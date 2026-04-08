@@ -22,9 +22,93 @@ interface Movimiento {
   registrado_por: string | null; created_at: string
 }
 
+// ── Panel de ayuda contextual ────────────────────────────────────────────────
+const ayudaPorTab: Record<Tab, { titulo: string; pasos: string[] }> = {
+  stock: {
+    titulo: 'Stock actual',
+    pasos: [
+      'Acá ves todos los productos cargados y su stock actual.',
+      'Usá los filtros arriba para buscar por nombre, proveedor o categoría.',
+      'Hacé clic en los KPIs de colores para filtrar rápido (bajo mínimo, sin stock, etc.).',
+      'Para cambiar el stock mínimo de un producto, hacé clic en el número de la columna "Mín." y escribí el nuevo valor.',
+    ],
+  },
+  movimientos: {
+    titulo: 'Historial de movimientos',
+    pasos: [
+      'Acá se registran todas las entradas y salidas de mercadería.',
+      'Cada vez que confirmás una recepción, se crean movimientos de entrada automáticamente.',
+      'Podés ver quién registró cada movimiento, la fecha y el motivo.',
+    ],
+  },
+  importar: {
+    titulo: 'Importar productos',
+    pasos: [
+      'Usá esta pestaña para cargar el listado de productos desde un export de Fudo.',
+      'Paso 1: Exportá el archivo de Stock desde Fudo (formato .xls o .xlsx).',
+      'Paso 2: Arrastrá el archivo acá o hacé clic para seleccionarlo.',
+      'Los productos se actualizan por nombre — si ya existen, se pisan con los nuevos datos.',
+    ],
+  },
+  recepcion: {
+    titulo: 'Recepción de mercadería',
+    pasos: [
+      'Paso 1: Exportá el archivo de GASTOS desde Fudo (no el de ventas).',
+      'Paso 2: Seleccioná el local correcto arriba a la izquierda.',
+      'Paso 3: Arrastrá el archivo o hacé clic para seleccionarlo.',
+      'El sistema lee la hoja "Detalle" y cruza cada item con tus productos.',
+      'Paso 4: Revisá los matches — los verdes son automáticos, los amarillos necesitan que elijas el producto correcto del desplegable.',
+      'Paso 5: Tildá los items que querés confirmar y hacé clic en "Confirmar recepción".',
+      'Esto actualiza el stock Y guarda los gastos para el tab de Pagos.',
+    ],
+  },
+  pagos: {
+    titulo: 'Pagos a proveedores',
+    pasos: [
+      'Arriba ves el resumen mensual: total comprado, pagado y lo que resta. Cambiá el mes con el selector.',
+      'Los colores indican el estado: 🔴 Vencido — 🟠 Vence esta semana — 🔵 A pagar — 🟢 Pagado.',
+      'Hacé clic en los KPIs de estado para filtrar rápido.',
+      'Cuando pagues a un proveedor, hacé clic en "Marcar pagado" en esa fila.',
+      'Los gastos se cargan automáticamente cuando subís un export en Recepción.',
+      'Los que aparecen "Sin fecha" son gastos viejos — marcalos como pagados si ya se pagaron.',
+    ],
+  },
+}
+
+function AyudaPanel({ tab, onClose }: { tab: Tab; onClose: () => void }) {
+  const info = ayudaPorTab[tab]
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-end p-4" onClick={onClose}>
+      <div
+        className="mt-16 mr-2 w-80 bg-white rounded-xl shadow-2xl border border-gray-200 animate-in slide-in-from-right"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
+          <h4 className="font-semibold text-sm text-gray-900">{info.titulo}</h4>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-lg leading-none">&times;</button>
+        </div>
+        <ol className="px-4 py-3 space-y-2">
+          {info.pasos.map((paso, i) => (
+            <li key={i} className="flex gap-2 text-xs text-gray-600 leading-relaxed">
+              <span className="flex-shrink-0 w-5 h-5 rounded-full bg-rodziny-100 text-rodziny-700 flex items-center justify-center text-[10px] font-bold mt-0.5">
+                {i + 1}
+              </span>
+              <span>{paso}</span>
+            </li>
+          ))}
+        </ol>
+        <div className="px-4 py-2 border-t border-gray-100">
+          <p className="text-[10px] text-gray-400">Dudas → consultá a Lucas o administración</p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export function ComprasPage() {
   const [local, setLocal] = useState<'vedia' | 'saavedra'>('vedia')
   const [tab, setTab]     = useState<Tab>('stock')
+  const [ayudaAbierta, setAyudaAbierta] = useState(false)
   const [filtro, setFiltro] = useState('')
   const [filtroEstado, setFiltroEstado] = useState<FiltroEstado>('todos')
   const [editandoMin, setEditandoMin] = useState<string | null>(null) // producto id
@@ -82,6 +166,12 @@ export function ComprasPage() {
 
   const [filtroPagos, setFiltroPagos] = useState<'todos' | 'pendientes' | 'vencidos' | 'semana'>('pendientes')
 
+  // Mes seleccionado para el resumen (default: mes actual)
+  const [mesPagos, setMesPagos] = useState(() => {
+    const d = new Date()
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+  })
+
   const pagosFiltrados = useMemo(() => {
     const hoy = new Date().toISOString().split('T')[0]
     const en7dias = new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0]
@@ -101,6 +191,11 @@ export function ComprasPage() {
     const pendientes = todos.filter((g) => g.estado_pago?.toLowerCase() !== 'pagado')
     const vencidos = pendientes.filter((g) => g.fecha_vencimiento && g.fecha_vencimiento < hoy)
     const proxSemana = pendientes.filter((g) => g.fecha_vencimiento && g.fecha_vencimiento >= hoy && g.fecha_vencimiento <= en7dias)
+
+    // Total gastado del mes seleccionado (todos los gastos, pagados o no)
+    const delMes = todos.filter((g) => g.fecha?.startsWith(mesPagos))
+    const pagadosDelMes = delMes.filter((g) => g.estado_pago?.toLowerCase() === 'pagado')
+
     return {
       totalPendiente: pendientes.reduce((s, g) => s + g.importe_total, 0),
       cantPendientes: pendientes.length,
@@ -108,8 +203,12 @@ export function ComprasPage() {
       cantVencidos: vencidos.length,
       totalSemana: proxSemana.reduce((s, g) => s + g.importe_total, 0),
       cantSemana: proxSemana.length,
+      totalMes: delMes.reduce((s, g) => s + g.importe_total, 0),
+      cantMes: delMes.length,
+      pagadoMes: pagadosDelMes.reduce((s, g) => s + g.importe_total, 0),
+      cantPagadoMes: pagadosDelMes.length,
     }
-  }, [gastosPagos])
+  }, [gastosPagos, mesPagos])
 
   // ── Filtrar productos ──────────────────────────────────────────────────────
   const productosFiltrados = useMemo(() => {
@@ -363,7 +462,17 @@ export function ComprasPage() {
             </button>
           ))}
         </div>
+
+        <button
+          onClick={() => setAyudaAbierta(true)}
+          className="ml-auto w-8 h-8 rounded-full bg-rodziny-100 text-rodziny-700 hover:bg-rodziny-200 text-sm font-bold transition-colors flex items-center justify-center"
+          title="Ayuda"
+        >
+          ?
+        </button>
       </div>
+
+      {ayudaAbierta && <AyudaPanel tab={tab} onClose={() => setAyudaAbierta(false)} />}
 
       {/* ═══ TAB: STOCK ═══ */}
       {tab === 'stock' && (
@@ -804,7 +913,36 @@ export function ComprasPage() {
       {/* ═══ TAB: PAGOS ═══ */}
       {tab === 'pagos' && (
         <div>
-          {/* KPIs */}
+          {/* Resumen mensual */}
+          <div className="bg-white rounded-lg border border-surface-border p-4 mb-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold text-gray-700">Resumen mensual — {local === 'vedia' ? 'Rodziny Vedia' : 'Rodziny Saavedra'}</h3>
+              <input
+                type="month"
+                value={mesPagos}
+                onChange={(e) => setMesPagos(e.target.value)}
+                className="text-sm border border-gray-300 rounded-md px-2 py-1 focus:outline-none focus:ring-1 focus:ring-rodziny-500"
+              />
+            </div>
+            <div className="grid grid-cols-3 gap-4">
+              <div>
+                <p className="text-xs text-gray-500 mb-0.5">Total comprado ({pagosKpis.cantMes})</p>
+                <p className="text-xl font-bold text-gray-900">{formatARS(pagosKpis.totalMes)}</p>
+              </div>
+              <div>
+                <p className="text-xs text-gray-500 mb-0.5">Pagado ({pagosKpis.cantPagadoMes})</p>
+                <p className="text-xl font-bold text-green-600">{formatARS(pagosKpis.pagadoMes)}</p>
+              </div>
+              <div>
+                <p className="text-xs text-gray-500 mb-0.5">Resta pagar</p>
+                <p className={cn('text-xl font-bold', pagosKpis.totalMes - pagosKpis.pagadoMes > 0 ? 'text-red-600' : 'text-green-600')}>
+                  {formatARS(pagosKpis.totalMes - pagosKpis.pagadoMes)}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* KPIs de estado */}
           <div className="grid grid-cols-3 gap-3 mb-4">
             <button
               onClick={() => setFiltroPagos(filtroPagos === 'pendientes' ? 'todos' : 'pendientes')}
