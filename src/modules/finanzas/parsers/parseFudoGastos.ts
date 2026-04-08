@@ -21,6 +21,16 @@ function parseNum(val: unknown): number {
   return parseFloat(s) || 0
 }
 
+export interface DetalleRow {
+  gasto_id: string
+  fecha: string           // YYYY-MM-DD
+  cantidad: number
+  unidad: string
+  descripcion: string
+  precio: number
+  cancelado: boolean
+}
+
 export interface GastoRow {
   fudo_id: string
   fecha: string           // YYYY-MM-DD
@@ -77,7 +87,7 @@ function findHeaderRow(sheet: XLSX.WorkSheet): number {
 export function parseFudoGastos(
   buffer: ArrayBuffer,
   local: 'vedia' | 'saavedra'
-): { gastos: GastoRow[]; periodo: string; local: 'vedia' | 'saavedra' } {
+): { gastos: GastoRow[]; detalle: DetalleRow[]; periodo: string; local: 'vedia' | 'saavedra' } {
   const wb = XLSX.read(buffer, { type: 'array' })
 
   // ---------- Hoja Gastos ----------
@@ -169,6 +179,51 @@ export function parseFudoGastos(
       }
     })
 
+  // ---------- Hoja Detalle ----------
+  let detalle: DetalleRow[] = []
+  try {
+    const wsDetalle = findSheet(wb, 'Detalle', 'Detalle de gastos', 'Items')
+    const detClaves = new Set(['id', 'gasto', 'fecha', 'cantidad', 'unidad', 'descripcion', 'precio'])
+    const rangeDet = XLSX.utils.decode_range(wsDetalle['!ref'] ?? 'A1')
+    let headerRowDet = 0
+    for (let r = 0; r <= Math.min(7, rangeDet.e.r); r++) {
+      let coincidencias = 0
+      for (let c = 0; c <= Math.min(15, rangeDet.e.c); c++) {
+        const cell = wsDetalle[XLSX.utils.encode_cell({ r, c })]
+        const v = norm(cell?.v)
+        for (const clave of detClaves) {
+          if (v.includes(clave)) { coincidencias++; break }
+        }
+      }
+      if (coincidencias >= 3) { headerRowDet = r; break }
+    }
+    console.log('[gastos] Hoja Detalle encontrada, header en fila:', headerRowDet)
+    const rawDetalle = XLSX.utils.sheet_to_json<Record<string, unknown>>(wsDetalle, { range: headerRowDet, defval: '' })
+
+    detalle = rawDetalle
+      .filter((r) => {
+        const id = String(r['Id# Gasto'] ?? r['Id. Gasto'] ?? r['Id Gasto'] ?? '')
+        return id && id !== 'Id# Gasto' && id !== 'Id. Gasto'
+      })
+      .filter((r) => {
+        const canc = String(r['Cancelado'] ?? '').toLowerCase()
+        return canc !== 'sí' && canc !== 'si'
+      })
+      .map((r) => ({
+        gasto_id: String(r['Id# Gasto'] ?? r['Id. Gasto'] ?? r['Id Gasto'] ?? ''),
+        fecha: parseDate(r['Fecha'] ?? ''),
+        cantidad: parseNum(r['Cantidad'] ?? 0),
+        unidad: String(r['Unidad'] ?? ''),
+        descripcion: String(r['Descripción'] ?? r['Descripcion'] ?? r['Nombre'] ?? ''),
+        precio: parseNum(r['Precio'] ?? r['Precio unitario'] ?? r['Precio $'] ?? 0),
+        cancelado: false,
+      }))
+
+    console.log('[gastos] Detalle items parseados:', detalle.length)
+  } catch (err) {
+    console.warn('[gastos] No se encontró hoja de Detalle:', err)
+  }
+
   const periodo = gastos.find((g) => g.fecha)?.fecha.substring(0, 7) ?? ''
-  return { gastos, periodo, local }
+  return { gastos, detalle, periodo, local }
 }

@@ -1,12 +1,13 @@
-import { useState, useRef, useMemo } from 'react'
+import { useState, useRef, useMemo, useCallback } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { PageContainer } from '@/components/layout/PageContainer'
 import { LocalSelector } from '@/components/ui/LocalSelector'
 import { formatARS, cn } from '@/lib/utils'
 import { parseStockFudo } from './parsers/parseStock'
+import { parseFudoGastos, type DetalleRow, type GastoRow } from '@/modules/finanzas/parsers/parseFudoGastos'
 
-type Tab = 'stock' | 'movimientos' | 'importar'
+type Tab = 'stock' | 'movimientos' | 'importar' | 'recepcion'
 type FiltroEstado = 'todos' | 'bajo_minimo' | 'sin_stock' | 'inactivos'
 
 interface Producto {
@@ -93,6 +94,146 @@ export function ComprasPage() {
     return { total: activos.length, bajoMinimo: bajoMinimo.length, sinStock: sinStock.length, valorTotal, inactivos: inactivos.length }
   }, [productos])
 
+  // ── Recepción de mercadería ──────────────────────────────────────────────
+  interface DetalleConMatch extends DetalleRow {
+    proveedor: string
+    productoMatch: Producto | null
+    confirmado: boolean
+  }
+  const recepcionRef = useRef<HTMLInputElement>(null)
+  const [recItems, setRecItems] = useState<DetalleConMatch[]>([])
+  const [recLoading, setRecLoading] = useState(false)
+  const [recError, setRecError] = useState<string | null>(null)
+  const [recPeriodo, setRecPeriodo] = useState('')
+  const [recConfirmando, setRecConfirmando] = useState(false)
+  const [recResultado, setRecResultado] = useState<string | null>(null)
+
+  // Similitud simple por palabras compartidas
+  const similitud = useCallback((a: string, b: string) => {
+    const normStr = (s: string) => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9\s]/g, '')
+    const wordsA = normStr(a).split(/\s+/).filter(Boolean)
+    const wordsB = normStr(b).split(/\s+/).filter(Boolean)
+    if (!wordsA.length || !wordsB.length) return 0
+    let matches = 0
+    for (const w of wordsA) {
+      if (wordsB.some((wb) => wb.includes(w) || w.includes(wb))) matches++
+    }
+    return matches / Math.max(wordsA.length, wordsB.length)
+  }, [])
+
+  async function cargarRecepcion(file: File) {
+    setRecLoading(true)
+    setRecError(null)
+    setRecItems([])
+    setRecResultado(null)
+    try {
+      const buffer = await file.arrayBuffer()
+      const { gastos, detalle, periodo } = parseFudoGastos(buffer, local)
+      if (!detalle.length) throw new Error('No se encontró hoja "Detalle" en el archivo o está vacía')
+
+      setRecPeriodo(periodo)
+
+      // Mapa gasto_id → proveedor
+      const provMap = new Map<string, string>()
+      for (const g of gastos) {
+        if (!g.cancelado) provMap.set(g.fudo_id, g.proveedor)
+      }
+
+      // Solo items de gastos no cancelados
+      const itemsValidos = detalle.filter((d) => provMap.has(d.gasto_id))
+
+      // Buscar match con productos existentes
+      const prods = productos ?? []
+      const items: DetalleConMatch[] = itemsValidos.map((d) => {
+        let mejorMatch: Producto | null = null
+        let mejorScore = 0
+        for (const p of prods) {
+          const score = similitud(d.descripcion, p.nombre)
+          if (score > mejorScore) { mejorScore = score; mejorMatch = p }
+        }
+        return {
+          ...d,
+          proveedor: provMap.get(d.gasto_id) ?? '',
+          productoMatch: mejorScore >= 0.4 ? mejorMatch : null,
+          confirmado: mejorScore >= 0.6, // auto-confirmar si match alto
+        }
+      })
+
+      setRecItems(items)
+    } catch (e) {
+      setRecError((e as Error).message)
+    } finally {
+      setRecLoading(false)
+    }
+  }
+
+  function cambiarMatchRecepcion(idx: number, productoId: string | null) {
+    setRecItems((prev) => prev.map((item, i) => {
+      if (i !== idx) return item
+      const prod = productoId ? (productos ?? []).find((p) => p.id === productoId) ?? null : null
+      return { ...item, productoMatch: prod, confirmado: !!prod }
+    }))
+  }
+
+  function toggleConfirmado(idx: number) {
+    setRecItems((prev) => prev.map((item, i) =>
+      i === idx ? { ...item, confirmado: !item.confirmado } : item
+    ))
+  }
+
+  async function confirmarRecepcion() {
+    const confirmados = recItems.filter((it) => it.confirmado && it.productoMatch)
+    if (!confirmados.length) return
+
+    setRecConfirmando(true)
+    setRecResultado(null)
+    try {
+      // Agrupar cantidades por producto (puede haber varios items del mismo producto)
+      const porProducto = new Map<string, { prod: Producto; totalCantidad: number; items: DetalleConMatch[] }>()
+      for (const it of confirmados) {
+        const p = it.productoMatch!
+        const existing = porProducto.get(p.id)
+        if (existing) {
+          existing.totalCantidad += it.cantidad
+          existing.items.push(it)
+        } else {
+          porProducto.set(p.id, { prod: p, totalCantidad: it.cantidad, items: [it] })
+        }
+      }
+
+      // Crear movimientos de entrada y actualizar stock
+      for (const [, { prod, totalCantidad, items }] of porProducto) {
+        // Movimiento de entrada
+        await supabase.from('movimientos_stock').insert({
+          local,
+          producto_id: prod.id,
+          producto_nombre: prod.nombre,
+          tipo: 'entrada',
+          cantidad: totalCantidad,
+          unidad: items[0].unidad || prod.unidad,
+          motivo: 'Recepción mercadería',
+          observacion: `Proveedor: ${items[0].proveedor} | ${items.length} item(s) del export Fudo (${recPeriodo})`,
+        })
+
+        // Actualizar stock
+        await supabase
+          .from('productos')
+          .update({ stock_actual: prod.stock_actual + totalCantidad, updated_at: new Date().toISOString() })
+          .eq('id', prod.id)
+      }
+
+      setRecResultado(`${confirmados.length} items recepcionados (${porProducto.size} productos actualizados)`)
+      setRecItems([])
+      qc.invalidateQueries({ queryKey: ['productos_stock'] })
+      qc.invalidateQueries({ queryKey: ['productos_activos'] })
+      qc.invalidateQueries({ queryKey: ['movimientos_stock'] })
+    } catch (e) {
+      setRecResultado(`Error: ${(e as Error).message}`)
+    } finally {
+      setRecConfirmando(false)
+    }
+  }
+
   // ── Import stock ───────────────────────────────────────────────────────────
   const inputRef = useRef<HTMLInputElement>(null)
   const [importing, setImporting] = useState(false)
@@ -146,6 +287,7 @@ export function ComprasPage() {
             ['stock',       '📦 Stock'],
             ['movimientos', '📋 Movimientos'],
             ['importar',    '📥 Importar'],
+            ['recepcion',   '📬 Recepción'],
           ] as [Tab, string][]).map(([t, label]) => (
             <button
               key={t}
@@ -452,6 +594,148 @@ export function ComprasPage() {
               </div>
             )}
           </div>
+        </div>
+      )}
+      {/* ═══ TAB: RECEPCIÓN ═══ */}
+      {tab === 'recepcion' && (
+        <div>
+          {/* Upload */}
+          {recItems.length === 0 && (
+            <div className="max-w-xl">
+              <div className="bg-white rounded-lg border border-surface-border p-6">
+                <h3 className="font-semibold text-gray-900 mb-1">Recepción de mercadería</h3>
+                <p className="text-xs text-gray-400 mb-3">
+                  Subí el export de <strong>gastos</strong> de Fudo (.xls/.xlsx). Se leerá la hoja "Detalle" para matchear los items con tu inventario.
+                </p>
+                <div className="mb-4 p-3 bg-rodziny-50 border border-rodziny-200 rounded-lg text-sm">
+                  Recibiendo en: <span className="font-semibold text-rodziny-800">{local === 'vedia' ? 'Rodziny Vedia' : 'Rodziny Saavedra'}</span>
+                </div>
+
+                <div
+                  className="border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors border-gray-300 hover:border-rodziny-500"
+                  onClick={() => recepcionRef.current?.click()}
+                >
+                  <div className="text-2xl mb-2">📬</div>
+                  <p className="text-sm text-gray-600">
+                    Arrastrá el export de <strong>gastos</strong> de Fudo
+                  </p>
+                  <input
+                    ref={recepcionRef} type="file" className="hidden" accept=".xls,.xlsx"
+                    onChange={(e) => { const f = e.target.files?.[0]; if (f) cargarRecepcion(f) }}
+                  />
+                </div>
+
+                {recLoading && <p className="mt-3 text-sm text-blue-600 animate-pulse">Procesando archivo...</p>}
+                {recError && <div className="mt-3 p-3 rounded-md text-sm bg-red-50 text-red-700">{recError}</div>}
+                {recResultado && (
+                  <div className={cn('mt-3 p-3 rounded-md text-sm', recResultado.startsWith('Error') ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-800')}>
+                    {recResultado}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Tabla de matching */}
+          {recItems.length > 0 && (
+            <>
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <h3 className="font-semibold text-gray-900">
+                    Items del export — {recPeriodo}
+                  </h3>
+                  <p className="text-xs text-gray-500">
+                    {recItems.filter((i) => i.confirmado && i.productoMatch).length} de {recItems.length} items matcheados.
+                    Confirmá o corregí el match de cada item antes de recepcionar.
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => { setRecItems([]); setRecResultado(null) }}
+                    className="px-3 py-1.5 text-xs border border-gray-300 rounded-md text-gray-600 hover:bg-gray-50"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    onClick={confirmarRecepcion}
+                    disabled={recConfirmando || !recItems.some((i) => i.confirmado && i.productoMatch)}
+                    className={cn(
+                      'px-4 py-1.5 text-sm font-medium rounded-md text-white transition-colors',
+                      recConfirmando ? 'bg-gray-400' : 'bg-rodziny-600 hover:bg-rodziny-700',
+                      !recItems.some((i) => i.confirmado && i.productoMatch) && 'opacity-50 cursor-not-allowed'
+                    )}
+                  >
+                    {recConfirmando ? 'Procesando...' : `Recepcionar (${recItems.filter((i) => i.confirmado && i.productoMatch).length})`}
+                  </button>
+                </div>
+              </div>
+
+              {recResultado && (
+                <div className={cn('mb-3 p-3 rounded-md text-sm', recResultado.startsWith('Error') ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-800')}>
+                  {recResultado}
+                </div>
+              )}
+
+              <div className="bg-white rounded-lg border border-surface-border overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-gray-50 border-b border-gray-200">
+                        <th className="px-3 py-2.5 text-center text-xs font-semibold text-gray-600 w-10">OK</th>
+                        <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600">Descripción (Fudo)</th>
+                        <th className="px-4 py-2.5 text-right text-xs font-semibold text-gray-600">Cantidad</th>
+                        <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600">Unidad</th>
+                        <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600">Proveedor</th>
+                        <th className="px-4 py-2.5 text-right text-xs font-semibold text-gray-600">Precio</th>
+                        <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600 min-w-[220px]">Match producto</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {recItems.map((item, idx) => (
+                        <tr key={idx} className={cn(
+                          'border-b border-gray-50 hover:bg-gray-50',
+                          item.confirmado && item.productoMatch ? 'bg-green-50/50' : '',
+                          !item.productoMatch ? 'bg-yellow-50/50' : ''
+                        )}>
+                          <td className="px-3 py-2 text-center">
+                            <input
+                              type="checkbox"
+                              checked={item.confirmado && !!item.productoMatch}
+                              disabled={!item.productoMatch}
+                              onChange={() => toggleConfirmado(idx)}
+                              className="h-4 w-4 rounded border-gray-300 text-rodziny-600 focus:ring-rodziny-500"
+                            />
+                          </td>
+                          <td className="px-4 py-2 font-medium text-gray-900">{item.descripcion}</td>
+                          <td className="px-4 py-2 text-right font-medium text-gray-800">{item.cantidad}</td>
+                          <td className="px-4 py-2 text-gray-600 text-xs">{item.unidad}</td>
+                          <td className="px-4 py-2 text-gray-600 text-xs">{item.proveedor}</td>
+                          <td className="px-4 py-2 text-right text-gray-600">{item.precio > 0 ? formatARS(item.precio) : '—'}</td>
+                          <td className="px-4 py-2">
+                            <select
+                              value={item.productoMatch?.id ?? ''}
+                              onChange={(e) => cambiarMatchRecepcion(idx, e.target.value || null)}
+                              className={cn(
+                                'w-full text-sm border rounded-md px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-rodziny-500',
+                                item.productoMatch ? 'border-green-300 bg-green-50' : 'border-orange-300 bg-orange-50'
+                              )}
+                            >
+                              <option value="">— Sin match —</option>
+                              {(productos ?? []).filter((p) => p.activo).map((p) => (
+                                <option key={p.id} value={p.id}>
+                                  {p.nombre} ({p.stock_actual} {p.unidad})
+                                </option>
+                              ))}
+                            </select>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </>
+          )}
         </div>
       )}
     </PageContainer>
