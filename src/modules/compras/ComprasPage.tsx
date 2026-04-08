@@ -16,7 +16,7 @@ interface Producto {
 }
 
 interface Movimiento {
-  id: string; producto_nombre: string; tipo: string; cantidad: number
+  id: string; producto_id: string | null; producto_nombre: string; tipo: string; cantidad: number
   unidad: string; motivo: string; observacion: string | null
   registrado_por: string | null; created_at: string
 }
@@ -356,11 +356,12 @@ export function ComprasPage() {
                   <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600">Motivo</th>
                   <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600">Observación</th>
                   <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600">Registrado por</th>
+                  <th className="px-2 py-2.5 w-8"></th>
                 </tr>
               </thead>
               <tbody>
                 {(!movimientos || movimientos.length === 0) ? (
-                  <tr><td colSpan={7} className="px-4 py-8 text-center text-gray-400">No hay movimientos registrados</td></tr>
+                  <tr><td colSpan={8} className="px-4 py-8 text-center text-gray-400">No hay movimientos registrados</td></tr>
                 ) : movimientos.map((m) => (
                   <tr key={m.id} className="border-b border-gray-50 hover:bg-gray-50">
                     <td className="px-4 py-2 text-gray-600 text-xs">
@@ -380,6 +381,31 @@ export function ComprasPage() {
                     <td className="px-4 py-2 text-gray-600 text-xs">{m.motivo || '—'}</td>
                     <td className="px-4 py-2 text-gray-500 text-xs max-w-[200px] truncate">{m.observacion || '—'}</td>
                     <td className="px-4 py-2 text-gray-500 text-xs">{m.registrado_por || '—'}</td>
+                    <td className="px-2 py-2 text-center">
+                      <button
+                        onClick={async () => {
+                          if (!confirm(`¿Eliminar este movimiento y revertir el stock de ${m.producto_nombre}?`)) return
+                          // Revertir stock: si fue salida sumamos, si fue entrada restamos
+                          if (m.producto_id) {
+                            const { data: prod } = await supabase.from('productos').select('stock_actual').eq('id', m.producto_id).single()
+                            if (prod) {
+                              const nuevoStock = m.tipo === 'salida'
+                                ? prod.stock_actual + m.cantidad
+                                : Math.max(0, prod.stock_actual - m.cantidad)
+                              await supabase.from('productos').update({ stock_actual: nuevoStock }).eq('id', m.producto_id)
+                            }
+                          }
+                          await supabase.from('movimientos_stock').delete().eq('id', m.id)
+                          qc.invalidateQueries({ queryKey: ['movimientos_stock'] })
+                          qc.invalidateQueries({ queryKey: ['productos_stock'] })
+                          qc.invalidateQueries({ queryKey: ['productos_activos'] })
+                        }}
+                        className="text-gray-300 hover:text-red-500 transition-colors text-xs"
+                        title="Eliminar y revertir stock"
+                      >
+                        ✕
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
