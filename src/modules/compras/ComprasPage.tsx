@@ -7,7 +7,7 @@ import { formatARS, cn } from '@/lib/utils'
 import { parseStockFudo } from './parsers/parseStock'
 import { parseFudoGastos, type DetalleRow, type GastoRow } from '@/modules/finanzas/parsers/parseFudoGastos'
 
-type Tab = 'stock' | 'movimientos' | 'importar' | 'recepcion'
+type Tab = 'stock' | 'movimientos' | 'importar' | 'recepcion' | 'pagos'
 type FiltroEstado = 'todos' | 'bajo_minimo' | 'sin_stock' | 'inactivos'
 
 interface Producto {
@@ -58,6 +58,58 @@ export function ComprasPage() {
     },
     enabled: tab === 'movimientos',
   })
+
+  interface GastoPago {
+    id: string; fudo_id: string; fecha: string; fecha_vencimiento: string | null
+    proveedor: string; categoria: string; subcategoria: string; importe_total: number
+    estado_pago: string; comentario: string
+  }
+
+  const { data: gastosPagos } = useQuery({
+    queryKey: ['gastos_pagos', local],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('gastos')
+        .select('id,fudo_id,fecha,fecha_vencimiento,proveedor,categoria,subcategoria,importe_total,estado_pago,comentario')
+        .eq('local', local)
+        .eq('cancelado', false)
+        .order('fecha_vencimiento', { ascending: true, nullsFirst: false })
+        .limit(500)
+      return (data ?? []) as GastoPago[]
+    },
+    enabled: tab === 'pagos',
+  })
+
+  const [filtroPagos, setFiltroPagos] = useState<'todos' | 'pendientes' | 'vencidos' | 'semana'>('pendientes')
+
+  const pagosFiltrados = useMemo(() => {
+    const hoy = new Date().toISOString().split('T')[0]
+    const en7dias = new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0]
+    let lista = gastosPagos ?? []
+
+    if (filtroPagos === 'pendientes') lista = lista.filter((g) => g.estado_pago?.toLowerCase() !== 'pagado')
+    else if (filtroPagos === 'vencidos') lista = lista.filter((g) => g.estado_pago?.toLowerCase() !== 'pagado' && g.fecha_vencimiento && g.fecha_vencimiento < hoy)
+    else if (filtroPagos === 'semana') lista = lista.filter((g) => g.estado_pago?.toLowerCase() !== 'pagado' && g.fecha_vencimiento && g.fecha_vencimiento >= hoy && g.fecha_vencimiento <= en7dias)
+
+    return lista
+  }, [gastosPagos, filtroPagos])
+
+  const pagosKpis = useMemo(() => {
+    const hoy = new Date().toISOString().split('T')[0]
+    const en7dias = new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0]
+    const todos = gastosPagos ?? []
+    const pendientes = todos.filter((g) => g.estado_pago?.toLowerCase() !== 'pagado')
+    const vencidos = pendientes.filter((g) => g.fecha_vencimiento && g.fecha_vencimiento < hoy)
+    const proxSemana = pendientes.filter((g) => g.fecha_vencimiento && g.fecha_vencimiento >= hoy && g.fecha_vencimiento <= en7dias)
+    return {
+      totalPendiente: pendientes.reduce((s, g) => s + g.importe_total, 0),
+      cantPendientes: pendientes.length,
+      totalVencido: vencidos.reduce((s, g) => s + g.importe_total, 0),
+      cantVencidos: vencidos.length,
+      totalSemana: proxSemana.reduce((s, g) => s + g.importe_total, 0),
+      cantSemana: proxSemana.length,
+    }
+  }, [gastosPagos])
 
   // ── Filtrar productos ──────────────────────────────────────────────────────
   const productosFiltrados = useMemo(() => {
@@ -132,6 +184,15 @@ export function ComprasPage() {
       if (!detalle.length) throw new Error('No se encontró hoja "Detalle" en el archivo o está vacía')
 
       setRecPeriodo(periodo)
+
+      // Guardar gastos en Supabase (alimenta tab Pagos)
+      const gastosRows = gastos
+        .filter((g) => g.fecha && !g.cancelado)
+        .map((g) => ({ local, periodo, ...g }))
+      if (gastosRows.length) {
+        await supabase.from('gastos').upsert(gastosRows, { onConflict: 'local,fudo_id' })
+        qc.invalidateQueries({ queryKey: ['gastos_pagos'] })
+      }
 
       // Mapa gasto_id → proveedor
       const provMap = new Map<string, string>()
@@ -288,6 +349,7 @@ export function ComprasPage() {
             ['movimientos', '📋 Movimientos'],
             ['importar',    '📥 Importar'],
             ['recepcion',   '📬 Recepción'],
+            ['pagos',       '💰 Pagos'],
           ] as [Tab, string][]).map(([t, label]) => (
             <button
               key={t}
@@ -736,6 +798,128 @@ export function ComprasPage() {
               </div>
             </>
           )}
+        </div>
+      )}
+
+      {/* ═══ TAB: PAGOS ═══ */}
+      {tab === 'pagos' && (
+        <div>
+          {/* KPIs */}
+          <div className="grid grid-cols-3 gap-3 mb-4">
+            <button
+              onClick={() => setFiltroPagos(filtroPagos === 'pendientes' ? 'todos' : 'pendientes')}
+              className={cn('bg-white rounded-lg border p-4 text-left transition-colors',
+                filtroPagos === 'pendientes' ? 'border-blue-500 ring-1 ring-blue-200' : 'border-surface-border hover:border-gray-300'
+              )}
+            >
+              <p className="text-xs text-gray-500 mb-1">Pendiente total ({pagosKpis.cantPendientes})</p>
+              <p className="text-lg font-semibold text-gray-900">{formatARS(pagosKpis.totalPendiente)}</p>
+            </button>
+            <button
+              onClick={() => setFiltroPagos(filtroPagos === 'vencidos' ? 'todos' : 'vencidos')}
+              className={cn('bg-white rounded-lg border p-4 text-left transition-colors',
+                filtroPagos === 'vencidos' ? 'border-red-500 ring-1 ring-red-200 bg-red-50' : 'border-surface-border hover:border-gray-300'
+              )}
+            >
+              <p className="text-xs text-gray-500 mb-1">Vencido ({pagosKpis.cantVencidos})</p>
+              <p className={cn('text-lg font-semibold', pagosKpis.cantVencidos > 0 ? 'text-red-600' : 'text-green-600')}>
+                {formatARS(pagosKpis.totalVencido)}
+              </p>
+            </button>
+            <button
+              onClick={() => setFiltroPagos(filtroPagos === 'semana' ? 'todos' : 'semana')}
+              className={cn('bg-white rounded-lg border p-4 text-left transition-colors',
+                filtroPagos === 'semana' ? 'border-orange-500 ring-1 ring-orange-200 bg-orange-50' : 'border-surface-border hover:border-gray-300'
+              )}
+            >
+              <p className="text-xs text-gray-500 mb-1">Próximos 7 días ({pagosKpis.cantSemana})</p>
+              <p className={cn('text-lg font-semibold', pagosKpis.cantSemana > 0 ? 'text-orange-600' : 'text-green-600')}>
+                {formatARS(pagosKpis.totalSemana)}
+              </p>
+            </button>
+          </div>
+
+          {/* Tabla de pagos */}
+          <div className="bg-white rounded-lg border border-surface-border overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-gray-50 border-b border-gray-200">
+                    <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600">Vencimiento</th>
+                    <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600">Proveedor</th>
+                    <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600">Categoría</th>
+                    <th className="px-4 py-2.5 text-right text-xs font-semibold text-gray-600">Importe</th>
+                    <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-600">Estado</th>
+                    <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600">Fecha compra</th>
+                    <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-600 w-24">Acción</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pagosFiltrados.length === 0 ? (
+                    <tr><td colSpan={7} className="px-4 py-8 text-center text-gray-400">
+                      {filtroPagos === 'todos' ? 'No hay gastos cargados' : 'No hay pagos en esta categoría'}
+                    </td></tr>
+                  ) : pagosFiltrados.map((g) => {
+                    const hoy = new Date().toISOString().split('T')[0]
+                    const en7dias = new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0]
+                    const pagado = g.estado_pago?.toLowerCase() === 'pagado'
+                    const vencido = !pagado && g.fecha_vencimiento && g.fecha_vencimiento < hoy
+                    const proxSemana = !pagado && !vencido && g.fecha_vencimiento && g.fecha_vencimiento <= en7dias
+                    return (
+                      <tr key={g.id} className={cn(
+                        'border-b border-gray-50 hover:bg-gray-50',
+                        pagado && 'opacity-50',
+                        vencido && 'bg-red-50',
+                        proxSemana && 'bg-orange-50'
+                      )}>
+                        <td className="px-4 py-2 font-medium">
+                          {g.fecha_vencimiento ? (
+                            <span className={cn(
+                              vencido ? 'text-red-600' : proxSemana ? 'text-orange-600' : 'text-gray-900'
+                            )}>
+                              {new Date(g.fecha_vencimiento + 'T12:00:00').toLocaleDateString('es-AR', { day: '2-digit', month: 'short' })}
+                            </span>
+                          ) : (
+                            <span className="text-gray-300">Sin fecha</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-2 text-gray-900">{g.proveedor || '—'}</td>
+                        <td className="px-4 py-2 text-gray-600 text-xs">{g.subcategoria || g.categoria}</td>
+                        <td className="px-4 py-2 text-right font-medium text-gray-900">{formatARS(g.importe_total)}</td>
+                        <td className="px-4 py-2 text-center">
+                          {pagado ? (
+                            <span className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-700">Pagado</span>
+                          ) : vencido ? (
+                            <span className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-700">Vencido</span>
+                          ) : proxSemana ? (
+                            <span className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-orange-100 text-orange-700">Próximo</span>
+                          ) : (
+                            <span className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-700">A pagar</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-2 text-gray-500 text-xs">
+                          {g.fecha ? new Date(g.fecha + 'T12:00:00').toLocaleDateString('es-AR', { day: '2-digit', month: 'short' }) : '—'}
+                        </td>
+                        <td className="px-4 py-2 text-center">
+                          {!pagado && (
+                            <button
+                              onClick={async () => {
+                                await supabase.from('gastos').update({ estado_pago: 'Pagado' }).eq('id', g.id)
+                                qc.invalidateQueries({ queryKey: ['gastos_pagos'] })
+                              }}
+                              className="px-2 py-1 text-xs rounded border border-green-300 text-green-700 hover:bg-green-50 transition-colors"
+                            >
+                              Marcar pagado
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
       )}
     </PageContainer>

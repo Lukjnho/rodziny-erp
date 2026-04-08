@@ -34,6 +34,7 @@ export interface DetalleRow {
 export interface GastoRow {
   fudo_id: string
   fecha: string           // YYYY-MM-DD
+  fecha_vencimiento: string | null  // YYYY-MM-DD — cuándo hay que pagar
   proveedor: string
   categoria: string
   subcategoria: string
@@ -157,6 +158,7 @@ export function parseFudoGastos(
       return {
         fudo_id:          id,
         fecha:            parseDate(r['Fecha']),
+        fecha_vencimiento: parseDate(r['Fecha de vencimiento'] ?? r['Vencimiento'] ?? '') || null,
         proveedor:        String(r['Proveedor'] ?? ''),
         categoria:        String(r['Categoría'] ?? r['Categoria'] ?? ''),
         subcategoria:     String(r['Subcategoría'] ?? r['Subcategoria'] ?? ''),
