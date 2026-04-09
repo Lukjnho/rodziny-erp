@@ -165,6 +165,7 @@ export function ComprasPage() {
   })
 
   const [filtroPagos, setFiltroPagos] = useState<'todos' | 'pendientes' | 'vencidos' | 'semana'>('pendientes')
+  const [filtroProveedor, setFiltroProveedor] = useState('')
 
   // Mes seleccionado para el resumen (default: mes actual)
   const [mesPagos, setMesPagos] = useState(() => {
@@ -172,17 +173,60 @@ export function ComprasPage() {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
   })
 
+  // Lista única de proveedores para el dropdown
+  const proveedoresPagos = useMemo(() => {
+    const todos = gastosPagos ?? []
+    const unicos = [...new Set(todos.map((g) => g.proveedor).filter(Boolean))].sort()
+    return unicos
+  }, [gastosPagos])
+
   const pagosFiltrados = useMemo(() => {
     const hoy = new Date().toISOString().split('T')[0]
     const en7dias = new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0]
     let lista = gastosPagos ?? []
+
+    // Filtro por proveedor
+    if (filtroProveedor) {
+      const fp = filtroProveedor.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      lista = lista.filter((g) => g.proveedor?.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').includes(fp))
+    }
 
     if (filtroPagos === 'pendientes') lista = lista.filter((g) => g.estado_pago?.toLowerCase() !== 'pagado')
     else if (filtroPagos === 'vencidos') lista = lista.filter((g) => g.estado_pago?.toLowerCase() !== 'pagado' && g.fecha_vencimiento && g.fecha_vencimiento < hoy)
     else if (filtroPagos === 'semana') lista = lista.filter((g) => g.estado_pago?.toLowerCase() !== 'pagado' && g.fecha_vencimiento && g.fecha_vencimiento >= hoy && g.fecha_vencimiento <= en7dias)
 
     return lista
-  }, [gastosPagos, filtroPagos])
+  }, [gastosPagos, filtroPagos, filtroProveedor])
+
+  const [vistaResumenProv, setVistaResumenProv] = useState<'mes' | 'año'>('mes')
+
+  // Resumen por proveedor filtrado (cuánto se le debe)
+  const resumenProveedor = useMemo(() => {
+    if (!filtroProveedor) return null
+    const fp = filtroProveedor.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    const todosDelProveedor = (gastosPagos ?? []).filter((g) =>
+      g.proveedor?.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').includes(fp)
+    )
+
+    // Filtro temporal según vista (mes o año del mesPagos seleccionado)
+    const año = mesPagos.split('-')[0]
+    const delProveedor = vistaResumenProv === 'mes'
+      ? todosDelProveedor.filter((g) => g.fecha?.startsWith(mesPagos))
+      : todosDelProveedor.filter((g) => g.fecha?.startsWith(año))
+
+    // Pendiente: SIEMPRE total (lo que se debe no depende del período seleccionado)
+    const pendientesTotal = todosDelProveedor.filter((g) => g.estado_pago?.toLowerCase() !== 'pagado')
+    const pagados = delProveedor.filter((g) => g.estado_pago?.toLowerCase() === 'pagado')
+
+    return {
+      nombre: todosDelProveedor[0]?.proveedor ?? filtroProveedor,
+      totalCompras: delProveedor.reduce((s, g) => s + g.importe_total, 0),
+      cantCompras: delProveedor.length,
+      totalPendiente: pendientesTotal.reduce((s, g) => s + g.importe_total, 0),
+      cantPendientes: pendientesTotal.length,
+      totalPagado: pagados.reduce((s, g) => s + g.importe_total, 0),
+    }
+  }, [gastosPagos, filtroProveedor, vistaResumenProv, mesPagos])
 
   const pagosKpis = useMemo(() => {
     const hoy = new Date().toISOString().split('T')[0]
@@ -976,6 +1020,81 @@ export function ComprasPage() {
               </p>
             </button>
           </div>
+
+          {/* Buscador por proveedor */}
+          <div className="flex items-center gap-3 mb-4">
+            <div className="relative flex-1 max-w-sm">
+              <input
+                type="text"
+                placeholder="Buscar proveedor..."
+                value={filtroProveedor}
+                onChange={(e) => setFiltroProveedor(e.target.value)}
+                list="proveedores-pagos-list"
+                className="w-full text-sm border border-gray-300 rounded-md pl-8 pr-8 py-2 focus:outline-none focus:ring-1 focus:ring-rodziny-500 focus:border-rodziny-500"
+              />
+              <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 text-xs">🔍</span>
+              {filtroProveedor && (
+                <button
+                  onClick={() => setFiltroProveedor('')}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-sm"
+                >&times;</button>
+              )}
+              <datalist id="proveedores-pagos-list">
+                {proveedoresPagos.map((p) => <option key={p} value={p} />)}
+              </datalist>
+            </div>
+            {filtroProveedor && pagosFiltrados.length > 0 && (
+              <p className="text-xs text-gray-500">{pagosFiltrados.length} resultado{pagosFiltrados.length !== 1 ? 's' : ''}</p>
+            )}
+          </div>
+
+          {/* Resumen del proveedor filtrado */}
+          {resumenProveedor && (
+            <div className="bg-purple-50 border border-purple-200 rounded-lg p-4 mb-4">
+              <div className="flex items-center justify-between mb-3">
+                <div>
+                  <h4 className="text-sm font-semibold text-purple-900">{resumenProveedor.nombre}</h4>
+                  <p className="text-[10px] text-purple-600">
+                    {vistaResumenProv === 'mes' ? `Vista mensual (${mesPagos})` : `Vista anual (${mesPagos.split('-')[0]})`}
+                  </p>
+                </div>
+                <div className="flex bg-white rounded-md border border-purple-300 overflow-hidden text-xs">
+                  <button
+                    onClick={() => setVistaResumenProv('mes')}
+                    className={cn('px-3 py-1 transition-colors',
+                      vistaResumenProv === 'mes' ? 'bg-purple-600 text-white' : 'text-purple-700 hover:bg-purple-100'
+                    )}
+                  >
+                    Mensual
+                  </button>
+                  <button
+                    onClick={() => setVistaResumenProv('año')}
+                    className={cn('px-3 py-1 transition-colors',
+                      vistaResumenProv === 'año' ? 'bg-purple-600 text-white' : 'text-purple-700 hover:bg-purple-100'
+                    )}
+                  >
+                    Anual
+                  </button>
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-4">
+                <div>
+                  <p className="text-xs text-purple-600 mb-0.5">Total comprado ({resumenProveedor.cantCompras})</p>
+                  <p className="text-lg font-bold text-purple-900">{formatARS(resumenProveedor.totalCompras)}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-purple-600 mb-0.5">Pagado en período</p>
+                  <p className="text-lg font-bold text-green-600">{formatARS(resumenProveedor.totalPagado)}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-purple-600 mb-0.5">Deuda total ({resumenProveedor.cantPendientes})</p>
+                  <p className={cn('text-lg font-bold', resumenProveedor.totalPendiente > 0 ? 'text-red-600' : 'text-green-600')}>
+                    {formatARS(resumenProveedor.totalPendiente)}
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Tabla de pagos */}
           <div className="bg-white rounded-lg border border-surface-border overflow-hidden">
