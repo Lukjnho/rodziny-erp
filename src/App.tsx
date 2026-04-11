@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { FinanzasPage } from '@/modules/finanzas/FinanzasPage'
@@ -8,7 +8,13 @@ import { GastosPage } from '@/modules/gastos/GastosPage'
 import { AmortizacionesPage } from '@/modules/finanzas/amortizaciones/AmortizacionesPage'
 import { ComprasPage } from '@/modules/compras/ComprasPage'
 import { DepositoPage } from '@/modules/compras/DepositoPage'
+import { RRHHPage } from '@/modules/rrhh/RRHHPage'
+import { FicharPage } from '@/modules/rrhh/FicharPage'
+import { LoginPage } from '@/modules/auth/LoginPage'
+import { UsuariosPage } from '@/modules/usuarios/UsuariosPage'
 import { PageContainer } from '@/components/layout/PageContainer'
+import { AuthProvider, useAuth, type Modulo } from '@/lib/auth'
+import { type ReactNode } from 'react'
 
 const qc = new QueryClient({ defaultOptions: { queries: { staleTime: 1000 * 60 * 2 } } })
 
@@ -20,34 +26,109 @@ function Placeholder({ title }: { title: string }) {
   )
 }
 
+function PantallaCargando() {
+  return (
+    <div className="min-h-screen flex items-center justify-center" style={{ background: '#0f1117' }}>
+      <div className="text-sm" style={{ color: '#8b9bb4' }}>Cargando…</div>
+    </div>
+  )
+}
+
+function SinAcceso() {
+  return (
+    <PageContainer title="Sin acceso">
+      <div className="bg-white rounded-lg border border-gray-200 p-8 text-center">
+        <div className="text-4xl mb-3">🔒</div>
+        <h3 className="text-lg font-semibold text-gray-700 mb-1">No tenés acceso a este módulo</h3>
+        <p className="text-sm text-gray-500">Pedile a un administrador que te habilite el permiso.</p>
+      </div>
+    </PageContainer>
+  )
+}
+
+function Ruta({ modulo, children }: { modulo: Modulo; children: ReactNode }) {
+  const { tienePermiso } = useAuth()
+  return tienePermiso(modulo) ? <>{children}</> : <SinAcceso />
+}
+
+function AppInterna() {
+  const { user, perfil, cargando, tienePermiso } = useAuth()
+
+  if (cargando) return <PantallaCargando />
+  if (!user) return <LoginPage />
+  if (!perfil) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-6 text-center" style={{ background: '#0f1117' }}>
+        <div className="max-w-md">
+          <div className="text-4xl mb-3">⚠️</div>
+          <p className="text-white font-semibold mb-2">Tu usuario no tiene un perfil cargado</p>
+          <p className="text-sm mb-4" style={{ color: '#8b9bb4' }}>
+            Pedile a un administrador que te asigne permisos desde el módulo Usuarios.
+          </p>
+          <button
+            onClick={async () => {
+              const { supabase } = await import('@/lib/supabase')
+              await supabase.auth.signOut()
+              window.location.reload()
+            }}
+            className="bg-rodziny-700 hover:bg-rodziny-800 text-white text-sm rounded px-4 py-2"
+          >
+            Cerrar sesión
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  // Primera ruta con acceso para redirigir el '/' cuando Dashboard no esté habilitado
+  const primeraRutaPermitida =
+    tienePermiso('dashboard') ? '/' :
+    tienePermiso('ventas') ? '/ventas' :
+    tienePermiso('finanzas') ? '/finanzas' :
+    tienePermiso('edr') ? '/edr' :
+    tienePermiso('gastos') ? '/gastos' :
+    tienePermiso('amortizaciones') ? '/amortizaciones' :
+    tienePermiso('rrhh') ? '/rrhh' :
+    tienePermiso('compras') ? '/compras' :
+    tienePermiso('usuarios') ? '/usuarios' :
+    null
+
+  return (
+    <div className="flex min-h-screen">
+      <Sidebar />
+      <div className="flex-1">
+        <Routes>
+          <Route path="/"               element={tienePermiso('dashboard') ? <Placeholder title="Dashboard" /> : (primeraRutaPermitida && primeraRutaPermitida !== '/' ? <Navigate to={primeraRutaPermitida} replace /> : <SinAcceso />)} />
+          <Route path="/ventas"         element={<Ruta modulo="ventas"><VentasPage /></Ruta>} />
+          <Route path="/finanzas"       element={<Ruta modulo="finanzas"><FinanzasPage /></Ruta>} />
+          <Route path="/edr"            element={<Ruta modulo="edr"><EstadoResultados /></Ruta>} />
+          <Route path="/gastos"         element={<Ruta modulo="gastos"><GastosPage /></Ruta>} />
+          <Route path="/amortizaciones" element={<Ruta modulo="amortizaciones"><AmortizacionesPage /></Ruta>} />
+          <Route path="/rrhh"           element={<Ruta modulo="rrhh"><RRHHPage /></Ruta>} />
+          <Route path="/compras"        element={<Ruta modulo="compras"><ComprasPage /></Ruta>} />
+          <Route path="/usuarios"       element={<Ruta modulo="usuarios"><UsuariosPage /></Ruta>} />
+          <Route path="*"               element={<Navigate to={primeraRutaPermitida || '/'} replace />} />
+        </Routes>
+      </div>
+    </div>
+  )
+}
+
 export default function App() {
   return (
     <QueryClientProvider client={qc}>
-      <BrowserRouter>
-        <Routes>
-          {/* Ruta mobile sin sidebar (para QR depósito) */}
-          <Route path="/deposito" element={<DepositoPage />} />
+      <AuthProvider>
+        <BrowserRouter>
+          <Routes>
+            {/* Rutas públicas sin auth (mobile PWAs) */}
+            <Route path="/deposito" element={<DepositoPage />} />
+            <Route path="/fichar"   element={<FicharPage />} />
 
-          {/* Rutas con sidebar */}
-          <Route path="*" element={
-            <div className="flex min-h-screen">
-              <Sidebar />
-              <div className="flex-1">
-                <Routes>
-                  <Route path="/"         element={<Placeholder title="Dashboard" />} />
-                  <Route path="/ventas"   element={<VentasPage />} />
-                  <Route path="/finanzas" element={<FinanzasPage />} />
-                  <Route path="/edr"      element={<EstadoResultados />} />
-                  <Route path="/gastos"          element={<GastosPage />} />
-                  <Route path="/amortizaciones"  element={<AmortizacionesPage />} />
-                  <Route path="/rrhh"     element={<Placeholder title="RRHH" />} />
-                  <Route path="/compras"  element={<ComprasPage />} />
-                </Routes>
-              </div>
-            </div>
-          } />
-        </Routes>
-      </BrowserRouter>
+            {/* Resto del ERP protegido */}
+            <Route path="*" element={<AppInterna />} />
+          </Routes>
+        </BrowserRouter>
+      </AuthProvider>
     </QueryClientProvider>
   )
 }

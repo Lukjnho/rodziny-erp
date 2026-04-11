@@ -1,20 +1,28 @@
 import { NavLink } from 'react-router-dom'
 import { cn } from '@/lib/utils'
+import { useAuth, type Modulo } from '@/lib/auth'
 
-const NAV = [
-  { to: '/',          label: 'Dashboard',  icon: '▦' },
-  { to: '/ventas',    label: 'Ventas',     icon: '📈' },
-  { to: '/finanzas',  label: 'Finanzas',   icon: '💰' },
-  { to: '/edr',       label: 'EdR',        icon: '📋' },
-  { to: '/gastos',          label: 'Gastos',          icon: '🧾' },
-  { to: '/amortizaciones', label: 'Amortizaciones',  icon: '📉' },
-  { to: '/rrhh',      label: 'RRHH',       icon: '👥' },
-  { to: '/compras',   label: 'Compras',    icon: '🛒' },
+const NAV: { to: string; label: string; icon: string; modulo: Modulo }[] = [
+  { to: '/',               label: 'Dashboard',      icon: '▦',  modulo: 'dashboard' },
+  { to: '/ventas',         label: 'Ventas',         icon: '📈', modulo: 'ventas' },
+  { to: '/finanzas',       label: 'Finanzas',       icon: '💰', modulo: 'finanzas' },
+  { to: '/edr',            label: 'EdR',            icon: '📋', modulo: 'edr' },
+  { to: '/gastos',         label: 'Gastos',         icon: '🧾', modulo: 'gastos' },
+  { to: '/amortizaciones', label: 'Amortizaciones', icon: '📉', modulo: 'amortizaciones' },
+  { to: '/rrhh',           label: 'RRHH',           icon: '👥', modulo: 'rrhh' },
+  { to: '/compras',        label: 'Compras',        icon: '🛒', modulo: 'compras' },
+  { to: '/usuarios',       label: 'Usuarios',       icon: '🔑', modulo: 'usuarios' },
 ]
 
 export function Sidebar() {
+  const { perfil, signOut, tienePermiso } = useAuth()
+  const items = NAV.filter((n) => tienePermiso(n.modulo))
+
+  const iniciales = (perfil?.nombre || '?').slice(0, 1).toUpperCase()
+  const rolLabel = perfil?.es_admin ? 'Administrador' : 'Usuario'
+
   return (
-    <aside className="w-60 min-h-screen flex flex-col" style={{ background: '#0f1117', borderRight: '1px solid #1e2330' }}>
+    <aside className="w-60 h-screen sticky top-0 flex flex-col" style={{ background: '#0f1117', borderRight: '1px solid #1e2330' }}>
       {/* Logo */}
       <div className="px-5 py-5 border-b" style={{ borderColor: '#1e2330' }}>
         <div className="flex items-center gap-2">
@@ -28,7 +36,7 @@ export function Sidebar() {
 
       {/* Nav */}
       <nav className="flex-1 px-3 py-3 space-y-0.5">
-        {NAV.map(({ to, label, icon }) => (
+        {items.map(({ to, label, icon }) => (
           <NavLink
             key={to}
             to={to}
@@ -49,13 +57,22 @@ export function Sidebar() {
 
       {/* Footer */}
       <div className="px-4 py-3 border-t" style={{ borderColor: '#1e2330' }}>
-        <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-full bg-rodziny-800 flex items-center justify-center text-xs font-bold text-rodziny-400">L</div>
-          <div>
-            <div className="text-sm text-white">Lucas</div>
-            <div className="text-xs" style={{ color: '#8b9bb4' }}>Superadmin</div>
+        <div className="flex items-center gap-2 mb-2">
+          <div className="w-7 h-7 rounded-full bg-rodziny-800 flex items-center justify-center text-xs font-bold text-rodziny-400">
+            {iniciales}
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="text-sm text-white truncate capitalize">{perfil?.nombre || 'Usuario'}</div>
+            <div className="text-xs truncate" style={{ color: '#8b9bb4' }}>{rolLabel}</div>
           </div>
         </div>
+        <button
+          onClick={() => signOut()}
+          className="w-full text-xs rounded px-2 py-1.5 transition-colors"
+          style={{ background: '#1e2330', color: '#8b9bb4' }}
+        >
+          Cerrar sesión
+        </button>
       </div>
     </aside>
   )
