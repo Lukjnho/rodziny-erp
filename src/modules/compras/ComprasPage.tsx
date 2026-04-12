@@ -164,6 +164,65 @@ export function ComprasPage() {
     enabled: tab === 'pagos',
   })
 
+  interface ItemRecepcion {
+    producto_id: string
+    producto_nombre: string
+    cantidad: number
+    unidad: string
+  }
+  interface RecepcionPendiente {
+    id: string
+    local: string
+    proveedor: string | null
+    items: ItemRecepcion[]
+    registrado_por: string | null
+    notas: string | null
+    estado: string
+    created_at: string
+    foto_path: string | null
+  }
+
+  async function verFotoRecepcion(path: string) {
+    const { data, error } = await supabase.storage
+      .from('recepciones-fotos')
+      .createSignedUrl(path, 60)
+    if (error || !data) { window.alert(`Error: ${error?.message ?? 'sin URL'}`); return }
+    window.open(data.signedUrl, '_blank')
+  }
+
+  const { data: recepcionesPendientes } = useQuery({
+    queryKey: ['recepciones_pendientes', local],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('recepciones_pendientes')
+        .select('*')
+        .eq('local', local)
+        .eq('estado', 'pendiente')
+        .order('created_at', { ascending: false })
+      return (data ?? []) as RecepcionPendiente[]
+    },
+    enabled: tab === 'recepcion',
+  })
+
+  async function validarRecepcion(id: string) {
+    const { error } = await supabase
+      .from('recepciones_pendientes')
+      .update({ estado: 'validada', validada_en: new Date().toISOString(), validada_por: 'Martín' })
+      .eq('id', id)
+    if (error) { window.alert(`Error: ${error.message}`); return }
+    qc.invalidateQueries({ queryKey: ['recepciones_pendientes'] })
+  }
+
+  async function descartarRecepcion(id: string) {
+    if (!window.confirm('¿Descartar esta recepción? El stock NO se revierte automáticamente.')) return
+    const { error } = await supabase
+      .from('recepciones_pendientes')
+      .update({ estado: 'descartada', validada_en: new Date().toISOString(), validada_por: 'Martín' })
+      .eq('id', id)
+    if (error) { window.alert(`Error: ${error.message}`); return }
+    qc.invalidateQueries({ queryKey: ['recepciones_pendientes'] })
+  }
+
   const [filtroPagos, setFiltroPagos] = useState<'todos' | 'pendientes' | 'vencidos' | 'semana'>('pendientes')
   const [filtroProveedor, setFiltroProveedor] = useState('')
 
@@ -814,6 +873,73 @@ export function ComprasPage() {
       {/* ═══ TAB: RECEPCIÓN ═══ */}
       {tab === 'recepcion' && (
         <div>
+          {/* Pagos pendientes de cargar (mercadería ya recibida desde la PWA) */}
+          {recepcionesPendientes && recepcionesPendientes.length > 0 && (
+            <div className="mb-6 bg-amber-50 border border-amber-300 rounded-lg p-4">
+              <div className="flex items-center justify-between mb-3">
+                <div>
+                  <h3 className="font-semibold text-amber-900 text-sm">
+                    💰 Pagos pendientes de cargar ({recepcionesPendientes.length})
+                  </h3>
+                  <p className="text-xs text-amber-700 mt-0.5">
+                    Estas recepciones ya entraron al stock desde la PWA. Falta cargar el gasto (monto, fecha de pago, IVA) en Fudo o en la sección de Pagos.
+                  </p>
+                </div>
+              </div>
+              <div className="space-y-3">
+                {recepcionesPendientes.map((r) => {
+                  const fechaStr = new Date(r.created_at).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' })
+                  return (
+                    <div key={r.id} className="bg-white rounded border border-amber-200 p-3">
+                      <div className="flex items-start justify-between gap-3 mb-2">
+                        <div className="flex-1 min-w-0">
+                          <div className="text-sm font-medium text-gray-900">
+                            {r.proveedor || 'Sin proveedor indicado'}
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            {fechaStr} · Recibió: <span className="font-medium">{r.registrado_por || '—'}</span>
+                          </div>
+                          {r.notas && <div className="text-xs text-gray-600 mt-1 italic">"{r.notas}"</div>}
+                        </div>
+                        <div className="flex gap-1">
+                          {r.foto_path && (
+                            <button
+                              onClick={() => verFotoRecepcion(r.foto_path!)}
+                              className="text-xs px-2 py-1 bg-blue-600 text-white rounded hover:bg-blue-700"
+                            >
+                              📷 Ver remito
+                            </button>
+                          )}
+                          <button
+                            onClick={() => validarRecepcion(r.id)}
+                            className="text-xs px-2 py-1 bg-green-600 text-white rounded hover:bg-green-700"
+                            title="Marcar como gasto ya cargado"
+                          >
+                            ✓ Gasto cargado
+                          </button>
+                          <button
+                            onClick={() => descartarRecepcion(r.id)}
+                            className="text-xs px-2 py-1 bg-gray-200 text-gray-700 rounded hover:bg-gray-300"
+                          >
+                            Descartar
+                          </button>
+                        </div>
+                      </div>
+                      <div className="bg-gray-50 rounded p-2 text-xs space-y-0.5">
+                        {r.items.map((it, idx) => (
+                          <div key={idx} className="flex justify-between text-gray-700">
+                            <span>{it.producto_nombre}</span>
+                            <span className="font-medium">{it.cantidad} {it.unidad}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
           {/* Upload */}
           {recItems.length === 0 && (
             <div className="max-w-xl">

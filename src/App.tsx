@@ -8,6 +8,7 @@ import { GastosPage } from '@/modules/gastos/GastosPage'
 import { AmortizacionesPage } from '@/modules/finanzas/amortizaciones/AmortizacionesPage'
 import { ComprasPage } from '@/modules/compras/ComprasPage'
 import { DepositoPage } from '@/modules/compras/DepositoPage'
+import { RecepcionPage } from '@/modules/compras/RecepcionPage'
 import { RRHHPage } from '@/modules/rrhh/RRHHPage'
 import { FicharPage } from '@/modules/rrhh/FicharPage'
 import { LoginPage } from '@/modules/auth/LoginPage'
@@ -121,8 +122,9 @@ export default function App() {
         <BrowserRouter>
           <Routes>
             {/* Rutas públicas sin auth (mobile PWAs) */}
-            <Route path="/deposito" element={<DepositoPage />} />
-            <Route path="/fichar"   element={<FicharPage />} />
+            <Route path="/deposito"  element={<DepositoPage />} />
+            <Route path="/recepcion" element={<RecepcionPage />} />
+            <Route path="/fichar"    element={<FicharPage />} />
 
             {/* Resto del ERP protegido */}
             <Route path="*" element={<AppInterna />} />
