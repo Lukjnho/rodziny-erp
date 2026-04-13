@@ -61,23 +61,39 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let montado = true
 
-    supabase.auth.getSession().then(async ({ data }) => {
-      if (!montado) return
-      const u = data.session?.user ?? null
-      setUser(u)
-      if (u) setPerfil(await fetchPerfil(u.id))
-      setCargando(false)
-    })
+    // Fallback de seguridad: si en 4s no llegó ningún evento de auth, sacamos
+    // la pantalla de carga igual. Esto evita el "Cargando…" infinito si
+    // getSession() queda colgado (bug conocido de Supabase con refresh tokens).
+    const timeoutFallback = setTimeout(() => {
+      if (montado) setCargando(false)
+    }, 4000)
 
-    const { data: sub } = supabase.auth.onAuthStateChange(async (_ev, session) => {
+    // No usamos getSession() — onAuthStateChange dispara INITIAL_SESSION
+    // automáticamente al suscribirse y es la fuente de verdad oficial.
+    const { data: sub } = supabase.auth.onAuthStateChange((_ev, session) => {
       if (!montado) return
       const u = session?.user ?? null
       setUser(u)
-      setPerfil(u ? await fetchPerfil(u.id) : null)
+      // CRÍTICO: cualquier llamada a Supabase adentro de este callback puede
+      // deadlockear el cliente gotrue. Hay que diferir con setTimeout(0).
+      if (u) {
+        setTimeout(async () => {
+          if (!montado) return
+          const p = await fetchPerfil(u.id)
+          if (montado) {
+            setPerfil(p)
+            setCargando(false)
+          }
+        }, 0)
+      } else {
+        setPerfil(null)
+        setCargando(false)
+      }
     })
 
     return () => {
       montado = false
+      clearTimeout(timeoutFallback)
       sub.subscription.unsubscribe()
     }
   }, [])
