@@ -111,4 +111,7 @@ export interface ItemGastoStock {
   unidad: string
   precio_unitario: number
   subtotal: number
+  // Subcategoría del EdR (hoja). Se elige en el modal al cargar.
+  // Permite dividir una misma factura en varios gastos según a qué línea del EdR va cada item.
+  categoria_gasto_id: string | null
 }

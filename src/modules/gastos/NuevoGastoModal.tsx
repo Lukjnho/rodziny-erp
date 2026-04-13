@@ -106,7 +106,7 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
     queryFn: async () => {
       const { data } = await supabase
         .from('productos')
-        .select('id, nombre, unidad, costo_unitario, stock_actual')
+        .select('id, nombre, unidad, costo_unitario, stock_actual, categoria_gasto_id')
         .eq('local', form.local)
         .not('activo', 'is', false)
         .order('nombre')
@@ -155,6 +155,7 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
           unidad: it.unidad,
           precio_unitario: 0,
           subtotal: 0,
+          categoria_gasto_id: null,
         })),
       })
       setComprobantePath(prefill?.comprobante_path ?? null)
@@ -163,6 +164,25 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
     setError(null)
     setBusquedaProducto('')
   }, [open, gastoEditando, prefill])
+
+  // Cuando productos termina de cargar, completar categoria_gasto_id de items
+  // que vinieron de prefill (recepción) con el valor guardado del producto.
+  useEffect(() => {
+    if (!open || !productos || form.items.length === 0) return
+    setForm((f) => {
+      let cambio = false
+      const nuevos = f.items.map((it) => {
+        if (it.categoria_gasto_id) return it
+        const p: any = productos.find((x: any) => x.id === it.producto_id)
+        if (p?.categoria_gasto_id) {
+          cambio = true
+          return { ...it, categoria_gasto_id: p.categoria_gasto_id }
+        }
+        return it
+      })
+      return cambio ? { ...f, items: nuevos } : f
+    })
+  }, [open, productos])
 
   // Categorías padre (raíz) y derivación del padre desde la subcat elegida
   const padresCat = useMemo(
@@ -240,6 +260,51 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
     [form.items]
   )
 
+  // Items faltantes de subcategoría
+  const itemsSinSubcat = useMemo(
+    () => form.items.filter((it) => !it.categoria_gasto_id),
+    [form.items]
+  )
+
+  // Split del gasto en subcategorías del EdR. Prorratea neto/iva/iibb/total
+  // proporcional al subtotal de items que caen en cada subcat.
+  const splitPorSubcat = useMemo(() => {
+    if (!form.vincular_stock || form.items.length === 0 || itemsSinSubcat.length > 0) return []
+    const netoT = parseFloat(form.importe_neto.replace(',', '.')) || 0
+    const ivaT = parseFloat(form.iva.replace(',', '.')) || 0
+    const iibbT = parseFloat(form.iibb.replace(',', '.')) || 0
+    const totalT = parseFloat(form.importe_total.replace(',', '.')) || 0
+    const totalIt = totalItems || 1
+
+    const map = new Map<string, { subtotal: number; items: typeof form.items }>()
+    for (const it of form.items) {
+      const k = it.categoria_gasto_id!
+      const prev = map.get(k) ?? { subtotal: 0, items: [] }
+      prev.subtotal += it.precio_unitario * it.cantidad
+      prev.items.push(it)
+      map.set(k, prev)
+    }
+    return Array.from(map.entries()).map(([catId, g]) => {
+      const prop = g.subtotal / totalIt
+      const sub = categorias?.find((c) => c.id === catId)
+      const padre = sub?.parent_id ? categorias?.find((c) => c.id === sub.parent_id) : null
+      return {
+        categoria_id: catId,
+        subcat_nombre: sub?.nombre ?? '—',
+        padre_nombre: padre?.nombre ?? null,
+        items: g.items,
+        subtotal_items: +g.subtotal.toFixed(2),
+        proporcion: prop,
+        neto: +(netoT * prop).toFixed(2),
+        iva: +(ivaT * prop).toFixed(2),
+        iibb: +(iibbT * prop).toFixed(2),
+        total: +(totalT * prop).toFixed(2),
+      }
+    })
+  }, [form.vincular_stock, form.items, form.importe_neto, form.iva, form.iibb, form.importe_total, totalItems, itemsSinSubcat, categorias])
+
+  const usarSplit = splitPorSubcat.length >= 1 && form.vincular_stock && !gastoEditando
+
   function agregarProducto(productoId: string) {
     const p = productos?.find((x: any) => x.id === productoId)
     if (!p) return
@@ -252,9 +317,17 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
         unidad: p.unidad,
         precio_unitario: p.costo_unitario || 0,
         subtotal: p.costo_unitario || 0,
+        categoria_gasto_id: (p as any).categoria_gasto_id ?? null,
       }],
     }))
     setBusquedaProducto('')
+  }
+
+  function actualizarSubcatItem(idx: number, categoria_id: string | null) {
+    setForm((f) => ({
+      ...f,
+      items: f.items.map((it, i) => (i === idx ? { ...it, categoria_gasto_id: categoria_id } : it)),
+    }))
   }
 
   function actualizarItem(idx: number, campo: 'cantidad' | 'precio_unitario', valor: string) {
@@ -298,8 +371,19 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
     setError(null)
     if (!form.fecha) { setError('Fecha del comprobante requerida'); return }
     if (!form.importe_total || parseFloat(form.importe_total) <= 0) { setError('Importe total requerido'); return }
-    if (!form.categoria_id) { setError('Subcategoría requerida'); return }
     if (!form.proveedor_id && !form.proveedor_libre.trim()) { setError('Proveedor requerido'); return }
+
+    // Validación de subcategoría según el modo:
+    //  - Si vinculás stock, cada item tiene que tener subcategoría asignada.
+    //  - Si no, tiene que estar el select general lleno.
+    if (usarSplit) {
+      if (itemsSinSubcat.length > 0) {
+        setError(`Faltan subcategorías en ${itemsSinSubcat.length} item(s) del stock`)
+        return
+      }
+    } else {
+      if (!form.categoria_id) { setError('Subcategoría requerida'); return }
+    }
 
     setGuardando(true)
     try {
@@ -315,79 +399,125 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
         pathComprobante = path
       }
 
-      // 2) Resolver categoría textual desde la subcategoría seleccionada (retrocompat).
-      //    El gasto.categoria_id apunta a la HOJA (subcategoría); en los campos legacy
-      //    guardamos categoria=padre.nombre, subcategoria=hoja.nombre.
-      const subObj = categorias?.find((c) => c.id === form.categoria_id)
-      const padreObj = subObj?.parent_id ? categorias?.find((c) => c.id === subObj.parent_id) : null
       const proveedorObj = proveedores?.find((p) => p.id === form.proveedor_id)
-
       const periodo = form.fecha.substring(0, 7) // YYYY-MM
-      const payload = {
-        local: form.local,
-        fecha: form.fecha,
-        fecha_vencimiento: form.fecha_vencimiento || null,
-        proveedor: proveedorObj?.razon_social ?? form.proveedor_libre.trim(),
-        proveedor_id: form.proveedor_id,
-        categoria: padreObj?.nombre ?? subObj?.nombre ?? null,
-        subcategoria: subObj?.nombre ?? null,
-        categoria_id: form.categoria_id,
-        comentario: form.comentario.trim() || null,
-        importe_neto: parseFloat(form.importe_neto.replace(',', '.')) || 0,
-        iva: parseFloat(form.iva.replace(',', '.')) || 0,
-        iibb: parseFloat(form.iibb.replace(',', '.')) || 0,
-        importe_total: parseFloat(form.importe_total.replace(',', '.')) || 0,
-        medio_pago: form.estado_pago === 'pagado' ? form.medio_pago : null,
-        tipo_comprobante: form.tipo_comprobante,
-        punto_venta: form.punto_venta.trim() || null,
-        nro_comprobante: form.nro_comprobante.trim() || null,
-        estado_pago: form.estado_pago === 'pagado' ? 'Pagado' : 'Pendiente',
-        comprobante_path: pathComprobante,
-        recepcion_id: prefill?.recepcion_id ?? null,
-        creado_por: perfil?.nombre ?? null,
-        creado_manual: true,
-        cancelado: false,
-        periodo,
+      const nroCompleto = [form.punto_venta.trim(), form.nro_comprobante.trim()].filter(Boolean).join('-')
+      const proveedorNombre = proveedorObj?.razon_social ?? form.proveedor_libre.trim()
+
+      // Helper: construye el payload base de un gasto (montos se pisan después)
+      const buildPayload = (categoria_id: string, neto: number, iva: number, iibb: number, total: number, comentarioExtra?: string) => {
+        const sub = categorias?.find((c) => c.id === categoria_id)
+        const padre = sub?.parent_id ? categorias?.find((c) => c.id === sub.parent_id) : null
+        const comentarioBase = form.comentario.trim()
+        const comentario = [comentarioBase, comentarioExtra].filter(Boolean).join(' · ') || null
+        return {
+          local: form.local,
+          fecha: form.fecha,
+          fecha_vencimiento: form.fecha_vencimiento || null,
+          proveedor: proveedorNombre,
+          proveedor_id: form.proveedor_id,
+          categoria: padre?.nombre ?? sub?.nombre ?? null,
+          subcategoria: sub?.nombre ?? null,
+          categoria_id,
+          comentario,
+          importe_neto: neto,
+          iva,
+          iibb,
+          importe_total: total,
+          medio_pago: form.estado_pago === 'pagado' ? form.medio_pago : null,
+          tipo_comprobante: form.tipo_comprobante,
+          punto_venta: form.punto_venta.trim() || null,
+          nro_comprobante: form.nro_comprobante.trim() || null,
+          estado_pago: form.estado_pago === 'pagado' ? 'Pagado' : 'Pendiente',
+          comprobante_path: pathComprobante,
+          recepcion_id: prefill?.recepcion_id ?? null,
+          creado_por: perfil?.nombre ?? null,
+          creado_manual: true,
+          cancelado: false,
+          periodo,
+        }
       }
 
-      let gastoId: string
+      // 2) Insertar gastos (1 solo si no hay split; N si lo hay)
+      const gastosCreados: string[] = []
       if (gastoEditando) {
+        // Edición: siempre 1 fila, sin split
+        const catId = form.categoria_id!
+        const payload = buildPayload(
+          catId,
+          parseFloat(form.importe_neto.replace(',', '.')) || 0,
+          parseFloat(form.iva.replace(',', '.')) || 0,
+          parseFloat(form.iibb.replace(',', '.')) || 0,
+          parseFloat(form.importe_total.replace(',', '.')) || 0,
+        )
         const { error: errUp } = await supabase.from('gastos').update(payload).eq('id', gastoEditando.id)
         if (errUp) throw errUp
-        gastoId = gastoEditando.id
+        gastosCreados.push(gastoEditando.id)
+      } else if (usarSplit && splitPorSubcat.length > 1) {
+        // Split: una fila por subcategoría
+        const nroLabel = nroCompleto || 'comprobante'
+        const rows = splitPorSubcat.map((s, i) =>
+          buildPayload(
+            s.categoria_id,
+            s.neto,
+            s.iva,
+            s.iibb,
+            s.total,
+            `Parte ${i + 1}/${splitPorSubcat.length} de ${nroLabel}`,
+          ),
+        )
+        const { data: ins, error: errIns } = await supabase.from('gastos').insert(rows).select('id')
+        if (errIns) throw errIns
+        for (const r of ins ?? []) gastosCreados.push(r.id as string)
       } else {
+        // Caso normal: una sola fila
+        const catId = usarSplit ? splitPorSubcat[0].categoria_id : form.categoria_id!
+        const payload = buildPayload(
+          catId,
+          parseFloat(form.importe_neto.replace(',', '.')) || 0,
+          parseFloat(form.iva.replace(',', '.')) || 0,
+          parseFloat(form.iibb.replace(',', '.')) || 0,
+          parseFloat(form.importe_total.replace(',', '.')) || 0,
+        )
         const { data: ins, error: errIns } = await supabase.from('gastos').insert(payload).select('id').single()
         if (errIns) throw errIns
-        gastoId = ins!.id as string
+        gastosCreados.push(ins!.id as string)
       }
 
-      // 3) Si está marcado como pagado, crear el pago en pagos_gastos
+      // 3) Pagos: si está marcado como pagado, crear un row por cada gasto creado
       if (form.estado_pago === 'pagado' && !gastoEditando) {
-        const { error: errPago } = await supabase.from('pagos_gastos').insert({
-          gasto_id: gastoId,
+        const rowsPago = gastosCreados.map((gid, i) => ({
+          gasto_id: gid,
           fecha_pago: form.fecha_pago,
-          monto: parseFloat(form.importe_total.replace(',', '.')) || 0,
+          monto: usarSplit && splitPorSubcat.length > 1
+            ? splitPorSubcat[i].total
+            : parseFloat(form.importe_total.replace(',', '.')) || 0,
           medio_pago: form.medio_pago,
           creado_por: perfil?.nombre ?? null,
-        })
+        }))
+        const { error: errPago } = await supabase.from('pagos_gastos').insert(rowsPago)
         if (errPago) throw errPago
       }
 
-      // 4) Si está vinculado a stock, actualizar productos + crear movimientos
+      // 4) Stock + movimientos + self-learning de categoria_gasto_id en productos
       if (form.vincular_stock && form.items.length > 0 && !gastoEditando) {
         for (const it of form.items) {
-          // sumar al stock
           const { data: prodActual } = await supabase
-            .from('productos').select('stock_actual').eq('id', it.producto_id).single()
+            .from('productos')
+            .select('stock_actual, categoria_gasto_id')
+            .eq('id', it.producto_id)
+            .single()
           if (prodActual) {
-            await supabase
-              .from('productos')
-              .update({
-                stock_actual: (prodActual.stock_actual ?? 0) + it.cantidad,
-                costo_unitario: it.precio_unitario,
-                updated_at: new Date().toISOString(),
-              })
-              .eq('id', it.producto_id)
+            const updates: Record<string, unknown> = {
+              stock_actual: (prodActual.stock_actual ?? 0) + it.cantidad,
+              costo_unitario: it.precio_unitario,
+              updated_at: new Date().toISOString(),
+            }
+            // Self-learning: si el producto no tenía subcat guardada, persistir la actual
+            if (!prodActual.categoria_gasto_id && it.categoria_gasto_id) {
+              updates.categoria_gasto_id = it.categoria_gasto_id
+            }
+            await supabase.from('productos').update(updates).eq('id', it.producto_id)
           }
           await supabase.from('movimientos_stock').insert({
             local: form.local,
@@ -397,21 +527,23 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
             cantidad: it.cantidad,
             unidad: it.unidad,
             motivo: 'Compra a proveedor',
-            observacion: `Gasto ${proveedorObj?.razon_social ?? form.proveedor_libre} · ${form.tipo_comprobante.toUpperCase()} ${form.nro_comprobante}`,
+            observacion: `Gasto ${proveedorNombre} · ${form.tipo_comprobante.toUpperCase()} ${nroCompleto}`,
             registrado_por: perfil?.nombre ?? null,
           })
         }
       }
 
-      // 5) Si vino de una recepción pendiente, marcarla como validada y linkearla
-      if (prefill?.recepcion_id) {
+      // 5) Si vino de una recepción pendiente, linkearla al PRIMER gasto
+      if (prefill?.recepcion_id && gastosCreados.length > 0) {
         await supabase.from('recepciones_pendientes').update({
           estado: 'validada',
-          gasto_id: gastoId,
+          gasto_id: gastosCreados[0],
           validada_en: new Date().toISOString(),
           validada_por: perfil?.nombre ?? null,
         }).eq('id', prefill.recepcion_id)
       }
+
+      const gastoId = gastosCreados[0]
 
       qc.invalidateQueries({ queryKey: ['gastos'] })
       qc.invalidateQueries({ queryKey: ['gastos_listado'] })
@@ -419,6 +551,7 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
       qc.invalidateQueries({ queryKey: ['gastos_vista'] })
       qc.invalidateQueries({ queryKey: ['recepciones_pendientes'] })
       qc.invalidateQueries({ queryKey: ['productos_stock'] })
+      qc.invalidateQueries({ queryKey: ['productos_para_gasto'] })
       qc.invalidateQueries({ queryKey: ['pagos_gastos'] })
       onSaved?.(gastoId)
       onClose()
@@ -553,28 +686,37 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
                   </div>
                 )}
               </div>
-              <div>
-                <label className="block text-xs text-gray-600 mb-1">Subcategoría *</label>
-                <select
-                  value={form.categoria_id ?? ''}
-                  onChange={(e) => setForm({ ...form, categoria_id: e.target.value || null })}
-                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded bg-white"
-                >
-                  <option value="">— Seleccionar —</option>
-                  {padresCat.map((p) => {
-                    const hijos = (categorias ?? []).filter((c) => c.parent_id === p.id)
-                    if (hijos.length === 0) return null
-                    return (
-                      <optgroup key={p.id} label={p.nombre}>
-                        {hijos.map((h) => <option key={h.id} value={h.id}>{h.nombre}</option>)}
-                      </optgroup>
-                    )
-                  })}
-                </select>
-                <p className="text-[11px] text-gray-500 mt-1">
-                  Categoría: <strong className="text-gray-700">{padreSeleccionado?.nombre ?? '—'}</strong>
-                </p>
-              </div>
+              {form.vincular_stock && form.items.length > 0 ? (
+                <div>
+                  <label className="block text-xs text-gray-600 mb-1">Subcategoría</label>
+                  <div className="px-3 py-2 text-xs bg-amber-50 border border-amber-200 rounded text-amber-800">
+                    Cargada por item (abajo en "Vincular a stock"). Este comprobante se va a dividir según las subcategorías de los productos.
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <label className="block text-xs text-gray-600 mb-1">Subcategoría *</label>
+                  <select
+                    value={form.categoria_id ?? ''}
+                    onChange={(e) => setForm({ ...form, categoria_id: e.target.value || null })}
+                    className="w-full px-3 py-2 text-sm border border-gray-300 rounded bg-white"
+                  >
+                    <option value="">— Seleccionar —</option>
+                    {padresCat.map((p) => {
+                      const hijos = (categorias ?? []).filter((c) => c.parent_id === p.id)
+                      if (hijos.length === 0) return null
+                      return (
+                        <optgroup key={p.id} label={p.nombre}>
+                          {hijos.map((h) => <option key={h.id} value={h.id}>{h.nombre}</option>)}
+                        </optgroup>
+                      )
+                    })}
+                  </select>
+                  <p className="text-[11px] text-gray-500 mt-1">
+                    Categoría: <strong className="text-gray-700">{padreSeleccionado?.nombre ?? '—'}</strong>
+                  </p>
+                </div>
+              )}
             </div>
           </div>
 
@@ -650,31 +792,54 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
                 {form.items.length > 0 && (
                   <div className="bg-white rounded border border-gray-200 divide-y divide-gray-100">
                     {form.items.map((it, idx) => (
-                      <div key={idx} className="px-3 py-2 grid grid-cols-12 gap-2 items-center text-xs">
-                        <div className="col-span-4 truncate">{it.producto_nombre}</div>
-                        <div className="col-span-2">
-                          <input
-                            type="text"
-                            inputMode="decimal"
-                            value={it.cantidad}
-                            onChange={(e) => actualizarItem(idx, 'cantidad', e.target.value)}
-                            className="w-full px-2 py-1 text-xs border border-gray-300 rounded text-right"
-                          />
+                      <div key={idx} className="px-3 py-2 text-xs space-y-1.5">
+                        <div className="grid grid-cols-12 gap-2 items-center">
+                          <div className="col-span-4 truncate font-medium">{it.producto_nombre}</div>
+                          <div className="col-span-2">
+                            <input
+                              type="text"
+                              inputMode="decimal"
+                              value={it.cantidad}
+                              onChange={(e) => actualizarItem(idx, 'cantidad', e.target.value)}
+                              className="w-full px-2 py-1 text-xs border border-gray-300 rounded text-right"
+                            />
+                          </div>
+                          <div className="col-span-1 text-gray-500">{it.unidad}</div>
+                          <div className="col-span-2">
+                            <input
+                              type="text"
+                              inputMode="decimal"
+                              value={it.precio_unitario}
+                              onChange={(e) => actualizarItem(idx, 'precio_unitario', e.target.value)}
+                              placeholder="$/u"
+                              className="w-full px-2 py-1 text-xs border border-gray-300 rounded text-right"
+                            />
+                          </div>
+                          <div className="col-span-2 text-right font-medium">{formatARS(it.subtotal)}</div>
+                          <div className="col-span-1 text-right">
+                            <button onClick={() => quitarItem(idx)} className="text-red-500 text-xs">×</button>
+                          </div>
                         </div>
-                        <div className="col-span-1 text-gray-500">{it.unidad}</div>
-                        <div className="col-span-2">
-                          <input
-                            type="text"
-                            inputMode="decimal"
-                            value={it.precio_unitario}
-                            onChange={(e) => actualizarItem(idx, 'precio_unitario', e.target.value)}
-                            placeholder="$/u"
-                            className="w-full px-2 py-1 text-xs border border-gray-300 rounded text-right"
-                          />
-                        </div>
-                        <div className="col-span-2 text-right font-medium">{formatARS(it.subtotal)}</div>
-                        <div className="col-span-1 text-right">
-                          <button onClick={() => quitarItem(idx)} className="text-red-500 text-xs">×</button>
+                        <div className="pl-1">
+                          <select
+                            value={it.categoria_gasto_id ?? ''}
+                            onChange={(e) => actualizarSubcatItem(idx, e.target.value || null)}
+                            className={cn(
+                              'w-full px-2 py-1 text-[11px] border rounded bg-white',
+                              it.categoria_gasto_id ? 'border-gray-200 text-gray-700' : 'border-amber-300 bg-amber-50 text-amber-800'
+                            )}
+                          >
+                            <option value="">⚠ Elegí subcategoría del EdR...</option>
+                            {padresCat.map((p) => {
+                              const hijos = (categorias ?? []).filter((c) => c.parent_id === p.id)
+                              if (hijos.length === 0) return null
+                              return (
+                                <optgroup key={p.id} label={p.nombre}>
+                                  {hijos.map((h) => <option key={h.id} value={h.id}>{h.nombre}</option>)}
+                                </optgroup>
+                              )
+                            })}
+                          </select>
                         </div>
                       </div>
                     ))}
@@ -820,6 +985,70 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
               </div>
             </div>
           </div>
+
+          {/* Preview del split en N gastos */}
+          {form.vincular_stock && form.items.length > 0 && (
+            <div className="bg-gray-50 rounded-lg border border-gray-200 p-3">
+              <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+                División por subcategoría del EdR
+              </h4>
+              {itemsSinSubcat.length > 0 ? (
+                <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded px-3 py-2">
+                  ⚠ Asigná una subcategoría a cada item para poder dividir el gasto.
+                  Faltan {itemsSinSubcat.length} de {form.items.length}.
+                </div>
+              ) : splitPorSubcat.length === 1 ? (
+                <div className="text-xs text-gray-600">
+                  Todos los items van a <strong className="text-gray-800">{splitPorSubcat[0].subcat_nombre}</strong>.
+                  Se crea 1 gasto con el total completo.
+                </div>
+              ) : (
+                <div>
+                  <p className="text-[11px] text-gray-500 mb-2">
+                    Este comprobante se va a dividir en <strong>{splitPorSubcat.length} gastos</strong> — todos con el mismo proveedor,
+                    nro de comprobante, fecha y foto. IVA e IIBB se prorratean proporcional al subtotal de items.
+                  </p>
+                  <table className="w-full text-[11px]">
+                    <thead>
+                      <tr className="text-gray-500 uppercase border-b border-gray-200">
+                        <th className="text-left py-1">Subcategoría</th>
+                        <th className="text-right py-1">Items</th>
+                        <th className="text-right py-1">Neto</th>
+                        <th className="text-right py-1">IVA</th>
+                        <th className="text-right py-1">IIBB</th>
+                        <th className="text-right py-1">Total</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {splitPorSubcat.map((s) => (
+                        <tr key={s.categoria_id} className="border-b border-gray-100">
+                          <td className="py-1">
+                            <div className="font-medium text-gray-800">{s.subcat_nombre}</div>
+                            {s.padre_nombre && <div className="text-[9px] text-gray-400">{s.padre_nombre}</div>}
+                          </td>
+                          <td className="py-1 text-right text-gray-600">{s.items.length}</td>
+                          <td className="py-1 text-right tabular-nums">{formatARS(s.neto)}</td>
+                          <td className="py-1 text-right tabular-nums text-gray-500">{formatARS(s.iva)}</td>
+                          <td className="py-1 text-right tabular-nums text-gray-500">{formatARS(s.iibb)}</td>
+                          <td className="py-1 text-right tabular-nums font-semibold">{formatARS(s.total)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="font-semibold border-t border-gray-300">
+                        <td className="py-1 text-gray-600">TOTAL</td>
+                        <td className="py-1 text-right text-gray-600">{form.items.length}</td>
+                        <td className="py-1 text-right tabular-nums">{formatARS(splitPorSubcat.reduce((s, x) => s + x.neto, 0))}</td>
+                        <td className="py-1 text-right tabular-nums">{formatARS(splitPorSubcat.reduce((s, x) => s + x.iva, 0))}</td>
+                        <td className="py-1 text-right tabular-nums">{formatARS(splitPorSubcat.reduce((s, x) => s + x.iibb, 0))}</td>
+                        <td className="py-1 text-right tabular-nums">{formatARS(splitPorSubcat.reduce((s, x) => s + x.total, 0))}</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
 
           {error && (
             <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded px-3 py-2">{error}</div>
