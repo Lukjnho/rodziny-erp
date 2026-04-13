@@ -75,6 +75,16 @@ const ayudaPorTab: Record<Tab, { titulo: string; pasos: string[] }> = {
       'Los que aparecen "Sin fecha" son gastos viejos — marcalos como pagados si ya se pagaron.',
     ],
   },
+  proveedores: {
+    titulo: 'Proveedores',
+    pasos: [
+      'Listado completo de proveedores con datos fiscales (CUIT, condición IVA, contacto).',
+      'Usá "+ Nuevo proveedor" para crear uno desde cero.',
+      'El botón "📥 Importar desde histórico" rastrea los gastos viejos y crea los proveedores que falten.',
+      'Cada proveedor tiene categoría y medio de pago default — eso se autocompleta al cargar un gasto suyo.',
+      'Activá/desactivá un proveedor con el toggle. Los inactivos no aparecen en el modal de Nuevo gasto.',
+    ],
+  },
 }
 
 function AyudaPanel({ tab, onClose }: { tab: Tab; onClose: () => void }) {
