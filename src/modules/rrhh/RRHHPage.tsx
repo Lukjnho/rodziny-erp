@@ -330,6 +330,25 @@ function LegajosTab() {
     }
   }, [empleados])
 
+  async function eliminarEmpleado(emp: Empleado) {
+    const ok = window.confirm(
+      `¿Eliminar definitivamente a ${emp.apellido}, ${emp.nombre}?\n\n` +
+      `Esto borra el legajo. Si tiene fichadas, cronograma u otro historial asociado, ` +
+      `el borrado puede fallar y conviene marcarlo como BAJA desde Editar.`
+    )
+    if (!ok) return
+    const { error } = await supabase.from('empleados').delete().eq('id', emp.id)
+    if (error) {
+      window.alert(
+        `No se pudo eliminar: ${error.message}\n\n` +
+        `Probablemente tiene registros asociados (fichadas / cronograma / sueldos). ` +
+        `Editá el legajo y cambiá el estado a "Baja" en vez de borrar.`
+      )
+      return
+    }
+    qc.invalidateQueries({ queryKey: ['empleados'] })
+  }
+
   function abrirNuevo() {
     setEmpleadoEdit(null)
     setModalAbierto(true)
@@ -444,7 +463,10 @@ function LegajosTab() {
                   <td className="px-4 py-2">{badgeCertificaciones(e)}</td>
                   <td className="px-4 py-2">{badgeEstado(e.estado_laboral)}</td>
                   <td className="px-4 py-2 text-right">
-                    <button onClick={() => abrirEditar(e)} className="text-rodziny-600 hover:text-rodziny-800 text-xs font-medium">Editar</button>
+                    <div className="flex items-center justify-end gap-3">
+                      <button onClick={() => abrirEditar(e)} className="text-rodziny-600 hover:text-rodziny-800 text-xs font-medium">Editar</button>
+                      <button onClick={() => eliminarEmpleado(e)} className="text-red-600 hover:text-red-800 text-xs font-medium">Eliminar</button>
+                    </div>
                   </td>
                 </tr>
               )
