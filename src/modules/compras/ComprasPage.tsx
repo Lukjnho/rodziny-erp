@@ -6,8 +6,10 @@ import { LocalSelector } from '@/components/ui/LocalSelector'
 import { formatARS, cn } from '@/lib/utils'
 import { parseStockFudo } from './parsers/parseStock'
 import { parseFudoGastos, type DetalleRow, type GastoRow } from '@/modules/finanzas/parsers/parseFudoGastos'
+import { NuevoGastoModal, type PrefillGasto } from '@/modules/gastos/NuevoGastoModal'
+import { ProveedoresPanel } from '@/modules/gastos/ProveedoresPanel'
 
-type Tab = 'stock' | 'movimientos' | 'importar' | 'recepcion' | 'pagos'
+type Tab = 'stock' | 'movimientos' | 'importar' | 'recepcion' | 'pagos' | 'proveedores'
 type FiltroEstado = 'todos' | 'bajo_minimo' | 'sin_stock' | 'inactivos'
 
 interface Producto {
@@ -204,13 +206,25 @@ export function ComprasPage() {
     enabled: tab === 'recepcion',
   })
 
-  async function validarRecepcion(id: string) {
-    const { error } = await supabase
-      .from('recepciones_pendientes')
-      .update({ estado: 'validada', validada_en: new Date().toISOString(), validada_por: 'Martín' })
-      .eq('id', id)
-    if (error) { window.alert(`Error: ${error.message}`); return }
-    qc.invalidateQueries({ queryKey: ['recepciones_pendientes'] })
+  // Modal de Nuevo Gasto desde recepción pendiente
+  const [modalGastoOpen, setModalGastoOpen] = useState(false)
+  const [prefillGasto, setPrefillGasto] = useState<PrefillGasto | undefined>(undefined)
+
+  function abrirGastoDesdeRecepcion(r: RecepcionPendiente) {
+    setPrefillGasto({
+      recepcion_id: r.id,
+      local: r.local as 'vedia' | 'saavedra',
+      proveedor_nombre: r.proveedor,
+      comprobante_path: r.foto_path,
+      items: r.items.map((it) => ({
+        producto_id: it.producto_id,
+        producto_nombre: it.producto_nombre,
+        cantidad: it.cantidad,
+        unidad: it.unidad,
+      })),
+      comentario: r.notas ? `Recepción del ${new Date(r.created_at).toLocaleDateString('es-AR')} · ${r.notas}` : null,
+    })
+    setModalGastoOpen(true)
   }
 
   async function descartarRecepcion(id: string) {
@@ -552,6 +566,7 @@ export function ComprasPage() {
             ['importar',    '📥 Importar'],
             ['recepcion',   '📬 Recepción'],
             ['pagos',       '💰 Pagos'],
+            ['proveedores', '🏢 Proveedores'],
           ] as [Tab, string][]).map(([t, label]) => (
             <button
               key={t}
@@ -911,11 +926,11 @@ export function ComprasPage() {
                             </button>
                           )}
                           <button
-                            onClick={() => validarRecepcion(r.id)}
+                            onClick={() => abrirGastoDesdeRecepcion(r)}
                             className="text-xs px-2 py-1 bg-green-600 text-white rounded hover:bg-green-700"
-                            title="Marcar como gasto ya cargado"
+                            title="Cargar gasto en el sistema"
                           >
-                            ✓ Gasto cargado
+                            💰 Cargar gasto
                           </button>
                           <button
                             onClick={() => descartarRecepcion(r.id)}
@@ -1305,6 +1320,16 @@ export function ComprasPage() {
           </div>
         </div>
       )}
+
+      {/* ═══ TAB: PROVEEDORES ═══ */}
+      {tab === 'proveedores' && <ProveedoresPanel />}
+
+      {/* Modal de Nuevo Gasto desde una recepción pendiente */}
+      <NuevoGastoModal
+        open={modalGastoOpen}
+        onClose={() => { setModalGastoOpen(false); setPrefillGasto(undefined) }}
+        prefill={prefillGasto}
+      />
     </PageContainer>
   )
 }

@@ -1,0 +1,849 @@
+import { useState, useEffect, useMemo } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { supabase } from '@/lib/supabase'
+import { useAuth } from '@/lib/auth'
+import { cn, formatARS } from '@/lib/utils'
+import type {
+  Proveedor, CategoriaGasto, Gasto, ItemGastoStock,
+  TipoComprobante, MedioPago, EstadoPago,
+} from './types'
+import { TIPO_COMPROBANTE_LABEL, MEDIO_PAGO_LABEL } from './types'
+
+export interface PrefillGasto {
+  recepcion_id?: string
+  local?: 'vedia' | 'saavedra'
+  proveedor_nombre?: string | null
+  comprobante_path?: string | null
+  items?: { producto_id: string; producto_nombre: string; cantidad: number; unidad: string }[]
+  comentario?: string | null
+}
+
+interface Props {
+  open: boolean
+  onClose: () => void
+  gastoEditando?: Gasto | null
+  prefill?: PrefillGasto
+  onSaved?: (gastoId: string) => void
+}
+
+const HOY = () => new Date().toISOString().split('T')[0]
+
+interface FormState {
+  local: 'vedia' | 'saavedra'
+  fecha: string                  // fecha del comprobante (devengado)
+  fecha_vencimiento: string
+  proveedor_id: string | null
+  proveedor_libre: string        // si no hay id, se guarda como string libre
+  categoria_id: string | null
+  tipo_comprobante: TipoComprobante
+  punto_venta: string
+  nro_comprobante: string
+  importe_neto: string
+  iva: string
+  iibb: string
+  importe_total: string
+  comentario: string
+  estado_pago: EstadoPago
+  fecha_pago: string
+  medio_pago: MedioPago
+  vincular_stock: boolean
+  items: ItemGastoStock[]
+}
+
+const FORM_INICIAL: FormState = {
+  local: 'vedia',
+  fecha: HOY(),
+  fecha_vencimiento: '',
+  proveedor_id: null,
+  proveedor_libre: '',
+  categoria_id: null,
+  tipo_comprobante: 'factura_a',
+  punto_venta: '',
+  nro_comprobante: '',
+  importe_neto: '',
+  iva: '',
+  iibb: '',
+  importe_total: '',
+  comentario: '',
+  estado_pago: 'pendiente',
+  fecha_pago: HOY(),
+  medio_pago: 'transferencia_mp',
+  vincular_stock: false,
+  items: [],
+}
+
+export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved }: Props) {
+  const qc = useQueryClient()
+  const { perfil } = useAuth()
+  const [form, setForm] = useState<FormState>(FORM_INICIAL)
+  const [comprobante, setComprobante] = useState<File | null>(null)
+  const [comprobantePath, setComprobantePath] = useState<string | null>(null)
+  const [guardando, setGuardando] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [busquedaProducto, setBusquedaProducto] = useState('')
+
+  // Queries
+  const { data: proveedores } = useQuery({
+    queryKey: ['proveedores_activos'],
+    queryFn: async () => {
+      const { data } = await supabase.from('proveedores').select('*').eq('activo', true).order('razon_social')
+      return (data ?? []) as Proveedor[]
+    },
+    enabled: open,
+  })
+
+  const { data: categorias } = useQuery({
+    queryKey: ['categorias_gasto_activas'],
+    queryFn: async () => {
+      const { data } = await supabase.from('categorias_gasto').select('*').eq('activo', true).order('orden')
+      return (data ?? []) as CategoriaGasto[]
+    },
+    enabled: open,
+  })
+
+  const { data: productos } = useQuery({
+    queryKey: ['productos_para_gasto', form.local],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('productos')
+        .select('id, nombre, unidad, costo_unitario, stock_actual')
+        .eq('local', form.local)
+        .not('activo', 'is', false)
+        .order('nombre')
+      return data ?? []
+    },
+    enabled: open && form.vincular_stock,
+  })
+
+  // Cargar al abrir
+  useEffect(() => {
+    if (!open) return
+    if (gastoEditando) {
+      setForm({
+        local: gastoEditando.local,
+        fecha: gastoEditando.fecha,
+        fecha_vencimiento: gastoEditando.fecha_vencimiento ?? '',
+        proveedor_id: gastoEditando.proveedor_id,
+        proveedor_libre: gastoEditando.proveedor ?? '',
+        categoria_id: gastoEditando.categoria_id,
+        tipo_comprobante: (gastoEditando.tipo_comprobante as TipoComprobante) || 'factura_a',
+        punto_venta: gastoEditando.punto_venta ?? '',
+        nro_comprobante: gastoEditando.nro_comprobante ?? '',
+        importe_neto: String(gastoEditando.importe_neto ?? ''),
+        iva: String(gastoEditando.iva ?? ''),
+        iibb: String(gastoEditando.iibb ?? ''),
+        importe_total: String(gastoEditando.importe_total ?? ''),
+        comentario: gastoEditando.comentario ?? '',
+        estado_pago: ((gastoEditando.estado_pago?.toLowerCase() === 'pagado') ? 'pagado' : 'pendiente') as EstadoPago,
+        fecha_pago: gastoEditando.fecha_vencimiento ?? HOY(),
+        medio_pago: 'transferencia_mp',
+        vincular_stock: false,
+        items: [],
+      })
+      setComprobantePath(gastoEditando.comprobante_path)
+    } else {
+      setForm({
+        ...FORM_INICIAL,
+        local: prefill?.local ?? 'vedia',
+        proveedor_libre: prefill?.proveedor_nombre ?? '',
+        comentario: prefill?.comentario ?? '',
+        vincular_stock: !!prefill?.items?.length,
+        items: (prefill?.items ?? []).map((it) => ({
+          producto_id: it.producto_id,
+          producto_nombre: it.producto_nombre,
+          cantidad: it.cantidad,
+          unidad: it.unidad,
+          precio_unitario: 0,
+          subtotal: 0,
+        })),
+      })
+      setComprobantePath(prefill?.comprobante_path ?? null)
+    }
+    setComprobante(null)
+    setError(null)
+    setBusquedaProducto('')
+  }, [open, gastoEditando, prefill])
+
+  // Categorías padre (raíz) y derivación del padre desde la subcat elegida
+  const padresCat = useMemo(
+    () => (categorias ?? []).filter((c) => c.parent_id == null),
+    [categorias]
+  )
+  const padreSeleccionado = useMemo(() => {
+    if (!form.categoria_id || !categorias) return null
+    const sub = categorias.find((c) => c.id === form.categoria_id)
+    if (!sub?.parent_id) return null
+    return categorias.find((c) => c.id === sub.parent_id) ?? null
+  }, [categorias, form.categoria_id])
+
+  // Auto-match proveedor: si vino prefill con string, intentar matchear
+  useEffect(() => {
+    if (!open || gastoEditando || form.proveedor_id || !form.proveedor_libre || !proveedores) return
+    const norm = (s: string) => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim()
+    const objetivo = norm(form.proveedor_libre)
+    const match = proveedores.find((p) => norm(p.razon_social) === objetivo)
+    if (match) {
+      setForm((f) => ({
+        ...f,
+        proveedor_id: match.id,
+        categoria_id: f.categoria_id ?? match.categoria_default_id,
+        medio_pago: (match.medio_pago_default as MedioPago) ?? f.medio_pago,
+      }))
+    }
+  }, [open, gastoEditando, form.proveedor_libre, form.proveedor_id, proveedores])
+
+  // Cuando se elige proveedor, autocompletar categoría default y vencimiento
+  function elegirProveedor(id: string) {
+    const p = proveedores?.find((x) => x.id === id)
+    if (!p) return
+    setForm((f) => {
+      let venc = f.fecha_vencimiento
+      if (!venc && f.fecha && p.dias_pago) {
+        const d = new Date(f.fecha)
+        d.setDate(d.getDate() + p.dias_pago)
+        venc = d.toISOString().split('T')[0]
+      }
+      return {
+        ...f,
+        proveedor_id: id,
+        proveedor_libre: p.razon_social,
+        categoria_id: f.categoria_id ?? p.categoria_default_id,
+        medio_pago: (p.medio_pago_default as MedioPago) ?? f.medio_pago,
+        fecha_vencimiento: venc,
+      }
+    })
+  }
+
+  // Calcular totales automáticamente
+  function calcularDesdeNeto(neto: string) {
+    const n = parseFloat(neto.replace(',', '.')) || 0
+    const iva = +(n * 0.21).toFixed(2)
+    const total = +(n + iva + (parseFloat(form.iibb.replace(',', '.')) || 0)).toFixed(2)
+    setForm((f) => ({ ...f, importe_neto: neto, iva: String(iva), importe_total: String(total) }))
+  }
+
+  function calcularDesdeTotal(total: string) {
+    const t = parseFloat(total.replace(',', '.')) || 0
+    // Si tipo factura A → desglosar IVA. Si C/ticket/remito → sin IVA discriminado
+    if (form.tipo_comprobante === 'factura_a') {
+      const neto = +(t / 1.21).toFixed(2)
+      const iva = +(t - neto).toFixed(2)
+      setForm((f) => ({ ...f, importe_total: total, importe_neto: String(neto), iva: String(iva) }))
+    } else {
+      setForm((f) => ({ ...f, importe_total: total, importe_neto: String(t), iva: '0' }))
+    }
+  }
+
+  // Items del stock
+  const totalItems = useMemo(
+    () => form.items.reduce((s, it) => s + (it.precio_unitario * it.cantidad), 0),
+    [form.items]
+  )
+
+  function agregarProducto(productoId: string) {
+    const p = productos?.find((x: any) => x.id === productoId)
+    if (!p) return
+    setForm((f) => ({
+      ...f,
+      items: [...f.items, {
+        producto_id: p.id,
+        producto_nombre: p.nombre,
+        cantidad: 1,
+        unidad: p.unidad,
+        precio_unitario: p.costo_unitario || 0,
+        subtotal: p.costo_unitario || 0,
+      }],
+    }))
+    setBusquedaProducto('')
+  }
+
+  function actualizarItem(idx: number, campo: 'cantidad' | 'precio_unitario', valor: string) {
+    const v = parseFloat(valor.replace(',', '.')) || 0
+    setForm((f) => ({
+      ...f,
+      items: f.items.map((it, i) => {
+        if (i !== idx) return it
+        const next = { ...it, [campo]: v }
+        next.subtotal = +(next.cantidad * next.precio_unitario).toFixed(2)
+        return next
+      }),
+    }))
+  }
+
+  function quitarItem(idx: number) {
+    setForm((f) => ({ ...f, items: f.items.filter((_, i) => i !== idx) }))
+  }
+
+  function aplicarTotalDesdeItems() {
+    if (form.tipo_comprobante === 'factura_a') {
+      calcularDesdeTotal(String(totalItems))
+    } else {
+      setForm((f) => ({ ...f, importe_total: String(totalItems), importe_neto: String(totalItems), iva: '0' }))
+    }
+  }
+
+  // Buscar productos por texto
+  const productosFiltrados = useMemo(() => {
+    if (!productos || !busquedaProducto.trim()) return []
+    const b = busquedaProducto.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    return (productos as any[])
+      .filter((p) => {
+        const n = (p.nombre ?? '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+        return n.includes(b) && !form.items.some((it) => it.producto_id === p.id)
+      })
+      .slice(0, 8)
+  }, [productos, busquedaProducto, form.items])
+
+  async function guardar() {
+    setError(null)
+    if (!form.fecha) { setError('Fecha del comprobante requerida'); return }
+    if (!form.importe_total || parseFloat(form.importe_total) <= 0) { setError('Importe total requerido'); return }
+    if (!form.categoria_id) { setError('Subcategoría requerida'); return }
+    if (!form.proveedor_id && !form.proveedor_libre.trim()) { setError('Proveedor requerido'); return }
+
+    setGuardando(true)
+    try {
+      // 1) Subir comprobante si hay uno nuevo
+      let pathComprobante = comprobantePath
+      if (comprobante) {
+        const ext = comprobante.name.split('.').pop()?.toLowerCase() || 'pdf'
+        const path = `${form.local}/${form.fecha.substring(0, 7)}/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`
+        const { error: errUp } = await supabase.storage
+          .from('gastos-comprobantes')
+          .upload(path, comprobante, { contentType: comprobante.type || 'application/octet-stream' })
+        if (errUp) throw errUp
+        pathComprobante = path
+      }
+
+      // 2) Resolver categoría textual desde la subcategoría seleccionada (retrocompat).
+      //    El gasto.categoria_id apunta a la HOJA (subcategoría); en los campos legacy
+      //    guardamos categoria=padre.nombre, subcategoria=hoja.nombre.
+      const subObj = categorias?.find((c) => c.id === form.categoria_id)
+      const padreObj = subObj?.parent_id ? categorias?.find((c) => c.id === subObj.parent_id) : null
+      const proveedorObj = proveedores?.find((p) => p.id === form.proveedor_id)
+
+      const periodo = form.fecha.substring(0, 7) // YYYY-MM
+      const payload = {
+        local: form.local,
+        fecha: form.fecha,
+        fecha_vencimiento: form.fecha_vencimiento || null,
+        proveedor: proveedorObj?.razon_social ?? form.proveedor_libre.trim(),
+        proveedor_id: form.proveedor_id,
+        categoria: padreObj?.nombre ?? subObj?.nombre ?? null,
+        subcategoria: subObj?.nombre ?? null,
+        categoria_id: form.categoria_id,
+        comentario: form.comentario.trim() || null,
+        importe_neto: parseFloat(form.importe_neto.replace(',', '.')) || 0,
+        iva: parseFloat(form.iva.replace(',', '.')) || 0,
+        iibb: parseFloat(form.iibb.replace(',', '.')) || 0,
+        importe_total: parseFloat(form.importe_total.replace(',', '.')) || 0,
+        medio_pago: form.estado_pago === 'pagado' ? form.medio_pago : null,
+        tipo_comprobante: form.tipo_comprobante,
+        punto_venta: form.punto_venta.trim() || null,
+        nro_comprobante: form.nro_comprobante.trim() || null,
+        estado_pago: form.estado_pago === 'pagado' ? 'Pagado' : 'Pendiente',
+        comprobante_path: pathComprobante,
+        recepcion_id: prefill?.recepcion_id ?? null,
+        creado_por: perfil?.nombre ?? null,
+        creado_manual: true,
+        cancelado: false,
+        periodo,
+      }
+
+      let gastoId: string
+      if (gastoEditando) {
+        const { error: errUp } = await supabase.from('gastos').update(payload).eq('id', gastoEditando.id)
+        if (errUp) throw errUp
+        gastoId = gastoEditando.id
+      } else {
+        const { data: ins, error: errIns } = await supabase.from('gastos').insert(payload).select('id').single()
+        if (errIns) throw errIns
+        gastoId = ins!.id as string
+      }
+
+      // 3) Si está marcado como pagado, crear el pago en pagos_gastos
+      if (form.estado_pago === 'pagado' && !gastoEditando) {
+        const { error: errPago } = await supabase.from('pagos_gastos').insert({
+          gasto_id: gastoId,
+          fecha_pago: form.fecha_pago,
+          monto: parseFloat(form.importe_total.replace(',', '.')) || 0,
+          medio_pago: form.medio_pago,
+          creado_por: perfil?.nombre ?? null,
+        })
+        if (errPago) throw errPago
+      }
+
+      // 4) Si está vinculado a stock, actualizar productos + crear movimientos
+      if (form.vincular_stock && form.items.length > 0 && !gastoEditando) {
+        for (const it of form.items) {
+          // sumar al stock
+          const { data: prodActual } = await supabase
+            .from('productos').select('stock_actual').eq('id', it.producto_id).single()
+          if (prodActual) {
+            await supabase
+              .from('productos')
+              .update({
+                stock_actual: (prodActual.stock_actual ?? 0) + it.cantidad,
+                costo_unitario: it.precio_unitario,
+                updated_at: new Date().toISOString(),
+              })
+              .eq('id', it.producto_id)
+          }
+          await supabase.from('movimientos_stock').insert({
+            local: form.local,
+            producto_id: it.producto_id,
+            producto_nombre: it.producto_nombre,
+            tipo: 'entrada',
+            cantidad: it.cantidad,
+            unidad: it.unidad,
+            motivo: 'Compra a proveedor',
+            observacion: `Gasto ${proveedorObj?.razon_social ?? form.proveedor_libre} · ${form.tipo_comprobante.toUpperCase()} ${form.nro_comprobante}`,
+            registrado_por: perfil?.nombre ?? null,
+          })
+        }
+      }
+
+      // 5) Si vino de una recepción pendiente, marcarla como validada y linkearla
+      if (prefill?.recepcion_id) {
+        await supabase.from('recepciones_pendientes').update({
+          estado: 'validada',
+          gasto_id: gastoId,
+          validada_en: new Date().toISOString(),
+          validada_por: perfil?.nombre ?? null,
+        }).eq('id', prefill.recepcion_id)
+      }
+
+      qc.invalidateQueries({ queryKey: ['gastos'] })
+      qc.invalidateQueries({ queryKey: ['gastos_listado'] })
+      qc.invalidateQueries({ queryKey: ['gastos_pagos'] })
+      qc.invalidateQueries({ queryKey: ['gastos_vista'] })
+      qc.invalidateQueries({ queryKey: ['recepciones_pendientes'] })
+      qc.invalidateQueries({ queryKey: ['productos_stock'] })
+      qc.invalidateQueries({ queryKey: ['pagos_gastos'] })
+      onSaved?.(gastoId)
+      onClose()
+    } catch (e: any) {
+      setError(e.message ?? 'Error al guardar')
+    } finally {
+      setGuardando(false)
+    }
+  }
+
+  async function verComprobanteExistente() {
+    if (!comprobantePath) return
+    const { data, error } = await supabase.storage
+      .from('gastos-comprobantes').createSignedUrl(comprobantePath, 60)
+    if (error || !data) { window.alert('No se pudo abrir el comprobante'); return }
+    window.open(data.signedUrl, '_blank')
+  }
+
+  if (!open) return null
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => !guardando && onClose()}>
+      <div className="bg-white rounded-lg w-full max-w-3xl max-h-[92vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        {/* Header */}
+        <div className="px-5 py-4 border-b border-gray-200 flex items-center justify-between sticky top-0 bg-white z-10">
+          <div>
+            <h3 className="font-semibold text-gray-900">{gastoEditando ? 'Editar gasto' : 'Nuevo gasto'}</h3>
+            {prefill?.recepcion_id && (
+              <p className="text-xs text-amber-700 mt-0.5">📥 Cargando desde recepción pendiente</p>
+            )}
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
+        </div>
+
+        <div className="p-5 space-y-5">
+          {/* Sección 1: Datos del comprobante */}
+          <div>
+            <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Comprobante</h4>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Local *</label>
+                <select
+                  value={form.local}
+                  onChange={(e) => setForm({ ...form, local: e.target.value as 'vedia' | 'saavedra' })}
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded bg-white"
+                >
+                  <option value="vedia">Rodziny Vedia</option>
+                  <option value="saavedra">Rodziny Saavedra</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Tipo de comprobante *</label>
+                <select
+                  value={form.tipo_comprobante}
+                  onChange={(e) => setForm({ ...form, tipo_comprobante: e.target.value as TipoComprobante })}
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded bg-white"
+                >
+                  {Object.entries(TIPO_COMPROBANTE_LABEL).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Punto de venta</label>
+                <input
+                  value={form.punto_venta}
+                  onChange={(e) => setForm({ ...form, punto_venta: e.target.value })}
+                  placeholder="0001"
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">N° comprobante</label>
+                <input
+                  value={form.nro_comprobante}
+                  onChange={(e) => setForm({ ...form, nro_comprobante: e.target.value })}
+                  placeholder="00001234"
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Fecha del comprobante *</label>
+                <input
+                  type="date"
+                  value={form.fecha}
+                  onChange={(e) => setForm({ ...form, fecha: e.target.value })}
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Vencimiento</label>
+                <input
+                  type="date"
+                  value={form.fecha_vencimiento}
+                  onChange={(e) => setForm({ ...form, fecha_vencimiento: e.target.value })}
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Sección 2: Proveedor + Categoría */}
+          <div>
+            <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Proveedor & categoría</h4>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Proveedor *</label>
+                <select
+                  value={form.proveedor_id ?? ''}
+                  onChange={(e) => e.target.value ? elegirProveedor(e.target.value) : setForm({ ...form, proveedor_id: null })}
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded bg-white"
+                >
+                  <option value="">— Seleccionar —</option>
+                  {(proveedores ?? []).map((p) => <option key={p.id} value={p.id}>{p.razon_social}</option>)}
+                </select>
+                {form.proveedor_libre && !form.proveedor_id && (
+                  <div className="text-[11px] text-amber-600 mt-1">
+                    "{form.proveedor_libre}" no está en la lista. Se va a guardar como texto libre.
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const { data, error } = await supabase.from('proveedores').insert({
+                          razon_social: form.proveedor_libre.trim(),
+                          activo: true,
+                        }).select('id').single()
+                        if (error) { window.alert(error.message); return }
+                        qc.invalidateQueries({ queryKey: ['proveedores_activos'] })
+                        setForm((f) => ({ ...f, proveedor_id: data!.id as string }))
+                      }}
+                      className="ml-1 text-rodziny-700 underline"
+                    >
+                      Crear ahora
+                    </button>
+                  </div>
+                )}
+              </div>
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Subcategoría *</label>
+                <select
+                  value={form.categoria_id ?? ''}
+                  onChange={(e) => setForm({ ...form, categoria_id: e.target.value || null })}
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded bg-white"
+                >
+                  <option value="">— Seleccionar —</option>
+                  {padresCat.map((p) => {
+                    const hijos = (categorias ?? []).filter((c) => c.parent_id === p.id)
+                    if (hijos.length === 0) return null
+                    return (
+                      <optgroup key={p.id} label={p.nombre}>
+                        {hijos.map((h) => <option key={h.id} value={h.id}>{h.nombre}</option>)}
+                      </optgroup>
+                    )
+                  })}
+                </select>
+                <p className="text-[11px] text-gray-500 mt-1">
+                  Categoría: <strong className="text-gray-700">{padreSeleccionado?.nombre ?? '—'}</strong>
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Sección 3: Importes */}
+          <div>
+            <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Importes</h4>
+            <div className="grid grid-cols-4 gap-3">
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Neto</label>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={form.importe_neto}
+                  onChange={(e) => calcularDesdeNeto(e.target.value)}
+                  placeholder="0.00"
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded text-right"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">IVA 21%</label>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={form.iva}
+                  onChange={(e) => setForm({ ...form, iva: e.target.value })}
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded text-right bg-gray-50"
+                  readOnly
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">IIBB</label>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={form.iibb}
+                  onChange={(e) => setForm({ ...form, iibb: e.target.value })}
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded text-right"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Total *</label>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={form.importe_total}
+                  onChange={(e) => calcularDesdeTotal(e.target.value)}
+                  placeholder="0.00"
+                  className="w-full px-3 py-2 text-sm border border-rodziny-400 rounded text-right font-semibold"
+                />
+              </div>
+            </div>
+            <p className="text-[10px] text-gray-400 mt-1">
+              Para Factura A: completá Neto o Total y se autocalcula. Para Factura C / Ticket / Remito: cargá solo el Total.
+            </p>
+          </div>
+
+          {/* Sección 4: Vincular a stock */}
+          <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={form.vincular_stock}
+                onChange={(e) => setForm({ ...form, vincular_stock: e.target.checked })}
+                className="rounded"
+              />
+              <span className="text-sm font-medium text-gray-700">Vincular a stock</span>
+              <span className="text-[11px] text-gray-500">(suma los productos al inventario y crea movimiento de entrada)</span>
+            </label>
+
+            {form.vincular_stock && (
+              <div className="mt-3 space-y-2">
+                {/* Items cargados */}
+                {form.items.length > 0 && (
+                  <div className="bg-white rounded border border-gray-200 divide-y divide-gray-100">
+                    {form.items.map((it, idx) => (
+                      <div key={idx} className="px-3 py-2 grid grid-cols-12 gap-2 items-center text-xs">
+                        <div className="col-span-4 truncate">{it.producto_nombre}</div>
+                        <div className="col-span-2">
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            value={it.cantidad}
+                            onChange={(e) => actualizarItem(idx, 'cantidad', e.target.value)}
+                            className="w-full px-2 py-1 text-xs border border-gray-300 rounded text-right"
+                          />
+                        </div>
+                        <div className="col-span-1 text-gray-500">{it.unidad}</div>
+                        <div className="col-span-2">
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            value={it.precio_unitario}
+                            onChange={(e) => actualizarItem(idx, 'precio_unitario', e.target.value)}
+                            placeholder="$/u"
+                            className="w-full px-2 py-1 text-xs border border-gray-300 rounded text-right"
+                          />
+                        </div>
+                        <div className="col-span-2 text-right font-medium">{formatARS(it.subtotal)}</div>
+                        <div className="col-span-1 text-right">
+                          <button onClick={() => quitarItem(idx)} className="text-red-500 text-xs">×</button>
+                        </div>
+                      </div>
+                    ))}
+                    <div className="px-3 py-2 flex items-center justify-between bg-gray-50">
+                      <span className="text-xs text-gray-600">Subtotal items</span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-bold">{formatARS(totalItems)}</span>
+                        <button
+                          type="button"
+                          onClick={aplicarTotalDesdeItems}
+                          className="text-[11px] text-rodziny-700 underline"
+                        >
+                          Aplicar al total
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Buscar producto para agregar */}
+                <div className="relative">
+                  <input
+                    value={busquedaProducto}
+                    onChange={(e) => setBusquedaProducto(e.target.value)}
+                    placeholder="Buscar producto para agregar..."
+                    className="w-full px-3 py-1.5 text-xs border border-gray-300 rounded"
+                  />
+                  {productosFiltrados.length > 0 && (
+                    <div className="absolute z-20 left-0 right-0 mt-1 bg-white border border-gray-200 rounded shadow-lg max-h-48 overflow-y-auto">
+                      {productosFiltrados.map((p: any) => (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={() => agregarProducto(p.id)}
+                          className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-100 border-b border-gray-50"
+                        >
+                          <div className="font-medium">{p.nombre}</div>
+                          <div className="text-[10px] text-gray-500">stock {p.stock_actual} {p.unidad} · costo {formatARS(p.costo_unitario || 0)}</div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Sección 5: Estado del pago */}
+          <div>
+            <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Estado del pago</h4>
+            <div className="flex items-center gap-3 mb-3">
+              <button
+                type="button"
+                onClick={() => setForm({ ...form, estado_pago: 'pendiente' })}
+                className={cn(
+                  'px-3 py-1.5 text-xs rounded font-medium border',
+                  form.estado_pago === 'pendiente' ? 'bg-amber-100 border-amber-400 text-amber-800' : 'bg-white border-gray-300 text-gray-600'
+                )}
+              >
+                Pendiente
+              </button>
+              <button
+                type="button"
+                onClick={() => setForm({ ...form, estado_pago: 'pagado' })}
+                className={cn(
+                  'px-3 py-1.5 text-xs rounded font-medium border',
+                  form.estado_pago === 'pagado' ? 'bg-green-100 border-green-400 text-green-800' : 'bg-white border-gray-300 text-gray-600'
+                )}
+              >
+                Pagado
+              </button>
+            </div>
+            {form.estado_pago === 'pagado' && (
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-gray-600 mb-1">Fecha de pago</label>
+                  <input
+                    type="date"
+                    value={form.fecha_pago}
+                    onChange={(e) => setForm({ ...form, fecha_pago: e.target.value })}
+                    className="w-full px-3 py-2 text-sm border border-gray-300 rounded"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-600 mb-1">Medio de pago</label>
+                  <select
+                    value={form.medio_pago}
+                    onChange={(e) => setForm({ ...form, medio_pago: e.target.value as MedioPago })}
+                    className="w-full px-3 py-2 text-sm border border-gray-300 rounded bg-white"
+                  >
+                    {Object.entries(MEDIO_PAGO_LABEL).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                  </select>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Sección 6: Adjunto + comentario */}
+          <div>
+            <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Adjunto y notas</h4>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Comprobante (PDF / imagen)</label>
+                {comprobantePath && !comprobante ? (
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={verComprobanteExistente}
+                      className="text-xs px-2 py-1 bg-blue-600 text-white rounded hover:bg-blue-700"
+                    >
+                      📎 Ver actual
+                    </button>
+                    <label className="text-xs px-2 py-1 bg-gray-200 text-gray-700 rounded hover:bg-gray-300 cursor-pointer">
+                      Reemplazar
+                      <input
+                        type="file"
+                        accept="image/*,application/pdf"
+                        className="hidden"
+                        onChange={(e) => setComprobante(e.target.files?.[0] ?? null)}
+                      />
+                    </label>
+                  </div>
+                ) : (
+                  <input
+                    type="file"
+                    accept="image/*,application/pdf"
+                    onChange={(e) => setComprobante(e.target.files?.[0] ?? null)}
+                    className="text-xs"
+                  />
+                )}
+                {comprobante && (
+                  <div className="text-[11px] text-green-700 mt-1">📎 {comprobante.name}</div>
+                )}
+              </div>
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Comentario</label>
+                <textarea
+                  value={form.comentario}
+                  onChange={(e) => setForm({ ...form, comentario: e.target.value })}
+                  rows={2}
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded"
+                />
+              </div>
+            </div>
+          </div>
+
+          {error && (
+            <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded px-3 py-2">{error}</div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="px-5 py-3 border-t border-gray-200 flex justify-end gap-2 sticky bottom-0 bg-white">
+          <button
+            onClick={onClose}
+            disabled={guardando}
+            className="px-4 py-2 text-sm border border-gray-300 rounded text-gray-700 hover:bg-gray-50"
+          >
+            Cancelar
+          </button>
+          <button
+            onClick={guardar}
+            disabled={guardando}
+            className="px-4 py-2 text-sm bg-rodziny-700 hover:bg-rodziny-800 text-white rounded font-medium disabled:bg-gray-300"
+          >
+            {guardando ? 'Guardando…' : (gastoEditando ? 'Guardar cambios' : 'Crear gasto')}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
