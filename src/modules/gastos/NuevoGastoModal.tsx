@@ -39,6 +39,7 @@ interface FormState {
   punto_venta: string
   nro_comprobante: string
   importe_neto: string
+  iva_rate: number            // 0 / 10.5 / 21 / 27
   iva: string
   iibb: string
   importe_total: string
@@ -61,6 +62,7 @@ const FORM_INICIAL: FormState = {
   punto_venta: '',
   nro_comprobante: '',
   importe_neto: '',
+  iva_rate: 21,
   iva: '',
   iibb: '',
   importe_total: '',
@@ -130,6 +132,16 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
         punto_venta: gastoEditando.punto_venta ?? '',
         nro_comprobante: gastoEditando.nro_comprobante ?? '',
         importe_neto: String(gastoEditando.importe_neto ?? ''),
+        iva_rate: (() => {
+          const n = Number(gastoEditando.importe_neto ?? 0)
+          const i = Number(gastoEditando.iva ?? 0)
+          if (n > 0 && i > 0) {
+            const r = (i / n) * 100
+            if (Math.abs(r - 10.5) < 1) return 10.5
+            if (Math.abs(r - 27) < 1) return 27
+          }
+          return 21
+        })(),
         iva: String(gastoEditando.iva ?? ''),
         iibb: String(gastoEditando.iibb ?? ''),
         importe_total: String(gastoEditando.importe_total ?? ''),
@@ -235,28 +247,40 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
   }
 
   // Calcular totales automáticamente
-  function calcularDesdeNeto(neto: string) {
+  function calcularDesdeNeto(neto: string, rate: number = form.iva_rate) {
     const n = parseFloat(neto.replace(',', '.')) || 0
-    const iva = +(n * 0.21).toFixed(2)
+    const iva = +(n * rate / 100).toFixed(2)
     const total = +(n + iva + (parseFloat(form.iibb.replace(',', '.')) || 0)).toFixed(2)
-    setForm((f) => ({ ...f, importe_neto: neto, iva: String(iva), importe_total: String(total) }))
+    setForm((f) => ({ ...f, importe_neto: neto, iva_rate: rate, iva: String(iva), importe_total: String(total) }))
   }
 
-  function calcularDesdeTotal(total: string) {
+  function calcularDesdeTotal(total: string, rate: number = form.iva_rate) {
     const t = parseFloat(total.replace(',', '.')) || 0
     // Si tipo factura A → desglosar IVA. Si C/ticket/remito → sin IVA discriminado
-    if (form.tipo_comprobante === 'factura_a') {
-      const neto = +(t / 1.21).toFixed(2)
+    if (form.tipo_comprobante === 'factura_a' && rate > 0) {
+      const factor = 1 + rate / 100
+      const neto = +(t / factor).toFixed(2)
       const iva = +(t - neto).toFixed(2)
-      setForm((f) => ({ ...f, importe_total: total, importe_neto: String(neto), iva: String(iva) }))
+      setForm((f) => ({ ...f, importe_total: total, iva_rate: rate, importe_neto: String(neto), iva: String(iva) }))
     } else {
-      setForm((f) => ({ ...f, importe_total: total, importe_neto: String(t), iva: '0' }))
+      setForm((f) => ({ ...f, importe_total: total, iva_rate: rate, importe_neto: String(t), iva: '0' }))
+    }
+  }
+
+  function cambiarIvaRate(rate: number) {
+    // Recalcular desde el total existente si lo hay, si no desde el neto
+    if (form.importe_total) {
+      calcularDesdeTotal(form.importe_total, rate)
+    } else if (form.importe_neto) {
+      calcularDesdeNeto(form.importe_neto, rate)
+    } else {
+      setForm((f) => ({ ...f, iva_rate: rate }))
     }
   }
 
   // Items del stock
   const totalItems = useMemo(
-    () => form.items.reduce((s, it) => s + (it.precio_unitario * it.cantidad), 0),
+    () => form.items.reduce((s, it) => s + (it.subtotal || it.precio_unitario * it.cantidad), 0),
     [form.items]
   )
 
@@ -280,7 +304,7 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
     for (const it of form.items) {
       const k = it.categoria_gasto_id!
       const prev = map.get(k) ?? { subtotal: 0, items: [] }
-      prev.subtotal += it.precio_unitario * it.cantidad
+      prev.subtotal += it.subtotal || it.precio_unitario * it.cantidad
       prev.items.push(it)
       map.set(k, prev)
     }
@@ -316,7 +340,7 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
         cantidad: 1,
         unidad: p.unidad,
         precio_unitario: p.costo_unitario || 0,
-        subtotal: p.costo_unitario || 0,
+        subtotal: +((p.costo_unitario || 0) * 1).toFixed(2),
         categoria_gasto_id: (p as any).categoria_gasto_id ?? null,
       }],
     }))
@@ -330,15 +354,23 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
     }))
   }
 
-  function actualizarItem(idx: number, campo: 'cantidad' | 'precio_unitario', valor: string) {
+  function actualizarItem(idx: number, campo: 'cantidad' | 'subtotal', valor: string) {
     const v = parseFloat(valor.replace(',', '.')) || 0
     setForm((f) => ({
       ...f,
       items: f.items.map((it, i) => {
         if (i !== idx) return it
-        const next = { ...it, [campo]: v }
-        next.subtotal = +(next.cantidad * next.precio_unitario).toFixed(2)
-        return next
+        if (campo === 'cantidad') {
+          // Al cambiar cantidad: mantengo el subtotal y recalculo precio_unitario
+          const next = { ...it, cantidad: v }
+          next.precio_unitario = v > 0 ? +(it.subtotal / v).toFixed(4) : 0
+          return next
+        } else {
+          // Al cambiar subtotal: recalculo precio_unitario
+          const next = { ...it, subtotal: v }
+          next.precio_unitario = it.cantidad > 0 ? +(v / it.cantidad).toFixed(4) : 0
+          return next
+        }
       }),
     }))
   }
@@ -723,7 +755,7 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
           {/* Sección 3: Importes */}
           <div>
             <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Importes</h4>
-            <div className="grid grid-cols-4 gap-3">
+            <div className="grid grid-cols-5 gap-3">
               <div>
                 <label className="block text-xs text-gray-600 mb-1">Neto</label>
                 <input
@@ -736,7 +768,20 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
                 />
               </div>
               <div>
-                <label className="block text-xs text-gray-600 mb-1">IVA 21%</label>
+                <label className="block text-xs text-gray-600 mb-1">Alícuota IVA</label>
+                <select
+                  value={form.iva_rate}
+                  onChange={(e) => cambiarIvaRate(parseFloat(e.target.value))}
+                  className="w-full px-2 py-2 text-sm border border-gray-300 rounded bg-white"
+                >
+                  <option value={0}>0%</option>
+                  <option value={10.5}>10,5%</option>
+                  <option value={21}>21%</option>
+                  <option value={27}>27%</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">IVA $</label>
                 <input
                   type="text"
                   inputMode="decimal"
@@ -805,17 +850,19 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
                             />
                           </div>
                           <div className="col-span-1 text-gray-500">{it.unidad}</div>
+                          <div className="col-span-2 text-right text-[10px] text-gray-500">
+                            {formatARS(it.precio_unitario)}/u
+                          </div>
                           <div className="col-span-2">
                             <input
                               type="text"
                               inputMode="decimal"
-                              value={it.precio_unitario}
-                              onChange={(e) => actualizarItem(idx, 'precio_unitario', e.target.value)}
-                              placeholder="$/u"
-                              className="w-full px-2 py-1 text-xs border border-gray-300 rounded text-right"
+                              value={it.subtotal}
+                              onChange={(e) => actualizarItem(idx, 'subtotal', e.target.value)}
+                              placeholder="Total $"
+                              className="w-full px-2 py-1 text-xs border border-gray-300 rounded text-right font-medium"
                             />
                           </div>
-                          <div className="col-span-2 text-right font-medium">{formatARS(it.subtotal)}</div>
                           <div className="col-span-1 text-right">
                             <button onClick={() => quitarItem(idx)} className="text-red-500 text-xs">×</button>
                           </div>
