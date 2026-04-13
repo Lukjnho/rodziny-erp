@@ -209,16 +209,14 @@ export function RecepcionPage() {
         <div className="bg-white rounded-lg border border-gray-200 p-3 space-y-3">
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Proveedor (opcional — filtra productos)</label>
-            <input
+            <select
               value={proveedor}
               onChange={(e) => setProveedor(e.target.value)}
-              list="lista-proveedores"
-              placeholder="Ej: La Serenísima"
-              className="w-full px-3 py-2 text-sm border border-gray-300 rounded"
-            />
-            <datalist id="lista-proveedores">
-              {proveedores.map((p) => <option key={p} value={p} />)}
-            </datalist>
+              className="w-full px-3 py-2 text-sm border border-gray-300 rounded bg-white"
+            >
+              <option value="">— Cualquiera —</option>
+              {proveedores.map((p) => <option key={p} value={p}>{p}</option>)}
+            </select>
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Tu nombre *</label>

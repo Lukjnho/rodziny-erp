@@ -83,6 +83,10 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
   const [guardando, setGuardando] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [busquedaProducto, setBusquedaProducto] = useState('')
+  // Drafts de texto crudo para los inputs numéricos de items. Sin esto
+  // React re-render machaca la coma/punto que estás tipeando porque
+  // it.cantidad/subtotal son number y parseFloat("10500,") => 10500.
+  const [itemDrafts, setItemDrafts] = useState<Record<string, string>>({})
 
   // Queries
   const { data: proveedores } = useQuery({
@@ -175,6 +179,7 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
     setComprobante(null)
     setError(null)
     setBusquedaProducto('')
+    setItemDrafts({})
   }, [open, gastoEditando, prefill])
 
   // Cuando productos termina de cargar, completar categoria_gasto_id de items
@@ -355,6 +360,7 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
   }
 
   function actualizarItem(idx: number, campo: 'cantidad' | 'subtotal', valor: string) {
+    setItemDrafts((d) => ({ ...d, [`${idx}:${campo}`]: valor }))
     const v = parseFloat(valor.replace(',', '.')) || 0
     setForm((f) => ({
       ...f,
@@ -844,8 +850,12 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
                             <input
                               type="text"
                               inputMode="decimal"
-                              value={it.cantidad}
+                              value={itemDrafts[`${idx}:cantidad`] ?? String(it.cantidad)}
                               onChange={(e) => actualizarItem(idx, 'cantidad', e.target.value)}
+                              onBlur={() => setItemDrafts((d) => {
+                                const { [`${idx}:cantidad`]: _, ...rest } = d
+                                return rest
+                              })}
                               className="w-full px-2 py-1 text-xs border border-gray-300 rounded text-right"
                             />
                           </div>
@@ -857,8 +867,12 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
                             <input
                               type="text"
                               inputMode="decimal"
-                              value={it.subtotal}
+                              value={itemDrafts[`${idx}:subtotal`] ?? String(it.subtotal)}
                               onChange={(e) => actualizarItem(idx, 'subtotal', e.target.value)}
+                              onBlur={() => setItemDrafts((d) => {
+                                const { [`${idx}:subtotal`]: _, ...rest } = d
+                                return rest
+                              })}
                               placeholder="Total $"
                               className="w-full px-2 py-1 text-xs border border-gray-300 rounded text-right font-medium"
                             />
