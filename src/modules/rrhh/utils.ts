@@ -55,6 +55,22 @@ export function diffHoras(entrada: string | null, salida: string | null): number
   return mins / 60
 }
 
+// ── Turno de cronograma: puede haber varios en un día (jornada partida) ─────
+export interface TurnoCrono { entrada: string; salida: string }
+
+// Suma las horas reales trabajadas en un array de turnos. Si el array está
+// vacío o nulo, cae al par legacy hora_entrada/hora_salida (compat).
+export function sumHorasTurnos(
+  turnos: TurnoCrono[] | null | undefined,
+  legacyEntrada?: string | null,
+  legacySalida?: string | null,
+): number {
+  if (turnos && turnos.length > 0) {
+    return turnos.reduce((s, t) => s + diffHoras(t.entrada, t.salida), 0)
+  }
+  return diffHoras(legacyEntrada ?? null, legacySalida ?? null)
+}
+
 // ── Diferencia en minutos entre un Date y una hora programada HH:MM ─────────
 export function diffMinutosVsHorario(ahora: Date, horaProgramada: string | null): number | null {
   if (!horaProgramada) return null

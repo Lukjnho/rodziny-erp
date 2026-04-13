@@ -7,9 +7,11 @@ import {
   DIAS_SEMANA,
   diasDeQuincena,
   diffHoras,
+  sumHorasTurnos,
   sumarDias,
   ymd,
   type Quincena,
+  type TurnoCrono,
 } from './utils'
 
 type FiltroLocal = 'todos' | 'vedia' | 'saavedra' | 'ambos'
@@ -20,6 +22,7 @@ interface Cronograma {
   fecha: string           // YYYY-MM-DD
   hora_entrada: string | null
   hora_salida: string | null
+  turnos: TurnoCrono[] | null
   es_franco: boolean
   publicado: boolean
 }
@@ -90,7 +93,7 @@ export function CronogramaTab() {
     const map = new Map<string, number>()
     ;(cronograma ?? []).forEach((c) => {
       if (c.es_franco) return
-      const h = diffHoras(c.hora_entrada, c.hora_salida)
+      const h = sumHorasTurnos(c.turnos, c.hora_entrada, c.hora_salida)
       map.set(c.empleado_id, (map.get(c.empleado_id) ?? 0) + h)
     })
     return map
@@ -232,6 +235,15 @@ export function CronogramaTab() {
                       >
                         {c?.es_franco ? (
                           <div className="text-base">🌴</div>
+                        ) : c?.turnos && c.turnos.length > 0 ? (
+                          <div className="text-[11px] font-medium text-gray-700 leading-tight space-y-0.5">
+                            {c.turnos.map((t, i) => (
+                              <div key={i} className={i > 0 ? 'pt-0.5 border-t border-gray-200' : ''}>
+                                <div>{t.entrada.slice(0, 5)}</div>
+                                <div className="text-gray-400">{t.salida.slice(0, 5)}</div>
+                              </div>
+                            ))}
+                          </div>
                         ) : c?.hora_entrada && c?.hora_salida ? (
                           <div className="text-[11px] font-medium text-gray-700 leading-tight">
                             <div>{c.hora_entrada.slice(0, 5)}</div>
@@ -296,23 +308,51 @@ function ModalCelda({ empleado, fecha, existente, onClose, onSaved }: {
   onSaved: () => void
 }) {
   const [esFranco, setEsFranco] = useState(existente?.es_franco ?? false)
-  const [horaEntrada, setHoraEntrada] = useState(existente?.hora_entrada?.slice(0, 5) ?? '08:00')
-  const [horaSalida, setHoraSalida] = useState(existente?.hora_salida?.slice(0, 5) ?? '16:00')
+  // Estado de turnos del día. Se inicializa desde turnos[] si existe, o
+  // desde el par legacy, o con un turno por default 08:00-16:00.
+  const [turnos, setTurnos] = useState<TurnoCrono[]>(() => {
+    if (existente?.turnos && existente.turnos.length > 0) return existente.turnos
+    if (existente?.hora_entrada && existente?.hora_salida) {
+      return [{ entrada: existente.hora_entrada.slice(0, 5), salida: existente.hora_salida.slice(0, 5) }]
+    }
+    return [{ entrada: '08:00', salida: '16:00' }]
+  })
   const [guardando, setGuardando] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const horas = esFranco ? 0 : diffHoras(horaEntrada, horaSalida)
+  const horas = esFranco ? 0 : turnos.reduce((s, t) => s + diffHoras(t.entrada, t.salida), 0)
+
+  function actualizarTurno(idx: number, campo: 'entrada' | 'salida', valor: string) {
+    setTurnos((prev) => prev.map((t, i) => (i === idx ? { ...t, [campo]: valor } : t)))
+  }
+  function agregarTurno() {
+    setTurnos((prev) => [...prev, { entrada: '20:00', salida: '00:00' }])
+  }
+  function quitarTurno(idx: number) {
+    setTurnos((prev) => prev.filter((_, i) => i !== idx))
+  }
 
   async function guardar() {
     setError(null)
+    // Validación: al menos 1 turno con horas válidas, si no es franco
+    if (!esFranco) {
+      if (turnos.length === 0) { setError('Agregá al menos un turno.'); return }
+      for (const t of turnos) {
+        if (!t.entrada || !t.salida) { setError('Completá entrada y salida de todos los turnos.'); return }
+      }
+    }
     setGuardando(true)
     try {
+      // Turnos ordenados por entrada para que hora_entrada sea la primera.
+      const ordenados = [...turnos].sort((a, b) => a.entrada.localeCompare(b.entrada))
       const payload = {
         empleado_id: empleado.id,
         fecha,
         es_franco: esFranco,
-        hora_entrada: esFranco ? null : horaEntrada,
-        hora_salida: esFranco ? null : horaSalida,
+        turnos: esFranco ? [] : ordenados,
+        // Compat legacy: primera entrada y última salida del día
+        hora_entrada: esFranco ? null : ordenados[0].entrada,
+        hora_salida:  esFranco ? null : ordenados[ordenados.length - 1].salida,
         publicado: false,
         updated_at: new Date().toISOString(),
       }
@@ -358,15 +398,44 @@ function ModalCelda({ empleado, fecha, existente, onClose, onSaved }: {
           </label>
 
           {!esFranco && (
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs text-gray-600 mb-1">Hora entrada</label>
-                <input type="time" value={horaEntrada} onChange={(e) => setHoraEntrada(e.target.value)} className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded" />
-              </div>
-              <div>
-                <label className="block text-xs text-gray-600 mb-1">Hora salida</label>
-                <input type="time" value={horaSalida} onChange={(e) => setHoraSalida(e.target.value)} className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded" />
-              </div>
+            <div className="space-y-2">
+              {turnos.map((t, idx) => (
+                <div key={idx} className="grid grid-cols-[1fr_1fr_auto] gap-2 items-end">
+                  <div>
+                    {idx === 0 && <label className="block text-xs text-gray-600 mb-1">Hora entrada</label>}
+                    <input
+                      type="time"
+                      value={t.entrada}
+                      onChange={(e) => actualizarTurno(idx, 'entrada', e.target.value)}
+                      className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded"
+                    />
+                  </div>
+                  <div>
+                    {idx === 0 && <label className="block text-xs text-gray-600 mb-1">Hora salida</label>}
+                    <input
+                      type="time"
+                      value={t.salida}
+                      onChange={(e) => actualizarTurno(idx, 'salida', e.target.value)}
+                      className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded"
+                    />
+                  </div>
+                  {turnos.length > 1 && (
+                    <button
+                      onClick={() => quitarTurno(idx)}
+                      className="px-2 py-1.5 text-xs text-red-600 hover:bg-red-50 rounded"
+                      title="Quitar turno"
+                    >
+                      ×
+                    </button>
+                  )}
+                </div>
+              ))}
+              <button
+                onClick={agregarTurno}
+                className="w-full px-3 py-1.5 text-xs border border-dashed border-gray-300 text-gray-600 rounded hover:bg-gray-50"
+              >
+                + Agregar otro turno (jornada partida)
+              </button>
             </div>
           )}
 
@@ -464,6 +533,7 @@ function ModalCopia({ modo, fechaDesde, fechaHasta, empleados, onClose, onCopied
       fecha: sumarDias(c.fecha, offsetDias),
       hora_entrada: c.hora_entrada,
       hora_salida: c.hora_salida,
+      turnos: c.turnos ?? [],
       es_franco: c.es_franco,
       publicado: false,
     }))
@@ -480,6 +550,7 @@ function ModalCopia({ modo, fechaDesde, fechaHasta, empleados, onClose, onCopied
       fecha: destino,
       hora_entrada: c.hora_entrada,
       hora_salida: c.hora_salida,
+      turnos: c.turnos ?? [],
       es_franco: c.es_franco,
       publicado: false,
     }))
