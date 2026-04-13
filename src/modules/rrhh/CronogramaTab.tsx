@@ -25,6 +25,7 @@ interface Cronograma {
   turnos: TurnoCrono[] | null
   es_franco: boolean
   publicado: boolean
+  observaciones: string | null
 }
 
 // ── Componente principal ────────────────────────────────────────────────────
@@ -227,12 +228,16 @@ export function CronogramaTab() {
                       <td
                         key={fecha}
                         onClick={() => setCeldaAbierta({ empleado: emp, fecha, existente: c ?? null })}
+                        title={c?.observaciones ?? undefined}
                         className={cn(
-                          'text-center px-1 py-2 border-l border-gray-100 cursor-pointer hover:bg-rodziny-50 align-middle',
+                          'relative text-center px-1 py-2 border-l border-gray-100 cursor-pointer hover:bg-rodziny-50 align-middle',
                           c && !c.publicado && 'bg-yellow-50',
                           c?.es_franco && 'bg-blue-50 text-blue-700',
                         )}
                       >
+                        {c?.observaciones && (
+                          <span className="absolute top-0.5 right-0.5 text-[10px] text-amber-500" title={c.observaciones}>📝</span>
+                        )}
                         {c?.es_franco ? (
                           <div className="text-base">🌴</div>
                         ) : c?.turnos && c.turnos.length > 0 ? (
@@ -317,6 +322,7 @@ function ModalCelda({ empleado, fecha, existente, onClose, onSaved }: {
     }
     return [{ entrada: '08:00', salida: '16:00' }]
   })
+  const [observaciones, setObservaciones] = useState(existente?.observaciones ?? '')
   const [guardando, setGuardando] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -353,6 +359,7 @@ function ModalCelda({ empleado, fecha, existente, onClose, onSaved }: {
         // Compat legacy: primera entrada y última salida del día
         hora_entrada: esFranco ? null : ordenados[0].entrada,
         hora_salida:  esFranco ? null : ordenados[ordenados.length - 1].salida,
+        observaciones: observaciones.trim() || null,
         publicado: false,
         updated_at: new Date().toISOString(),
       }
@@ -442,6 +449,17 @@ function ModalCelda({ empleado, fecha, existente, onClose, onSaved }: {
           {!esFranco && (
             <div className="text-xs text-gray-500">Total: <span className="font-semibold text-gray-700">{horas.toFixed(1)} hs</span></div>
           )}
+
+          <div>
+            <label className="block text-xs text-gray-600 mb-1">Observaciones</label>
+            <textarea
+              value={observaciones}
+              onChange={(e) => setObservaciones(e.target.value)}
+              placeholder="Ej: cubre turno de Pedro, llega tarde avisado..."
+              rows={2}
+              className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded resize-none"
+            />
+          </div>
 
           {error && <div className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded">{error}</div>}
         </div>
