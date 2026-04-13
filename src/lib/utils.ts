@@ -1,10 +1,13 @@
-/** Formatea un número como moneda ARS: $1.234.567 */
-export function formatARS(value: number, decimals = 0): string {
+/** Formatea un número como moneda ARS: $1.234.567 (o $1.234.567,50 si tiene centavos).
+ *  Si se pasa `decimals` explícito, respeta ese valor; si no, muestra 2 decimales
+ *  solo cuando el número tiene centavos reales (no redondea silenciosamente). */
+export function formatARS(value: number, decimals?: number): string {
+  const d = decimals ?? (Math.round(value * 100) % 100 === 0 ? 0 : 2)
   return new Intl.NumberFormat('es-AR', {
     style: 'currency',
     currency: 'ARS',
-    minimumFractionDigits: decimals,
-    maximumFractionDigits: decimals,
+    minimumFractionDigits: d,
+    maximumFractionDigits: d,
   }).format(value)
 }
 
