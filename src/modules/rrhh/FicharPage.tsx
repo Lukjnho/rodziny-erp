@@ -737,7 +737,10 @@ function MisHorarios({ empleado, onVolver }: { empleado: Empleado; onVolver: () 
         <div className="space-y-1.5">
           {filas.map((f) => {
             const d = new Date(f.fecha + 'T00:00:00')
-            const dia = d.toLocaleDateString('es-AR', { weekday: 'short', day: '2-digit', month: '2-digit' })
+            const DIAS = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb']
+            const dd = String(d.getDate()).padStart(2, '0')
+            const mm = String(d.getMonth() + 1).padStart(2, '0')
+            const dia = `${DIAS[d.getDay()]} ${dd}-${mm}`
             return (
               <div key={f.id} className="flex justify-between text-xs border-b border-gray-100 py-1.5">
                 <span className="capitalize text-gray-700">{dia}</span>
