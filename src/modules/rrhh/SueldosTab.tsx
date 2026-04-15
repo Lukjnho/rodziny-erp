@@ -10,7 +10,7 @@ import {
   normalizarTexto,
   type Quincena,
 } from './utils'
-import type { Liquidacion, Adelanto, Sancion, Descuento } from './sueldos/tipos'
+import type { Liquidacion, Adelanto, Sancion, Descuento, MedioPagoSueldo } from './sueldos/tipos'
 import { periodoQuincena, periodoMes } from './sueldos/tipos'
 import { PanelAdelantos } from './sueldos/PanelAdelantos'
 import { PanelSanciones } from './sueldos/PanelSanciones'
@@ -278,6 +278,7 @@ export function SueldosTab() {
     descuentosMonto: number
     total: number
     pagado: boolean
+    medioPago: MedioPagoSueldo | null
   }
 
   const hoyYmd = `${hoy.getFullYear()}-${String(hoy.getMonth() + 1).padStart(2, '0')}-${String(hoy.getDate()).padStart(2, '0')}`
@@ -352,6 +353,7 @@ export function SueldosTab() {
         descuentosMonto,
         total,
         pagado: !!liquidacion?.pagado,
+        medioPago: (liquidacion?.medio_pago ?? null) as MedioPagoSueldo | null,
       }
     })
   }, [
@@ -380,7 +382,22 @@ export function SueldosTab() {
     const totalDescuentos = filas.reduce((s, f) => s + f.descuentosMonto, 0)
     const pagados = filasAPagar.filter((f) => f.pagado).length
     const totalEmpleados = filasAPagar.length
-    return { totalAPagar, totalAdelantos, totalSanciones, totalDescuentos, pagados, totalEmpleados }
+    const pagadoEfectivo = filasAPagar
+      .filter((f) => f.pagado && f.medioPago === 'efectivo')
+      .reduce((s, f) => s + f.total, 0)
+    const pagadoTransferencia = filasAPagar
+      .filter((f) => f.pagado && f.medioPago === 'transferencia')
+      .reduce((s, f) => s + f.total, 0)
+    return {
+      totalAPagar,
+      totalAdelantos,
+      totalSanciones,
+      totalDescuentos,
+      pagados,
+      totalEmpleados,
+      pagadoEfectivo,
+      pagadoTransferencia,
+    }
   }, [filas])
 
   // ── Navegación ───────────────────────────────────────────────────────────
@@ -443,9 +460,11 @@ export function SueldosTab() {
       </div>
 
       {/* ── KPIs ──────────────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3">
         <KpiMini label="Total a pagar" value={formatARS(kpis.totalAPagar)} color="green" />
         <KpiMini label="Pagados" value={`${kpis.pagados} / ${kpis.totalEmpleados}`} color={kpis.pagados === kpis.totalEmpleados ? 'green' : 'amber'} />
+        <KpiMini label="Efectivo" value={formatARS(kpis.pagadoEfectivo)} color="green" />
+        <KpiMini label="Transferencia" value={formatARS(kpis.pagadoTransferencia)} color="blue" />
         <KpiMini label="Adelantos" value={formatARS(kpis.totalAdelantos)} color="gray" />
         <KpiMini label="Sanciones" value={formatARS(kpis.totalSanciones)} color="red" />
         <KpiMini label="Descuentos" value={formatARS(kpis.totalDescuentos)} color="amber" />
@@ -465,7 +484,7 @@ export function SueldosTab() {
                 <th className="text-right px-2 py-2 font-semibold">Sanciones</th>
                 <th className="text-right px-2 py-2 font-semibold" title="Días sin goce, licencias no remuneradas, etc.">Descuentos</th>
                 <th className="text-right px-2 py-2 font-semibold">Total</th>
-                <th className="text-center px-2 py-2 font-semibold">Pagado</th>
+                <th className="text-center px-2 py-2 font-semibold">Pago</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
@@ -487,13 +506,14 @@ export function SueldosTab() {
                       patch: { cobra_presentismo: nuevo },
                     })
                   }
-                  onTogglePagado={(nuevo) =>
+                  onCambiarPago={(medio) =>
                     upsertLiquidacion.mutate({
                       empleado_id: fila.empleado.id,
                       periodo: periodoActual,
                       patch: {
-                        pagado: nuevo,
-                        fecha_pago: nuevo ? hoyYmd : null,
+                        pagado: medio !== null,
+                        medio_pago: medio,
+                        fecha_pago: medio !== null ? hoyYmd : null,
                       },
                     })
                   }
@@ -552,7 +572,7 @@ export function SueldosTab() {
 function FilaEmpleado({
   fila,
   onTogglePresentismo,
-  onTogglePagado,
+  onCambiarPago,
   onCambiarModalidad,
   onAbrirAdelantos,
   onAbrirSanciones,
@@ -572,15 +592,16 @@ function FilaEmpleado({
     descuentosMonto: number
     total: number
     pagado: boolean
+    medioPago: MedioPagoSueldo | null
   }
   onTogglePresentismo: (v: boolean) => void
-  onTogglePagado: (v: boolean) => void
+  onCambiarPago: (v: MedioPagoSueldo | null) => void
   onCambiarModalidad: (v: 'quincenal' | 'mensual') => void
   onAbrirAdelantos: () => void
   onAbrirSanciones: () => void
   onAbrirDescuentos: () => void
 }) {
-  const { empleado, modalidad, esMensualEnQ1, base, cobraPresentismo, presentismoOverride, deduccionPresentismo, adelantosMonto, sancionesMonto, descuentosMonto, total, pagado } = fila
+  const { empleado, modalidad, esMensualEnQ1, base, cobraPresentismo, presentismoOverride, deduccionPresentismo, adelantosMonto, sancionesMonto, descuentosMonto, total, medioPago } = fila
 
   return (
     <tr className={cn('hover:bg-gray-50', esMensualEnQ1 && 'bg-gray-50/60 text-gray-500')}>
@@ -671,12 +692,24 @@ function FilaEmpleado({
         {esMensualEnQ1 ? (
           <span className="text-gray-300 text-xs">—</span>
         ) : (
-          <input
-            type="checkbox"
-            checked={pagado}
-            onChange={(e) => onTogglePagado(e.target.checked)}
-            className="w-4 h-4"
-          />
+          <select
+            value={medioPago ?? ''}
+            onChange={(e) => {
+              const v = e.target.value
+              onCambiarPago(v === '' ? null : (v as MedioPagoSueldo))
+            }}
+            className={cn(
+              'text-[11px] border rounded px-1.5 py-0.5 cursor-pointer',
+              medioPago === 'efectivo' && 'bg-green-50 border-green-300 text-green-800 font-medium',
+              medioPago === 'transferencia' && 'bg-blue-50 border-blue-300 text-blue-800 font-medium',
+              !medioPago && 'bg-white border-gray-300 text-gray-500',
+            )}
+            title={medioPago ? `Pagado por ${medioPago}` : 'Sin pagar'}
+          >
+            <option value="">— sin pagar</option>
+            <option value="efectivo">Efectivo</option>
+            <option value="transferencia">Transferencia</option>
+          </select>
         )}
       </td>
     </tr>
@@ -684,12 +717,13 @@ function FilaEmpleado({
 }
 
 // ─── KPI mini (mismo estilo que AsistenciaTab) ──────────────────────────────
-function KpiMini({ label, value, color }: { label: string; value: string; color: 'gray' | 'green' | 'red' | 'amber' }) {
+function KpiMini({ label, value, color }: { label: string; value: string; color: 'gray' | 'green' | 'red' | 'amber' | 'blue' }) {
   const colorClass = {
     gray: 'text-gray-900',
     green: 'text-green-700',
     red: 'text-red-700',
     amber: 'text-amber-700',
+    blue: 'text-blue-700',
   }[color]
   return (
     <div className="bg-white rounded-lg border border-gray-200 p-3">
