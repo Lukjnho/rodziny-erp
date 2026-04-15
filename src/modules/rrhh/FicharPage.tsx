@@ -302,8 +302,41 @@ function Inicio({ empleado, onIrAFichar, onIrAHorarios, onIrAQuincena }: {
           .eq('empleado_id', empleado.id)
           .gte('fecha', hoy)
           .lte('fecha', ymd(hastaDt))
+        // Test: contar todas las filas de cronograma SIN filtro de empleado (sanity check)
+        const { count: cronoTotal } = await supabase
+          .from('cronograma')
+          .select('*', { count: 'exact', head: true })
+        // Test: count empleados
+        const { count: empTotal } = await supabase
+          .from('empleados')
+          .select('*', { count: 'exact', head: true })
+        // Fetch directo a Supabase REST bypasseando el cliente, con cache-buster
+        let directCount = -1
+        let directErr: string | null = null
+        try {
+          const supaUrl = import.meta.env.VITE_SUPABASE_URL as string
+          const supaKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string
+          const url = `${supaUrl}/rest/v1/cronograma?select=fecha&empleado_id=eq.${empleado.id}&fecha=gte.${hoy}&fecha=lte.${ymd(hastaDt)}&_cb=${Date.now()}`
+          const r = await fetch(url, {
+            headers: {
+              apikey: supaKey,
+              Authorization: `Bearer ${supaKey}`,
+              'Cache-Control': 'no-cache, no-store, must-revalidate',
+              Pragma: 'no-cache',
+            },
+            cache: 'no-store',
+          })
+          const arr = await r.json()
+          directCount = Array.isArray(arr) ? arr.length : -2
+        } catch (e: any) {
+          directErr = e?.message ?? String(e)
+        }
         const tz = Intl.DateTimeFormat().resolvedOptions().timeZone
         const offset = -ahoraDev.getTimezoneOffset() / 60
+        const supaUrl = (import.meta.env.VITE_SUPABASE_URL as string) || '(sin env)'
+        const supaHost = supaUrl.replace('https://', '').split('.')[0]
+        // @ts-ignore
+        const conn = (navigator as any).connection
         setDebugInfo(JSON.stringify({
           empleado_id: empleado.id,
           empleado_nombre: `${empleado.nombre} ${empleado.apellido}`,
@@ -317,6 +350,19 @@ function Inicio({ empleado, onIrAFichar, onIrAHorarios, onIrAQuincena }: {
           prox14_todos: todos?.length ?? 0,
           primera_pub: prox?.[0] ?? null,
           err: proxErr?.message ?? null,
+          // Sanity checks
+          supabase_project: supaHost,
+          crono_total_en_db: cronoTotal ?? null,
+          empleados_total_en_db: empTotal ?? null,
+          // Fetch directo con cache-bust
+          direct_fetch_count: directCount,
+          direct_fetch_err: directErr,
+          // Red
+          net_type: conn?.effectiveType ?? 'n/a',
+          net_downlink: conn?.downlink ?? 'n/a',
+          // Build / URL
+          url: typeof window !== 'undefined' ? window.location.href : '',
+          ua: typeof navigator !== 'undefined' ? navigator.userAgent.slice(0, 80) : '',
         }, null, 2))
       }
     })()
