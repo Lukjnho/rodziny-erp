@@ -96,3 +96,9 @@ export function quincenaDeFecha(fecha: string): Quincena {
   const d = parseYmd(fecha)
   return d.getDate() <= 14 ? 'q1' : 'q2'
 }
+
+// ── Normalizar texto para búsqueda: minúsculas y sin tildes ────────────────
+// Uso: normalizarTexto('Martín Peña') === 'martin pena'
+export function normalizarTexto(s: string): string {
+  return s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+}

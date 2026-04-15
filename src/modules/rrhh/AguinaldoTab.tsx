@@ -4,7 +4,7 @@ import { supabase } from '@/lib/supabase'
 import { formatARS, cn } from '@/lib/utils'
 import { KPICard } from '@/components/ui/KPICard'
 import type { Empleado } from './RRHHPage'
-import { parseYmd, ymd } from './utils'
+import { parseYmd, ymd, normalizarTexto } from './utils'
 
 interface SueldoMensual {
   empleado_id: string
@@ -152,8 +152,9 @@ export function AguinaldoTab() {
       if (filtroLocal === 'vedia' && !(e.local === 'vedia' || e.local === 'ambos')) return false
       if (filtroLocal === 'saavedra' && !(e.local === 'saavedra' || e.local === 'ambos')) return false
       if (busqueda.trim()) {
-        const q = busqueda.toLowerCase()
-        if (!`${e.nombre} ${e.apellido}`.toLowerCase().includes(q)) return false
+        const q = normalizarTexto(busqueda)
+        const txt = normalizarTexto(`${e.nombre} ${e.apellido} ${e.dni ?? ''}`)
+        if (!txt.includes(q)) return false
       }
       return true
     })
@@ -430,7 +431,7 @@ function ModalAguinaldo({
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
       <div className="bg-white rounded-xl shadow-2xl w-full max-w-md" onClick={(e) => e.stopPropagation()}>
         <div className="px-6 py-4 border-b border-gray-100">
           <h3 className="font-semibold text-gray-900">Aguinaldo {semestre === 1 ? '1° semestre' : '2° semestre'} {año}</h3>

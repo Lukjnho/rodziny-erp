@@ -7,6 +7,7 @@ import {
   MESES,
   diasDeQuincena,
   ultimoDiaDelMes,
+  normalizarTexto,
   type Quincena,
 } from './utils'
 import type { Liquidacion, Adelanto, Sancion } from './sueldos/tipos'
@@ -236,9 +237,9 @@ export function SueldosTab() {
       if (filtroLocal === 'vedia' && e.local !== 'vedia' && e.local !== 'ambos') return false
       if (filtroLocal === 'saavedra' && e.local !== 'saavedra' && e.local !== 'ambos') return false
       if (filtroLocal === 'ambos' && e.local !== 'ambos') return false
-      if (busqueda) {
-        const q = busqueda.toLowerCase()
-        const txt = `${e.nombre} ${e.apellido} ${e.dni}`.toLowerCase()
+      if (busqueda.trim()) {
+        const q = normalizarTexto(busqueda)
+        const txt = normalizarTexto(`${e.nombre} ${e.apellido} ${e.dni ?? ''}`)
         if (!txt.includes(q)) return false
       }
       return true

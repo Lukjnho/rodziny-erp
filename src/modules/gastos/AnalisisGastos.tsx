@@ -38,6 +38,33 @@ export function AnalisisGastos() {
     },
   })
 
+  // Ventas del año para ratio gastos/ventas
+  const { data: ventasAnio } = useQuery({
+    queryKey: ['ventas_para_ratio_gastos', año, local],
+    queryFn: async () => {
+      const PAGE = 1000
+      const allRows: { fecha: string; total_bruto: number; medio_pago: string | null }[] = []
+      let from = 0
+      while (true) {
+        let q = supabase
+          .from('ventas_tickets')
+          .select('fecha, total_bruto, medio_pago')
+          .gte('fecha', `${año}-01-01`)
+          .lte('fecha', `${año}-12-31`)
+          .neq('estado', 'Cancelada')
+          .neq('estado', 'Eliminada')
+          .range(from, from + PAGE - 1)
+        if (localActivo) q = q.eq('local', localActivo)
+        const { data } = await q
+        if (!data || data.length === 0) break
+        allRows.push(...data)
+        if (data.length < PAGE) break
+        from += PAGE
+      }
+      return allRows
+    },
+  })
+
   const { categorias, mesesConDatos } = useMemo(() => {
     const cats = new Map<string, CatData>()
     const mesesSet = new Set<string>()
@@ -94,6 +121,30 @@ export function AnalisisGastos() {
 
   const totalAcum = totalMes(totalGeneral, meses)
 
+  // ── KPIs: top categoría del año, último mes y variación ───────────────────
+  const mesesOrdenados = meses.filter((m) => (totalGeneral.get(m) ?? 0) > 0)
+  const ultimoMes      = mesesOrdenados[mesesOrdenados.length - 1]
+  const mesAnterior    = mesesOrdenados[mesesOrdenados.length - 2]
+  const gastoUltimo    = ultimoMes   ? (totalGeneral.get(ultimoMes)   ?? 0) : 0
+  const gastoAnterior  = mesAnterior ? (totalGeneral.get(mesAnterior) ?? 0) : 0
+  const variacionPct   = gastoAnterior > 0 ? ((gastoUltimo - gastoAnterior) / gastoAnterior) * 100 : null
+
+  const topCategoria = (() => {
+    let best: { nombre: string; total: number } | null = null
+    for (const [, cat] of categorias) {
+      const t = totalMes(cat.porMes, meses)
+      if (!best || t > best.total) best = { nombre: cat.nombre, total: t }
+    }
+    return best
+  })()
+  const topPct = totalAcum > 0 && topCategoria ? (topCategoria.total / totalAcum) * 100 : 0
+
+  // Ratio gastos/ventas (anual)
+  const ventasTotalesAnio = (ventasAnio ?? [])
+    .filter((t) => (t.medio_pago ?? '').toLowerCase() !== 'mercadopago lucas')
+    .reduce((s, t) => s + Number(t.total_bruto), 0)
+  const ratioGastosVentas = ventasTotalesAnio > 0 ? (totalAcum / ventasTotalesAnio) * 100 : null
+
   return (
     <div>
       <div className="flex items-center gap-4 mb-4 flex-wrap">
@@ -112,6 +163,61 @@ export function AnalisisGastos() {
           <button onClick={colapsarTodo} className="text-xs text-gray-500 hover:underline">Colapsar todo</button>
         </div>
       </div>
+
+      {/* KPIs del año */}
+      {!isLoading && categorias.size > 0 && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+          <div className="bg-white rounded-lg border border-gray-200 p-4">
+            <div className="text-xs text-gray-500">Gasto total del año</div>
+            <div className="text-lg font-semibold text-gray-900 tabular-nums">{formatARS(totalAcum)}</div>
+            <div className="text-xs text-gray-400 mt-0.5">{mesesOrdenados.length} {mesesOrdenados.length === 1 ? 'mes' : 'meses'} con datos</div>
+          </div>
+
+          <div className="bg-white rounded-lg border border-gray-200 p-4">
+            <div className="text-xs text-gray-500">Variación último mes</div>
+            <div className="text-lg font-semibold tabular-nums">
+              {variacionPct === null ? (
+                <span className="text-gray-400">—</span>
+              ) : (
+                <span className={variacionPct > 5 ? 'text-red-700' : variacionPct < -5 ? 'text-green-700' : 'text-gray-900'}>
+                  {variacionPct >= 0 ? '+' : ''}{variacionPct.toFixed(1)}%
+                </span>
+              )}
+            </div>
+            <div className="text-xs text-gray-400 mt-0.5">
+              {ultimoMes && mesAnterior
+                ? `${MESES_LABEL[parseInt(ultimoMes.substring(5, 7)) - 1]} vs ${MESES_LABEL[parseInt(mesAnterior.substring(5, 7)) - 1]}`
+                : 'necesita ≥2 meses cargados'}
+            </div>
+          </div>
+
+          <div className="bg-white rounded-lg border border-gray-200 p-4">
+            <div className="text-xs text-gray-500">Categoría #1</div>
+            <div className="text-lg font-semibold text-gray-900 truncate" title={topCategoria?.nombre ?? ''}>
+              {topCategoria?.nombre ?? '—'}
+            </div>
+            <div className="text-xs text-gray-400 mt-0.5">
+              {topCategoria ? `${formatARS(topCategoria.total)} · ${topPct.toFixed(1)}% del total` : ''}
+            </div>
+          </div>
+
+          <div className="bg-white rounded-lg border border-gray-200 p-4">
+            <div className="text-xs text-gray-500">Gastos / Ventas</div>
+            <div className="text-lg font-semibold tabular-nums">
+              {ratioGastosVentas === null ? (
+                <span className="text-gray-400">—</span>
+              ) : (
+                <span className={ratioGastosVentas > 90 ? 'text-red-700' : ratioGastosVentas > 75 ? 'text-amber-700' : 'text-green-700'}>
+                  {ratioGastosVentas.toFixed(1)}%
+                </span>
+              )}
+            </div>
+            <div className="text-xs text-gray-400 mt-0.5">
+              {ventasTotalesAnio > 0 ? `Ventas ${formatARS(ventasTotalesAnio)}` : 'sin ventas cargadas'}
+            </div>
+          </div>
+        </div>
+      )}
 
       {isLoading ? (
         <div className="flex items-center justify-center h-40 text-gray-400 text-sm">Cargando...</div>

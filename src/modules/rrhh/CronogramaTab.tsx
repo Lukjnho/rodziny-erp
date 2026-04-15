@@ -392,7 +392,7 @@ function ModalCelda({ empleado, fecha, existente, onClose, onSaved }: {
   const fechaLegible = new Date(fecha + 'T00:00:00').toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'long' })
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
       <div className="bg-white rounded-xl shadow-2xl w-full max-w-md" onClick={(e) => e.stopPropagation()}>
         <div className="px-5 py-3 border-b border-gray-100">
           <h3 className="font-semibold text-gray-900 text-sm">{empleado.apellido}, {empleado.nombre}</h3>
@@ -587,7 +587,7 @@ function ModalCopia({ modo, fechaDesde, fechaHasta, empleados, onClose, onCopied
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
       <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
         <div className="px-5 py-3 border-b border-gray-100">
           <h3 className="font-semibold text-gray-900 text-sm">{titulos[modo]}</h3>

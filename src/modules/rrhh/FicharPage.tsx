@@ -298,8 +298,10 @@ function Inicio({ empleado, onIrAFichar, onIrAHorarios, onIrAQuincena }: {
         ) : (
           <p className="text-sm text-gray-500">No tenés turno asignado hoy</p>
         )}
-        {!crono?.publicado && crono && (
-          <p className="text-[11px] text-amber-700 mt-1">Borrador (sin publicar)</p>
+        {crono && !crono.publicado && (
+          <div className="mt-2 bg-amber-50 border border-amber-200 rounded px-2 py-1.5 text-[11px] text-amber-800">
+            ⚠️ Tu horario todavía está en <strong>borrador</strong> (sin publicar por el encargado). Podés fichar igual, pero sin horario de referencia.
+          </div>
         )}
       </div>
 
@@ -462,7 +464,7 @@ function Fichando({ empleado, onCancelar, onListo }: {
       // Cronograma del día (para diferencia)
       const { data: crono } = await supabase
         .from('cronograma')
-        .select('hora_entrada, hora_salida, es_franco')
+        .select('hora_entrada, hora_salida, es_franco, publicado')
         .eq('empleado_id', empleado.id)
         .eq('fecha', fecha)
         .maybeSingle()
@@ -473,20 +475,22 @@ function Fichando({ empleado, onCancelar, onListo }: {
       // Warnings (no bloquean)
       let w: string | null = null
       if (crono?.es_franco) w = 'Hoy figurás de franco. Quedará registrado igual.'
+      else if (crono && !crono.publicado) w = 'Tu horario de hoy está en borrador (sin publicar). Queda registrado igual.'
       else if (!horaProgramada) w = 'No tenés horario asignado para hoy.'
       else if (minutosDif !== null && Math.abs(minutosDif) > TOLERANCIA_MIN)
         w = `Estás ${minutosDif > 0 ? 'tarde' : 'antes'} ${Math.abs(minutosDif)} min vs tu horario.`
       setWarning(w)
 
-      // Subir foto comprimida
+      // Subir foto comprimida (path con nonce para evitar colisiones en ms idénticos)
       const comprimida = await comprimirImagen(fotoBlob)
-      const path = `${empleado.id}/${fecha}/${ahora.getTime()}_${tipo}.jpg`
+      const nonce = Math.random().toString(36).slice(2, 8)
+      const path = `${empleado.id}/${fecha}/${ahora.getTime()}_${nonce}_${tipo}.jpg`
       const { error: upErr } = await supabase.storage
         .from('fichadas-fotos')
         .upload(path, comprimida, { contentType: 'image/jpeg', upsert: false })
       if (upErr) throw upErr
 
-      // Insertar fichada
+      // Insertar fichada — si falla, borrar la foto que quedó huérfana
       const { error: insErr } = await supabase.from('fichadas').insert({
         empleado_id: empleado.id,
         fecha,
@@ -499,7 +503,10 @@ function Fichando({ empleado, onCancelar, onListo }: {
         minutos_diferencia: minutosDif,
         origen: 'pwa',
       })
-      if (insErr) throw insErr
+      if (insErr) {
+        await supabase.storage.from('fichadas-fotos').remove([path]).catch(() => {})
+        throw insErr
+      }
 
       setResultado({ tipo, minutos: minutosDif })
       setPaso('ok')

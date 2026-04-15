@@ -2,21 +2,25 @@ import { NavLink } from 'react-router-dom'
 import { cn } from '@/lib/utils'
 import { useAuth, type Modulo } from '@/lib/auth'
 
-const NAV: { to: string; label: string; icon: string; modulo: Modulo }[] = [
-  { to: '/',               label: 'Dashboard',      icon: '▦',  modulo: 'dashboard' },
-  { to: '/ventas',         label: 'Ventas',         icon: '📈', modulo: 'ventas' },
-  { to: '/finanzas',       label: 'Finanzas',       icon: '💰', modulo: 'finanzas' },
-  { to: '/edr',            label: 'EdR',            icon: '📋', modulo: 'edr' },
-  { to: '/gastos',         label: 'Gastos',         icon: '🧾', modulo: 'gastos' },
-  { to: '/amortizaciones', label: 'Amortizaciones', icon: '📉', modulo: 'amortizaciones' },
-  { to: '/rrhh',           label: 'RRHH',           icon: '👥', modulo: 'rrhh' },
-  { to: '/compras',        label: 'Compras',        icon: '🛒', modulo: 'compras' },
-  { to: '/usuarios',       label: 'Usuarios',       icon: '🔑', modulo: 'usuarios' },
+// Modulos que viven dentro del tab de Finanzas. Si el usuario tiene permiso
+// a cualquiera de estos, mostramos el item Finanzas en el sidebar.
+const MODULOS_FINANZAS: Modulo[] = ['finanzas', 'ventas', 'edr', 'gastos', 'amortizaciones']
+
+const NAV: { to: string; label: string; icon: string; modulo: Modulo | 'finanzas-grupo' }[] = [
+  { to: '/',          label: 'Dashboard', icon: '▦',  modulo: 'dashboard' },
+  { to: '/finanzas',  label: 'Finanzas',  icon: '💰', modulo: 'finanzas-grupo' },
+  { to: '/rrhh',      label: 'RRHH',      icon: '👥', modulo: 'rrhh' },
+  { to: '/compras',   label: 'Compras',   icon: '🛒', modulo: 'compras' },
+  { to: '/usuarios',  label: 'Usuarios',  icon: '🔑', modulo: 'usuarios' },
 ]
 
 export function Sidebar() {
   const { perfil, signOut, tienePermiso } = useAuth()
-  const items = NAV.filter((n) => tienePermiso(n.modulo))
+  const items = NAV.filter((n) =>
+    n.modulo === 'finanzas-grupo'
+      ? MODULOS_FINANZAS.some((m) => tienePermiso(m))
+      : tienePermiso(n.modulo)
+  )
 
   const iniciales = (perfil?.nombre || '?').slice(0, 1).toUpperCase()
   const rolLabel = perfil?.es_admin ? 'Administrador' : 'Usuario'

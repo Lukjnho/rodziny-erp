@@ -180,7 +180,7 @@ function formatValor(v: number, formato?: Formato): string {
 }
 
 // ── componente ────────────────────────────────────────────────────────────────
-export function EstadoResultados() {
+export function EstadoResultados({ embedded = false }: { embedded?: boolean } = {}) {
   const [año,       setAño]       = useState(() => String(new Date().getFullYear()))
   const [localEdr,  setLocalEdr]  = useState<'vedia' | 'saavedra' | 'consolidado'>('vedia')
   const locales: ('vedia' | 'saavedra')[] = localEdr === 'consolidado' ? ['vedia', 'saavedra'] : [localEdr]
@@ -476,8 +476,8 @@ export function EstadoResultados() {
   function cancelar() { setEditando(null) }
 
   // ── render ─────────────────────────────────────────────────────────────────
-  return (
-    <PageContainer title="Estado de Resultados" subtitle="Mensual por local — edición inline">
+  const inner = (
+    <>
       {/* Filtros */}
       <div className="flex items-center gap-4 mb-6 flex-wrap">
         <LocalSelector
@@ -655,6 +655,13 @@ export function EstadoResultados() {
         Cortesías y descuentos son informativos (ya incluidos en la venta bruta por Fudo).
         El resto de las celdas (azules) son editables — hacé clic para ingresar el valor.
       </p>
+    </>
+  )
+
+  if (embedded) return inner
+  return (
+    <PageContainer title="Estado de Resultados" subtitle="Mensual por local — edición inline">
+      {inner}
     </PageContainer>
   )
 }

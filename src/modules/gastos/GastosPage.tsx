@@ -13,11 +13,11 @@ const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: 'categorias', label: 'Categorías', icon: '🏷' },
 ]
 
-export function GastosPage() {
+export function GastosPage({ embedded = false }: { embedded?: boolean } = {}) {
   const [tab, setTab] = useState<Tab>('listado')
 
-  return (
-    <PageContainer title="Gastos" subtitle="Compras, pagos y análisis">
+  const inner = (
+    <>
       <div className="flex gap-1 border-b border-gray-200 mb-5">
         {TABS.map((t) => (
           <button
@@ -38,6 +38,13 @@ export function GastosPage() {
       {tab === 'listado'    && <ListadoGastos />}
       {tab === 'analisis'   && <AnalisisGastos />}
       {tab === 'categorias' && <CategoriasPanel />}
+    </>
+  )
+
+  if (embedded) return inner
+  return (
+    <PageContainer title="Gastos" subtitle="Compras, pagos y análisis">
+      {inner}
     </PageContainer>
   )
 }

@@ -5,7 +5,7 @@ import { useAuth } from '@/lib/auth'
 import { cn } from '@/lib/utils'
 import { KPICard } from '@/components/ui/KPICard'
 import type { Empleado } from './RRHHPage'
-import { ymd, parseYmd, MESES } from './utils'
+import { ymd, parseYmd, MESES, normalizarTexto } from './utils'
 
 type FiltroLocal = 'todos' | 'vedia' | 'saavedra'
 type EstadoVac = 'pendiente' | 'aprobada' | 'tomada' | 'rechazada'
@@ -205,8 +205,8 @@ export function VacacionesTab() {
       if (filtroLocal === 'vedia' && !(e.local === 'vedia' || e.local === 'ambos')) return false
       if (filtroLocal === 'saavedra' && !(e.local === 'saavedra' || e.local === 'ambos')) return false
       if (busqueda.trim()) {
-        const q = busqueda.toLowerCase()
-        const txt = `${e.nombre} ${e.apellido}`.toLowerCase()
+        const q = normalizarTexto(busqueda)
+        const txt = normalizarTexto(`${e.nombre} ${e.apellido} ${e.dni ?? ''}`)
         if (!txt.includes(q)) return false
       }
       return true
@@ -538,7 +538,7 @@ function ModalVacacion({
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
       <div className="bg-white rounded-xl shadow-2xl w-full max-w-md" onClick={(e) => e.stopPropagation()}>
         <div className="px-6 py-4 border-b border-gray-100">
           <h3 className="font-semibold text-gray-900">

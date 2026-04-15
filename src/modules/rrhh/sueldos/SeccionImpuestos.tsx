@@ -66,7 +66,7 @@ export function SeccionImpuestos({ periodoMes }: Props) {
   }
 
   const verPdf = async (path: string) => {
-    const { data, error } = await supabase.storage.from(BUCKET).createSignedUrl(path, 60)
+    const { data, error } = await supabase.storage.from(BUCKET).createSignedUrl(path, 300)
     if (error) {
       window.alert(`Error al generar link: ${error.message}`)
       return

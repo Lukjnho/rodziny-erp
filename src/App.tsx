@@ -2,10 +2,6 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { FinanzasPage } from '@/modules/finanzas/FinanzasPage'
-import { VentasPage } from '@/modules/ventas/VentasPage'
-import { EstadoResultados } from '@/modules/finanzas/edr/EstadoResultados'
-import { GastosPage } from '@/modules/gastos/GastosPage'
-import { AmortizacionesPage } from '@/modules/finanzas/amortizaciones/AmortizacionesPage'
 import { ComprasPage } from '@/modules/compras/ComprasPage'
 import { DepositoPage } from '@/modules/compras/DepositoPage'
 import { RecepcionPage } from '@/modules/compras/RecepcionPage'
@@ -52,6 +48,15 @@ function Ruta({ modulo, children }: { modulo: Modulo; children: ReactNode }) {
   return tienePermiso(modulo) ? <>{children}</> : <SinAcceso />
 }
 
+// Modulos que viven dentro del tab Finanzas — el acceso a /finanzas se
+// concede si el usuario tiene permiso a cualquiera de estos.
+const MODULOS_FINANZAS: Modulo[] = ['finanzas', 'ventas', 'edr', 'gastos', 'amortizaciones']
+
+function RutaFinanzas({ children }: { children: ReactNode }) {
+  const { tienePermiso } = useAuth()
+  return MODULOS_FINANZAS.some((m) => tienePermiso(m)) ? <>{children}</> : <SinAcceso />
+}
+
 function AppInterna() {
   const { user, perfil, cargando, tienePermiso } = useAuth()
 
@@ -82,13 +87,10 @@ function AppInterna() {
   }
 
   // Primera ruta con acceso para redirigir el '/' cuando Dashboard no esté habilitado
+  const tieneAlgunFinanzas = MODULOS_FINANZAS.some((m) => tienePermiso(m))
   const primeraRutaPermitida =
     tienePermiso('dashboard') ? '/' :
-    tienePermiso('ventas') ? '/ventas' :
-    tienePermiso('finanzas') ? '/finanzas' :
-    tienePermiso('edr') ? '/edr' :
-    tienePermiso('gastos') ? '/gastos' :
-    tienePermiso('amortizaciones') ? '/amortizaciones' :
+    tieneAlgunFinanzas ? '/finanzas' :
     tienePermiso('rrhh') ? '/rrhh' :
     tienePermiso('compras') ? '/compras' :
     tienePermiso('usuarios') ? '/usuarios' :
@@ -100,11 +102,12 @@ function AppInterna() {
       <div className="flex-1">
         <Routes>
           <Route path="/"               element={tienePermiso('dashboard') ? <Placeholder title="Dashboard" /> : (primeraRutaPermitida && primeraRutaPermitida !== '/' ? <Navigate to={primeraRutaPermitida} replace /> : <SinAcceso />)} />
-          <Route path="/ventas"         element={<Ruta modulo="ventas"><VentasPage /></Ruta>} />
-          <Route path="/finanzas"       element={<Ruta modulo="finanzas"><FinanzasPage /></Ruta>} />
-          <Route path="/edr"            element={<Ruta modulo="edr"><EstadoResultados /></Ruta>} />
-          <Route path="/gastos"         element={<Ruta modulo="gastos"><GastosPage /></Ruta>} />
-          <Route path="/amortizaciones" element={<Ruta modulo="amortizaciones"><AmortizacionesPage /></Ruta>} />
+          <Route path="/finanzas"       element={<RutaFinanzas><FinanzasPage /></RutaFinanzas>} />
+          {/* Rutas legacy: ahora viven como tabs adentro de /finanzas */}
+          <Route path="/ventas"         element={<Navigate to="/finanzas" replace />} />
+          <Route path="/edr"            element={<Navigate to="/finanzas" replace />} />
+          <Route path="/gastos"         element={<Navigate to="/finanzas" replace />} />
+          <Route path="/amortizaciones" element={<Navigate to="/finanzas" replace />} />
           <Route path="/rrhh"           element={<Ruta modulo="rrhh"><RRHHPage /></Ruta>} />
           <Route path="/compras"        element={<Ruta modulo="compras"><ComprasPage /></Ruta>} />
           <Route path="/usuarios"       element={<Ruta modulo="usuarios"><UsuariosPage /></Ruta>} />

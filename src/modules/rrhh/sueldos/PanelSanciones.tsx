@@ -52,7 +52,7 @@ export function PanelSanciones({ empleado, periodo, sanciones, onClose }: Props)
   const total = sanciones.reduce((s, a) => s + Number(a.monto), 0)
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-end bg-black/30" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-start justify-end bg-black/30">
       <div
         className="mt-0 h-full w-full max-w-md bg-white shadow-2xl flex flex-col"
         onClick={(e) => e.stopPropagation()}

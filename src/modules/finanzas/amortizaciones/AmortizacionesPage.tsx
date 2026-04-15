@@ -25,7 +25,7 @@ const VIDA_UTIL_DEFAULT: Record<string, number> = {
   'Utensilios varios': 24,
 }
 
-export function AmortizacionesPage() {
+export function AmortizacionesPage({ embedded = false }: { embedded?: boolean } = {}) {
   const [año, setAño]           = useState(() => String(new Date().getFullYear()))
   const [local, setLocal]       = useState<'vedia' | 'saavedra'>('vedia')
   const [editando, setEditando] = useState<string | null>(null) // gasto_id
@@ -132,8 +132,8 @@ export function AmortizacionesPage() {
     return totales
   }, [meses, amortizaciones])
 
-  return (
-    <PageContainer title="Amortizaciones" subtitle="Inversiones y depreciación mensual">
+  const inner = (
+    <>
       {/* Filtros */}
       <div className="flex items-center gap-4 mb-6 flex-wrap">
         <LocalSelector value={local} onChange={(v) => setLocal(v as 'vedia' | 'saavedra')} />
@@ -338,6 +338,13 @@ export function AmortizacionesPage() {
       <p className="mt-3 text-xs text-gray-400">
         Las amortizaciones se reflejan automáticamente en la línea "Amortizaciones" del Estado de Resultados.
       </p>
+    </>
+  )
+
+  if (embedded) return inner
+  return (
+    <PageContainer title="Amortizaciones" subtitle="Inversiones y depreciación mensual">
+      {inner}
     </PageContainer>
   )
 }

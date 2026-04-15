@@ -9,6 +9,7 @@ import {
   diasDeQuincena,
   diffMinutosVsHorario,
   etiquetaDia,
+  normalizarTexto,
   parseYmd,
   ultimoDiaDelMes,
   ymd,
@@ -147,9 +148,9 @@ export function AsistenciaTab() {
       if (filtroLocal === 'vedia' && e.local !== 'vedia' && e.local !== 'ambos') return false
       if (filtroLocal === 'saavedra' && e.local !== 'saavedra' && e.local !== 'ambos') return false
       if (filtroLocal === 'ambos' && e.local !== 'ambos') return false
-      if (busqueda) {
-        const q = busqueda.toLowerCase()
-        const txt = `${e.nombre} ${e.apellido} ${e.dni}`.toLowerCase()
+      if (busqueda.trim()) {
+        const q = normalizarTexto(busqueda)
+        const txt = normalizarTexto(`${e.nombre} ${e.apellido} ${e.dni ?? ''}`)
         if (!txt.includes(q)) return false
       }
       return true
@@ -527,8 +528,14 @@ function FilaFichada({ fichada, onEdit, onCambio }: {
 
   async function cargarFoto() {
     if (!fichada.foto_path || fotoUrl) { setVerFoto(true); return }
-    const { data } = await supabase.storage.from('fichadas-fotos').createSignedUrl(fichada.foto_path, 60)
-    if (data?.signedUrl) { setFotoUrl(data.signedUrl); setVerFoto(true) }
+    const { data, error } = await supabase.storage.from('fichadas-fotos').createSignedUrl(fichada.foto_path, 300)
+    if (error || !data?.signedUrl) {
+      console.error('[ver foto] createSignedUrl falló', { error, foto_path: fichada.foto_path })
+      alert(`No se pudo cargar la foto:\n${error?.message ?? 'sin detalle'}\n\nPath: ${fichada.foto_path}`)
+      return
+    }
+    setFotoUrl(data.signedUrl)
+    setVerFoto(true)
   }
 
   async function eliminar() {
@@ -634,7 +641,7 @@ function ModalEditarFichada({
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
       <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-5" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-base font-semibold text-gray-900">Editar fichada</h3>
@@ -737,7 +744,7 @@ function ModalFichajeManual({
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
       <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-5" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-base font-semibold text-gray-900">Fichaje manual</h3>

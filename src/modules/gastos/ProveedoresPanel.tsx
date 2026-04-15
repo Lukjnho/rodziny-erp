@@ -274,7 +274,7 @@ export function ProveedoresPanel() {
 
       {/* Modal edición */}
       {editando && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => !guardando && setEditando(null)}>
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-lg w-full max-w-2xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <div className="px-5 py-4 border-b border-gray-200 flex items-center justify-between">
               <h3 className="font-semibold text-gray-900">{editando.id ? 'Editar proveedor' : 'Nuevo proveedor'}</h3>

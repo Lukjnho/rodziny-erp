@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { LocalSelector } from '@/components/ui/LocalSelector'
@@ -30,7 +30,7 @@ type Tab   = 'resumen' | 'productos' | 'horario' | 'medios'
 type Vista = 'mensual' | 'anual'
 
 // ── componente ────────────────────────────────────────────────────────────────
-export function VentasPage() {
+export function VentasPage({ embedded = false }: { embedded?: boolean } = {}) {
   const [local,  setLocal]  = useState<'ambos' | 'vedia' | 'saavedra'>('vedia')
   const [tab,    setTab]    = useState<Tab>('resumen')
   const [vista,  setVista]  = useState<Vista>('mensual')
@@ -107,6 +107,46 @@ export function VentasPage() {
     },
   })
 
+  // ── KPI: mes anterior (solo en vista mensual, para delta %) ───────────────
+  const periodoAnterior = useMemo(() => {
+    if (esAnual) return null
+    const [y, m] = periodo.split('-').map(Number)
+    const dt = new Date(y, m - 2, 1)
+    return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}`
+  }, [esAnual, periodo])
+
+  const { data: ticketsPrev } = useQuery({
+    queryKey: ['ventas_tickets_prev', periodoAnterior, local],
+    enabled: !!periodoAnterior,
+    queryFn: async () => {
+      if (!periodoAnterior) return [] as Ticket[]
+      const [y, m] = periodoAnterior.split('-').map(Number)
+      const ultimo = new Date(y, m, 0).getDate()
+      const desde = `${periodoAnterior}-01`
+      const hasta = `${periodoAnterior}-${String(ultimo).padStart(2, '0')}`
+      const PAGE = 1000
+      const allRows: Ticket[] = []
+      let from = 0
+      while (true) {
+        let q = supabase
+          .from('ventas_tickets')
+          .select('fecha, hora, total_bruto, iva, es_fiscal, estado, medio_pago')
+          .gte('fecha', desde)
+          .lte('fecha', hasta)
+          .neq('estado', 'Cancelada')
+          .neq('estado', 'Eliminada')
+          .range(from, from + PAGE - 1)
+        if (local !== 'ambos') q = q.eq('local', local)
+        const { data } = await q
+        if (!data || data.length === 0) break
+        allRows.push(...(data as Ticket[]))
+        if (data.length < PAGE) break
+        from += PAGE
+      }
+      return allRows
+    },
+  })
+
   const { data: pagos, isLoading: loadingPagos, error: errPagos } = useQuery({
     queryKey: ['ventas_pagos', vista, esAnual ? año : periodo, local],
     queryFn: async () => {
@@ -148,6 +188,27 @@ export function VentasPage() {
   const totalIVA       = Math.round(ticketsFiltrados.reduce((s, t) => s + Number(t.iva ?? 0), 0) * 100) / 100
   const totalNeto      = Math.round((totalVentas - totalIVA) * 100) / 100
   const ticketPromedio = ticketsCobrados.length > 0 ? Math.round(totalVentas / ticketsCobrados.length) : 0
+
+  // ── Deltas vs mes anterior (solo en mensual) ──────────────────────────────
+  const prevFiltrados = (ticketsPrev ?? []).filter(
+    (t) => (t.medio_pago ?? '').toLowerCase() !== 'mercadopago lucas'
+  )
+  const prevCobrados = prevFiltrados.filter((t) => Number(t.total_bruto) > 0)
+  const prevTickets  = prevFiltrados.length
+  const prevVentas   = prevFiltrados.reduce((s, t) => s + Number(t.total_bruto), 0)
+  const prevIVA      = prevFiltrados.reduce((s, t) => s + Number(t.iva ?? 0), 0)
+  const prevNeto     = prevVentas - prevIVA
+  const prevTicketProm = prevCobrados.length > 0 ? prevVentas / prevCobrados.length : 0
+
+  function delta(actual: number, anterior: number): number | undefined {
+    if (esAnual) return undefined
+    if (!periodoAnterior || anterior <= 0) return undefined
+    return ((actual - anterior) / anterior) * 100
+  }
+  const deltaTickets = delta(totalTickets, prevTickets)
+  const deltaVentas  = delta(totalVentas, prevVentas)
+  const deltaNeto    = delta(totalNeto, prevNeto)
+  const deltaTicket  = delta(ticketPromedio, prevTicketProm)
 
   // ── Evolución mensual (solo vista anual) ──────────────────────────────────
   const evolucionMensual = (() => {
@@ -241,8 +302,8 @@ export function VentasPage() {
     .map(([name, value]) => ({ name, value, pctLabel: pct(value, totalMedios) }))
 
   // ── render ────────────────────────────────────────────────────────────────
-  return (
-    <PageContainer title="Ventas" subtitle="Análisis de ventas por período">
+  const inner = (
+    <>
 
       {/* Local selector */}
       <div className="flex items-center gap-4 mb-4">
@@ -322,10 +383,10 @@ export function VentasPage() {
         <div className="space-y-6">
           {/* KPIs */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <KPICard label="Tickets"            value={totalTickets.toLocaleString('es-AR')} color="blue"    loading={loading} />
-            <KPICard label="Venta bruta"        value={formatARS(totalVentas)}               color="green"   loading={loading} />
-            <KPICard label="Venta neta (s/IVA)" value={formatARS(totalNeto)}                 color="neutral" loading={loading} />
-            <KPICard label="Ticket promedio"    value={formatARS(ticketPromedio)}            color="yellow"  loading={loading} />
+            <KPICard label="Tickets"            value={totalTickets.toLocaleString('es-AR')} change={deltaTickets} color="blue"    loading={loading} />
+            <KPICard label="Venta bruta"        value={formatARS(totalVentas)}               change={deltaVentas}  color="green"   loading={loading} />
+            <KPICard label="Venta neta (s/IVA)" value={formatARS(totalNeto)}                 change={deltaNeto}    color="neutral" loading={loading} />
+            <KPICard label="Ticket promedio"    value={formatARS(ticketPromedio)}            change={deltaTicket}  color="yellow"  loading={loading} />
           </div>
 
           {/* Evolución mensual (solo vista anual) */}
@@ -708,6 +769,13 @@ export function VentasPage() {
           )}
         </div>
       )}
+    </>
+  )
+
+  if (embedded) return inner
+  return (
+    <PageContainer title="Ventas" subtitle="Análisis de ventas por período">
+      {inner}
     </PageContainer>
   )
 }
