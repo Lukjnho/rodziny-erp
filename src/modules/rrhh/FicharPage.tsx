@@ -270,7 +270,10 @@ function Inicio({ empleado, onIrAFichar, onIrAHorarios, onIrAQuincena }: {
 }) {
   const [crono, setCrono] = useState<Cronograma | null>(null)
   const [fichadasHoy, setFichadasHoy] = useState<Fichada[]>([])
-  const hoy = ymd(new Date())
+  const [debugInfo, setDebugInfo] = useState<string>('')
+  const ahoraDev = new Date()
+  const hoy = ymd(ahoraDev)
+  const debugOn = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('debug') === '1'
 
   useEffect(() => {
     (async () => {
@@ -280,8 +283,44 @@ function Inicio({ empleado, onIrAFichar, onIrAHorarios, onIrAQuincena }: {
       ])
       setCrono((c as Cronograma) || null)
       setFichadasHoy((f as Fichada[]) || [])
+
+      if (debugOn) {
+        // Traer los próximos 14 días publicados para diagnóstico
+        const hastaDt = new Date(ahoraDev); hastaDt.setDate(hastaDt.getDate() + 14)
+        const { data: prox, error: proxErr } = await supabase
+          .from('cronograma')
+          .select('fecha, hora_entrada, hora_salida, publicado')
+          .eq('empleado_id', empleado.id)
+          .eq('publicado', true)
+          .gte('fecha', hoy)
+          .lte('fecha', ymd(hastaDt))
+          .order('fecha')
+        // Traer TODOS los días (sin filtro publicado) para comparar
+        const { data: todos } = await supabase
+          .from('cronograma')
+          .select('fecha, publicado')
+          .eq('empleado_id', empleado.id)
+          .gte('fecha', hoy)
+          .lte('fecha', ymd(hastaDt))
+        const tz = Intl.DateTimeFormat().resolvedOptions().timeZone
+        const offset = -ahoraDev.getTimezoneOffset() / 60
+        setDebugInfo(JSON.stringify({
+          empleado_id: empleado.id,
+          empleado_nombre: `${empleado.nombre} ${empleado.apellido}`,
+          dni: empleado.dni,
+          hoy_device: hoy,
+          ahora_iso: ahoraDev.toISOString(),
+          tz,
+          offset_hs: offset,
+          crono_hoy: c ? { fecha: (c as any).fecha, he: (c as any).hora_entrada, hs: (c as any).hora_salida, pub: (c as any).publicado } : null,
+          prox14_pub: prox?.length ?? 0,
+          prox14_todos: todos?.length ?? 0,
+          primera_pub: prox?.[0] ?? null,
+          err: proxErr?.message ?? null,
+        }, null, 2))
+      }
     })()
-  }, [empleado.id, hoy])
+  }, [empleado.id, hoy, debugOn])
 
   const proximoTipo: 'entrada' | 'salida' = fichadasHoy.length % 2 === 0 ? 'entrada' : 'salida'
 
@@ -332,6 +371,12 @@ function Inicio({ empleado, onIrAFichar, onIrAHorarios, onIrAQuincena }: {
           Mi quincena
         </button>
       </div>
+
+      {debugOn && debugInfo && (
+        <pre className="mt-4 p-2 bg-gray-900 text-green-300 text-[10px] rounded overflow-x-auto whitespace-pre-wrap break-all">
+          {debugInfo}
+        </pre>
+      )}
     </>
   )
 }
