@@ -33,6 +33,19 @@ export interface Sancion {
   created_at: string
 }
 
+// Descuentos eventuales: días sin goce, licencias no remuneradas, ausencias
+// justificadas que descuentan, etc. Estructura igual a Sancion pero separado
+// conceptualmente — no es una penalización, es una deducción por día no trabajado.
+export interface Descuento {
+  id: string
+  empleado_id: string
+  periodo: string
+  fecha: string
+  monto: number
+  motivo: string
+  created_at: string
+}
+
 export interface ImpuestoMensual {
   id: string
   periodo: string // 'YYYY-MM'

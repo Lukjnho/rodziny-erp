@@ -10,14 +10,15 @@ import {
   normalizarTexto,
   type Quincena,
 } from './utils'
-import type { Liquidacion, Adelanto, Sancion } from './sueldos/tipos'
+import type { Liquidacion, Adelanto, Sancion, Descuento } from './sueldos/tipos'
 import { periodoQuincena, periodoMes } from './sueldos/tipos'
 import { PanelAdelantos } from './sueldos/PanelAdelantos'
 import { PanelSanciones } from './sueldos/PanelSanciones'
+import { PanelDescuentos } from './sueldos/PanelDescuentos'
 import { SeccionImpuestos } from './sueldos/SeccionImpuestos'
 
 type FiltroLocal = 'todos' | 'vedia' | 'saavedra' | 'ambos'
-type PanelEstado = { tipo: 'adelantos' | 'sanciones'; empleadoId: string } | null
+type PanelEstado = { tipo: 'adelantos' | 'sanciones' | 'descuentos'; empleadoId: string } | null
 
 interface Cronograma {
   id: string
@@ -178,6 +179,18 @@ export function SueldosTab() {
     },
   })
 
+  const { data: descuentos } = useQuery({
+    queryKey: ['descuentos', periodoQ1, periodoQ2],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('descuentos')
+        .select('*')
+        .in('periodo', [periodoQ1, periodoQ2])
+      if (error) throw error
+      return data as Descuento[]
+    },
+  })
+
   // ── Mutaciones ────────────────────────────────────────────────────────────
   const upsertLiquidacion = useMutation({
     mutationFn: async (payload: {
@@ -259,8 +272,10 @@ export function SueldosTab() {
     deduccionPresentismo: number
     adelantosEmp: Adelanto[]
     sancionesEmp: Sancion[]
+    descuentosEmp: Descuento[]
     adelantosMonto: number
     sancionesMonto: number
+    descuentosMonto: number
     total: number
     pagado: boolean
   }
@@ -311,10 +326,13 @@ export function SueldosTab() {
         adelantos?.filter((a) => a.empleado_id === emp.id && periodosRelevantes.includes(a.periodo)) ?? []
       const sancionesEmp =
         sanciones?.filter((s) => s.empleado_id === emp.id && periodosRelevantes.includes(s.periodo)) ?? []
+      const descuentosEmp =
+        descuentos?.filter((d) => d.empleado_id === emp.id && periodosRelevantes.includes(d.periodo)) ?? []
       const adelantosMonto = adelantosEmp.reduce((s, a) => s + Number(a.monto), 0)
       const sancionesMonto = sancionesEmp.reduce((s, a) => s + Number(a.monto), 0)
+      const descuentosMonto = descuentosEmp.reduce((s, d) => s + Number(d.monto), 0)
 
-      const total = base - deduccionPresentismo - adelantosMonto - sancionesMonto
+      const total = base - deduccionPresentismo - adelantosMonto - sancionesMonto - descuentosMonto
 
       return {
         empleado: emp,
@@ -328,8 +346,10 @@ export function SueldosTab() {
         deduccionPresentismo,
         adelantosEmp,
         sancionesEmp,
+        descuentosEmp,
         adelantosMonto,
         sancionesMonto,
+        descuentosMonto,
         total,
         pagado: !!liquidacion?.pagado,
       }
@@ -341,6 +361,7 @@ export function SueldosTab() {
     liquidaciones,
     adelantos,
     sanciones,
+    descuentos,
     quincena,
     periodoActual,
     periodoQ1,
@@ -356,9 +377,10 @@ export function SueldosTab() {
     const totalAPagar = filasAPagar.reduce((s, f) => s + f.total, 0)
     const totalAdelantos = filas.reduce((s, f) => s + f.adelantosMonto, 0)
     const totalSanciones = filas.reduce((s, f) => s + f.sancionesMonto, 0)
+    const totalDescuentos = filas.reduce((s, f) => s + f.descuentosMonto, 0)
     const pagados = filasAPagar.filter((f) => f.pagado).length
     const totalEmpleados = filasAPagar.length
-    return { totalAPagar, totalAdelantos, totalSanciones, pagados, totalEmpleados }
+    return { totalAPagar, totalAdelantos, totalSanciones, totalDescuentos, pagados, totalEmpleados }
   }, [filas])
 
   // ── Navegación ───────────────────────────────────────────────────────────
@@ -421,11 +443,12 @@ export function SueldosTab() {
       </div>
 
       {/* ── KPIs ──────────────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
         <KpiMini label="Total a pagar" value={formatARS(kpis.totalAPagar)} color="green" />
         <KpiMini label="Pagados" value={`${kpis.pagados} / ${kpis.totalEmpleados}`} color={kpis.pagados === kpis.totalEmpleados ? 'green' : 'amber'} />
         <KpiMini label="Adelantos" value={formatARS(kpis.totalAdelantos)} color="gray" />
         <KpiMini label="Sanciones" value={formatARS(kpis.totalSanciones)} color="red" />
+        <KpiMini label="Descuentos" value={formatARS(kpis.totalDescuentos)} color="amber" />
       </div>
 
       {/* ── Tabla de liquidación ──────────────────────────────────────────── */}
@@ -440,6 +463,7 @@ export function SueldosTab() {
                 <th className="text-center px-2 py-2 font-semibold">Presentismo</th>
                 <th className="text-right px-2 py-2 font-semibold">Adelantos</th>
                 <th className="text-right px-2 py-2 font-semibold">Sanciones</th>
+                <th className="text-right px-2 py-2 font-semibold" title="Días sin goce, licencias no remuneradas, etc.">Descuentos</th>
                 <th className="text-right px-2 py-2 font-semibold">Total</th>
                 <th className="text-center px-2 py-2 font-semibold">Pagado</th>
               </tr>
@@ -447,7 +471,7 @@ export function SueldosTab() {
             <tbody className="divide-y divide-gray-100">
               {filas.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="px-4 py-8 text-center text-xs text-gray-400">
+                  <td colSpan={9} className="px-4 py-8 text-center text-xs text-gray-400">
                     {empleados ? 'Sin empleados para mostrar' : 'Cargando...'}
                   </td>
                 </tr>
@@ -482,6 +506,9 @@ export function SueldosTab() {
                   onAbrirSanciones={() =>
                     setPanel({ tipo: 'sanciones', empleadoId: fila.empleado.id })
                   }
+                  onAbrirDescuentos={() =>
+                    setPanel({ tipo: 'descuentos', empleadoId: fila.empleado.id })
+                  }
                 />
               ))}
             </tbody>
@@ -509,6 +536,14 @@ export function SueldosTab() {
           onClose={() => setPanel(null)}
         />
       )}
+      {panel && panelData && panel.tipo === 'descuentos' && (
+        <PanelDescuentos
+          empleado={panelData.fila.empleado}
+          periodo={panelData.periodo}
+          descuentos={panelData.fila.descuentosEmp}
+          onClose={() => setPanel(null)}
+        />
+      )}
     </div>
   )
 }
@@ -521,6 +556,7 @@ function FilaEmpleado({
   onCambiarModalidad,
   onAbrirAdelantos,
   onAbrirSanciones,
+  onAbrirDescuentos,
 }: {
   fila: {
     empleado: Empleado
@@ -533,6 +569,7 @@ function FilaEmpleado({
     deduccionPresentismo: number
     adelantosMonto: number
     sancionesMonto: number
+    descuentosMonto: number
     total: number
     pagado: boolean
   }
@@ -541,8 +578,9 @@ function FilaEmpleado({
   onCambiarModalidad: (v: 'quincenal' | 'mensual') => void
   onAbrirAdelantos: () => void
   onAbrirSanciones: () => void
+  onAbrirDescuentos: () => void
 }) {
-  const { empleado, modalidad, esMensualEnQ1, base, cobraPresentismo, presentismoOverride, deduccionPresentismo, adelantosMonto, sancionesMonto, total, pagado } = fila
+  const { empleado, modalidad, esMensualEnQ1, base, cobraPresentismo, presentismoOverride, deduccionPresentismo, adelantosMonto, sancionesMonto, descuentosMonto, total, pagado } = fila
 
   return (
     <tr className={cn('hover:bg-gray-50', esMensualEnQ1 && 'bg-gray-50/60 text-gray-500')}>
@@ -612,6 +650,18 @@ function FilaEmpleado({
           )}
         >
           {sancionesMonto > 0 ? formatARS(sancionesMonto) : '+ agregar'}
+        </button>
+      </td>
+      <td className="px-2 py-2 text-right">
+        <button
+          onClick={onAbrirDescuentos}
+          className={cn(
+            'tabular-nums hover:underline text-xs',
+            descuentosMonto > 0 ? 'text-orange-700 font-medium' : 'text-gray-400',
+          )}
+          title="Días sin goce, licencias no remuneradas, etc."
+        >
+          {descuentosMonto > 0 ? formatARS(descuentosMonto) : '+ agregar'}
         </button>
       </td>
       <td className="px-2 py-2 text-right tabular-nums font-semibold text-gray-900">
