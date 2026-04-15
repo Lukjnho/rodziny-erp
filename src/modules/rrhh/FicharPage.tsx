@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { supabase } from '@/lib/supabase'
+import { supabaseAnon as supabase } from '@/lib/supabaseAnon'
 import { cn } from '@/lib/utils'
 import { TOLERANCIA_MIN, ymd, hhmm, diffMinutosVsHorario } from './utils'
 
@@ -285,6 +285,10 @@ function Inicio({ empleado, onIrAFichar, onIrAHorarios, onIrAQuincena }: {
       setFichadasHoy((f as Fichada[]) || [])
 
       if (debugOn) {
+        // Verificar si hay sesión auth activa en el cliente principal (hipótesis del bug RLS)
+        const { supabase: supaMain } = await import('@/lib/supabase')
+        const { data: sess } = await supaMain.auth.getSession()
+        const authSession = sess?.session ? { user_id: sess.session.user?.id ?? null, email: sess.session.user?.email ?? null } : null
         // Traer los próximos 14 días publicados para diagnóstico
         const hastaDt = new Date(ahoraDev); hastaDt.setDate(hastaDt.getDate() + 14)
         const { data: prox, error: proxErr } = await supabase
@@ -363,6 +367,9 @@ function Inicio({ empleado, onIrAFichar, onIrAHorarios, onIrAQuincena }: {
           // Build / URL
           url: typeof window !== 'undefined' ? window.location.href : '',
           ua: typeof navigator !== 'undefined' ? navigator.userAgent.slice(0, 80) : '',
+          // HIPÓTESIS CLAVE: sesión auth contaminada de la ERP principal
+          auth_session_present: !!authSession,
+          auth_session: authSession,
         }, null, 2))
       }
     })()

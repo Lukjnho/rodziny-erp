@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
-import { supabase } from '@/lib/supabase'
+import { supabaseAnon as supabase } from '@/lib/supabaseAnon'
 import { cn } from '@/lib/utils'
 
 interface Producto {
