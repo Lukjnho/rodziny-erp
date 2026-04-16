@@ -183,7 +183,7 @@ export function FlujoCaja() {
         .select('id, gasto_id, fecha_pago, monto, medio_pago, gasto:gastos(local, proveedor, categoria, subcategoria, categoria_id)')
         .gte('fecha_pago', `${periodo}-01`)
         .lte('fecha_pago', `${periodo}-${lastDay}`)
-      return (data ?? []) as PagoRealizado[]
+      return (data ?? []) as unknown as PagoRealizado[]
     },
   })
 
@@ -624,7 +624,7 @@ export function FlujoCaja() {
               </defs>
               <XAxis dataKey="fecha" tick={{ fontSize: 11 }} />
               <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `$${(v / 1000000).toFixed(1)}M`} />
-              <Tooltip formatter={(v: number) => [formatARS(v), 'Saldo acumulado']} labelFormatter={(l) => `Día ${l}`} />
+              <Tooltip formatter={(v) => [formatARS(Number(v)), 'Saldo acumulado']} labelFormatter={(l) => `Día ${l}`} />
               <Area type="monotone" dataKey="saldo" stroke="#4f8828" fill="url(#saldoGradFC)" strokeWidth={2} />
             </AreaChart>
           </ResponsiveContainer>
