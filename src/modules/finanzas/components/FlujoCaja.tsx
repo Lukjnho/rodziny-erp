@@ -17,6 +17,7 @@ interface MovBancario {
 interface CierreVerificado {
   id: string; local: string; fecha: string; turno: string; caja: string | null
   monto_contado: number; monto_esperado: number | null; diferencia: number | null
+  retiro: number; fondo_apertura: number; fondo_siguiente: number
   verificado: boolean; verificado_por: string | null
 }
 
@@ -50,6 +51,20 @@ interface CategoriaGasto {
 interface Dividendo {
   id: string; socio: string; fecha: string; monto: number
   medio_pago: string; concepto: string | null; local: string | null; periodo: string
+}
+
+interface PagoMP {
+  id: number; fecha: string; monto: number; monto_neto: number
+  comision_mp: number; impuestos: number; medio_pago: string
+  local: string; periodo: string
+}
+
+const MEDIO_PAGO_MP_LABEL: Record<string, string> = {
+  account_money: 'QR / Saldo MP',
+  debit_card: 'Tarjeta débito',
+  credit_card: 'Tarjeta crédito',
+  bank_transfer: 'Transferencia bancaria',
+  prepaid_card: 'Tarjeta prepaga',
 }
 
 // ── constantes ───────────────────────────────────────────────────────────────
@@ -117,6 +132,10 @@ export function FlujoCaja() {
   const [dividendosOpen, setDividendosOpen] = useState(false)
   const [noOperativoOpen, setNoOperativoOpen] = useState(false)
   const [showDivForm, setShowDivForm] = useState(false)
+
+  // Sync MP state
+  const [syncing, setSyncing] = useState(false)
+  const [syncResult, setSyncResult] = useState<{ ok: boolean; sincronizados?: number; error?: string } | null>(null)
 
   // Form dividendo
   const [divSocio, setDivSocio] = useState<string>('lucas')
@@ -187,6 +206,37 @@ export function FlujoCaja() {
     },
   })
 
+  // Pagos MP (API sync)
+  const { data: pagosMP } = useQuery({
+    queryKey: ['fc_pagos_mp', periodo],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('pagos_mp')
+        .select('id, fecha, monto, monto_neto, comision_mp, impuestos, medio_pago, local, periodo')
+        .eq('periodo', periodo)
+        .eq('estado', 'approved')
+      return (data ?? []) as PagoMP[]
+    },
+  })
+
+  // ── sync MP ────────────────────────────────────────────────────────────────
+  const sincronizarMP = async () => {
+    setSyncing(true)
+    setSyncResult(null)
+    try {
+      const { data, error } = await supabase.functions.invoke('sync-mercadopago', {
+        body: { periodo },
+      })
+      if (error) throw error
+      setSyncResult(data)
+      qc.invalidateQueries({ queryKey: ['fc_pagos_mp'] })
+    } catch (e) {
+      setSyncResult({ ok: false, error: (e as Error).message })
+    } finally {
+      setSyncing(false)
+    }
+  }
+
   // ── mutation: dividendo ────────────────────────────────────────────────────
 
   const guardarDiv = useMutation({
@@ -235,6 +285,12 @@ export function FlujoCaja() {
     return (dividendos ?? []).filter((d) => d.local === local || !d.local)
   }, [dividendos, local])
 
+  const pagosMPFiltrados = useMemo(() => {
+    const pagos = pagosMP ?? []
+    if (local === 'ambos') return pagos
+    return pagos.filter((p) => p.local === local || p.local === 'ambos')
+  }, [pagosMP, local])
+
   // Mapa de categoría ID → tipo_edr
   const catMap = useMemo(() => {
     const m = new Map<string, string>()
@@ -263,11 +319,10 @@ export function FlujoCaja() {
   const movimientosClasificados = useMemo(() => {
     const movs = movimientos ?? []
 
-    // Ingresos: créditos de MP (ventas digitales)
-    const ingresosMP = movs.filter((m) => m.cuenta === 'mercadopago' && Number(m.credito) > 0)
+    // Liquidaciones MP: créditos de MP en extracto = MP depositando en banco (no operativo)
+    const liquidacionesMP = movs.filter((m) => m.cuenta === 'mercadopago' && Number(m.credito) > 0)
 
-    // Egresos bancarios: todos los débitos de las 3 cuentas
-    const debitosMP = movs.filter((m) => m.cuenta === 'mercadopago' && Number(m.debito) > 0)
+    // Egresos bancarios: débitos de Galicia e ICBC (los débitos MP ahora vienen de pagos_mp API)
     const debitosGalicia = movs.filter((m) => m.cuenta === 'galicia' && Number(m.debito) > 0)
     const debitosICBC = movs.filter((m) => m.cuenta === 'icbc' && Number(m.debito) > 0)
 
@@ -289,8 +344,8 @@ export function FlujoCaja() {
     }
 
     return {
-      ingresosMP, creditosOperativos,
-      debitosMP, debitosGalicia, debitosICBC,
+      liquidacionesMP, creditosOperativos,
+      debitosGalicia, debitosICBC,
       transferenciasInternas, capital,
     }
   }, [movimientos])
@@ -299,16 +354,21 @@ export function FlujoCaja() {
 
   const ingresos = useMemo(() => {
     const cierresVerif = cierresFiltrados.filter((c) => c.verificado)
-    const efectivoVerificado = cierresVerif.reduce((s, c) => s + c.monto_contado, 0)
+    const efectivoVerificado = cierresVerif.reduce((s, c) => s + (c.retiro > 0 ? c.retiro : c.monto_contado), 0)
     const cierresPendientes = cierresFiltrados.filter((c) => !c.verificado).length
 
-    const ventasMP = movimientosClasificados.ingresosMP.reduce((s, m) => s + Number(m.credito), 0)
+    // Ventas MP desde la API (bruto por medio de pago)
+    const ventasMPBruto = pagosMPFiltrados.reduce((s, p) => s + Number(p.monto), 0)
+    const ventasMPPorMedio = new Map<string, number>()
+    for (const p of pagosMPFiltrados) {
+      ventasMPPorMedio.set(p.medio_pago, (ventasMPPorMedio.get(p.medio_pago) ?? 0) + Number(p.monto))
+    }
+
     const otrosIngresos = movimientosClasificados.creditosOperativos.reduce((s, m) => s + Number(m.credito), 0)
+    const total = efectivoVerificado + ventasMPBruto + otrosIngresos
 
-    const total = efectivoVerificado + ventasMP + otrosIngresos
-
-    return { efectivoVerificado, cierresPendientes, ventasMP, otrosIngresos, total }
-  }, [cierresFiltrados, movimientosClasificados])
+    return { efectivoVerificado, cierresPendientes, ventasMPBruto, ventasMPPorMedio, otrosIngresos, total }
+  }, [cierresFiltrados, movimientosClasificados, pagosMPFiltrados])
 
   // ── EGRESOS ──────────────────────────────────────────────────────────────────
 
@@ -328,24 +388,22 @@ export function FlujoCaja() {
       else entry.items.push({ nombre: label, monto: Number(p.monto) })
     }
 
-    // 2) Débitos bancarios por cuenta (comisiones MP, débitos Galicia, Visa ICBC)
-    const { debitosMP, debitosGalicia, debitosICBC } = movimientosClasificados
+    // 2) Costos financieros (comisiones MP desde API + débitos Galicia/ICBC desde extractos)
+    const { debitosGalicia, debitosICBC } = movimientosClasificados
     const bancarios: { nombre: string; monto: number; items: { nombre: string; monto: number }[] }[] = []
 
-    if (debitosMP.length > 0) {
-      const totalMP = debitosMP.reduce((s, m) => s + Number(m.debito), 0)
-      // Agrupar débitos MP por tipo (comisiones vs retenciones)
-      const mpItems = new Map<string, number>()
-      for (const m of debitosMP) {
-        const key = (m.descripcion ?? '').includes('Comisión') ? 'Comisiones MP'
-          : (m.descripcion ?? '').includes('Retenciones') ? 'Retenciones impositivas MP'
-          : 'Otros débitos MP'
-        mpItems.set(key, (mpItems.get(key) ?? 0) + Number(m.debito))
-      }
+    // Comisiones e impuestos MP desde pagos_mp (API)
+    const comisionesMP = pagosMPFiltrados.reduce((s, p) => s + Number(p.comision_mp), 0)
+    const impuestosMP = pagosMPFiltrados.reduce((s, p) => s + Number(p.impuestos), 0)
+    const totalCostosMP = comisionesMP + impuestosMP
+    if (totalCostosMP > 0) {
+      const mpItems: { nombre: string; monto: number }[] = []
+      if (comisionesMP > 0) mpItems.push({ nombre: 'Comisiones MercadoPago', monto: comisionesMP })
+      if (impuestosMP > 0) mpItems.push({ nombre: 'Retenciones impositivas MP', monto: impuestosMP })
       bancarios.push({
         nombre: GRUPO_DEBITO_LABEL.mercadopago,
-        monto: totalMP,
-        items: [...mpItems.entries()].map(([nombre, monto]) => ({ nombre, monto })),
+        monto: totalCostosMP,
+        items: mpItems,
       })
     }
 
@@ -394,16 +452,17 @@ export function FlujoCaja() {
     const total = totalPagos + totalDebitosBanc + totalDivs
 
     return { grupos, bancarios, totalPagos, totalDebitosBanc, totalDivs, total }
-  }, [pagosFiltrados, movimientosClasificados, divsFiltrados, catMap])
+  }, [pagosFiltrados, movimientosClasificados, pagosMPFiltrados, divsFiltrados, catMap])
 
   // ── NO OPERATIVO ───────────────────────────────────────────────────────────
 
   const noOperativo = useMemo(() => {
-    const { transferenciasInternas, capital } = movimientosClasificados
+    const { transferenciasInternas, capital, liquidacionesMP } = movimientosClasificados
     const totalTransf = transferenciasInternas.reduce((s, m) => s + Number(m.credito), 0)
+    const totalLiquidacionesMP = liquidacionesMP.reduce((s, m) => s + Number(m.credito), 0)
     const capitalIn = capital.filter((m) => Number(m.credito) > 0).reduce((s, m) => s + Number(m.credito), 0)
     const capitalOut = capital.filter((m) => Number(m.debito) > 0).reduce((s, m) => s + Number(m.debito), 0)
-    return { transferenciasInternas, capital, totalTransf, capitalIn, capitalOut }
+    return { transferenciasInternas, capital, liquidacionesMP, totalTransf, totalLiquidacionesMP, capitalIn, capitalOut }
   }, [movimientosClasificados])
 
   // ── KPIs de liquidez ───────────────────────────────────────────────────────
@@ -432,25 +491,32 @@ export function FlujoCaja() {
   const chartData = useMemo(() => {
     const byDay = new Map<string, { ingresos: number; egresos: number }>()
 
-    // Ingresos: cierres verificados + créditos MP
+    // Ingresos: cierres verificados + MP API (bruto) + otros bancarios
     for (const c of cierresFiltrados.filter((c) => c.verificado)) {
       const d = byDay.get(c.fecha) ?? { ingresos: 0, egresos: 0 }
-      d.ingresos += c.monto_contado
+      d.ingresos += (c.retiro > 0 ? c.retiro : c.monto_contado)
       byDay.set(c.fecha, d)
     }
-    for (const m of [...movimientosClasificados.ingresosMP, ...movimientosClasificados.creditosOperativos]) {
+    for (const p of pagosMPFiltrados) {
+      const fecha = p.fecha.substring(0, 10)
+      const d = byDay.get(fecha) ?? { ingresos: 0, egresos: 0 }
+      d.ingresos += Number(p.monto)
+      d.egresos += Number(p.comision_mp) + Number(p.impuestos)
+      byDay.set(fecha, d)
+    }
+    for (const m of movimientosClasificados.creditosOperativos) {
       const d = byDay.get(m.fecha) ?? { ingresos: 0, egresos: 0 }
       d.ingresos += Number(m.credito)
       byDay.set(m.fecha, d)
     }
 
-    // Egresos: pagos realizados + débitos bancarios + dividendos
+    // Egresos: pagos realizados + débitos bancarios (Galicia/ICBC) + dividendos
     for (const p of pagosFiltrados) {
       const d = byDay.get(p.fecha_pago) ?? { ingresos: 0, egresos: 0 }
       d.egresos += Number(p.monto)
       byDay.set(p.fecha_pago, d)
     }
-    for (const m of [...movimientosClasificados.debitosMP, ...movimientosClasificados.debitosGalicia, ...movimientosClasificados.debitosICBC]) {
+    for (const m of [...movimientosClasificados.debitosGalicia, ...movimientosClasificados.debitosICBC]) {
       const d = byDay.get(m.fecha) ?? { ingresos: 0, egresos: 0 }
       d.egresos += Number(m.debito)
       byDay.set(m.fecha, d)
@@ -468,7 +534,7 @@ export function FlujoCaja() {
         acum += vals.ingresos - vals.egresos
         return { fecha: fecha.substring(8), saldo: acum }
       })
-  }, [cierresFiltrados, movimientosClasificados, pagosFiltrados, divsFiltrados])
+  }, [cierresFiltrados, movimientosClasificados, pagosMPFiltrados, pagosFiltrados, divsFiltrados])
 
   // ── semáforo ───────────────────────────────────────────────────────────────
 
@@ -490,7 +556,38 @@ export function FlujoCaja() {
           <input type="month" value={periodo} onChange={(e) => setPeriodo(e.target.value)}
             className="border border-gray-300 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500" />
         </div>
+        <div className="ml-auto flex items-center gap-2">
+          <button
+            onClick={sincronizarMP}
+            disabled={syncing}
+            className={cn(
+              'px-3 py-1.5 rounded-md text-xs font-medium transition-colors flex items-center gap-1.5',
+              syncing ? 'bg-gray-100 text-gray-400 cursor-wait' : 'bg-blue-600 hover:bg-blue-700 text-white'
+            )}
+          >
+            {syncing ? (
+              <><span className="animate-spin inline-block w-3 h-3 border-2 border-white border-t-transparent rounded-full" /> Sincronizando...</>
+            ) : (
+              <><span>🔄</span> Sync MercadoPago</>
+            )}
+          </button>
+          {pagosMPFiltrados.length > 0 && (
+            <span className="text-[10px] text-blue-600 font-medium bg-blue-50 px-2 py-0.5 rounded">
+              {pagosMPFiltrados.length} pagos MP
+            </span>
+          )}
+        </div>
       </div>
+
+      {/* Sync result toast */}
+      {syncResult && (
+        <div className={cn('text-xs px-3 py-2 rounded-md', syncResult.ok ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700')}>
+          {syncResult.ok
+            ? `Sincronización exitosa: ${syncResult.sincronizados} pagos de ${periodo}`
+            : `Error: ${syncResult.error}`}
+          <button onClick={() => setSyncResult(null)} className="ml-2 text-gray-400 hover:text-gray-600">✕</button>
+        </div>
+      )}
 
       {/* KPIs de liquidez y solvencia */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -540,7 +637,13 @@ export function FlujoCaja() {
         <div className="divide-y divide-gray-100">
           <LineaDetalle label="Efectivo (cierres verificados)" monto={ingresos.efectivoVerificado}
             nota={ingresos.cierresPendientes > 0 ? `⚠️ ${ingresos.cierresPendientes} pendiente${ingresos.cierresPendientes > 1 ? 's' : ''} de verificar` : undefined} />
-          <LineaDetalle label="Ventas digitales (MercadoPago)" monto={ingresos.ventasMP} />
+          <GrupoEgreso
+            label={`Ventas digitales — MercadoPago (${pagosMPFiltrados.length} pagos)`}
+            total={ingresos.ventasMPBruto}
+            items={[...ingresos.ventasMPPorMedio.entries()]
+              .map(([medio, monto]) => ({ nombre: MEDIO_PAGO_MP_LABEL[medio] || medio, monto }))
+              .sort((a, b) => b.monto - a.monto)}
+          />
           <LineaDetalle label="Otros ingresos bancarios (dev. impuestos, cheques rechazados)" monto={ingresos.otrosIngresos} />
         </div>
       </SeccionExpandible>
@@ -563,13 +666,37 @@ export function FlujoCaja() {
       </SeccionExpandible>
 
       {/* ═══ NO OPERATIVO ═══ */}
-      {(noOperativo.transferenciasInternas.length > 0 || noOperativo.capital.length > 0) && (
+      {(noOperativo.transferenciasInternas.length > 0 || noOperativo.capital.length > 0 || noOperativo.liquidacionesMP.length > 0) && (
         <SeccionExpandible titulo="MOVIMIENTOS NO OPERATIVOS" total={0} open={noOperativoOpen}
           onToggle={() => setNoOperativoOpen(!noOperativoOpen)} color="blue">
           <div className="p-4 space-y-4">
             <p className="text-[10px] text-gray-500">
               Movimientos entre cuentas propias y cuenta comitente. No son ingresos ni egresos del negocio — no afectan los KPIs.
             </p>
+
+            {/* Liquidaciones MP (depósitos de MP al banco) */}
+            {noOperativo.liquidacionesMP.length > 0 && (
+              <div>
+                <h4 className="text-xs font-semibold text-gray-700 mb-2">Liquidaciones MercadoPago (depósitos al banco)</h4>
+                <p className="text-[10px] text-gray-400 mb-2">MP transfiere los fondos cobrados a la cuenta bancaria. No son ventas nuevas — las ventas ya se contaron arriba desde la API de MP.</p>
+                <div className="bg-gray-50 rounded-lg overflow-hidden">
+                  <table className="w-full text-xs">
+                    <tbody>
+                      {noOperativo.liquidacionesMP.map((m) => (
+                        <tr key={m.id} className="border-t border-gray-100">
+                          <td className="px-3 py-1.5 text-gray-500">{formatFecha(m.fecha)}</td>
+                          <td className="px-3 py-1.5 text-gray-500 truncate max-w-[250px]">{m.descripcion}</td>
+                          <td className="px-3 py-1.5 text-right font-medium text-gray-700 tabular-nums">{formatARS(Number(m.credito))}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="text-[10px] text-gray-400 mt-1 text-right">
+                  Total liquidado: {formatARS(noOperativo.totalLiquidacionesMP)}
+                </p>
+              </div>
+            )}
 
             {/* Transferencias internas */}
             {noOperativo.transferenciasInternas.length > 0 && (

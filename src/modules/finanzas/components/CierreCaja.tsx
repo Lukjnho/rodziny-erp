@@ -26,7 +26,11 @@ const TURNOS: Record<string, { key: string; label: string }[]> = {
 
 interface CierreRow {
   id: string; local: string; fecha: string; turno: string; caja: string | null
+  hora_inicio: string | null; hora_cierre: string | null
   monto_esperado: number | null; monto_contado: number; diferencia: number | null
+  fudo_efectivo: number; fudo_qr: number; fudo_debito: number; fudo_credito: number; fudo_transferencia: number
+  fondo_apertura: number; fondo_siguiente: number; retiro: number
+  otros_retiros: number; otros_retiros_nota: string | null
   nota: string | null; creado_por: string | null
   verificado: boolean; verificado_por: string | null; verificado_at: string | null
 }
@@ -43,8 +47,18 @@ export function CierreCaja() {
   const [fFecha, setFFecha]     = useState(hoy)
   const [fTurno, setFTurno]     = useState('')
   const [fCaja, setFCaja]       = useState('')
-  const [fEsperado, setFEsperado] = useState('')
+  const [fHoraInicio, setFHoraInicio] = useState('')
+  const [fHoraCierre, setFHoraCierre] = useState('')
+  const [fFudoEfvo, setFFudoEfvo]   = useState('')
+  const [fFudoQR, setFFudoQR]       = useState('')
+  const [fFudoDebito, setFFudoDebito] = useState('')
+  const [fFudoCredito, setFFudoCredito] = useState('')
+  const [fFudoTransf, setFFudoTransf] = useState('')
   const [fContado, setFContado] = useState('')
+  const [fFondoAp, setFFondoAp] = useState('')
+  const [fFondoSig, setFFondoSig] = useState('')
+  const [fOtrosRetiros, setFOtrosRetiros] = useState('')
+  const [fOtrosRetNota, setFOtrosRetNota] = useState('')
   const [fNota, setFNota]       = useState('')
 
   // ── query: cierres del mes ─────────────────────────────────────────────────
@@ -69,13 +83,38 @@ export function CierreCaja() {
   // ── mutation: guardar cierre ───────────────────────────────────────────────
   const guardarMut = useMutation({
     mutationFn: async () => {
+      const parse = (v: string) => parseFloat((v || '0').replace(/\./g, '').replace(',', '.')) || 0
+      const contado = parse(fContado)
+      const fondoAp = parse(fFondoAp)
+      const fondoSig = parse(fFondoSig)
+      const otrosRet = parse(fOtrosRetiros)
+      const fudoEfvo = parse(fFudoEfvo)
+      const fudoQR = parse(fFudoQR)
+      const fudoDebito = parse(fFudoDebito)
+      const fudoCredito = parse(fFudoCredito)
+      const fudoTransf = parse(fFudoTransf)
+      const totalFudo = fudoEfvo + fudoQR + fudoDebito + fudoCredito + fudoTransf
+      const retiro = contado - fondoSig
+
       const { error } = await supabase.from('cierres_caja').upsert({
         local,
         fecha: fFecha,
         turno: fTurno,
         caja: fCaja || null,
-        monto_esperado: fEsperado ? parseFloat(fEsperado.replace(/\./g, '').replace(',', '.')) : null,
-        monto_contado: parseFloat(fContado.replace(/\./g, '').replace(',', '.')) || 0,
+        hora_inicio: fHoraInicio || null,
+        hora_cierre: fHoraCierre || null,
+        fudo_efectivo: fudoEfvo,
+        fudo_qr: fudoQR,
+        fudo_debito: fudoDebito,
+        fudo_credito: fudoCredito,
+        fudo_transferencia: fudoTransf,
+        monto_esperado: totalFudo > 0 ? totalFudo : null,
+        monto_contado: contado,
+        fondo_apertura: fondoAp,
+        fondo_siguiente: fondoSig,
+        retiro: retiro > 0 ? retiro : 0,
+        otros_retiros: otrosRet,
+        otros_retiros_nota: fOtrosRetNota || null,
         nota: fNota || null,
         creado_por: 'Lucas',
       }, { onConflict: 'local,fecha,turno,caja' })
@@ -113,8 +152,18 @@ export function CierreCaja() {
     setFFecha(hoy)
     setFTurno(TURNOS[local]?.[0]?.key ?? '')
     setFCaja(CAJAS[local]?.[0] ?? '')
-    setFEsperado('')
+    setFHoraInicio('')
+    setFHoraCierre('')
+    setFFudoEfvo('')
+    setFFudoQR('')
+    setFFudoDebito('')
+    setFFudoCredito('')
+    setFFudoTransf('')
     setFContado('')
+    setFFondoAp('')
+    setFFondoSig('')
+    setFOtrosRetiros('')
+    setFOtrosRetNota('')
     setFNota('')
   }
 
@@ -125,16 +174,19 @@ export function CierreCaja() {
 
   // ── resumen del mes ────────────────────────────────────────────────────────
   const resumen = useMemo(() => {
-    if (!cierres) return { total: 0, positivos: 0, negativos: 0, cantidad: 0, verificados: 0, pendientes: 0 }
-    let total = 0, positivos = 0, negativos = 0, verificados = 0
+    if (!cierres) return { total: 0, positivos: 0, negativos: 0, cantidad: 0, verificados: 0, pendientes: 0, totalRetiros: 0, totalOtrosRetiros: 0, totalFudo: 0 }
+    let total = 0, positivos = 0, negativos = 0, verificados = 0, totalRetiros = 0, totalOtrosRetiros = 0, totalFudo = 0
     for (const c of cierres) {
       const dif = c.diferencia ?? 0
       total += dif
       if (dif > 0) positivos += dif
       if (dif < 0) negativos += dif
       if (c.verificado) verificados++
+      totalRetiros += c.retiro ?? 0
+      totalOtrosRetiros += c.otros_retiros ?? 0
+      totalFudo += c.monto_esperado ?? 0
     }
-    return { total, positivos, negativos, cantidad: cierres.length, verificados, pendientes: cierres.length - verificados }
+    return { total, positivos, negativos, cantidad: cierres.length, verificados, pendientes: cierres.length - verificados, totalRetiros, totalOtrosRetiros, totalFudo }
   }, [cierres])
 
   // Agrupar por fecha
@@ -164,33 +216,38 @@ export function CierreCaja() {
             className="border border-gray-300 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500"
           />
         </div>
-        <button
-          onClick={abrirForm}
-          className="ml-auto px-4 py-1.5 bg-rodziny-800 text-white text-sm font-medium rounded-md hover:bg-rodziny-700 transition-colors"
-        >
-          + Nuevo cierre
-        </button>
+        <div className="ml-auto">
+          <button
+            onClick={abrirForm}
+            className="px-4 py-1.5 bg-rodziny-800 text-white text-sm font-medium rounded-md hover:bg-rodziny-700 transition-colors"
+          >
+            + Nuevo cierre
+          </button>
+        </div>
       </div>
 
       {/* KPIs resumen */}
-      <div className="grid grid-cols-5 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <div className="bg-white rounded-lg border border-surface-border p-4">
-          <p className="text-xs text-gray-500 mb-1">Cierres del mes</p>
-          <p className="text-lg font-semibold text-gray-900">{resumen.cantidad}</p>
+          <p className="text-xs text-gray-500 mb-1">Efectivo del mes</p>
+          <p className="text-lg font-semibold text-green-700">{formatARS(resumen.totalRetiros)}</p>
+          <p className="text-[10px] text-gray-400 mt-0.5">{resumen.cantidad} cierres</p>
+        </div>
+        <div className="bg-white rounded-lg border border-surface-border p-4">
+          <p className="text-xs text-gray-500 mb-1">Total Fudo del mes</p>
+          <p className="text-lg font-semibold text-blue-700">{formatARS(resumen.totalFudo)}</p>
+          <p className="text-[10px] text-gray-400 mt-0.5">Suma de todos los cierres</p>
         </div>
         <div className="bg-white rounded-lg border border-surface-border p-4">
           <p className="text-xs text-gray-500 mb-1">Diferencia neta</p>
           <p className={cn('text-lg font-semibold', resumen.total === 0 ? 'text-green-600' : resumen.total > 0 ? 'text-blue-600' : 'text-red-600')}>
             {formatARS(resumen.total)}
           </p>
-        </div>
-        <div className="bg-white rounded-lg border border-surface-border p-4">
-          <p className="text-xs text-gray-500 mb-1">Sobrantes</p>
-          <p className="text-lg font-semibold text-blue-600">{formatARS(resumen.positivos)}</p>
-        </div>
-        <div className="bg-white rounded-lg border border-surface-border p-4">
-          <p className="text-xs text-gray-500 mb-1">Faltantes</p>
-          <p className="text-lg font-semibold text-red-600">{formatARS(resumen.negativos)}</p>
+          <p className="text-[10px] text-gray-400 mt-0.5">
+            {resumen.positivos > 0 && `Sobrantes: ${formatARS(resumen.positivos)}`}
+            {resumen.positivos > 0 && resumen.negativos < 0 && ' · '}
+            {resumen.negativos < 0 && `Faltantes: ${formatARS(resumen.negativos)}`}
+          </p>
         </div>
         <div className="bg-white rounded-lg border border-surface-border p-4">
           <p className="text-xs text-gray-500 mb-1">Verificación</p>
@@ -233,32 +290,137 @@ export function CierreCaja() {
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Esperado (Fudo)</label>
-              <input type="text" value={fEsperado} onChange={(e) => setFEsperado(e.target.value)}
+              <label className="block text-xs font-medium text-gray-600 mb-1">Hora inicio (Fudo)</label>
+              <input type="time" value={fHoraInicio} onChange={(e) => setFHoraInicio(e.target.value)}
+                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500" />
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Hora cierre (Fudo)</label>
+              <input type="time" value={fHoraCierre} onChange={(e) => setFHoraCierre(e.target.value)}
+                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500" />
+            </div>
+
+            {/* ── Datos de Fudo (desglose del cierre impreso) ── */}
+            <div className="col-span-2 md:col-span-3 mt-2">
+              <p className="text-xs font-semibold text-gray-700 border-b border-gray-200 pb-1 mb-3">Datos de Fudo (según cierre impreso)</p>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Efectivo (Fudo)</label>
+              <input type="text" value={fFudoEfvo} onChange={(e) => setFFudoEfvo(e.target.value)}
                 placeholder="0" className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Código QR (Fudo)</label>
+              <input type="text" value={fFudoQR} onChange={(e) => setFFudoQR(e.target.value)}
+                placeholder="0" className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Débito (Fudo)</label>
+              <input type="text" value={fFudoDebito} onChange={(e) => setFFudoDebito(e.target.value)}
+                placeholder="0" className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Crédito (Fudo)</label>
+              <input type="text" value={fFudoCredito} onChange={(e) => setFFudoCredito(e.target.value)}
+                placeholder="0" className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Transferencia (Fudo)</label>
+              <input type="text" value={fFudoTransf} onChange={(e) => setFFudoTransf(e.target.value)}
+                placeholder="0" className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Total Fudo</label>
+              {(() => {
+                const parse = (v: string) => parseFloat((v || '0').replace(/\./g, '').replace(',', '.')) || 0
+                const total = parse(fFudoEfvo) + parse(fFudoQR) + parse(fFudoDebito) + parse(fFudoCredito) + parse(fFudoTransf)
+                return (
+                  <div className="w-full rounded-md px-3 py-2 text-sm font-semibold bg-gray-100 text-gray-800">
+                    {total > 0 ? formatARS(total) : '—'}
+                  </div>
+                )
+              })()}
+            </div>
+
+            {/* ── Arqueo real (efectivo contado) ── */}
+            <div className="col-span-2 md:col-span-3 mt-2">
+              <p className="text-xs font-semibold text-gray-700 border-b border-gray-200 pb-1 mb-3">Arqueo de efectivo</p>
             </div>
 
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Contado real <span className="text-red-500">*</span></label>
               <input type="text" value={fContado} onChange={(e) => setFContado(e.target.value)}
                 placeholder="0" className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500" />
+              <p className="text-[10px] text-gray-400 mt-0.5">Total de efectivo en caja al cerrar</p>
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Diferencia</label>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Diferencia efectivo</label>
               {(() => {
-                const esp = parseFloat((fEsperado || '0').replace(/\./g, '').replace(',', '.')) || 0
-                const cont = parseFloat((fContado || '0').replace(/\./g, '').replace(',', '.')) || 0
-                const dif = esp > 0 ? cont - esp : 0
+                const parse = (v: string) => parseFloat((v || '0').replace(/\./g, '').replace(',', '.')) || 0
+                const fudoEfvo = parse(fFudoEfvo)
+                const cont = parse(fContado)
+                const fondoAp = parse(fFondoAp)
+                const otrosRet = parse(fOtrosRetiros)
+                const ventasReales = cont + otrosRet - fondoAp
+                const dif = fudoEfvo > 0 ? ventasReales - fudoEfvo : 0
                 return (
                   <div className={cn(
                     'w-full rounded-md px-3 py-2 text-sm font-medium',
-                    dif === 0 ? 'bg-gray-50 text-gray-500' : dif > 0 ? 'bg-blue-50 text-blue-700' : 'bg-red-50 text-red-700'
+                    dif === 0 && fudoEfvo === 0 ? 'bg-gray-50 text-gray-500' : dif === 0 ? 'bg-green-50 text-green-700' : dif > 0 ? 'bg-blue-50 text-blue-700' : 'bg-red-50 text-red-700'
                   )}>
-                    {esp > 0 ? `${formatARS(dif)} ${dif === 0 ? '— Cuadra' : dif > 0 ? '↑ Sobrante' : '↓ Faltante'}` : '—'}
+                    {fudoEfvo > 0 ? `${formatARS(dif)} ${dif === 0 ? '— Cuadra' : dif > 0 ? '↑ Sobrante' : '↓ Faltante'}` : '—'}
                   </div>
                 )
               })()}
+            </div>
+
+            {/* Cambio y retiros */}
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Cambio apertura</label>
+              <input type="text" value={fFondoAp} onChange={(e) => setFFondoAp(e.target.value)}
+                placeholder="Cambio al iniciar"
+                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500" />
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Cambio próximo turno</label>
+              <input type="text" value={fFondoSig} onChange={(e) => setFFondoSig(e.target.value)}
+                placeholder="Cambio que se deja"
+                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500" />
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Retiro de efectivo</label>
+              {(() => {
+                const cont = parseFloat((fContado || '0').replace(/\./g, '').replace(',', '.')) || 0
+                const fondoSig = parseFloat((fFondoSig || '0').replace(/\./g, '').replace(',', '.')) || 0
+                const retiro = cont - fondoSig
+                return (
+                  <div className="w-full rounded-md px-3 py-2 text-sm font-medium bg-green-50 text-green-800">
+                    {cont > 0 ? formatARS(retiro > 0 ? retiro : 0) : '—'}
+                  </div>
+                )
+              })()}
+              <p className="text-[10px] text-gray-400 mt-0.5">Lo que admin se lleva</p>
+            </div>
+
+            {/* Otros retiros eventuales */}
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Otros retiros</label>
+              <input type="text" value={fOtrosRetiros} onChange={(e) => setFOtrosRetiros(e.target.value)}
+                placeholder="0"
+                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500" />
+              <p className="text-[10px] text-gray-400 mt-0.5">Dinero sacado de caja durante el turno</p>
+            </div>
+
+            <div className="col-span-1 md:col-span-2">
+              <label className="block text-xs font-medium text-gray-600 mb-1">Motivo del retiro extra</label>
+              <input type="text" value={fOtrosRetNota} onChange={(e) => setFOtrosRetNota(e.target.value)}
+                placeholder="Ej: Pago proveedor hielo"
+                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500" />
             </div>
 
             <div className="col-span-2 md:col-span-3">
@@ -303,8 +465,11 @@ export function CierreCaja() {
                   <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600">Fecha</th>
                   <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600">Caja</th>
                   <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600">Turno</th>
-                  <th className="px-4 py-2.5 text-right text-xs font-semibold text-gray-600">Esperado</th>
+                  <th className="px-4 py-2.5 text-right text-xs font-semibold text-gray-600">Fudo total</th>
                   <th className="px-4 py-2.5 text-right text-xs font-semibold text-gray-600">Contado</th>
+                  <th className="px-4 py-2.5 text-right text-xs font-semibold text-gray-600">Cambio</th>
+                  <th className="px-4 py-2.5 text-right text-xs font-semibold text-gray-600">Retiro</th>
+                  <th className="px-4 py-2.5 text-right text-xs font-semibold text-gray-600">Otros ret.</th>
                   <th className="px-4 py-2.5 text-right text-xs font-semibold text-gray-600">Diferencia</th>
                   <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600">Nota</th>
                   <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-600">Verificado</th>
@@ -314,6 +479,8 @@ export function CierreCaja() {
               <tbody>
                 {porFecha.map(([fecha, rows]) => {
                   const difDia = rows.reduce((s, r) => s + (r.diferencia ?? 0), 0)
+                  const efectivoDia = rows.reduce((s, r) => s + (r.retiro > 0 ? r.retiro : r.monto_contado) + (r.otros_retiros ?? 0), 0)
+                  const fudoDia = rows.reduce((s, r) => s + (r.monto_esperado ?? 0), 0)
                   return rows.map((c, i) => (
                     <tr key={c.id} className={cn(
                       'border-b border-gray-50 hover:bg-gray-50',
@@ -323,8 +490,12 @@ export function CierreCaja() {
                       {i === 0 ? (
                         <td className="px-4 py-2 font-medium text-gray-800 align-top" rowSpan={rows.length}>
                           <div>{new Date(fecha + 'T12:00:00').toLocaleDateString('es-AR', { weekday: 'short', day: 'numeric', month: 'short' })}</div>
+                          <div className="mt-1 space-y-0.5">
+                            <div className="text-[10px] text-green-700 font-medium">Efvo: {formatARS(efectivoDia)}</div>
+                            {fudoDia > 0 && <div className="text-[10px] text-blue-700 font-medium">Fudo: {formatARS(fudoDia)}</div>}
+                          </div>
                           <div className={cn(
-                            'text-xs font-medium mt-0.5',
+                            'text-xs font-medium mt-1',
                             difDia === 0 ? 'text-green-600' : difDia > 0 ? 'text-blue-600' : 'text-red-600'
                           )}>
                             {difDia === 0 ? 'Cuadra' : formatARS(difDia)}
@@ -332,11 +503,31 @@ export function CierreCaja() {
                         </td>
                       ) : null}
                       <td className="px-4 py-2 text-gray-700">{c.caja || '—'}</td>
-                      <td className="px-4 py-2 text-gray-600">{turnoLabel(c.turno)}</td>
+                      <td className="px-4 py-2 text-gray-600">
+                        <div>{turnoLabel(c.turno)}</div>
+                        {c.hora_inicio && c.hora_cierre && (
+                          <div className="text-[10px] text-gray-400">{c.hora_inicio.substring(0, 5)}–{c.hora_cierre.substring(0, 5)}</div>
+                        )}
+                      </td>
                       <td className="px-4 py-2 text-right text-gray-600">
                         {c.monto_esperado != null ? formatARS(c.monto_esperado) : '—'}
                       </td>
                       <td className="px-4 py-2 text-right font-medium text-gray-900">{formatARS(c.monto_contado)}</td>
+                      <td className="px-4 py-2 text-right text-gray-500 text-xs">
+                        {c.fondo_apertura > 0 && <div>Inicio: {formatARS(c.fondo_apertura)}</div>}
+                        {c.fondo_siguiente > 0 && <div>Deja: {formatARS(c.fondo_siguiente)}</div>}
+                      </td>
+                      <td className="px-4 py-2 text-right font-medium text-green-700">
+                        {c.retiro > 0 ? formatARS(c.retiro) : '—'}
+                      </td>
+                      <td className="px-4 py-2 text-right text-xs">
+                        {(c.otros_retiros ?? 0) > 0 ? (
+                          <div>
+                            <span className="font-medium text-amber-700">{formatARS(c.otros_retiros)}</span>
+                            {c.otros_retiros_nota && <div className="text-gray-400 truncate max-w-[120px]" title={c.otros_retiros_nota}>{c.otros_retiros_nota}</div>}
+                          </div>
+                        ) : '—'}
+                      </td>
                       <td className="px-4 py-2 text-right">
                         {c.diferencia != null ? (
                           <span className={cn(
