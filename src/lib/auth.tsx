@@ -12,6 +12,7 @@ export type Modulo =
   | 'rrhh'
   | 'compras'
   | 'usuarios'
+  | 'cocina'
 
 export interface Perfil {
   user_id: string
@@ -26,6 +27,7 @@ export interface Perfil {
   puede_ver_rrhh: boolean
   puede_ver_compras: boolean
   puede_ver_usuarios: boolean
+  puede_ver_cocina: boolean
 }
 
 interface AuthContextValue {
@@ -123,6 +125,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       case 'rrhh': return perfil.puede_ver_rrhh
       case 'compras': return perfil.puede_ver_compras
       case 'usuarios': return perfil.puede_ver_usuarios
+      case 'cocina': return perfil.puede_ver_cocina
     }
   }
 

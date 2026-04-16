@@ -9,6 +9,7 @@ import { RRHHPage } from '@/modules/rrhh/RRHHPage'
 import { FicharPage } from '@/modules/rrhh/FicharPage'
 import { LoginPage } from '@/modules/auth/LoginPage'
 import { UsuariosPage } from '@/modules/usuarios/UsuariosPage'
+import { CocinaPage } from '@/modules/cocina/CocinaPage'
 import { PageContainer } from '@/components/layout/PageContainer'
 import { AuthProvider, useAuth, type Modulo } from '@/lib/auth'
 import { type ReactNode } from 'react'
@@ -93,6 +94,7 @@ function AppInterna() {
     tieneAlgunFinanzas ? '/finanzas' :
     tienePermiso('rrhh') ? '/rrhh' :
     tienePermiso('compras') ? '/compras' :
+    tienePermiso('cocina') ? '/cocina' :
     tienePermiso('usuarios') ? '/usuarios' :
     null
 
@@ -110,6 +112,7 @@ function AppInterna() {
           <Route path="/amortizaciones" element={<Navigate to="/finanzas" replace />} />
           <Route path="/rrhh"           element={<Ruta modulo="rrhh"><RRHHPage /></Ruta>} />
           <Route path="/compras"        element={<Ruta modulo="compras"><ComprasPage /></Ruta>} />
+          <Route path="/cocina"          element={<Ruta modulo="cocina"><CocinaPage /></Ruta>} />
           <Route path="/usuarios"       element={<Ruta modulo="usuarios"><UsuariosPage /></Ruta>} />
           <Route path="*"               element={<Navigate to={primeraRutaPermitida || '/'} replace />} />
         </Routes>
