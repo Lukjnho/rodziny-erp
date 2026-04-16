@@ -10,7 +10,7 @@ const NAV: { to: string; label: string; icon: string; modulo: Modulo | 'finanzas
   { to: '/',          label: 'Dashboard', icon: '▦',  modulo: 'dashboard' },
   { to: '/finanzas',  label: 'Finanzas',  icon: '💰', modulo: 'finanzas-grupo' },
   { to: '/rrhh',      label: 'RRHH',      icon: '👥', modulo: 'rrhh' },
-  { to: '/compras',   label: 'Compras',   icon: '🛒', modulo: 'compras' },
+  { to: '/compras',   label: 'Gastos-Compras', icon: '🧾', modulo: 'compras' },
   { to: '/usuarios',  label: 'Usuarios',  icon: '🔑', modulo: 'usuarios' },
 ]
 

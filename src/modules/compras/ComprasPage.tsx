@@ -8,8 +8,9 @@ import { parseStockFudo } from './parsers/parseStock'
 import { parseFudoGastos, type DetalleRow, type GastoRow } from '@/modules/finanzas/parsers/parseFudoGastos'
 import { NuevoGastoModal, type PrefillGasto } from '@/modules/gastos/NuevoGastoModal'
 import { ProveedoresPanel } from '@/modules/gastos/ProveedoresPanel'
+import { ListadoGastos } from '@/modules/gastos/ListadoGastos'
 
-type Tab = 'stock' | 'movimientos' | 'importar' | 'recepcion' | 'pagos' | 'proveedores'
+type Tab = 'gastos' | 'stock' | 'movimientos' | 'importar' | 'recepcion' | 'pagos' | 'proveedores'
 type FiltroEstado = 'todos' | 'bajo_minimo' | 'sin_stock' | 'inactivos'
 
 interface Producto {
@@ -26,6 +27,16 @@ interface Movimiento {
 
 // ── Panel de ayuda contextual ────────────────────────────────────────────────
 const ayudaPorTab: Record<Tab, { titulo: string; pasos: string[] }> = {
+  gastos: {
+    titulo: 'Gastos',
+    pasos: [
+      'Acá se cargan todos los gastos del negocio: compras a proveedores, servicios, alquiler, sueldos, etc.',
+      'Hacé clic en "+ Nuevo gasto" para cargar un comprobante.',
+      'Completá proveedor, categoría, importes y adjuntá el comprobante (PDF o foto).',
+      'Si el gasto ya se pagó, marcalo como "Pagado" y elegí fecha + medio de pago.',
+      'Si todavía no se pagó, dejalo como "Pendiente" y después usá el botón "Pagar" del listado.',
+    ],
+  },
   stock: {
     titulo: 'Stock actual',
     pasos: [
@@ -119,7 +130,7 @@ function AyudaPanel({ tab, onClose }: { tab: Tab; onClose: () => void }) {
 
 export function ComprasPage() {
   const [local, setLocal] = useState<'vedia' | 'saavedra'>('vedia')
-  const [tab, setTab]     = useState<Tab>('stock')
+  const [tab, setTab]     = useState<Tab>('gastos')
   const [ayudaAbierta, setAyudaAbierta] = useState(false)
   const [filtro, setFiltro] = useState('')
   const [filtroEstado, setFiltroEstado] = useState<FiltroEstado>('todos')
@@ -564,7 +575,7 @@ export function ComprasPage() {
   }
 
   return (
-    <PageContainer title="Compras & Stock" subtitle="Inventario, movimientos y órdenes de compra">
+    <PageContainer title="Gastos-Compras" subtitle="Gastos, stock, proveedores y pagos">
       {/* Filtros */}
       <div className="flex items-center gap-4 mb-4 flex-wrap">
         <LocalSelector value={local} onChange={(v) => setLocal(v as 'vedia' | 'saavedra')} />
@@ -572,6 +583,7 @@ export function ComprasPage() {
         <div className="flex gap-1 border-b border-gray-200">
           {([
             ['stock',       '📦 Stock'],
+            ['gastos',      '🧾 Gastos'],
             ['movimientos', '📋 Movimientos'],
             ['importar',    '📥 Importar'],
             ['recepcion',   '📬 Recepción'],
@@ -601,6 +613,9 @@ export function ComprasPage() {
       </div>
 
       {ayudaAbierta && <AyudaPanel tab={tab} onClose={() => setAyudaAbierta(false)} />}
+
+      {/* ═══ TAB: GASTOS ═══ */}
+      {tab === 'gastos' && <ListadoGastos />}
 
       {/* ═══ TAB: STOCK ═══ */}
       {tab === 'stock' && (

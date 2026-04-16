@@ -28,6 +28,7 @@ interface CierreRow {
   id: string; local: string; fecha: string; turno: string; caja: string | null
   monto_esperado: number | null; monto_contado: number; diferencia: number | null
   nota: string | null; creado_por: string | null
+  verificado: boolean; verificado_por: string | null; verificado_at: string | null
 }
 
 // ── componente ───────────────────────────────────────────────────────────────
@@ -95,6 +96,19 @@ export function CierreCaja() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['cierres_mes'] }),
   })
 
+  // ── mutation: verificar cierre ─────────────────────────────────────────────
+  const verificarMut = useMutation({
+    mutationFn: async ({ id, verificado }: { id: string; verificado: boolean }) => {
+      const { error } = await supabase.from('cierres_caja').update({
+        verificado,
+        verificado_por: verificado ? 'Admin' : null,
+        verificado_at: verificado ? new Date().toISOString() : null,
+      }).eq('id', id)
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['cierres_mes'] }),
+  })
+
   function resetForm() {
     setFFecha(hoy)
     setFTurno(TURNOS[local]?.[0]?.key ?? '')
@@ -111,15 +125,16 @@ export function CierreCaja() {
 
   // ── resumen del mes ────────────────────────────────────────────────────────
   const resumen = useMemo(() => {
-    if (!cierres) return { total: 0, positivos: 0, negativos: 0, cantidad: 0 }
-    let total = 0, positivos = 0, negativos = 0
+    if (!cierres) return { total: 0, positivos: 0, negativos: 0, cantidad: 0, verificados: 0, pendientes: 0 }
+    let total = 0, positivos = 0, negativos = 0, verificados = 0
     for (const c of cierres) {
       const dif = c.diferencia ?? 0
       total += dif
       if (dif > 0) positivos += dif
       if (dif < 0) negativos += dif
+      if (c.verificado) verificados++
     }
-    return { total, positivos, negativos, cantidad: cierres.length }
+    return { total, positivos, negativos, cantidad: cierres.length, verificados, pendientes: cierres.length - verificados }
   }, [cierres])
 
   // Agrupar por fecha
@@ -158,7 +173,7 @@ export function CierreCaja() {
       </div>
 
       {/* KPIs resumen */}
-      <div className="grid grid-cols-4 gap-3">
+      <div className="grid grid-cols-5 gap-3">
         <div className="bg-white rounded-lg border border-surface-border p-4">
           <p className="text-xs text-gray-500 mb-1">Cierres del mes</p>
           <p className="text-lg font-semibold text-gray-900">{resumen.cantidad}</p>
@@ -176,6 +191,13 @@ export function CierreCaja() {
         <div className="bg-white rounded-lg border border-surface-border p-4">
           <p className="text-xs text-gray-500 mb-1">Faltantes</p>
           <p className="text-lg font-semibold text-red-600">{formatARS(resumen.negativos)}</p>
+        </div>
+        <div className="bg-white rounded-lg border border-surface-border p-4">
+          <p className="text-xs text-gray-500 mb-1">Verificación</p>
+          <p className={cn('text-lg font-semibold', resumen.pendientes === 0 ? 'text-green-600' : 'text-amber-600')}>
+            {resumen.verificados}/{resumen.cantidad}
+          </p>
+          {resumen.pendientes > 0 && <p className="text-[10px] text-amber-500 mt-0.5">{resumen.pendientes} pendiente{resumen.pendientes > 1 ? 's' : ''}</p>}
         </div>
       </div>
 
@@ -285,6 +307,7 @@ export function CierreCaja() {
                   <th className="px-4 py-2.5 text-right text-xs font-semibold text-gray-600">Contado</th>
                   <th className="px-4 py-2.5 text-right text-xs font-semibold text-gray-600">Diferencia</th>
                   <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600">Nota</th>
+                  <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-600">Verificado</th>
                   <th className="px-2 py-2.5 w-8"></th>
                 </tr>
               </thead>
@@ -326,6 +349,21 @@ export function CierreCaja() {
                         ) : '—'}
                       </td>
                       <td className="px-4 py-2 text-gray-400 text-xs max-w-[200px] truncate">{c.nota || ''}</td>
+                      <td className="px-4 py-2 text-center">
+                        <button
+                          onClick={() => verificarMut.mutate({ id: c.id, verificado: !c.verificado })}
+                          disabled={verificarMut.isPending}
+                          className={cn(
+                            'inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium transition-colors',
+                            c.verificado
+                              ? 'bg-green-100 text-green-800 hover:bg-green-200'
+                              : 'bg-gray-100 text-gray-500 hover:bg-amber-100 hover:text-amber-700'
+                          )}
+                          title={c.verificado ? `Verificado por ${c.verificado_por}` : 'Marcar como verificado'}
+                        >
+                          {c.verificado ? '✓ Verificado' : '○ Pendiente'}
+                        </button>
+                      </td>
                       <td className="px-2 py-2 text-center">
                         <button
                           onClick={() => { if (confirm('¿Eliminar este cierre?')) eliminarMut.mutate(c.id) }}
