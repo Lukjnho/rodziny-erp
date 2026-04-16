@@ -249,6 +249,7 @@ export function ListadoGastos() {
                 <th className="px-3 py-2 text-left font-semibold">Proveedor</th>
                 <th className="px-3 py-2 text-left font-semibold">Categoría</th>
                 <th className="px-3 py-2 text-left font-semibold">Comprobante</th>
+                <th className="px-3 py-2 text-left font-semibold">Comentario</th>
                 <th className="px-3 py-2 text-right font-semibold">Neto</th>
                 <th className="px-3 py-2 text-right font-semibold">IVA</th>
                 <th className="px-3 py-2 text-right font-semibold">Total</th>
@@ -259,10 +260,10 @@ export function ListadoGastos() {
             </thead>
             <tbody>
               {isLoading && (
-                <tr><td colSpan={10} className="px-3 py-8 text-center text-gray-400">Cargando...</td></tr>
+                <tr><td colSpan={11} className="px-3 py-8 text-center text-gray-400">Cargando...</td></tr>
               )}
               {!isLoading && filtrados.length === 0 && (
-                <tr><td colSpan={10} className="px-3 py-8 text-center text-gray-400">Sin gastos en este rango</td></tr>
+                <tr><td colSpan={11} className="px-3 py-8 text-center text-gray-400">Sin gastos en este rango</td></tr>
               )}
               {filtrados.map((g) => {
                 const pagado = (g.estado_pago ?? '').toLowerCase() === 'pagado'
@@ -278,6 +279,7 @@ export function ListadoGastos() {
                       <span className="text-[10px] text-gray-400">{tipoLabel}</span>
                       {g.nro_comprobante && <span className="ml-1 text-gray-700">{g.nro_comprobante}</span>}
                     </td>
+                    <td className="px-3 py-2 text-gray-600 max-w-[200px] truncate" title={g.comentario ?? ''}>{g.comentario || '—'}</td>
                     <td className="px-3 py-2 text-right text-gray-700 tabular-nums">{g.importe_neto ? formatARS(Number(g.importe_neto)) : '—'}</td>
                     <td className="px-3 py-2 text-right text-gray-500 tabular-nums">{g.iva ? formatARS(Number(g.iva)) : '—'}</td>
                     <td className="px-3 py-2 text-right text-gray-900 font-semibold tabular-nums">{formatARS(g.importe_total)}</td>
@@ -324,7 +326,7 @@ export function ListadoGastos() {
             {filtrados.length > 0 && (
               <tfoot className="bg-gray-100 border-t border-gray-300">
                 <tr className="font-semibold">
-                  <td colSpan={4} className="px-3 py-2 text-right text-gray-600">TOTALES ({totales.cantidad}):</td>
+                  <td colSpan={5} className="px-3 py-2 text-right text-gray-600">TOTALES ({totales.cantidad}):</td>
                   <td className="px-3 py-2 text-right tabular-nums">{formatARS(totales.neto)}</td>
                   <td className="px-3 py-2 text-right tabular-nums">{formatARS(totales.iva)}</td>
                   <td className="px-3 py-2 text-right tabular-nums">{formatARS(totales.total)}</td>
