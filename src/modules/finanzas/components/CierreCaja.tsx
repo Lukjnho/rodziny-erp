@@ -411,16 +411,26 @@ export function CierreCaja() {
               })()}
             </div>
 
-            {/* ── Arqueo real (efectivo contado) ── */}
+            {/* ── Arqueo de efectivo ── */}
             <div className="col-span-2 md:col-span-3 mt-2">
-              <p className="text-xs font-semibold text-gray-700 border-b border-gray-200 pb-1 mb-3">Arqueo de efectivo</p>
+              <p className="text-xs font-semibold text-gray-700 border-b border-gray-200 pb-1 mb-1">Arqueo de efectivo</p>
+              <p className="text-[10px] text-gray-400 mb-3">Solo se compara el efectivo físico en caja contra lo que Fudo registró como pago en efectivo</p>
+            </div>
+
+            {/* Fila 1: Cambio apertura, Contado real, Otros retiros */}
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Cambio apertura</label>
+              <input type="text" value={fFondoAp} onChange={(e) => setFFondoAp(e.target.value)}
+                placeholder="0"
+                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500" />
+              <p className="text-[10px] text-gray-400 mt-0.5">Plata que había al abrir la caja</p>
             </div>
 
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Contado real <span className="text-red-500">*</span></label>
               <input type="text" value={fContado} onChange={(e) => setFContado(e.target.value)}
                 placeholder="0" className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500" />
-              <p className="text-[10px] text-gray-400 mt-0.5">Total de efectivo en caja al cerrar</p>
+              <p className="text-[10px] text-gray-400 mt-0.5">Billetes y monedas al cerrar (solo efectivo)</p>
             </div>
 
             <div>
@@ -443,21 +453,16 @@ export function CierreCaja() {
                   </div>
                 )
               })()}
+              <p className="text-[10px] text-gray-400 mt-0.5">Contado + retiros - cambio apertura vs. efectivo Fudo</p>
             </div>
 
-            {/* Cambio y retiros */}
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Cambio apertura</label>
-              <input type="text" value={fFondoAp} onChange={(e) => setFFondoAp(e.target.value)}
-                placeholder="Cambio al iniciar"
-                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500" />
-            </div>
-
+            {/* Fila 2: Cambio siguiente, Retiro, Otros retiros */}
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Cambio próximo turno</label>
               <input type="text" value={fFondoSig} onChange={(e) => setFFondoSig(e.target.value)}
-                placeholder="Cambio que se deja"
+                placeholder="0"
                 className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500" />
+              <p className="text-[10px] text-gray-400 mt-0.5">Plata que se deja para el próximo turno</p>
             </div>
 
             <div>
