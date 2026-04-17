@@ -153,6 +153,7 @@ export function CierreCaja() {
         otros_retiros_nota: fOtrosRetNota || null,
         nota: fNota || null,
         creado_por: 'Lucas',
+        cajero_nombre: fudoResumen?.cajero || null,
       }, { onConflict: 'local,fecha,turno,caja' })
       if (error) throw error
     },

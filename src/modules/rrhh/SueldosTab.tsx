@@ -15,10 +15,17 @@ import { periodoQuincena, periodoMes } from './sueldos/tipos'
 import { PanelAdelantos } from './sueldos/PanelAdelantos'
 import { PanelSanciones } from './sueldos/PanelSanciones'
 import { PanelDescuentos } from './sueldos/PanelDescuentos'
+import { PanelErroresCaja, type CierreCajaError } from './sueldos/PanelErroresCaja'
 import { SeccionImpuestos } from './sueldos/SeccionImpuestos'
 
 type FiltroLocal = 'todos' | 'vedia' | 'saavedra' | 'ambos'
-type PanelEstado = { tipo: 'adelantos' | 'sanciones' | 'descuentos'; empleadoId: string } | null
+type PanelEstado = { tipo: 'adelantos' | 'sanciones' | 'descuentos' | 'errores_caja'; empleadoId: string } | null
+
+// Mapeo de nombres Fudo → apellido de empleado (para vincular cajero con legajo)
+const FUDO_CAJERO_APELLIDO: Record<string, string> = {
+  marcos: 'paredes',
+  brian: 'martinez',
+}
 
 interface Cronograma {
   id: string
@@ -191,6 +198,22 @@ export function SueldosTab() {
     },
   })
 
+  // Cierres de caja con diferencia (para trackear errores por cajero)
+  const { data: cierresCaja } = useQuery({
+    queryKey: ['cierres_caja_errores', fechaDesdeMes, fechaHastaMes],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('cierres_caja')
+        .select('id, fecha, turno, caja, diferencia, monto_contado, monto_esperado, cajero_nombre, nota')
+        .gte('fecha', fechaDesdeMes)
+        .lte('fecha', fechaHastaMes)
+        .not('diferencia', 'eq', 0)
+        .not('cajero_nombre', 'is', null)
+      if (error) throw error
+      return data as CierreCajaError[]
+    },
+  })
+
   // ── Mutaciones ────────────────────────────────────────────────────────────
   const upsertLiquidacion = useMutation({
     mutationFn: async (payload: {
@@ -273,6 +296,7 @@ export function SueldosTab() {
     adelantosEmp: Adelanto[]
     sancionesEmp: Sancion[]
     descuentosEmp: Descuento[]
+    erroresCajaEmp: CierreCajaError[]
     adelantosMonto: number
     sancionesMonto: number
     descuentosMonto: number
@@ -333,6 +357,13 @@ export function SueldosTab() {
       const sancionesMonto = sancionesEmp.reduce((s, a) => s + Number(a.monto), 0)
       const descuentosMonto = descuentosEmp.reduce((s, d) => s + Number(d.monto), 0)
 
+      // Errores de caja: vincular por cajero_nombre → empleado.apellido
+      const erroresCajaEmp = (cierresCaja ?? []).filter((c) => {
+        if (!c.cajero_nombre) return false
+        const apellidoEsperado = FUDO_CAJERO_APELLIDO[c.cajero_nombre.toLowerCase()]
+        return apellidoEsperado && emp.apellido.toLowerCase() === apellidoEsperado
+      })
+
       const total = base - deduccionPresentismo - adelantosMonto - sancionesMonto - descuentosMonto
 
       return {
@@ -348,6 +379,7 @@ export function SueldosTab() {
         adelantosEmp,
         sancionesEmp,
         descuentosEmp,
+        erroresCajaEmp,
         adelantosMonto,
         sancionesMonto,
         descuentosMonto,
@@ -364,6 +396,7 @@ export function SueldosTab() {
     adelantos,
     sanciones,
     descuentos,
+    cierresCaja,
     quincena,
     periodoActual,
     periodoQ1,
@@ -482,6 +515,7 @@ export function SueldosTab() {
                 <th className="text-center px-2 py-2 font-semibold">Presentismo</th>
                 <th className="text-right px-2 py-2 font-semibold">Adelantos</th>
                 <th className="text-right px-2 py-2 font-semibold">Sanciones</th>
+                <th className="text-center px-2 py-2 font-semibold" title="Errores de caja (faltantes/sobrantes) del mes">Caja</th>
                 <th className="text-right px-2 py-2 font-semibold" title="Días sin goce, licencias no remuneradas, etc.">Descuentos</th>
                 <th className="text-right px-2 py-2 font-semibold">Total</th>
                 <th className="text-center px-2 py-2 font-semibold">Pago</th>
@@ -490,7 +524,7 @@ export function SueldosTab() {
             <tbody className="divide-y divide-gray-100">
               {filas.length === 0 && (
                 <tr>
-                  <td colSpan={9} className="px-4 py-8 text-center text-xs text-gray-400">
+                  <td colSpan={10} className="px-4 py-8 text-center text-xs text-gray-400">
                     {empleados ? 'Sin empleados para mostrar' : 'Cargando...'}
                   </td>
                 </tr>
@@ -529,6 +563,9 @@ export function SueldosTab() {
                   onAbrirDescuentos={() =>
                     setPanel({ tipo: 'descuentos', empleadoId: fila.empleado.id })
                   }
+                  onAbrirErroresCaja={() =>
+                    setPanel({ tipo: 'errores_caja', empleadoId: fila.empleado.id })
+                  }
                 />
               ))}
             </tbody>
@@ -564,6 +601,14 @@ export function SueldosTab() {
           onClose={() => setPanel(null)}
         />
       )}
+      {panel && panelData && panel.tipo === 'errores_caja' && (
+        <PanelErroresCaja
+          empleado={panelData.fila.empleado}
+          periodo={panelData.periodo}
+          errores={panelData.fila.erroresCajaEmp}
+          onClose={() => setPanel(null)}
+        />
+      )}
     </div>
   )
 }
@@ -577,6 +622,7 @@ function FilaEmpleado({
   onAbrirAdelantos,
   onAbrirSanciones,
   onAbrirDescuentos,
+  onAbrirErroresCaja,
 }: {
   fila: {
     empleado: Empleado
@@ -590,6 +636,7 @@ function FilaEmpleado({
     adelantosMonto: number
     sancionesMonto: number
     descuentosMonto: number
+    erroresCajaEmp: CierreCajaError[]
     total: number
     pagado: boolean
     medioPago: MedioPagoSueldo | null
@@ -600,8 +647,9 @@ function FilaEmpleado({
   onAbrirAdelantos: () => void
   onAbrirSanciones: () => void
   onAbrirDescuentos: () => void
+  onAbrirErroresCaja: () => void
 }) {
-  const { empleado, modalidad, esMensualEnQ1, base, cobraPresentismo, presentismoOverride, deduccionPresentismo, adelantosMonto, sancionesMonto, descuentosMonto, total, medioPago } = fila
+  const { empleado, modalidad, esMensualEnQ1, base, cobraPresentismo, presentismoOverride, deduccionPresentismo, adelantosMonto, sancionesMonto, descuentosMonto, erroresCajaEmp, total, medioPago } = fila
 
   return (
     <tr className={cn('hover:bg-gray-50', esMensualEnQ1 && 'bg-gray-50/60 text-gray-500')}>
@@ -672,6 +720,26 @@ function FilaEmpleado({
         >
           {sancionesMonto > 0 ? formatARS(sancionesMonto) : '+ agregar'}
         </button>
+      </td>
+      <td className="px-2 py-2 text-center">
+        {erroresCajaEmp.length > 0 ? (
+          <button
+            onClick={onAbrirErroresCaja}
+            className="hover:underline text-xs"
+            title={`${erroresCajaEmp.length} cierre(s) con diferencia`}
+          >
+            <span className={cn(
+              'inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium',
+              erroresCajaEmp.some((e) => e.diferencia < 0)
+                ? 'bg-red-50 text-red-700'
+                : 'bg-blue-50 text-blue-700',
+            )}>
+              {erroresCajaEmp.length} error{erroresCajaEmp.length > 1 ? 'es' : ''}
+            </span>
+          </button>
+        ) : (
+          <span className="text-[10px] text-gray-300">—</span>
+        )}
       </td>
       <td className="px-2 py-2 text-right">
         <button
