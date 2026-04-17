@@ -16,8 +16,13 @@ interface LoteRelleno {
   id: string; receta_id: string; peso_total_kg: number; local: string
   receta?: { nombre: string } | null
 }
+interface LoteMasa {
+  id: string; receta_id: string | null; kg_producidos: number
+  kg_sobrante: number | null; destino_sobrante: string | null
+  receta?: { nombre: string } | null
+}
 
-type Vista = 'inicio' | 'relleno' | 'pasta' | 'exito'
+type Vista = 'inicio' | 'relleno' | 'pasta' | 'masa' | 'cerrar-masa' | 'exito'
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -91,6 +96,23 @@ export function ProduccionQRPage() {
     },
   })
 
+  // Lotes de masa del día
+  const { data: lotesMasaHoy } = useQuery({
+    queryKey: ['cocina-lotes-masa-qr', hoy(), local],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('cocina_lotes_masa')
+        .select('id, receta_id, kg_producidos, kg_sobrante, destino_sobrante, receta:cocina_recetas(nombre)')
+        .eq('fecha', hoy())
+        .eq('local', local)
+        .order('created_at', { ascending: false })
+      if (error) throw error
+      return data as unknown as LoteMasa[]
+    },
+  })
+
+  const masasAbiertas = useMemo(() => (lotesMasaHoy ?? []).filter((m) => m.kg_sobrante === null).length, [lotesMasaHoy])
+
   const recetasRelleno = useMemo(() => (recetas ?? []).filter((r) => r.tipo === 'relleno'), [recetas])
   const recetasMasa = useMemo(() => (recetas ?? []).filter((r) => r.tipo === 'masa'), [recetas])
   const productosPasta = useMemo(() => (productos ?? []).filter((p) => p.tipo === 'pasta'), [productos])
@@ -100,6 +122,7 @@ export function ProduccionQRPage() {
     setVista('exito')
     // Refrescar lotes para que aparezcan al cargar pasta
     qc.invalidateQueries({ queryKey: ['cocina-lotes-relleno-qr'] })
+    qc.invalidateQueries({ queryKey: ['cocina-lotes-masa-qr'] })
   }
 
   return (
@@ -108,7 +131,10 @@ export function ProduccionQRPage() {
         <Inicio
           onRelleno={() => setVista('relleno')}
           onPasta={() => setVista('pasta')}
+          onMasa={() => setVista('masa')}
+          onCerrarMasa={() => setVista('cerrar-masa')}
           lotesHoy={lotesRellenoHoy?.length ?? 0}
+          masasAbiertas={masasAbiertas}
         />
       )}
 
@@ -127,6 +153,24 @@ export function ProduccionQRPage() {
           productos={productosPasta}
           recetasMasa={recetasMasa}
           lotesRelleno={lotesRellenoHoy ?? []}
+          lotesMasa={(lotesMasaHoy ?? []).filter((m) => m.kg_sobrante === null)}
+          onGuardado={(msg) => onGuardado(msg)}
+          onVolver={() => setVista('inicio')}
+        />
+      )}
+
+      {vista === 'masa' && (
+        <FormMasa
+          local={local}
+          recetas={recetasMasa}
+          onGuardado={(msg) => onGuardado(msg)}
+          onVolver={() => setVista('inicio')}
+        />
+      )}
+
+      {vista === 'cerrar-masa' && (
+        <FormCerrarMasa
+          lotesAbiertos={(lotesMasaHoy ?? []).filter((m) => m.kg_sobrante === null)}
           onGuardado={(msg) => onGuardado(msg)}
           onVolver={() => setVista('inicio')}
         />
@@ -144,8 +188,9 @@ export function ProduccionQRPage() {
 
 // ── Inicio ─────────────────────────────────────────────────────────────────────
 
-function Inicio({ onRelleno, onPasta, lotesHoy }: {
-  onRelleno: () => void; onPasta: () => void; lotesHoy: number
+function Inicio({ onRelleno, onPasta, onMasa, onCerrarMasa, lotesHoy, masasAbiertas }: {
+  onRelleno: () => void; onPasta: () => void; onMasa: () => void; onCerrarMasa: () => void
+  lotesHoy: number; masasAbiertas: number
 }) {
   const ahora = new Date()
   const fechaLabel = ahora.toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'long' })
@@ -159,6 +204,11 @@ function Inicio({ onRelleno, onPasta, lotesHoy }: {
             ? `${lotesHoy} lote${lotesHoy > 1 ? 's' : ''} de relleno registrado${lotesHoy > 1 ? 's' : ''} hoy`
             : 'Sin registros de relleno hoy'}
         </p>
+        {masasAbiertas > 0 && (
+          <p className="text-sm text-amber-600 mt-1">
+            {masasAbiertas} masa{masasAbiertas > 1 ? 's' : ''} abierta{masasAbiertas > 1 ? 's' : ''}
+          </p>
+        )}
       </div>
 
       <button
@@ -174,6 +224,22 @@ function Inicio({ onRelleno, onPasta, lotesHoy }: {
       >
         Cargar Pasta
       </button>
+
+      <button
+        onClick={onMasa}
+        className="w-full bg-amber-500 hover:bg-amber-600 text-white py-5 rounded-lg font-semibold text-base shadow active:scale-[0.98] transition-transform"
+      >
+        Cargar Masa
+      </button>
+
+      {masasAbiertas > 0 && (
+        <button
+          onClick={onCerrarMasa}
+          className="w-full border-2 border-amber-500 text-amber-700 py-5 rounded-lg font-semibold text-base active:scale-[0.98] transition-transform"
+        >
+          Cerrar Masa
+        </button>
+      )}
 
       <p className="text-[10px] text-gray-400 text-center mt-6">
         Rodziny ERP · Carga de producción
@@ -304,12 +370,14 @@ function FormRelleno({ local, recetas, onGuardado, onVolver }: {
 
 // ── Formulario Pasta ───────────────────────────────────────────────────────────
 
-function FormPasta({ local, productos, recetasMasa, lotesRelleno, onGuardado, onVolver }: {
+function FormPasta({ local, productos, recetasMasa, lotesRelleno, lotesMasa, onGuardado, onVolver }: {
   local: string; productos: Producto[]; recetasMasa: Receta[]; lotesRelleno: LoteRelleno[]
+  lotesMasa: LoteMasa[]
   onGuardado: (msg: string) => void; onVolver: () => void
 }) {
   const [productoId, setProductoId] = useState(productos[0]?.id ?? '')
   const [loteRellenoId, setLoteRellenoId] = useState('')
+  const [loteMasaId, setLoteMasaId] = useState('')
   const [recetaMasaId, setRecetaMasaId] = useState('')
   const [masaKg, setMasaKg] = useState('')
   const [rellenoKg, setRellenoKg] = useState('')
@@ -331,6 +399,7 @@ function FormPasta({ local, productos, recetasMasa, lotesRelleno, onGuardado, on
     const { error: err } = await supabase.from('cocina_lotes_pasta').insert({
       producto_id: productoId,
       lote_relleno_id: loteRellenoId || null,
+      lote_masa_id: loteMasaId || null,
       fecha: hoy(),
       codigo_lote: codigoLote,
       receta_masa_id: recetaMasaId || null,
@@ -401,6 +470,22 @@ function FormPasta({ local, productos, recetasMasa, lotesRelleno, onGuardado, on
           </select>
         </div>
 
+        <div>
+          <label className="block text-xs font-medium text-gray-700 mb-1">Masa usada</label>
+          <select
+            value={loteMasaId}
+            onChange={(e) => setLoteMasaId(e.target.value)}
+            className="w-full border border-gray-300 rounded px-3 py-2.5 text-sm"
+          >
+            <option value="">Sin lote de masa</option>
+            {lotesMasa.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.receta?.nombre ?? 'Masa'} — {m.kg_producidos} kg
+              </option>
+            ))}
+          </select>
+        </div>
+
         <div className="grid grid-cols-3 gap-2">
           <div>
             <label className="block text-xs font-medium text-gray-700 mb-1">Masa (kg)</label>
@@ -465,6 +550,235 @@ function FormPasta({ local, productos, recetasMasa, lotesRelleno, onGuardado, on
         className="w-full bg-rodziny-700 hover:bg-rodziny-800 text-white py-3.5 rounded-lg font-semibold text-sm disabled:opacity-50 shadow active:scale-[0.98] transition-transform"
       >
         {guardando ? 'Guardando...' : 'Registrar pasta'}
+      </button>
+    </div>
+  )
+}
+
+// ── Formulario Masa ───────────────────────────────────────────────────────────
+
+function FormMasa({ local, recetas, onGuardado, onVolver }: {
+  local: string; recetas: Receta[]
+  onGuardado: (msg: string) => void; onVolver: () => void
+}) {
+  const [recetaId, setRecetaId] = useState(recetas[0]?.id ?? '')
+  const [kgProducidos, setKgProducidos] = useState('')
+  const [responsable, setResponsable] = useState('')
+  const [notas, setNotas] = useState('')
+  const [guardando, setGuardando] = useState(false)
+  const [error, setError] = useState('')
+
+  const recetaSel = recetas.find((r) => r.id === recetaId)
+
+  async function guardar() {
+    if (!recetaId) { setError('Seleccioná una receta'); return }
+    if (!kgProducidos || Number(kgProducidos) <= 0) { setError('Indicá los kg producidos'); return }
+    setGuardando(true)
+    setError('')
+
+    const { error: err } = await supabase.from('cocina_lotes_masa').insert({
+      receta_id: recetaId,
+      fecha: hoy(),
+      kg_producidos: Number(kgProducidos),
+      responsable: responsable.trim() || null,
+      local,
+      notas: notas.trim() || null,
+    })
+
+    if (err) { setError(err.message); setGuardando(false); return }
+    onGuardado(`Masa "${recetaSel?.nombre ?? ''}" — ${kgProducidos} kg`)
+  }
+
+  return (
+    <div className="space-y-3 mt-2">
+      <div className="flex items-center justify-between">
+        <h2 className="text-base font-semibold text-gray-900">Cargar Masa</h2>
+        <button onClick={onVolver} className="text-xs text-gray-500 underline">Volver</button>
+      </div>
+
+      <div className="bg-white rounded-lg border border-gray-200 p-4 space-y-3">
+        <div>
+          <label className="block text-xs font-medium text-gray-700 mb-1">Receta de masa</label>
+          <select
+            value={recetaId}
+            onChange={(e) => setRecetaId(e.target.value)}
+            className="w-full border border-gray-300 rounded px-3 py-2.5 text-sm"
+          >
+            {recetas.length === 0 && <option value="">No hay recetas de masa cargadas</option>}
+            {recetas.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.nombre}{r.rendimiento_kg ? ` (${r.rendimiento_kg} kg/receta)` : ''}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <label className="block text-xs font-medium text-gray-700 mb-1">Kg producidos</label>
+          <input
+            type="number"
+            inputMode="decimal"
+            step="0.1"
+            value={kgProducidos}
+            onChange={(e) => setKgProducidos(e.target.value)}
+            className="w-full border border-gray-300 rounded px-3 py-2.5 text-sm"
+            placeholder="10.0"
+          />
+        </div>
+
+        <div>
+          <label className="block text-xs font-medium text-gray-700 mb-1">Responsable</label>
+          <input
+            value={responsable}
+            onChange={(e) => setResponsable(e.target.value)}
+            className="w-full border border-gray-300 rounded px-3 py-2.5 text-sm"
+            placeholder="Nombre"
+          />
+        </div>
+
+        <div>
+          <label className="block text-xs font-medium text-gray-700 mb-1">Notas (opcional)</label>
+          <input
+            value={notas}
+            onChange={(e) => setNotas(e.target.value)}
+            className="w-full border border-gray-300 rounded px-3 py-2.5 text-sm"
+            placeholder="Ej: masa más hidratada"
+          />
+        </div>
+      </div>
+
+      {error && <div className="text-xs text-red-600 bg-red-50 rounded p-2">{error}</div>}
+
+      <button
+        onClick={guardar}
+        disabled={guardando}
+        className="w-full bg-amber-500 hover:bg-amber-600 text-white py-3.5 rounded-lg font-semibold text-sm disabled:opacity-50 shadow active:scale-[0.98] transition-transform"
+      >
+        {guardando ? 'Guardando...' : 'Registrar masa'}
+      </button>
+    </div>
+  )
+}
+
+// ── Formulario Cerrar Masa ────────────────────────────────────────────────────
+
+function FormCerrarMasa({ lotesAbiertos, onGuardado, onVolver }: {
+  lotesAbiertos: LoteMasa[]
+  onGuardado: (msg: string) => void; onVolver: () => void
+}) {
+  const [selectedId, setSelectedId] = useState(lotesAbiertos[0]?.id ?? '')
+  const [kgSobrante, setKgSobrante] = useState('')
+  const [destinoSobrante, setDestinoSobrante] = useState('')
+  const [guardando, setGuardando] = useState(false)
+  const [error, setError] = useState('')
+
+  const masaSel = lotesAbiertos.find((m) => m.id === selectedId)
+
+  async function guardar() {
+    if (!selectedId) { setError('Seleccioná una masa'); return }
+    if (kgSobrante === '' || Number(kgSobrante) < 0) { setError('Indicá el kg sobrante (0 si no queda)'); return }
+    if (Number(kgSobrante) > 0 && !destinoSobrante) { setError('Indicá el destino del sobrante'); return }
+    setGuardando(true)
+    setError('')
+
+    const sobrante = Number(kgSobrante)
+    const { error: err } = await supabase
+      .from('cocina_lotes_masa')
+      .update({
+        kg_sobrante: sobrante,
+        destino_sobrante: sobrante > 0 ? destinoSobrante : null,
+      })
+      .eq('id', selectedId)
+
+    if (err) { setError(err.message); setGuardando(false); return }
+    onGuardado(`Masa "${masaSel?.receta?.nombre ?? ''}" cerrada — ${kgSobrante} kg sobrante`)
+  }
+
+  if (lotesAbiertos.length === 0) {
+    return (
+      <div className="space-y-3 mt-2">
+        <div className="flex items-center justify-between">
+          <h2 className="text-base font-semibold text-gray-900">Cerrar Masa</h2>
+          <button onClick={onVolver} className="text-xs text-gray-500 underline">Volver</button>
+        </div>
+        <div className="bg-white rounded-lg border border-gray-200 p-4 text-center">
+          <p className="text-sm text-gray-600">No hay masas abiertas para cerrar.</p>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-3 mt-2">
+      <div className="flex items-center justify-between">
+        <h2 className="text-base font-semibold text-gray-900">Cerrar Masa</h2>
+        <button onClick={onVolver} className="text-xs text-gray-500 underline">Volver</button>
+      </div>
+
+      <div className="bg-white rounded-lg border border-gray-200 p-4 space-y-3">
+        {lotesAbiertos.length > 1 ? (
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Masa a cerrar</label>
+            <select
+              value={selectedId}
+              onChange={(e) => setSelectedId(e.target.value)}
+              className="w-full border border-gray-300 rounded px-3 py-2.5 text-sm"
+            >
+              {lotesAbiertos.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.receta?.nombre ?? 'Masa'} — {m.kg_producidos} kg
+                </option>
+              ))}
+            </select>
+          </div>
+        ) : (
+          <div className="bg-amber-50 border border-amber-200 rounded px-3 py-2 text-center">
+            <span className="text-[10px] text-amber-600 block">Masa a cerrar</span>
+            <span className="font-semibold text-amber-900 text-sm">
+              {masaSel?.receta?.nombre ?? 'Masa'} — {masaSel?.kg_producidos} kg
+            </span>
+          </div>
+        )}
+
+        <div>
+          <label className="block text-xs font-medium text-gray-700 mb-1">Kg sobrante</label>
+          <input
+            type="number"
+            inputMode="decimal"
+            step="0.1"
+            min={0}
+            value={kgSobrante}
+            onChange={(e) => setKgSobrante(e.target.value)}
+            className="w-full border border-gray-300 rounded px-3 py-2.5 text-sm"
+            placeholder="0"
+          />
+        </div>
+
+        {Number(kgSobrante) > 0 && (
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Destino del sobrante</label>
+            <select
+              value={destinoSobrante}
+              onChange={(e) => setDestinoSobrante(e.target.value)}
+              className="w-full border border-gray-300 rounded px-3 py-2.5 text-sm"
+            >
+              <option value="">Seleccionar...</option>
+              <option value="fideos">Fideos (reutilizar)</option>
+              <option value="merma">Merma (descartar)</option>
+              <option value="proxima_masa">Próxima masa</option>
+            </select>
+          </div>
+        )}
+      </div>
+
+      {error && <div className="text-xs text-red-600 bg-red-50 rounded p-2">{error}</div>}
+
+      <button
+        onClick={guardar}
+        disabled={guardando}
+        className="w-full bg-amber-500 hover:bg-amber-600 text-white py-3.5 rounded-lg font-semibold text-sm disabled:opacity-50 shadow active:scale-[0.98] transition-transform"
+      >
+        {guardando ? 'Guardando...' : 'Cerrar masa'}
       </button>
     </div>
   )

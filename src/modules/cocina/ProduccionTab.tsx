@@ -18,13 +18,20 @@ interface LoteRelleno {
   receta?: { nombre: string } | null
 }
 interface LotePasta {
-  id: string; producto_id: string; lote_relleno_id: string | null; fecha: string
+  id: string; producto_id: string; lote_relleno_id: string | null; lote_masa_id: string | null; fecha: string
   codigo_lote: string; receta_masa_id: string | null; masa_kg: number | null
   relleno_kg: number | null; porciones: number; responsable: string | null
   local: string; notas: string | null; created_at: string
   producto?: { nombre: string; codigo: string } | null
   lote_relleno?: { receta?: { nombre: string } | null; peso_total_kg: number } | null
   receta_masa?: { nombre: string } | null
+}
+
+interface LoteMasa {
+  id: string; receta_id: string | null; fecha: string; kg_producidos: number
+  kg_sobrante: number | null; destino_sobrante: string | null
+  responsable: string | null; local: string; notas: string | null; created_at: string
+  receta?: { nombre: string } | null
 }
 
 type FiltroLocal = 'todos' | 'vedia' | 'saavedra'
@@ -47,6 +54,8 @@ export function ProduccionTab() {
 
   // Modales
   const [modalRelleno, setModalRelleno] = useState(false)
+  const [modalMasa, setModalMasa] = useState(false)
+  const [modalCerrarMasa, setModalCerrarMasa] = useState<LoteMasa | null>(null)
   const [modalPasta, setModalPasta] = useState(false)
 
   // Catálogos
@@ -82,6 +91,19 @@ export function ProduccionTab() {
     },
   })
 
+  const { data: lotesMasa, isLoading: cargandoM } = useQuery({
+    queryKey: ['cocina-lotes-masa', fecha],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('cocina_lotes_masa')
+        .select('*, receta:cocina_recetas(nombre)')
+        .eq('fecha', fecha)
+        .order('created_at', { ascending: false })
+      if (error) throw error
+      return data as unknown as LoteMasa[]
+    },
+  })
+
   const { data: lotesPasta, isLoading: cargandoP } = useQuery({
     queryKey: ['cocina-lotes-pasta', fecha],
     queryFn: async () => {
@@ -101,6 +123,11 @@ export function ProduccionTab() {
     return (lotesRelleno ?? []).filter((l) => l.local === filtroLocal)
   }, [lotesRelleno, filtroLocal])
 
+  const masasFiltradas = useMemo(() => {
+    if (filtroLocal === 'todos') return lotesMasa ?? []
+    return (lotesMasa ?? []).filter((l) => l.local === filtroLocal)
+  }, [lotesMasa, filtroLocal])
+
   const pastasFiltradas = useMemo(() => {
     if (filtroLocal === 'todos') return lotesPasta ?? []
     return (lotesPasta ?? []).filter((l) => l.local === filtroLocal)
@@ -111,6 +138,11 @@ export function ProduccionTab() {
     lotes: rellenosFiltrados.length,
     kgTotal: rellenosFiltrados.reduce((s, l) => s + l.peso_total_kg, 0),
   }), [rellenosFiltrados])
+
+  const kpiMasa = useMemo(() => ({
+    lotes: masasFiltradas.length,
+    kgTotal: masasFiltradas.reduce((s, l) => s + l.kg_producidos, 0),
+  }), [masasFiltradas])
 
   const kpiPasta = useMemo(() => ({
     lotes: pastasFiltradas.length,
@@ -132,6 +164,14 @@ export function ProduccionTab() {
       if (error) throw error
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['cocina-lotes-relleno', fecha] }),
+  })
+
+  const eliminarMasa = useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase.from('cocina_lotes_masa').delete().eq('id', id)
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['cocina-lotes-masa', fecha] }),
   })
 
   const eliminarPasta = useMutation({
@@ -217,6 +257,76 @@ export function ProduccionTab() {
         </div>
       </div>
 
+      {/* ── Sección: Masas del día ───────────────────────────────────────────── */}
+      <div>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-base font-semibold text-gray-800">Masas del día</h3>
+          <button onClick={() => setModalMasa(true)} className="bg-rodziny-700 hover:bg-rodziny-800 text-white text-sm rounded px-3 py-1.5">
+            + Registrar masa
+          </button>
+        </div>
+
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-3">
+          <KPICard label="Lotes de masa" value={String(kpiMasa.lotes)} color="green" loading={cargandoM} />
+          <KPICard label="Total kg" value={`${kpiMasa.kgTotal.toFixed(1)} kg`} color="blue" loading={cargandoM} />
+        </div>
+
+        <div className="bg-white rounded-lg border border-surface-border overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-surface-border bg-gray-50 text-left text-xs text-gray-500 uppercase">
+                <th className="px-4 py-2">Receta</th>
+                <th className="px-4 py-2">Kg producidos</th>
+                <th className="px-4 py-2">Kg sobrante</th>
+                <th className="px-4 py-2">Destino</th>
+                <th className="px-4 py-2">Local</th>
+                <th className="px-4 py-2">Responsable</th>
+                <th className="px-4 py-2">Acciones</th>
+              </tr>
+            </thead>
+            <tbody>
+              {masasFiltradas.map((l) => (
+                <tr key={l.id} className="border-b border-surface-border hover:bg-gray-50">
+                  <td className="px-4 py-2 font-medium">{l.receta?.nombre ?? '—'}</td>
+                  <td className="px-4 py-2">{l.kg_producidos} kg</td>
+                  <td className="px-4 py-2">
+                    {l.kg_sobrante == null
+                      ? <span className="inline-block px-2 py-0.5 text-xs rounded-full bg-blue-100 text-blue-700">Abierto</span>
+                      : `${l.kg_sobrante} kg`}
+                  </td>
+                  <td className="px-4 py-2">
+                    {l.destino_sobrante == null
+                      ? '—'
+                      : l.destino_sobrante === 'fideos'
+                        ? <span className="inline-block px-2 py-0.5 text-xs rounded-full bg-blue-100 text-blue-700">Fideos (reutilizar)</span>
+                        : l.destino_sobrante === 'merma'
+                          ? <span className="inline-block px-2 py-0.5 text-xs rounded-full bg-red-100 text-red-700">Merma (descartar)</span>
+                          : <span className="inline-block px-2 py-0.5 text-xs rounded-full bg-green-100 text-green-700">Próxima masa</span>}
+                  </td>
+                  <td className="px-4 py-2 capitalize">{l.local}</td>
+                  <td className="px-4 py-2">{l.responsable || '—'}</td>
+                  <td className="px-4 py-2 flex gap-2">
+                    {l.kg_sobrante == null && (
+                      <button
+                        onClick={() => setModalCerrarMasa(l)}
+                        className="text-blue-600 hover:text-blue-800 text-xs"
+                      >Cerrar</button>
+                    )}
+                    <button
+                      onClick={() => { if (window.confirm('¿Eliminar este lote de masa?')) eliminarMasa.mutate(l.id) }}
+                      className="text-red-500 hover:text-red-700 text-xs"
+                    >Eliminar</button>
+                  </td>
+                </tr>
+              ))}
+              {masasFiltradas.length === 0 && (
+                <tr><td colSpan={7} className="px-4 py-6 text-center text-gray-400">{cargandoM ? 'Cargando...' : 'No hay masas registradas hoy'}</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       {/* ── Sección: Pastas del día ──────────────────────────────────────────── */}
       <div>
         <div className="flex items-center justify-between mb-3">
@@ -289,12 +399,28 @@ export function ProduccionTab() {
           onSaved={() => { qc.invalidateQueries({ queryKey: ['cocina-lotes-relleno', fecha] }); setModalRelleno(false) }}
         />
       )}
+      {modalMasa && (
+        <ModalMasa
+          fecha={fecha}
+          recetas={(recetas ?? []).filter((r) => r.tipo === 'masa')}
+          onClose={() => setModalMasa(false)}
+          onSaved={() => { qc.invalidateQueries({ queryKey: ['cocina-lotes-masa', fecha] }); setModalMasa(false) }}
+        />
+      )}
+      {modalCerrarMasa && (
+        <ModalCerrarMasa
+          lote={modalCerrarMasa}
+          onClose={() => setModalCerrarMasa(null)}
+          onSaved={() => { qc.invalidateQueries({ queryKey: ['cocina-lotes-masa', fecha] }); setModalCerrarMasa(null) }}
+        />
+      )}
       {modalPasta && (
         <ModalPasta
           fecha={fecha}
           productos={(productos ?? []).filter((p) => p.tipo === 'pasta')}
           recetasMasa={(recetas ?? []).filter((r) => r.tipo === 'masa')}
           lotesRellenoDia={lotesRelleno ?? []}
+          lotesMasaDia={lotesMasa ?? []}
           onClose={() => setModalPasta(false)}
           onSaved={() => {
             qc.invalidateQueries({ queryKey: ['cocina-lotes-pasta', fecha] })
@@ -393,12 +519,13 @@ function ModalRelleno({ fecha, recetas, onClose, onSaved }: {
 
 // ── Modal: Registrar pasta ────────────────────────────────────────────────────
 
-function ModalPasta({ fecha, productos, recetasMasa, lotesRellenoDia, onClose, onSaved }: {
-  fecha: string; productos: Producto[]; recetasMasa: Receta[]; lotesRellenoDia: LoteRelleno[]
+function ModalPasta({ fecha, productos, recetasMasa, lotesRellenoDia, lotesMasaDia, onClose, onSaved }: {
+  fecha: string; productos: Producto[]; recetasMasa: Receta[]; lotesRellenoDia: LoteRelleno[]; lotesMasaDia: LoteMasa[]
   onClose: () => void; onSaved: () => void
 }) {
   const [productoId, setProductoId] = useState(productos[0]?.id ?? '')
   const [loteRellenoId, setLoteRellenoId] = useState('')
+  const [loteMasaId, setLoteMasaId] = useState('')
   const [recetaMasaId, setRecetaMasaId] = useState('')
   const [masaKg, setMasaKg] = useState('')
   const [rellenoKg, setRellenoKg] = useState('')
@@ -419,6 +546,7 @@ function ModalPasta({ fecha, productos, recetasMasa, lotesRellenoDia, onClose, o
     const { error: err } = await supabase.from('cocina_lotes_pasta').insert({
       producto_id: productoId,
       lote_relleno_id: loteRellenoId || null,
+      lote_masa_id: loteMasaId || null,
       fecha,
       codigo_lote: codigoLote,
       receta_masa_id: recetaMasaId || null,
@@ -460,6 +588,18 @@ function ModalPasta({ fecha, productos, recetasMasa, lotesRellenoDia, onClose, o
               {lotesRellenoDia.map((l) => (
                 <option key={l.id} value={l.id}>
                   {l.receta?.nombre ?? 'Relleno'} — {l.peso_total_kg} kg ({l.local})
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">Masa usada (del día)</label>
+            <select value={loteMasaId} onChange={(e) => setLoteMasaId(e.target.value)} className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm">
+              <option value="">Sin masa del día</option>
+              {lotesMasaDia.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.receta?.nombre ?? 'Masa'} — {l.kg_producidos} kg ({l.local})
                 </option>
               ))}
             </select>
@@ -513,6 +653,140 @@ function ModalPasta({ fecha, productos, recetasMasa, lotesRellenoDia, onClose, o
           <button onClick={onClose} className="px-4 py-1.5 text-sm text-gray-600 hover:text-gray-800">Cancelar</button>
           <button onClick={guardar} disabled={guardando} className="bg-rodziny-700 hover:bg-rodziny-800 text-white text-sm rounded px-4 py-1.5 disabled:opacity-50">
             {guardando ? 'Guardando...' : 'Guardar'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Modal: Registrar masa ────────────────────────────────────────────────────
+
+function ModalMasa({ fecha, recetas, onClose, onSaved }: {
+  fecha: string; recetas: Receta[]; onClose: () => void; onSaved: () => void
+}) {
+  const [recetaId, setRecetaId] = useState(recetas[0]?.id ?? '')
+  const [kgProducidos, setKgProducidos] = useState('')
+  const [responsable, setResponsable] = useState('')
+  const [local, setLocal] = useState<'vedia' | 'saavedra'>('vedia')
+  const [notas, setNotas] = useState('')
+  const [guardando, setGuardando] = useState(false)
+  const [error, setError] = useState('')
+
+  const guardar = async () => {
+    if (!recetaId || !kgProducidos) { setError('Receta y kg producidos son obligatorios'); return }
+    setGuardando(true)
+    setError('')
+    const { error: err } = await supabase.from('cocina_lotes_masa').insert({
+      receta_id: recetaId,
+      fecha,
+      kg_producidos: Number(kgProducidos),
+      responsable: responsable.trim() || null,
+      local,
+      notas: notas.trim() || null,
+    })
+    if (err) { setError(err.message); setGuardando(false); return }
+    onSaved()
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={onClose}>
+      <div className="absolute inset-0 bg-black/30" />
+      <div className="relative bg-white rounded-lg shadow-xl w-full max-w-md p-6" onClick={(e) => e.stopPropagation()}>
+        <h3 className="text-lg font-bold text-gray-800 mb-4">Registrar masa</h3>
+        <div className="space-y-3">
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">Receta de masa</label>
+            <select value={recetaId} onChange={(e) => setRecetaId(e.target.value)} className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm">
+              {recetas.length === 0 && <option value="">No hay recetas de masa cargadas</option>}
+              {recetas.map((r) => <option key={r.id} value={r.id}>{r.nombre}{r.rendimiento_kg ? ` (${r.rendimiento_kg} kg/receta)` : ''}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">Kg producidos</label>
+            <input type="number" step="0.1" value={kgProducidos} onChange={(e) => setKgProducidos(e.target.value)} className="w-full border border-gray-300 rounded px-3 py-1.5 text-sm" placeholder="10.0" />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Responsable</label>
+              <input value={responsable} onChange={(e) => setResponsable(e.target.value)} className="w-full border border-gray-300 rounded px-3 py-1.5 text-sm" />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Local</label>
+              <select value={local} onChange={(e) => setLocal(e.target.value as 'vedia' | 'saavedra')} className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm">
+                <option value="vedia">Vedia</option>
+                <option value="saavedra">Saavedra</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">Notas</label>
+            <input value={notas} onChange={(e) => setNotas(e.target.value)} className="w-full border border-gray-300 rounded px-3 py-1.5 text-sm" />
+          </div>
+        </div>
+        {error && <p className="text-red-500 text-xs mt-2">{error}</p>}
+        <div className="flex justify-end gap-2 mt-5">
+          <button onClick={onClose} className="px-4 py-1.5 text-sm text-gray-600 hover:text-gray-800">Cancelar</button>
+          <button onClick={guardar} disabled={guardando} className="bg-rodziny-700 hover:bg-rodziny-800 text-white text-sm rounded px-4 py-1.5 disabled:opacity-50">
+            {guardando ? 'Guardando...' : 'Guardar'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Modal: Cerrar masa (registrar sobrante) ──────────────────────────────────
+
+function ModalCerrarMasa({ lote, onClose, onSaved }: {
+  lote: LoteMasa; onClose: () => void; onSaved: () => void
+}) {
+  const [kgSobrante, setKgSobrante] = useState('')
+  const [destino, setDestino] = useState<'fideos' | 'merma' | 'proxima_masa'>('fideos')
+  const [guardando, setGuardando] = useState(false)
+  const [error, setError] = useState('')
+
+  const guardar = async () => {
+    if (kgSobrante === '') { setError('Kg sobrante es obligatorio (puede ser 0)'); return }
+    setGuardando(true)
+    setError('')
+    const { error: err } = await supabase.from('cocina_lotes_masa').update({
+      kg_sobrante: Number(kgSobrante),
+      destino_sobrante: Number(kgSobrante) === 0 ? null : destino,
+    }).eq('id', lote.id)
+    if (err) { setError(err.message); setGuardando(false); return }
+    onSaved()
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={onClose}>
+      <div className="absolute inset-0 bg-black/30" />
+      <div className="relative bg-white rounded-lg shadow-xl w-full max-w-md p-6" onClick={(e) => e.stopPropagation()}>
+        <h3 className="text-lg font-bold text-gray-800 mb-4">Cerrar lote de masa</h3>
+        <div className="text-sm text-gray-600 mb-4">
+          <span className="font-medium">{lote.receta?.nombre ?? 'Masa'}</span> — {lote.kg_producidos} kg producidos
+        </div>
+        <div className="space-y-3">
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">Kg sobrante</label>
+            <input type="number" step="0.1" min="0" value={kgSobrante} onChange={(e) => setKgSobrante(e.target.value)} className="w-full border border-gray-300 rounded px-3 py-1.5 text-sm" placeholder="0.0" />
+          </div>
+          {kgSobrante !== '' && Number(kgSobrante) > 0 && (
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Destino del sobrante</label>
+              <select value={destino} onChange={(e) => setDestino(e.target.value as 'fideos' | 'merma' | 'proxima_masa')} className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm">
+                <option value="fideos">Fideos (reutilizar)</option>
+                <option value="merma">Merma (descartar)</option>
+                <option value="proxima_masa">Próxima masa</option>
+              </select>
+            </div>
+          )}
+        </div>
+        {error && <p className="text-red-500 text-xs mt-2">{error}</p>}
+        <div className="flex justify-end gap-2 mt-5">
+          <button onClick={onClose} className="px-4 py-1.5 text-sm text-gray-600 hover:text-gray-800">Cancelar</button>
+          <button onClick={guardar} disabled={guardando} className="bg-rodziny-700 hover:bg-rodziny-800 text-white text-sm rounded px-4 py-1.5 disabled:opacity-50">
+            {guardando ? 'Guardando...' : 'Cerrar lote'}
           </button>
         </div>
       </div>
