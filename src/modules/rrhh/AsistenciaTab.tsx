@@ -17,6 +17,9 @@ import {
 } from './utils'
 
 type FiltroLocal = 'todos' | 'vedia' | 'saavedra' | 'ambos'
+type FiltroEstado = 'todos' | 'completas' | 'ausencias' | 'tardanzas' | 'incompletas'
+
+type EstadoEmpleadoDia = 'completa' | 'incompleta' | 'ausente' | 'franco' | 'sin_turno'
 
 interface Cronograma {
   id: string
@@ -56,6 +59,7 @@ export function AsistenciaTab() {
   const [modalManualAbierto, setModalManualAbierto] = useState(false)
   const [menuAbierto, setMenuAbierto] = useState(false)
   const [limpiando, setLimpiando] = useState(false)
+  const [filtroEstado, setFiltroEstado] = useState<FiltroEstado>('todos')
   const menuRef = useRef<HTMLDivElement>(null)
 
   // Cierra el menú al hacer click fuera
@@ -340,10 +344,17 @@ export function AsistenciaTab() {
 
       {/* ── KPIs ──────────────────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <KpiMini label="Fichajes" value={kpis.totalFichajes} color="gray" />
-        <KpiMini label="Asistencias completas" value={kpis.totalCompletos} color="green" />
-        <KpiMini label="Ausencias" value={kpis.totalAusencias} color="red" />
-        <KpiMini label="Tardanzas" value={kpis.totalTardanzas} color="amber" />
+        <KpiMini label="Fichajes" value={kpis.totalFichajes} color="gray"
+          activo={false} onClick={() => {}} />
+        <KpiMini label="Asistencias completas" value={kpis.totalCompletos} color="green"
+          activo={filtroEstado === 'completas'}
+          onClick={() => setFiltroEstado(filtroEstado === 'completas' ? 'todos' : 'completas')} />
+        <KpiMini label="Ausencias" value={kpis.totalAusencias} color="red"
+          activo={filtroEstado === 'ausencias'}
+          onClick={() => setFiltroEstado(filtroEstado === 'ausencias' ? 'todos' : 'ausencias')} />
+        <KpiMini label="Tardanzas" value={kpis.totalTardanzas} color="amber"
+          activo={filtroEstado === 'tardanzas'}
+          onClick={() => setFiltroEstado(filtroEstado === 'tardanzas' ? 'todos' : 'tardanzas')} />
       </div>
 
       {/* ── Lista de días ─────────────────────────────────────────────────── */}
@@ -363,11 +374,31 @@ export function AsistenciaTab() {
               >
                 <span className="text-sm font-medium text-gray-900 capitalize w-28">{etiquetaDia(d.fecha)}</span>
 
-                <div className="flex items-center gap-3 text-xs flex-1">
-                  {d.completos > 0 && <span className="text-green-700">✓ {d.completos} completos</span>}
-                  {d.incompletos > 0 && <span className="text-amber-700">⚠ {d.incompletos} incompletos</span>}
-                  {d.ausencias > 0 && <span className="text-red-700">✗ {d.ausencias} ausentes</span>}
-                  {d.tardanzas > 0 && <span className="text-amber-700">⏱ {d.tardanzas} tarde</span>}
+                <div className="flex items-center gap-3 text-xs flex-1" onClick={(e) => e.stopPropagation()}>
+                  {d.completos > 0 && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setFiltroEstado(filtroEstado === 'completas' ? 'todos' : 'completas'); setDiaExpandido(d.fecha) }}
+                      className={cn('text-green-700 hover:underline', filtroEstado === 'completas' && 'font-bold underline')}
+                    >✓ {d.completos} completos</button>
+                  )}
+                  {d.incompletos > 0 && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setFiltroEstado(filtroEstado === 'incompletas' ? 'todos' : 'incompletas'); setDiaExpandido(d.fecha) }}
+                      className={cn('text-amber-700 hover:underline', filtroEstado === 'incompletas' && 'font-bold underline')}
+                    >⚠ {d.incompletos} incompletos</button>
+                  )}
+                  {d.ausencias > 0 && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setFiltroEstado(filtroEstado === 'ausencias' ? 'todos' : 'ausencias'); setDiaExpandido(d.fecha) }}
+                      className={cn('text-red-700 hover:underline', filtroEstado === 'ausencias' && 'font-bold underline')}
+                    >✗ {d.ausencias} ausentes</button>
+                  )}
+                  {d.tardanzas > 0 && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setFiltroEstado(filtroEstado === 'tardanzas' ? 'todos' : 'tardanzas'); setDiaExpandido(d.fecha) }}
+                      className={cn('text-amber-700 hover:underline', filtroEstado === 'tardanzas' && 'font-bold underline')}
+                    >⏱ {d.tardanzas} tarde</button>
+                  )}
                   {d.francos > 0 && <span className="text-blue-700">F {d.francos}</span>}
                   {!tieneActividad && fechaPasada && <span className="text-gray-400">Sin actividad</span>}
                   {!fechaPasada && !tieneActividad && <span className="text-gray-400">A futuro</span>}
@@ -384,6 +415,8 @@ export function AsistenciaTab() {
                   empleados={empleadosFiltrados}
                   empleadosMap={empleadosMap}
                   onCambio={refrescar}
+                  filtroEstado={filtroEstado}
+                  filtroLocal={filtroLocal}
                 />
               )}
             </div>
@@ -406,25 +439,107 @@ export function AsistenciaTab() {
   )
 }
 
-// ─── KPI mini ───────────────────────────────────────────────────────────────
-function KpiMini({ label, value, color }: { label: string; value: number; color: 'gray' | 'green' | 'red' | 'amber' }) {
+// ─── KPI mini (clickable) ──────────────────────────────────────────────────
+function KpiMini({ label, value, color, activo, onClick }: {
+  label: string; value: number; color: 'gray' | 'green' | 'red' | 'amber'
+  activo: boolean; onClick: () => void
+}) {
   const colorClass = {
     gray: 'text-gray-900',
     green: 'text-green-700',
     red: 'text-red-700',
     amber: 'text-amber-700',
   }[color]
+  const ringClass = {
+    gray: 'ring-gray-400',
+    green: 'ring-green-500',
+    red: 'ring-red-500',
+    amber: 'ring-amber-500',
+  }[color]
   return (
-    <div className="bg-white rounded-lg border border-gray-200 p-3">
+    <button
+      onClick={onClick}
+      className={cn(
+        'bg-white rounded-lg border border-gray-200 p-3 text-left transition-all',
+        color !== 'gray' && 'cursor-pointer hover:shadow-sm',
+        activo && `ring-2 ${ringClass} shadow-sm`,
+      )}
+    >
       <p className="text-[10px] uppercase text-gray-500 font-medium tracking-wide">{label}</p>
       <p className={cn('text-2xl font-bold mt-1', colorClass)}>{value}</p>
-    </div>
+    </button>
+  )
+}
+
+// ─── Helpers de estado por empleado ─────────────────────────────────────────
+function calcularEstadoEmpleado(
+  emp: Empleado,
+  fichadas: Fichada[],
+  crono: Cronograma | undefined,
+  fecha: string,
+): { estado: EstadoEmpleadoDia; tarde: boolean } {
+  const hoyYmd = ymd(new Date())
+  const fs = fichadas.filter((f) => f.empleado_id === emp.id)
+
+  if (crono?.es_franco) return { estado: 'franco', tarde: false }
+  if (!crono?.publicado) return { estado: 'sin_turno', tarde: false }
+
+  const tarde = fs.some(
+    (f) => f.tipo === 'entrada' && f.minutos_diferencia !== null && f.minutos_diferencia > TOLERANCIA_MIN,
+  )
+
+  if (fs.length === 0) {
+    if (fecha <= hoyYmd) return { estado: 'ausente', tarde: false }
+    return { estado: 'sin_turno', tarde: false }
+  }
+
+  const tieneEntrada = fs.some((f) => f.tipo === 'entrada')
+  const tieneSalida = fs.some((f) => f.tipo === 'salida')
+  if (tieneEntrada && tieneSalida && fs.length % 2 === 0) {
+    return { estado: 'completa', tarde }
+  }
+  return { estado: 'incompleta', tarde }
+}
+
+function calcularHorasTrabajadas(fichadas: Fichada[]): string | null {
+  const entradas = fichadas.filter((f) => f.tipo === 'entrada').sort((a, b) => a.timestamp.localeCompare(b.timestamp))
+  const salidas = fichadas.filter((f) => f.tipo === 'salida').sort((a, b) => a.timestamp.localeCompare(b.timestamp))
+  if (entradas.length === 0 || salidas.length === 0) return null
+
+  let totalMin = 0
+  const pares = Math.min(entradas.length, salidas.length)
+  for (let i = 0; i < pares; i++) {
+    const e = new Date(entradas[i].timestamp).getTime()
+    const s = new Date(salidas[i].timestamp).getTime()
+    if (s > e) totalMin += (s - e) / 60000
+  }
+  if (totalMin === 0) return null
+  const h = Math.floor(totalMin / 60)
+  const m = Math.round(totalMin % 60)
+  return `${h}h ${m}m trabajadas`
+}
+
+function BadgeEstado({ estado, tarde }: { estado: EstadoEmpleadoDia; tarde: boolean }) {
+  const base = 'px-1.5 py-0.5 rounded text-[10px] font-medium'
+  const cfg: Record<EstadoEmpleadoDia, { bg: string; label: string }> = {
+    completa: { bg: 'bg-green-100 text-green-700', label: 'Completa' },
+    incompleta: { bg: 'bg-amber-100 text-amber-700', label: 'Incompleta' },
+    ausente: { bg: 'bg-red-100 text-red-700', label: 'Ausente' },
+    franco: { bg: 'bg-blue-100 text-blue-700', label: 'Franco' },
+    sin_turno: { bg: 'bg-gray-100 text-gray-500', label: 'Sin turno' },
+  }
+  const c = cfg[estado]
+  return (
+    <span className="inline-flex items-center gap-1">
+      <span className={cn(base, c.bg)}>{c.label}</span>
+      {tarde && <span className={cn(base, 'bg-orange-100 text-orange-700')}>Tarde</span>}
+    </span>
   )
 }
 
 // ─── Detalle del día (expandido) ────────────────────────────────────────────
 function DetalleDia({
-  fecha, fichadas, cronograma, empleados, empleadosMap, onCambio,
+  fecha, fichadas, cronograma, empleados, empleadosMap, onCambio, filtroEstado, filtroLocal,
 }: {
   fecha: string
   fichadas: Fichada[]
@@ -432,63 +547,130 @@ function DetalleDia({
   empleados: Empleado[]
   empleadosMap: Map<string, Empleado>
   onCambio: () => void
+  filtroEstado: FiltroEstado
+  filtroLocal: FiltroLocal
 }) {
   const [editando, setEditando] = useState<Fichada | null>(null)
   const [agregandoParaEmp, setAgregandoParaEmp] = useState<string | null>(null)
 
-  // Empleados a mostrar: con turno publicado o con fichadas (los que faltan abajo)
+  // Empleados a mostrar: con turno publicado o con fichadas
   const idsConActividad = new Set<string>()
   cronograma.forEach((c) => { if (c.publicado || c.es_franco) idsConActividad.add(c.empleado_id) })
   fichadas.forEach((f) => idsConActividad.add(f.empleado_id))
-  const filas = empleados.filter((e) => idsConActividad.has(e.id))
 
-  if (filas.length === 0) {
+  // Calcular estado de cada empleado
+  const filasConEstado = empleados
+    .filter((e) => idsConActividad.has(e.id))
+    .map((emp) => {
+      const crono = cronograma.find((x) => x.empleado_id === emp.id)
+      const { estado, tarde } = calcularEstadoEmpleado(emp, fichadas, crono, fecha)
+      return { emp, estado, tarde }
+    })
+    // Filtrar por filtroEstado
+    .filter(({ estado, tarde }) => {
+      if (filtroEstado === 'todos') return true
+      if (filtroEstado === 'completas') return estado === 'completa'
+      if (filtroEstado === 'ausencias') return estado === 'ausente'
+      if (filtroEstado === 'incompletas') return estado === 'incompleta'
+      if (filtroEstado === 'tardanzas') return tarde
+      return true
+    })
+    // Sort: francos to the bottom
+    .sort((a, b) => {
+      if (a.estado === 'franco' && b.estado !== 'franco') return 1
+      if (a.estado !== 'franco' && b.estado === 'franco') return -1
+      return 0
+    })
+
+  if (filasConEstado.length === 0) {
     return (
       <div className="px-4 py-3 bg-gray-50 text-xs text-gray-500">
-        No hay empleados con turno asignado ni fichajes este día.
+        {filtroEstado !== 'todos'
+          ? 'Ningún empleado coincide con el filtro seleccionado.'
+          : 'No hay empleados con turno asignado ni fichajes este día.'}
+      </div>
+    )
+  }
+
+  // Group by local when filtroLocal is 'todos'
+  const mostrarSeparadores = filtroLocal === 'todos'
+  const grupoVedia = mostrarSeparadores ? filasConEstado.filter(({ emp }) => emp.local === 'vedia' || emp.local === 'ambos') : []
+  const grupoSaavedra = mostrarSeparadores ? filasConEstado.filter(({ emp }) => emp.local === 'saavedra' || emp.local === 'ambos') : []
+
+  function renderCard({ emp, estado, tarde }: typeof filasConEstado[number]) {
+    const fs = fichadas.filter((f) => f.empleado_id === emp.id).sort((a, b) => a.timestamp.localeCompare(b.timestamp))
+    const c = cronograma.find((x) => x.empleado_id === emp.id)
+    const esFranco = estado === 'franco'
+    const esAusente = estado === 'ausente'
+    const horasTrabajadas = calcularHorasTrabajadas(fs)
+
+    return (
+      <div
+        key={emp.id}
+        className={cn(
+          'bg-white rounded border p-3 transition-opacity',
+          esAusente && 'bg-red-50 border-red-200',
+          !esAusente && 'border-gray-200',
+          esFranco && 'opacity-50',
+        )}
+      >
+        <div className="flex items-start justify-between mb-2">
+          <div>
+            <p className="text-sm font-medium text-gray-900 inline-flex items-center gap-2">
+              {emp.nombre} {emp.apellido}
+              <BadgeEstado estado={estado} tarde={tarde} />
+            </p>
+            <p className="text-[11px] text-gray-500">
+              {c?.es_franco
+                ? 'FRANCO'
+                : c?.hora_entrada
+                  ? `Turno: ${c.hora_entrada} – ${c.hora_salida}`
+                  : 'Sin turno'}
+              {c && !c.publicado && ' · borrador'}
+              {horasTrabajadas && <span className="ml-2 text-green-700">({horasTrabajadas})</span>}
+            </p>
+          </div>
+          <button
+            onClick={() => setAgregandoParaEmp(emp.id)}
+            className="text-[11px] text-rodziny-700 hover:text-rodziny-800 underline"
+          >
+            + Fichada
+          </button>
+        </div>
+
+        {fs.length === 0 ? (
+          <p className="text-[11px] text-gray-400 italic">Sin fichajes</p>
+        ) : (
+          <div className="space-y-1">
+            {fs.map((f) => (
+              <FilaFichada key={f.id} fichada={f} onEdit={() => setEditando(f)} onCambio={onCambio} />
+            ))}
+          </div>
+        )}
       </div>
     )
   }
 
   return (
     <div className="px-4 py-3 bg-gray-50 space-y-2">
-      {filas.map((emp) => {
-        const fs = fichadas.filter((f) => f.empleado_id === emp.id).sort((a, b) => a.timestamp.localeCompare(b.timestamp))
-        const c = cronograma.find((x) => x.empleado_id === emp.id)
-        return (
-          <div key={emp.id} className="bg-white rounded border border-gray-200 p-3">
-            <div className="flex items-start justify-between mb-2">
-              <div>
-                <p className="text-sm font-medium text-gray-900">{emp.nombre} {emp.apellido}</p>
-                <p className="text-[11px] text-gray-500">
-                  {c?.es_franco
-                    ? 'FRANCO'
-                    : c?.hora_entrada
-                      ? `Turno: ${c.hora_entrada} – ${c.hora_salida}`
-                      : 'Sin turno'}
-                  {c && !c.publicado && ' · borrador'}
-                </p>
-              </div>
-              <button
-                onClick={() => setAgregandoParaEmp(emp.id)}
-                className="text-[11px] text-rodziny-700 hover:text-rodziny-800 underline"
-              >
-                + Fichada
-              </button>
-            </div>
-
-            {fs.length === 0 ? (
-              <p className="text-[11px] text-gray-400 italic">Sin fichajes</p>
-            ) : (
-              <div className="space-y-1">
-                {fs.map((f) => (
-                  <FilaFichada key={f.id} fichada={f} onEdit={() => setEditando(f)} onCambio={onCambio} />
-                ))}
-              </div>
-            )}
-          </div>
-        )
-      })}
+      {mostrarSeparadores ? (
+        <>
+          {grupoVedia.length > 0 && (
+            <>
+              <p className="text-[10px] uppercase tracking-wide font-semibold text-gray-400 pt-1">Vedia</p>
+              {grupoVedia.map(renderCard)}
+            </>
+          )}
+          {grupoSaavedra.length > 0 && (
+            <>
+              <p className="text-[10px] uppercase tracking-wide font-semibold text-gray-400 pt-2">Saavedra</p>
+              {grupoSaavedra.map(renderCard)}
+            </>
+          )}
+        </>
+      ) : (
+        filasConEstado.map(renderCard)
+      )}
 
       {editando && (
         <ModalEditarFichada
