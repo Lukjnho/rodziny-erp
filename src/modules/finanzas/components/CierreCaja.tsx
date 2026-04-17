@@ -432,13 +432,14 @@ export function CierreCaja() {
                 const fondoAp = parse(fFondoAp)
                 const otrosRet = parse(fOtrosRetiros)
                 const ventasReales = cont + otrosRet - fondoAp
-                const dif = fudoEfvo > 0 ? ventasReales - fudoEfvo : 0
+                const mostrar = fudoEfvo > 0 && cont > 0
+                const dif = mostrar ? ventasReales - fudoEfvo : 0
                 return (
                   <div className={cn(
                     'w-full rounded-md px-3 py-2 text-sm font-medium',
-                    dif === 0 && fudoEfvo === 0 ? 'bg-gray-50 text-gray-500' : dif === 0 ? 'bg-green-50 text-green-700' : dif > 0 ? 'bg-blue-50 text-blue-700' : 'bg-red-50 text-red-700'
+                    !mostrar ? 'bg-gray-50 text-gray-500' : dif === 0 ? 'bg-green-50 text-green-700' : dif > 0 ? 'bg-blue-50 text-blue-700' : 'bg-red-50 text-red-700'
                   )}>
-                    {fudoEfvo > 0 ? `${formatARS(dif)} ${dif === 0 ? '— Cuadra' : dif > 0 ? '↑ Sobrante' : '↓ Faltante'}` : '—'}
+                    {mostrar ? `${formatARS(dif)} ${dif === 0 ? '— Cuadra' : dif > 0 ? '↑ Sobrante' : '↓ Faltante'}` : '—'}
                   </div>
                 )
               })()}
