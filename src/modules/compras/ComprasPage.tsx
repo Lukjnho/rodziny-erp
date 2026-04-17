@@ -837,7 +837,22 @@ export function ComprasPage() {
                         {m.tipo === 'entrada' ? '↑ Entrada' : m.tipo === 'salida' ? '↓ Salida' : '⟳ Ajuste'}
                       </span>
                     </td>
-                    <td className="px-4 py-2 text-right font-medium text-gray-800">{m.cantidad} {m.unidad}</td>
+                    <td className="px-4 py-2 text-right">
+                      <span className="font-medium text-gray-800">{m.cantidad} {m.unidad}</span>
+                      {m.producto_id && (() => {
+                        const prod = (productos ?? []).find((p) => p.id === m.producto_id)
+                        if (!prod) return null
+                        const stockActual = prod.stock_actual
+                        const stockAnterior = m.tipo === 'entrada'
+                          ? stockActual - m.cantidad
+                          : stockActual + m.cantidad
+                        return (
+                          <div className="text-[10px] text-gray-400 mt-0.5">
+                            {Math.max(0, Math.round(stockAnterior * 100) / 100)} → <span className="font-medium text-gray-600">{Math.round(stockActual * 100) / 100}</span>
+                          </div>
+                        )
+                      })()}
+                    </td>
                     <td className="px-4 py-2 text-gray-600 text-xs">{m.motivo || '—'}</td>
                     <td className="px-4 py-2 text-gray-500 text-xs max-w-[200px] truncate">{m.observacion || '—'}</td>
                     <td className="px-4 py-2 text-gray-500 text-xs">{m.registrado_por || '—'}</td>
