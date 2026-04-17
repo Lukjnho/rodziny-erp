@@ -257,6 +257,9 @@ export function ComprasPage() {
     qc.invalidateQueries({ queryKey: ['recepciones_pendientes'] })
   }
 
+  // Modal ajuste de inventario
+  const [modalAjuste, setModalAjuste] = useState(false)
+
   const [filtroPagos, setFiltroPagos] = useState<'todos' | 'pendientes' | 'vencidos' | 'semana'>('pendientes')
   const [filtroProveedor, setFiltroProveedor] = useState('')
 
@@ -689,7 +692,24 @@ export function ComprasPage() {
               </span>
             )}
             <span className="text-xs text-gray-400">{productosFiltrados.length} productos</span>
+            <button
+              onClick={() => setModalAjuste(true)}
+              className="ml-auto bg-blue-600 hover:bg-blue-700 text-white text-sm rounded px-3 py-1.5"
+            >Ajuste de inventario</button>
           </div>
+
+          {modalAjuste && (
+            <ModalAjusteInventario
+              productos={(productos ?? []).filter((p) => p.activo)}
+              local={local}
+              onClose={() => setModalAjuste(false)}
+              onSaved={() => {
+                qc.invalidateQueries({ queryKey: ['productos_stock'] })
+                qc.invalidateQueries({ queryKey: ['movimientos_stock'] })
+                setModalAjuste(false)
+              }}
+            />
+          )}
 
           {/* Tabla de stock */}
           <div className="bg-white rounded-lg border border-surface-border overflow-hidden">
@@ -1375,5 +1395,183 @@ export function ComprasPage() {
         prefill={prefillGasto}
       />
     </PageContainer>
+  )
+}
+
+// ── Modal: Ajuste de inventario ─────────────────────────────────────────────
+
+function ModalAjusteInventario({ productos, local, onClose, onSaved }: {
+  productos: Producto[]; local: string; onClose: () => void; onSaved: () => void
+}) {
+  const [productoId, setProductoId] = useState('')
+  const [stockReal, setStockReal] = useState('')
+  const [motivo, setMotivo] = useState('Inventario físico')
+  const [responsable, setResponsable] = useState('')
+  const [guardando, setGuardando] = useState(false)
+  const [error, setError] = useState('')
+  const [resultados, setResultados] = useState<{ nombre: string; anterior: number; nuevo: number; diff: number }[]>([])
+
+  const prodSel = productos.find((p) => p.id === productoId)
+  const diff = prodSel && stockReal !== '' ? Number(stockReal) - prodSel.stock_actual : null
+
+  async function guardar() {
+    if (!productoId || stockReal === '') { setError('Seleccioná un producto e ingresá el stock real'); return }
+    const nuevoStock = Number(stockReal)
+    if (isNaN(nuevoStock) || nuevoStock < 0) { setError('Stock inválido'); return }
+    if (!prodSel) return
+
+    setGuardando(true)
+    setError('')
+
+    const diferencia = nuevoStock - prodSel.stock_actual
+
+    // Registrar movimiento de ajuste
+    const { error: errMov } = await supabase.from('movimientos_stock').insert({
+      local,
+      producto_id: prodSel.id,
+      producto_nombre: prodSel.nombre,
+      tipo: diferencia >= 0 ? 'entrada' : 'salida',
+      cantidad: Math.abs(diferencia),
+      unidad: prodSel.unidad,
+      motivo: motivo || 'Inventario físico',
+      observacion: `Ajuste: stock ${prodSel.stock_actual} → ${nuevoStock} (dif: ${diferencia > 0 ? '+' : ''}${diferencia})`,
+      registrado_por: responsable.trim() || null,
+    })
+    if (errMov) { setError(errMov.message); setGuardando(false); return }
+
+    // Actualizar stock del producto
+    const { error: errProd } = await supabase
+      .from('productos')
+      .update({ stock_actual: nuevoStock, updated_at: new Date().toISOString() })
+      .eq('id', prodSel.id)
+    if (errProd) { setError(errProd.message); setGuardando(false); return }
+
+    setResultados((prev) => [...prev, {
+      nombre: prodSel.nombre,
+      anterior: prodSel.stock_actual,
+      nuevo: nuevoStock,
+      diff: diferencia,
+    }])
+
+    // Limpiar para el próximo producto
+    setProductoId('')
+    setStockReal('')
+    setGuardando(false)
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={onClose}>
+      <div className="absolute inset-0 bg-black/30" />
+      <div className="relative bg-white rounded-lg shadow-xl w-full max-w-lg p-6" onClick={(e) => e.stopPropagation()}>
+        <h3 className="text-lg font-bold text-gray-800 mb-1">Ajuste de inventario</h3>
+        <p className="text-xs text-gray-500 mb-4">Ingresá el stock real contado. El sistema calcula la diferencia y registra el movimiento.</p>
+
+        <div className="space-y-3">
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">Producto</label>
+            <select
+              value={productoId}
+              onChange={(e) => { setProductoId(e.target.value); setStockReal('') }}
+              className="w-full border border-gray-300 rounded px-3 py-1.5 text-sm"
+            >
+              <option value="">Seleccionar producto...</option>
+              {productos.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.nombre} (stock actual: {p.stock_actual} {p.unidad})
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {prodSel && (
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Stock en sistema</label>
+                <div className="border border-gray-200 rounded px-3 py-1.5 text-sm bg-gray-50 font-medium">
+                  {prodSel.stock_actual} {prodSel.unidad}
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Stock real (contado)</label>
+                <input
+                  type="number"
+                  step="any"
+                  value={stockReal}
+                  onChange={(e) => setStockReal(e.target.value)}
+                  className="w-full border border-gray-300 rounded px-3 py-1.5 text-sm"
+                  placeholder="Cantidad real"
+                  autoFocus
+                />
+              </div>
+            </div>
+          )}
+
+          {diff !== null && stockReal !== '' && (
+            <div className={cn(
+              'rounded p-3 text-sm font-medium text-center',
+              diff === 0 ? 'bg-green-50 text-green-700' :
+              diff > 0 ? 'bg-blue-50 text-blue-700' :
+              'bg-red-50 text-red-700'
+            )}>
+              {diff === 0 ? 'Sin diferencia — stock correcto' :
+               diff > 0 ? `+${diff} ${prodSel?.unidad} (faltaban en el sistema)` :
+               `${diff} ${prodSel?.unidad} (sobraban en el sistema)`}
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Motivo</label>
+              <select value={motivo} onChange={(e) => setMotivo(e.target.value)} className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm">
+                <option value="Inventario físico">Inventario físico</option>
+                <option value="Corrección de stock">Corrección de stock</option>
+                <option value="Conteo de cierre">Conteo de cierre</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Responsable</label>
+              <input
+                value={responsable}
+                onChange={(e) => setResponsable(e.target.value)}
+                className="w-full border border-gray-300 rounded px-3 py-1.5 text-sm"
+                placeholder="Nombre"
+              />
+            </div>
+          </div>
+        </div>
+
+        {error && <p className="text-red-500 text-xs mt-2">{error}</p>}
+
+        {/* Resultados de ajustes ya hechos en esta sesión */}
+        {resultados.length > 0 && (
+          <div className="mt-4 bg-gray-50 rounded border border-gray-200 p-3">
+            <p className="text-xs font-semibold text-gray-600 mb-2">Ajustes realizados ({resultados.length}):</p>
+            <div className="space-y-1 max-h-32 overflow-y-auto">
+              {resultados.map((r, i) => (
+                <div key={i} className="flex justify-between text-xs text-gray-700">
+                  <span>{r.nombre}</span>
+                  <span className={cn('font-medium', r.diff > 0 ? 'text-blue-600' : r.diff < 0 ? 'text-red-600' : 'text-green-600')}>
+                    {r.anterior} → {r.nuevo} ({r.diff > 0 ? '+' : ''}{r.diff})
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="flex justify-end gap-2 mt-5">
+          <button onClick={() => { if (resultados.length > 0) onSaved(); else onClose() }} className="px-4 py-1.5 text-sm text-gray-600 hover:text-gray-800">
+            {resultados.length > 0 ? 'Listo' : 'Cancelar'}
+          </button>
+          <button
+            onClick={guardar}
+            disabled={guardando || !productoId || stockReal === '' || diff === 0}
+            className="bg-blue-600 hover:bg-blue-700 text-white text-sm rounded px-4 py-1.5 disabled:opacity-50"
+          >
+            {guardando ? 'Guardando...' : 'Ajustar y siguiente'}
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }
