@@ -21,10 +21,18 @@ import { SeccionImpuestos } from './sueldos/SeccionImpuestos'
 type FiltroLocal = 'todos' | 'vedia' | 'saavedra' | 'ambos'
 type PanelEstado = { tipo: 'adelantos' | 'sanciones' | 'descuentos' | 'errores_caja'; empleadoId: string } | null
 
-// Mapeo de nombres Fudo → apellido de empleado (para vincular cajero con legajo)
-const FUDO_CAJERO_APELLIDO: Record<string, string> = {
-  marcos: 'paredes',
-  brian: 'martinez',
+// Mapeo nombre Fudo (closedBy) → { nombre, apellido } del empleado en RRHH.
+// Cuando hay apellidos duplicados (ej: 2 Lis) se matchea por nombre + apellido.
+const FUDO_CAJERO_EMPLEADO: Record<string, { nombre: string; apellido: string }> = {
+  'marcos':           { nombre: 'marcos',   apellido: 'paredes' },
+  'brian':            { nombre: 'brian',     apellido: 'martinez' },
+  'leandro acevedo':  { nombre: 'leandro',  apellido: 'acevedo' },
+  'karen':            { nombre: 'karen',    apellido: 'valenzuela' },
+  'tamara':           { nombre: 'tamara',   apellido: 'arzamendia' },
+  'maxi vera':        { nombre: 'maximiliano', apellido: 'vera' },
+  'martin':           { nombre: 'martin',   apellido: 'baez' },
+  'tomas':            { nombre: 'tomas',    apellido: 'lis' },
+  'lucas lis':        { nombre: 'lucas',    apellido: 'lis' },
 }
 
 interface Cronograma {
@@ -357,11 +365,13 @@ export function SueldosTab() {
       const sancionesMonto = sancionesEmp.reduce((s, a) => s + Number(a.monto), 0)
       const descuentosMonto = descuentosEmp.reduce((s, d) => s + Number(d.monto), 0)
 
-      // Errores de caja: vincular por cajero_nombre → empleado.apellido
+      // Errores de caja: vincular por cajero_nombre → empleado (nombre + apellido)
       const erroresCajaEmp = (cierresCaja ?? []).filter((c) => {
         if (!c.cajero_nombre) return false
-        const apellidoEsperado = FUDO_CAJERO_APELLIDO[c.cajero_nombre.toLowerCase()]
-        return apellidoEsperado && emp.apellido.toLowerCase() === apellidoEsperado
+        const match = FUDO_CAJERO_EMPLEADO[c.cajero_nombre.toLowerCase()]
+        if (!match) return false
+        return emp.apellido.toLowerCase() === match.apellido
+          && emp.nombre.toLowerCase().startsWith(match.nombre)
       })
 
       const total = base - deduccionPresentismo - adelantosMonto - sancionesMonto - descuentosMonto
