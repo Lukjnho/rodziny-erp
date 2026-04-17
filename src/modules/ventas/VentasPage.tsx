@@ -10,6 +10,7 @@ import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend, ComposedChart, Line,
 } from 'recharts'
+import { FudoLiveTab } from './components/FudoLiveTab'
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 const COLORES = ['#4f8828', '#65a832', '#82c44e', '#a3d96e', '#c5ef97', '#e7f9d0', '#2D5016', '#1b3b0d']
@@ -26,13 +27,13 @@ interface Ticket { fecha: string; hora: string | null; total_bruto: number; iva:
 interface Item    { nombre: string; categoria: string | null; cantidad: number; total: number; periodo: string }
 interface Pago    { medio_pago: string; monto: number }
 
-type Tab   = 'resumen' | 'productos' | 'horario' | 'medios'
+type Tab   = 'fudo' | 'resumen' | 'productos' | 'horario' | 'medios'
 type Vista = 'mensual' | 'anual'
 
 // ── componente ────────────────────────────────────────────────────────────────
 export function VentasPage({ embedded = false }: { embedded?: boolean } = {}) {
   const [local,  setLocal]  = useState<'ambos' | 'vedia' | 'saavedra'>('vedia')
-  const [tab,    setTab]    = useState<Tab>('resumen')
+  const [tab,    setTab]    = useState<Tab>('fudo')
   const [vista,  setVista]  = useState<Vista>('mensual')
   const [periodo, setPeriodo] = useState(() => new Date().toISOString().substring(0, 7))
   const [año,    setAño]    = useState(() => String(new Date().getFullYear()))
@@ -315,10 +316,11 @@ export function VentasPage({ embedded = false }: { embedded?: boolean } = {}) {
         {/* Tabs */}
         <div className="flex gap-1 border-b border-gray-200">
           {([
-            ['resumen',   '📊 Resumen'],
-            ['productos', '🍝 Productos'],
-            ['horario',   '📅 Días'],
-            ['medios',    '💳 Medios de pago'],
+            ['fudo',      'Fudo Live'],
+            ['resumen',   'Resumen'],
+            ['productos', 'Productos'],
+            ['horario',   'Días'],
+            ['medios',    'Medios de pago'],
           ] as [Tab, string][]).map(([t, label]) => (
             <button
               key={t}
@@ -377,6 +379,9 @@ export function VentasPage({ embedded = false }: { embedded?: boolean } = {}) {
           ❌ Error de base de datos: {queryError.message}
         </div>
       )}
+
+      {/* ── TAB: FUDO LIVE ──────────────────────────────────────────────── */}
+      {tab === 'fudo' && <FudoLiveTab />}
 
       {/* ── TAB: RESUMEN ─────────────────────────────────────────────────── */}
       {tab === 'resumen' && (
