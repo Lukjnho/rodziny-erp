@@ -1,15 +1,25 @@
 import { useState } from 'react'
 import { PageContainer } from '@/components/layout/PageContainer'
 import { cn } from '@/lib/utils'
+import { DashboardTab } from './DashboardTab'
 import { ProduccionTab } from './ProduccionTab'
 import { StockTab } from './StockTab'
 import { TraspasosTab } from './TraspasosTab'
 import { RecetasTab } from './RecetasTab'
 import { ProductosTab } from './ProductosTab'
 
-type Tab = 'produccion' | 'stock' | 'traspasos' | 'recetas' | 'productos' | 'historico'
+type Tab = 'dashboard' | 'produccion' | 'stock' | 'traspasos' | 'recetas' | 'productos' | 'historico'
 
 const ayudaPorTab: Record<Tab, { titulo: string; pasos: string[] }> = {
+  dashboard: {
+    titulo: 'Dashboard de cocina',
+    pasos: [
+      'Muestra el stock actual de salsas y postres con semáforo de estado.',
+      'Las ventas promedio se calculan automáticamente de Fudo (últimos 14 días).',
+      'Indica cuántos días de stock te quedan y cuánto producir.',
+      'Hacé click en "Cargar" o "Editar" para actualizar el stock (en kg para salsas, unidades para postres).',
+    ],
+  },
   produccion: {
     titulo: 'Producción del día',
     pasos: [
@@ -58,12 +68,13 @@ const ayudaPorTab: Record<Tab, { titulo: string; pasos: string[] }> = {
 }
 
 export function CocinaPage() {
-  const [tab, setTab] = useState<Tab>('produccion')
+  const [tab, setTab] = useState<Tab>('dashboard')
   const [ayudaAbierta, setAyudaAbierta] = useState(false)
 
   return (
     <PageContainer title="Cocina" subtitle="Producción y stock — Rodziny S.A.S.">
       <div className="flex items-center gap-1 mb-6 border-b border-surface-border">
+        <TabButton activo={tab === 'dashboard'} onClick={() => setTab('dashboard')}>Dashboard</TabButton>
         <TabButton activo={tab === 'produccion'} onClick={() => setTab('produccion')}>Producción</TabButton>
         <TabButton activo={tab === 'stock'} onClick={() => setTab('stock')}>Stock depósito</TabButton>
         <TabButton activo={tab === 'traspasos'} onClick={() => setTab('traspasos')}>Traspasos</TabButton>
@@ -77,6 +88,7 @@ export function CocinaPage() {
         >?</button>
       </div>
 
+      {tab === 'dashboard' && <DashboardTab />}
       {tab === 'produccion' && <ProduccionTab />}
       {tab === 'stock' && <StockTab />}
       {tab === 'traspasos' && <TraspasosTab />}
