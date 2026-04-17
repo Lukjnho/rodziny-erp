@@ -472,26 +472,41 @@ function Fichando({ empleado, onCancelar, onListo }: {
       setPaso('error')
       return
     }
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        const { latitude, longitude } = pos.coords
-        setCoords({ lat: latitude, lng: longitude })
-        const det = detectarLocal(latitude, longitude)
-        if (!det) {
-          setMensaje('No estás dentro del radio de ningún local. Acercate a la entrada o avisá a RRHH.')
-          setPaso('error')
-          return
-        }
-        setLocalDetectado(det.key)
-        setMensaje(`Detectado: ${LOCALES[det.key].nombre} (${Math.round(det.distancia)}m)`)
-        setPaso('foto')
-      },
-      (err) => {
-        setMensaje(`Error de GPS: ${err.message}. Activá la ubicación.`)
+    function onPosOk(pos: GeolocationPosition) {
+      const { latitude, longitude } = pos.coords
+      setCoords({ lat: latitude, lng: longitude })
+      const det = detectarLocal(latitude, longitude)
+      if (!det) {
+        setMensaje('No estás dentro del radio de ningún local. Acercate a la entrada o avisá a RRHH.')
         setPaso('error')
-      },
-      { enableHighAccuracy: true, timeout: 15000 }
-    )
+        return
+      }
+      setLocalDetectado(det.key)
+      setMensaje(`Detectado: ${LOCALES[det.key].nombre} (${Math.round(det.distancia)}m)`)
+      setPaso('foto')
+    }
+
+    function onPosError(err: GeolocationPositionError) {
+      // PERMISSION_DENIED: el navegador bloqueó el permiso del sitio
+      if (err.code === 1) {
+        setMensaje('El navegador tiene bloqueada la ubicación para este sitio.')
+        setWarning('En iPhone: Ajustes → Safari → Ubicación → Permitir. En Android: tocá el candado en la barra de dirección → Permisos → Ubicación → Permitir. Después tocá Reintentar.')
+        setPaso('error')
+        return
+      }
+      // TIMEOUT con alta precisión: reintentar sin enableHighAccuracy
+      if (err.code === 3) {
+        navigator.geolocation.getCurrentPosition(onPosOk, (err2) => {
+          setMensaje(`Error de GPS: ${err2.message}. Activá la ubicación.`)
+          setPaso('error')
+        }, { enableHighAccuracy: false, timeout: 10000 })
+        return
+      }
+      setMensaje(`Error de GPS: ${err.message}. Activá la ubicación.`)
+      setPaso('error')
+    }
+
+    navigator.geolocation.getCurrentPosition(onPosOk, onPosError, { enableHighAccuracy: true, timeout: 15000 })
   }, [paso])
 
   // Paso 2: cámara
@@ -695,9 +710,12 @@ function Fichando({ empleado, onCancelar, onListo }: {
         <div className="text-center py-4">
           <div className="text-3xl mb-2">⚠</div>
           <p className="text-sm text-red-700">{mensaje}</p>
+          {warning && (
+            <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded p-2.5 mt-3 text-left">{warning}</p>
+          )}
           <div className="grid grid-cols-2 gap-2 mt-4">
             <button onClick={onCancelar} className="bg-gray-100 hover:bg-gray-200 text-gray-700 py-2.5 rounded text-sm">Volver</button>
-            <button onClick={() => setPaso('gps')} className="bg-rodziny-700 text-white py-2.5 rounded text-sm">Reintentar</button>
+            <button onClick={() => { setWarning(null); setPaso('gps') }} className="bg-rodziny-700 text-white py-2.5 rounded text-sm">Reintentar</button>
           </div>
         </div>
       )}
