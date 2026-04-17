@@ -257,7 +257,16 @@ export function ComprasPage() {
     qc.invalidateQueries({ queryKey: ['recepciones_pendientes'] })
   }
 
-  // Modal ajuste de inventario
+  // Modo conteo de inventario
+  const [modoConteo, setModoConteo] = useState(false)
+  const [conteos, setConteos] = useState<Record<string, string>>({}) // producto_id → valor ingresado
+  const [conteoResponsable, setConteoResponsable] = useState('')
+  const [conteoGuardando, setConteoGuardando] = useState(false)
+  const [conteoResultado, setConteoResultado] = useState<string | null>(null)
+  const [filtroConteo, setFiltroConteo] = useState('')
+  const [filtroCatConteo, setFiltroCatConteo] = useState('todas')
+
+  // Modal ajuste individual (legacy)
   const [modalAjuste, setModalAjuste] = useState(false)
 
   const [filtroPagos, setFiltroPagos] = useState<'todos' | 'pendientes' | 'vencidos' | 'semana'>('pendientes')
@@ -692,10 +701,19 @@ export function ComprasPage() {
               </span>
             )}
             <span className="text-xs text-gray-400">{productosFiltrados.length} productos</span>
-            <button
-              onClick={() => setModalAjuste(true)}
-              className="ml-auto bg-blue-600 hover:bg-blue-700 text-white text-sm rounded px-3 py-1.5"
-            >Ajuste de inventario</button>
+            {!modoConteo ? (
+              <button
+                onClick={() => { setModoConteo(true); setConteos({}); setConteoResultado(null) }}
+                className="ml-auto bg-blue-600 hover:bg-blue-700 text-white text-sm rounded px-3 py-1.5"
+              >Conteo de inventario</button>
+            ) : (
+              <div className="ml-auto flex gap-2">
+                <button
+                  onClick={() => { setModoConteo(false); setConteos({}); setConteoResultado(null) }}
+                  className="border border-gray-300 text-gray-600 text-sm rounded px-3 py-1.5 hover:bg-gray-50"
+                >Cancelar conteo</button>
+              </div>
+            )}
           </div>
 
           {modalAjuste && (
@@ -711,8 +729,192 @@ export function ComprasPage() {
             />
           )}
 
-          {/* Tabla de stock */}
-          <div className="bg-white rounded-lg border border-surface-border overflow-hidden">
+          {/* ── Modo conteo de inventario ─────────────────────────────────── */}
+          {modoConteo && (() => {
+            const activos = (productos ?? []).filter((p) => p.activo)
+            const categorias = [...new Set(activos.map((p) => p.categoria).filter(Boolean))].sort()
+            let listaConteo = activos
+            if (filtroCatConteo !== 'todas') listaConteo = listaConteo.filter((p) => p.categoria === filtroCatConteo)
+            if (filtroConteo.trim()) {
+              const q = filtroConteo.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+              listaConteo = listaConteo.filter((p) => (p.nombre + ' ' + p.categoria).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').includes(q))
+            }
+            const conteosCompletados = listaConteo.filter((p) => conteos[p.id] !== undefined && conteos[p.id] !== '').length
+            const conDiferencia = listaConteo.filter((p) => {
+              const v = conteos[p.id]
+              if (v === undefined || v === '') return false
+              return Number(v) !== p.stock_actual
+            }).length
+
+            return (
+              <div className="space-y-3 mb-4">
+                {/* Toolbar conteo */}
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <div>
+                      <h3 className="font-semibold text-blue-900 text-sm">Conteo de inventario</h3>
+                      <p className="text-xs text-blue-700 mt-0.5">
+                        Ingresá la cantidad real contada de cada producto. Al finalizar, confirmá para ajustar todo junto.
+                      </p>
+                    </div>
+                    <div className="text-right text-xs text-blue-800">
+                      <div><span className="font-semibold">{conteosCompletados}</span> / {listaConteo.length} contados</div>
+                      {conDiferencia > 0 && <div className="text-amber-700 font-medium">{conDiferencia} con diferencia</div>}
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2 items-center">
+                    <select
+                      value={filtroCatConteo}
+                      onChange={(e) => setFiltroCatConteo(e.target.value)}
+                      className="border border-blue-300 rounded px-2 py-1.5 text-sm bg-white"
+                    >
+                      <option value="todas">Todas las categorías</option>
+                      {categorias.map((c) => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                    <input
+                      value={filtroConteo}
+                      onChange={(e) => setFiltroConteo(e.target.value)}
+                      placeholder="Buscar producto..."
+                      className="border border-blue-300 rounded px-3 py-1.5 text-sm bg-white w-56"
+                    />
+                    <input
+                      value={conteoResponsable}
+                      onChange={(e) => setConteoResponsable(e.target.value)}
+                      placeholder="Responsable del conteo"
+                      className="border border-blue-300 rounded px-3 py-1.5 text-sm bg-white w-48 ml-auto"
+                    />
+                  </div>
+                </div>
+
+                {conteoResultado && (
+                  <div className={cn('p-3 rounded-md text-sm', conteoResultado.startsWith('Error') ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-800')}>
+                    {conteoResultado}
+                  </div>
+                )}
+
+                {/* Tabla de conteo */}
+                <div className="bg-white rounded-lg border border-surface-border overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="bg-gray-50 border-b border-gray-200">
+                          <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600">Categoría</th>
+                          <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600">Producto</th>
+                          <th className="px-4 py-2.5 text-right text-xs font-semibold text-gray-600">Stock sistema</th>
+                          <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-600 w-32">Conteo</th>
+                          <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600">Unidad</th>
+                          <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-600">Diferencia</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {listaConteo.map((p) => {
+                          const val = conteos[p.id] ?? ''
+                          const diff = val !== '' ? Number(val) - p.stock_actual : null
+                          return (
+                            <tr key={p.id} className={cn(
+                              'border-b border-gray-50 hover:bg-gray-50',
+                              diff !== null && diff !== 0 && 'bg-amber-50/50',
+                              val !== '' && diff === 0 && 'bg-green-50/50',
+                            )}>
+                              <td className="px-4 py-1.5 text-gray-500 text-xs">{p.categoria}</td>
+                              <td className="px-4 py-1.5 font-medium text-gray-900">{p.nombre}</td>
+                              <td className="px-4 py-1.5 text-right text-gray-600">{p.stock_actual}</td>
+                              <td className="px-4 py-1.5 text-center">
+                                <input
+                                  type="number"
+                                  step="any"
+                                  value={val}
+                                  onChange={(e) => setConteos((prev) => ({ ...prev, [p.id]: e.target.value }))}
+                                  className="w-24 text-center border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                                  placeholder="—"
+                                />
+                              </td>
+                              <td className="px-4 py-1.5 text-gray-500 text-xs">{p.unidad}</td>
+                              <td className="px-4 py-1.5 text-center">
+                                {diff === null ? (
+                                  <span className="text-gray-300">—</span>
+                                ) : diff === 0 ? (
+                                  <span className="text-green-600 font-medium text-xs">OK</span>
+                                ) : (
+                                  <span className={cn('font-medium text-xs', diff > 0 ? 'text-blue-600' : 'text-red-600')}>
+                                    {diff > 0 ? '+' : ''}{Math.round(diff * 100) / 100}
+                                  </span>
+                                )}
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* Barra de confirmación */}
+                <div className="bg-white rounded-lg border border-surface-border p-4 flex items-center justify-between">
+                  <div className="text-xs text-gray-500">
+                    {conteosCompletados} productos contados · {conDiferencia} con diferencia
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => { setModoConteo(false); setConteos({}); setConteoResultado(null) }}
+                      className="px-4 py-1.5 text-sm text-gray-600 hover:text-gray-800 border border-gray-300 rounded"
+                    >Cancelar</button>
+                    <button
+                      onClick={async () => {
+                        const itemsAjustar = listaConteo.filter((p) => {
+                          const v = conteos[p.id]
+                          if (v === undefined || v === '') return false
+                          return Number(v) !== p.stock_actual
+                        })
+                        if (!itemsAjustar.length) { setConteoResultado('No hay diferencias para ajustar'); return }
+                        if (!conteoResponsable.trim()) { setConteoResultado('Error: Ingresá el responsable del conteo'); return }
+                        if (!confirm(`¿Confirmar ajuste de ${itemsAjustar.length} productos?`)) return
+
+                        setConteoGuardando(true)
+                        setConteoResultado(null)
+                        try {
+                          for (const p of itemsAjustar) {
+                            const nuevoStock = Number(conteos[p.id])
+                            const diferencia = nuevoStock - p.stock_actual
+                            await supabase.from('movimientos_stock').insert({
+                              local,
+                              producto_id: p.id,
+                              producto_nombre: p.nombre,
+                              tipo: diferencia >= 0 ? 'entrada' : 'salida',
+                              cantidad: Math.abs(diferencia),
+                              unidad: p.unidad,
+                              motivo: 'Inventario físico',
+                              observacion: `Conteo: ${p.stock_actual} → ${nuevoStock} (dif: ${diferencia > 0 ? '+' : ''}${diferencia})`,
+                              registrado_por: conteoResponsable.trim(),
+                            })
+                            await supabase.from('productos')
+                              .update({ stock_actual: nuevoStock, updated_at: new Date().toISOString() })
+                              .eq('id', p.id)
+                          }
+                          setConteoResultado(`${itemsAjustar.length} productos ajustados correctamente`)
+                          qc.invalidateQueries({ queryKey: ['productos_stock'] })
+                          qc.invalidateQueries({ queryKey: ['movimientos_stock'] })
+                          setConteos({})
+                          setTimeout(() => { setModoConteo(false); setConteoResultado(null) }, 2000)
+                        } catch (e: any) {
+                          setConteoResultado(`Error: ${e.message}`)
+                        } finally {
+                          setConteoGuardando(false)
+                        }
+                      }}
+                      disabled={conteoGuardando || conDiferencia === 0}
+                      className="bg-blue-600 hover:bg-blue-700 text-white text-sm rounded px-4 py-1.5 disabled:opacity-50"
+                    >
+                      {conteoGuardando ? 'Guardando...' : `Confirmar ajuste (${conDiferencia})`}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )
+          })()}
+
+          {/* Tabla de stock (oculta en modo conteo) */}
+          {!modoConteo && <div className="bg-white rounded-lg border border-surface-border overflow-hidden">
             {isLoading ? (
               <div className="p-8 text-center text-sm text-gray-400 animate-pulse">Cargando...</div>
             ) : (
@@ -818,7 +1020,7 @@ export function ComprasPage() {
                 </table>
               </div>
             )}
-          </div>
+          </div>}
         </>
       )}
 
