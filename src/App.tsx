@@ -10,6 +10,7 @@ import { FicharPage } from '@/modules/rrhh/FicharPage'
 import { LoginPage } from '@/modules/auth/LoginPage'
 import { UsuariosPage } from '@/modules/usuarios/UsuariosPage'
 import { CocinaPage } from '@/modules/cocina/CocinaPage'
+import { ProduccionQRPage } from '@/modules/cocina/ProduccionQRPage'
 import { PageContainer } from '@/components/layout/PageContainer'
 import { AuthProvider, useAuth, type Modulo } from '@/lib/auth'
 import { type ReactNode } from 'react'
@@ -131,6 +132,7 @@ export default function App() {
             <Route path="/deposito"  element={<DepositoPage />} />
             <Route path="/recepcion" element={<RecepcionPage />} />
             <Route path="/fichar"    element={<FicharPage />} />
+            <Route path="/produccion" element={<ProduccionQRPage />} />
 
             {/* Resto del ERP protegido */}
             <Route path="*" element={<AppInterna />} />
