@@ -7,10 +7,10 @@ import { cn } from '@/lib/utils'
 // ── Tipos ──────────────────────────────────────────────────────────────────────
 
 interface Producto {
-  id: string; nombre: string; codigo: string; tipo: string
+  id: string; nombre: string; codigo: string; tipo: string; local: string
 }
 interface Receta {
-  id: string; nombre: string; tipo: string; rendimiento_kg: number | null
+  id: string; nombre: string; tipo: string; rendimiento_kg: number | null; local: string | null
 }
 interface LoteRelleno {
   id: string; receta_id: string; peso_total_kg: number; local: string
@@ -66,7 +66,7 @@ export function ProduccionQRPage() {
   const { data: productos } = useQuery({
     queryKey: ['cocina-productos-qr'],
     queryFn: async () => {
-      const { data, error } = await supabase.from('cocina_productos').select('id, nombre, codigo, tipo').eq('activo', true).order('nombre')
+      const { data, error } = await supabase.from('cocina_productos').select('id, nombre, codigo, tipo, local').eq('activo', true).order('nombre')
       if (error) throw error
       return data as Producto[]
     },
@@ -75,7 +75,7 @@ export function ProduccionQRPage() {
   const { data: recetas } = useQuery({
     queryKey: ['cocina-recetas-qr'],
     queryFn: async () => {
-      const { data, error } = await supabase.from('cocina_recetas').select('id, nombre, tipo, rendimiento_kg').eq('activo', true).order('nombre')
+      const { data, error } = await supabase.from('cocina_recetas').select('id, nombre, tipo, rendimiento_kg, local').eq('activo', true).order('nombre')
       if (error) throw error
       return data as Receta[]
     },
@@ -113,9 +113,10 @@ export function ProduccionQRPage() {
 
   const masasAbiertas = useMemo(() => (lotesMasaHoy ?? []).filter((m) => m.kg_sobrante === null).length, [lotesMasaHoy])
 
-  const recetasRelleno = useMemo(() => (recetas ?? []).filter((r) => r.tipo === 'relleno'), [recetas])
-  const recetasMasa = useMemo(() => (recetas ?? []).filter((r) => r.tipo === 'masa'), [recetas])
-  const productosPasta = useMemo(() => (productos ?? []).filter((p) => p.tipo === 'pasta'), [productos])
+  const matchLocal = (l: string | null) => !l || l === local || l === 'ambos'
+  const recetasRelleno = useMemo(() => (recetas ?? []).filter((r) => r.tipo === 'relleno' && matchLocal(r.local)), [recetas, local])
+  const recetasMasa = useMemo(() => (recetas ?? []).filter((r) => r.tipo === 'masa' && matchLocal(r.local)), [recetas, local])
+  const productosPasta = useMemo(() => (productos ?? []).filter((p) => p.tipo === 'pasta' && matchLocal(p.local)), [productos, local])
 
   function onGuardado(msg: string) {
     setMensajeExito(msg)

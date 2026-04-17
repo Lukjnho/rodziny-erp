@@ -6,10 +6,10 @@ import { KPICard } from '@/components/ui/KPICard'
 // ── Tipos ─────────────────────────────────────────────────────────────────────
 
 interface Producto {
-  id: string; nombre: string; codigo: string; tipo: string
+  id: string; nombre: string; codigo: string; tipo: string; local: string
 }
 interface Receta {
-  id: string; nombre: string; tipo: string; rendimiento_kg: number | null
+  id: string; nombre: string; tipo: string; rendimiento_kg: number | null; local: string | null
 }
 interface LoteRelleno {
   id: string; receta_id: string; fecha: string; cantidad_recetas: number
@@ -35,6 +35,11 @@ interface LoteMasa {
 }
 
 type FiltroLocal = 'todos' | 'vedia' | 'saavedra'
+
+function matchLocal(itemLocal: string | null, filtro: string): boolean {
+  if (filtro === 'todos' || !itemLocal) return true
+  return itemLocal === filtro || itemLocal === 'ambos'
+}
 
 function hoy() {
   return new Date().toISOString().slice(0, 10)
@@ -62,7 +67,7 @@ export function ProduccionTab() {
   const { data: productos } = useQuery({
     queryKey: ['cocina-productos'],
     queryFn: async () => {
-      const { data, error } = await supabase.from('cocina_productos').select('id, nombre, codigo, tipo').eq('activo', true).order('nombre')
+      const { data, error } = await supabase.from('cocina_productos').select('id, nombre, codigo, tipo, local').eq('activo', true).order('nombre')
       if (error) throw error
       return data as Producto[]
     },
@@ -71,7 +76,7 @@ export function ProduccionTab() {
   const { data: recetas } = useQuery({
     queryKey: ['cocina-recetas'],
     queryFn: async () => {
-      const { data, error } = await supabase.from('cocina_recetas').select('id, nombre, tipo, rendimiento_kg').eq('activo', true).order('nombre')
+      const { data, error } = await supabase.from('cocina_recetas').select('id, nombre, tipo, rendimiento_kg, local').eq('activo', true).order('nombre')
       if (error) throw error
       return data as Receta[]
     },
@@ -394,7 +399,7 @@ export function ProduccionTab() {
       {modalRelleno && (
         <ModalRelleno
           fecha={fecha}
-          recetas={(recetas ?? []).filter((r) => r.tipo === 'relleno')}
+          recetas={(recetas ?? []).filter((r) => r.tipo === 'relleno' && matchLocal(r.local, filtroLocal))}
           onClose={() => setModalRelleno(false)}
           onSaved={() => { qc.invalidateQueries({ queryKey: ['cocina-lotes-relleno', fecha] }); setModalRelleno(false) }}
         />
@@ -402,7 +407,7 @@ export function ProduccionTab() {
       {modalMasa && (
         <ModalMasa
           fecha={fecha}
-          recetas={(recetas ?? []).filter((r) => r.tipo === 'masa')}
+          recetas={(recetas ?? []).filter((r) => r.tipo === 'masa' && matchLocal(r.local, filtroLocal))}
           onClose={() => setModalMasa(false)}
           onSaved={() => { qc.invalidateQueries({ queryKey: ['cocina-lotes-masa', fecha] }); setModalMasa(false) }}
         />
@@ -417,8 +422,8 @@ export function ProduccionTab() {
       {modalPasta && (
         <ModalPasta
           fecha={fecha}
-          productos={(productos ?? []).filter((p) => p.tipo === 'pasta')}
-          recetasMasa={(recetas ?? []).filter((r) => r.tipo === 'masa')}
+          productos={(productos ?? []).filter((p) => p.tipo === 'pasta' && matchLocal(p.local, filtroLocal))}
+          recetasMasa={(recetas ?? []).filter((r) => r.tipo === 'masa' && matchLocal(r.local, filtroLocal))}
           lotesRellenoDia={lotesRelleno ?? []}
           lotesMasaDia={lotesMasa ?? []}
           onClose={() => setModalPasta(false)}
