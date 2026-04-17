@@ -1,8 +1,35 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, Component, type ReactNode, type ErrorInfo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
 import { supabaseAnon as supabase } from '@/lib/supabaseAnon'
 import { cn } from '@/lib/utils'
+
+// Error boundary para capturar crashes y mostrar el error en vez de pantalla blanca
+class RecepcionErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  state = { error: null as Error | null }
+  static getDerivedStateFromError(error: Error) { return { error } }
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error('RecepcionPage crash:', error, info)
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
+          <div className="bg-white rounded-lg border border-red-200 p-6 max-w-sm text-center">
+            <div className="text-3xl mb-2">⚠️</div>
+            <h2 className="text-base font-semibold text-gray-900 mb-2">Error en Recepción</h2>
+            <p className="text-xs text-red-600 bg-red-50 rounded p-2 mb-3 break-all">{this.state.error.message}</p>
+            <button
+              onClick={() => window.location.reload()}
+              className="bg-rodziny-700 text-white text-sm rounded px-4 py-2"
+            >Recargar</button>
+          </div>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
 
 interface Producto {
   id: string
@@ -23,6 +50,14 @@ interface ItemCarrito {
 // PWA de recepción de mercadería
 // URL: /recepcion?local=vedia  o  /recepcion?local=saavedra
 export function RecepcionPage() {
+  return (
+    <RecepcionErrorBoundary>
+      <RecepcionPageInner />
+    </RecepcionErrorBoundary>
+  )
+}
+
+function RecepcionPageInner() {
   const [params] = useSearchParams()
   const local = (params.get('local') === 'saavedra' ? 'saavedra' : 'vedia') as 'vedia' | 'saavedra'
 
