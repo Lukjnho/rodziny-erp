@@ -224,7 +224,6 @@ export function ComprasPage() {
         .order('created_at', { ascending: false })
       return (data ?? []) as RecepcionPendiente[]
     },
-    enabled: tab === 'recepcion',
   })
 
   // Modal de Nuevo Gasto desde recepción pendiente
@@ -594,11 +593,16 @@ export function ComprasPage() {
               key={t}
               onClick={() => setTab(t)}
               className={cn(
-                'px-4 py-2 text-sm font-medium border-b-2 transition-colors',
+                'px-4 py-2 text-sm font-medium border-b-2 transition-colors relative',
                 tab === t ? 'border-rodziny-600 text-rodziny-800' : 'border-transparent text-gray-500 hover:text-gray-700'
               )}
             >
               {label}
+              {t === 'recepcion' && (recepcionesPendientes?.length ?? 0) > 0 && (
+                <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] flex items-center justify-center rounded-full bg-red-500 text-white text-[10px] font-bold px-1">
+                  {recepcionesPendientes!.length}
+                </span>
+              )}
             </button>
           ))}
         </div>
