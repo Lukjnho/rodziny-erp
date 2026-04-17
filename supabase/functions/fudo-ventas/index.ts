@@ -2,8 +2,11 @@
 // Proxy a la API de Fudo para obtener ventas de un día agrupadas por medio de pago.
 // Resuelve el problema de CORS (browser no puede llamar directo a api.fu.do).
 //
-// Body: { local: "vedia" | "saavedra", fecha: "YYYY-MM-DD" }
-// Response: { ok: true, data: { fecha, local, totalVentas, cantidadTickets, porMedioPago, efectivo, qr, ... } }
+// Body: { local: "vedia" | "saavedra", fecha: "YYYY-MM-DD", cajaId?: "1" | "4" }
+// Response: { ok: true, data: { fecha, local, totalVentas, cantidadTickets, porMedioPago, efectivo, qr, ..., cajero, porCaja } }
+//
+// cajaId filtra ventas por CashRegister ID de Fudo. Sin cajaId = todas las cajas.
+// cajero = nombre del usuario que más ventas cerró (closedBy) para esa caja.
 //
 // Credenciales hardcodeadas (son API keys de solo lectura, no secretos sensibles).
 // Si se prefiere mover a secrets: supabase secrets set FUDO_VEDIA_KEY=... FUDO_VEDIA_SECRET=...
@@ -92,9 +95,10 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}))
     const local: string = body.local
     const fecha: string = body.fecha // YYYY-MM-DD
+    const modo: string | undefined = body.modo // "descubrir" para explorar estructura
 
-    if (!local || !fecha) {
-      throw new Error('Faltan parámetros: local y fecha (YYYY-MM-DD)')
+    if (!local) {
+      throw new Error('Falta parámetro: local')
     }
     if (!CREDENCIALES[local]) {
       throw new Error(`Local "${local}" no tiene credenciales Fudo`)
@@ -102,11 +106,46 @@ Deno.serve(async (req) => {
 
     const token = await autenticar(local)
 
+    // ── Modo descubrir: devuelve estructura cruda de 1 sale + endpoints extra ──
+    if (modo === 'descubrir') {
+      // Traer 1 sale con todos los includes posibles
+      const saleRes = await fudoGet(token, 'sales', {
+        'page[size]': '3',
+        'page[number]': '1',
+        'include': 'cashRegister,closedBy,payments,payments.paymentMethod',
+      })
+      // Probar endpoints de cajas y usuarios
+      let cashRegisters = null
+      let users = null
+      let cashiers = null
+      try { cashRegisters = await fudoGet(token, 'cash-registers', { 'page[size]': '5' }) } catch { /* no existe */ }
+      try { users = await fudoGet(token, 'users', { 'page[size]': '5' }) } catch { /* no existe */ }
+      try { cashiers = await fudoGet(token, 'cashiers', { 'page[size]': '5' }) } catch { /* no existe */ }
+
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          data: {
+            sale: saleRes.data?.[0] ?? null,
+            included: saleRes.included ?? [],
+            saleRelationships: saleRes.data?.[0]?.relationships ? Object.keys(saleRes.data[0].relationships) : [],
+            cashRegisters,
+            users,
+            cashiers,
+          },
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+      )
+    }
+
+    if (!fecha) {
+      throw new Error('Falta parámetro: fecha (YYYY-MM-DD)')
+    }
+
+    const cajaId: string | undefined = body.cajaId // CashRegister ID de Fudo (opcional)
+
     // 1) Encontrar la última página con datos.
-    //    Estrategia: bajar de a 10 desde un hint alto hasta encontrar datos,
-    //    luego subir de a 1 hasta la última página con datos.
     let ultimaPagina = 340
-    // Bajar de a 5 hasta encontrar una página con datos
     while (ultimaPagina > 0) {
       const test = await fudoGet(token, 'sales', {
         'page[size]': String(PAGE_SIZE),
@@ -116,7 +155,6 @@ Deno.serve(async (req) => {
       ultimaPagina -= 5
     }
     if (ultimaPagina <= 0) ultimaPagina = 1
-    // Subir de a 1 hasta encontrar la primera página vacía
     while (true) {
       const next = await fudoGet(token, 'sales', {
         'page[size]': String(PAGE_SIZE),
@@ -128,7 +166,6 @@ Deno.serve(async (req) => {
 
     // 2) Paginar hacia atrás recolectando ventas del día
     //    Fudo guarda closedAt en UTC. Argentina = UTC-3.
-    //    Para cubrir todo el día argentino, buscamos desde 03:00 UTC hasta 02:59:59 UTC del día siguiente.
     const fechaInicio = `${fecha}T03:00:00Z`
     const d = new Date(fecha + 'T12:00:00Z')
     d.setUTCDate(d.getUTCDate() + 1)
@@ -136,6 +173,7 @@ Deno.serve(async (req) => {
     const fechaFin = `${sigDia}T02:59:59Z`
     const ventasDelDia: JsonApiResource[] = []
     const paymentsMap = new Map<string, JsonApiResource>()
+    const usersMap = new Map<string, JsonApiResource>()
     let pag = ultimaPagina
     let terminamos = false
 
@@ -143,15 +181,16 @@ Deno.serve(async (req) => {
       const res = await fudoGet(token, 'sales', {
         'page[size]': String(PAGE_SIZE),
         'page[number]': String(pag),
-        'include': 'payments',
+        'include': 'payments,cashRegister,closedBy',
       })
 
       if (res.data.length === 0) { pag--; continue }
 
-      // Indexar payments incluidos
+      // Indexar included resources
       if (res.included) {
         for (const r of res.included) {
           if (r.type === 'Payment') paymentsMap.set(r.id, r)
+          if (r.type === 'User') usersMap.set(r.id, r)
         }
       }
 
@@ -161,11 +200,14 @@ Deno.serve(async (req) => {
         if (!closedAt || saleState !== 'CLOSED') continue
 
         if (closedAt >= fechaInicio && closedAt <= fechaFin) {
+          // Filtrar por caja si se especificó
+          if (cajaId) {
+            const crData = sale.relationships?.cashRegister?.data
+            const saleCajaId = crData && !Array.isArray(crData) ? crData.id : null
+            if (saleCajaId !== cajaId) continue
+          }
           ventasDelDia.push(sale)
         } else if (closedAt < fechaInicio) {
-          // Hay ventas anteriores al rango en esta página.
-          // Marcamos para no seguir con páginas previas, pero NO cortamos
-          // el loop porque puede haber ventas del día más adelante en la página.
           terminamos = true
         }
       }
@@ -176,9 +218,30 @@ Deno.serve(async (req) => {
     // 3) Agrupar por medio de pago
     const porMedioPago: Record<string, number> = {}
     let totalVentas = 0
+    // Conteo de cajeros (closedBy) para determinar el cajero principal
+    const cajeroCounts: Record<string, number> = {}
+    // Desglose por caja
+    const porCaja: Record<string, { tickets: number; total: number; cajero: string | null }> = {}
 
     for (const sale of ventasDelDia) {
       totalVentas += (sale.attributes.total as number) ?? 0
+
+      // Trackear cajero
+      const closedByData = sale.relationships?.closedBy?.data
+      const closedById = closedByData && !Array.isArray(closedByData) ? closedByData.id : null
+      if (closedById) {
+        cajeroCounts[closedById] = (cajeroCounts[closedById] ?? 0) + 1
+      }
+
+      // Trackear caja
+      const crData = sale.relationships?.cashRegister?.data
+      const crId = crData && !Array.isArray(crData) ? crData.id : 'unknown'
+      if (!porCaja[crId]) {
+        const cajeroUser = closedById ? usersMap.get(closedById) : null
+        porCaja[crId] = { tickets: 0, total: 0, cajero: (cajeroUser?.attributes?.name as string) ?? null }
+      }
+      porCaja[crId].tickets++
+      porCaja[crId].total += (sale.attributes.total as number) ?? 0
 
       const paymentRels = sale.relationships?.payments?.data
       if (Array.isArray(paymentRels)) {
@@ -192,6 +255,17 @@ Deno.serve(async (req) => {
           const pmId = pmData && !Array.isArray(pmData) ? pmData.id : 'unknown'
           porMedioPago[pmId] = (porMedioPago[pmId] ?? 0) + amount
         }
+      }
+    }
+
+    // Determinar cajero principal (el que más ventas cerró)
+    let cajero: string | null = null
+    let maxCount = 0
+    for (const [userId, count] of Object.entries(cajeroCounts)) {
+      if (count > maxCount) {
+        maxCount = count
+        const user = usersMap.get(userId)
+        cajero = (user?.attributes?.name as string) ?? null
       }
     }
 
@@ -212,6 +286,8 @@ Deno.serve(async (req) => {
       otros: Object.entries(porMedioPago)
         .filter(([id]) => !pmVals.includes(id))
         .reduce((s, [, v]) => s + v, 0),
+      cajero,
+      porCaja,
     }
 
     return new Response(

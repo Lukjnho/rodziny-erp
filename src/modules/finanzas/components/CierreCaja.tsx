@@ -4,7 +4,7 @@ import { supabase } from '@/lib/supabase'
 import { formatARS } from '@/lib/utils'
 import { cn } from '@/lib/utils'
 import { LocalSelector } from '@/components/ui/LocalSelector'
-import { obtenerVentasFudo, type VentasFudoResumen } from '@/lib/fudoApi'
+import { obtenerVentasFudo, CAJA_FUDO_ID, type VentasFudoResumen } from '@/lib/fudoApi'
 
 // ── config por local ─────────────────────────────────────────────────────────
 const CAJAS: Record<string, string[]> = {
@@ -74,7 +74,9 @@ export function CierreCaja() {
     setFudoProgreso('Conectando con Fudo...')
     setFudoResumen(null)
     try {
-      const resumen = await obtenerVentasFudo(local, fFecha, setFudoProgreso)
+      // Buscar el CashRegister ID de Fudo para la caja seleccionada
+      const cajaFudoId = fCaja ? CAJA_FUDO_ID[local]?.[fCaja] : undefined
+      const resumen = await obtenerVentasFudo(local, fFecha, setFudoProgreso, cajaFudoId)
       setFudoResumen(resumen)
       // Auto-completar campos del formulario
       setFFudoEfvo(resumen.efectivo > 0 ? String(Math.round(resumen.efectivo)) : '')
@@ -366,9 +368,18 @@ export function CierreCaja() {
                   <p className="text-xs text-green-700">
                     {fudoResumen.cantidadTickets} tickets del {new Date(fudoResumen.fecha + 'T12:00:00').toLocaleDateString('es-AR')}
                     {' — '}Total: {formatARS(fudoResumen.totalVentas)}
+                    {fudoResumen.cajero && ` — Cajero: ${fudoResumen.cajero}`}
                     {fudoResumen.mpLucas > 0 && ` — MP Lucas: ${formatARS(fudoResumen.mpLucas)}`}
                     {fudoResumen.ctaCte > 0 && ` — Cta.Cte: ${formatARS(fudoResumen.ctaCte)}`}
                   </p>
+                  {/* Desglose por caja (solo si no se filtró por caja específica) */}
+                  {Object.keys(fudoResumen.porCaja || {}).length > 1 && (
+                    <p className="text-[10px] text-green-600 mt-1">
+                      {Object.entries(fudoResumen.porCaja).map(([id, c]) => (
+                        `Caja ${id}: ${c.tickets} tickets, ${c.cajero ?? 'sin cajero'}`
+                      )).join(' · ')}
+                    </p>
+                  )}
                 </div>
               )}
             </div>

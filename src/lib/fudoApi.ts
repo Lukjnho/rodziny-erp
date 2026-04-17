@@ -29,7 +29,25 @@ export const PM = {
   ctaCte: '2',
 } as const
 
+// ── Mapeo de cajas ERP → CashRegister IDs de Fudo ──────────────────────────
+export const CAJA_FUDO_ID: Record<string, Record<string, string>> = {
+  vedia: {
+    'Principal Pastas 1': '1',
+    'Barra Bebidas': '4',
+  },
+  saavedra: {
+    // Completar cuando Saavedra tenga API habilitada
+    'Caja Principal': '1',
+  },
+}
+
 // ── Resultado agrupado por medio de pago ────────────────────────────────────
+export interface CajaResumen {
+  tickets: number
+  total: number
+  cajero: string | null
+}
+
 export interface VentasFudoResumen {
   fecha: string
   local: string
@@ -44,6 +62,8 @@ export interface VentasFudoResumen {
   mpLucas: number
   ctaCte: number
   otros: number
+  cajero: string | null
+  porCaja: Record<string, CajaResumen>
 }
 
 // ── Obtener ventas de Fudo via Edge Function ────────────────────────────────
@@ -51,11 +71,12 @@ export async function obtenerVentasFudo(
   local: string,
   fecha: string,
   onProgreso?: (msg: string) => void,
+  cajaId?: string,
 ): Promise<VentasFudoResumen> {
   onProgreso?.('Consultando ventas en Fudo...')
 
   const { data, error } = await supabase.functions.invoke('fudo-ventas', {
-    body: { local, fecha },
+    body: { local, fecha, cajaId },
   })
 
   if (error) {
@@ -67,6 +88,7 @@ export async function obtenerVentasFudo(
   }
 
   const resumen = data.data as VentasFudoResumen
-  onProgreso?.(`${resumen.cantidadTickets} tickets cargados`)
+  const cajaLabel = cajaId ? ` (caja ${cajaId})` : ''
+  onProgreso?.(`${resumen.cantidadTickets} tickets cargados${cajaLabel}`)
   return resumen
 }
