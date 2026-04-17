@@ -87,7 +87,7 @@ export function ProduccionQRPage() {
         .eq('local', local)
         .order('created_at', { ascending: false })
       if (error) throw error
-      return data as LoteRelleno[]
+      return data as unknown as LoteRelleno[]
     },
   })
 
