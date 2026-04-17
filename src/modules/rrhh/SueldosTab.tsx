@@ -23,16 +23,28 @@ type PanelEstado = { tipo: 'adelantos' | 'sanciones' | 'descuentos' | 'errores_c
 
 // Mapeo nombre Fudo (closedBy) → { nombre, apellido } del empleado en RRHH.
 // Cuando hay apellidos duplicados (ej: 2 Lis) se matchea por nombre + apellido.
+// Incluye cajeros de Vedia y Saavedra (nombres tal como aparecen en Fudo closedBy)
 const FUDO_CAJERO_EMPLEADO: Record<string, { nombre: string; apellido: string }> = {
+  // ── Vedia ──
   'marcos':           { nombre: 'marcos',   apellido: 'paredes' },
   'brian':            { nombre: 'brian',     apellido: 'martinez' },
-  'leandro acevedo':  { nombre: 'leandro',  apellido: 'acevedo' },
-  'karen':            { nombre: 'karen',    apellido: 'valenzuela' },
-  'tamara':           { nombre: 'tamara',   apellido: 'arzamendia' },
   'maxi vera':        { nombre: 'maximiliano', apellido: 'vera' },
   'martin':           { nombre: 'martin',   apellido: 'baez' },
   'tomas':            { nombre: 'tomas',    apellido: 'lis' },
   'lucas lis':        { nombre: 'lucas',    apellido: 'lis' },
+  'tamara':           { nombre: 'tamara',   apellido: 'arzamendia' },
+  // ── Saavedra ──
+  'karen':            { nombre: 'karen',    apellido: 'valenzuela' },
+  'ian':              { nombre: 'ian',      apellido: 'polaski' },
+  'lily':             { nombre: 'liliana',  apellido: 'gomez' },
+  'leandro':          { nombre: 'leandro',  apellido: 'acevedo' },
+  'leandro acevedo':  { nombre: 'leandro',  apellido: 'acevedo' },
+  'selene':           { nombre: 'selene',   apellido: 'jara' },
+  'nahiara':          { nombre: 'nahiara',  apellido: 'robledo' },
+  'emanuel':          { nombre: 'emanuel',  apellido: 'aguilar' },
+  'gerardo':          { nombre: 'gerardo',  apellido: 'herrera' },
+  'lucas mariano lis': { nombre: 'lucas',   apellido: 'lis' },
+  'tomás lis':        { nombre: 'tomas',    apellido: 'lis' },
 }
 
 interface Cronograma {

@@ -144,25 +144,23 @@ Deno.serve(async (req) => {
 
     const cajaId: string | undefined = body.cajaId // CashRegister ID de Fudo (opcional)
 
-    // 1) Encontrar la última página con datos.
-    let ultimaPagina = 340
-    while (ultimaPagina > 0) {
+    // 1) Encontrar la última página con datos (búsqueda binaria).
+    //    Funciona tanto para Vedia (~340 páginas) como Saavedra (~25 páginas).
+    let lo = 1, hi = 500
+    // Primero acotar: bajar hi hasta encontrar datos
+    while (lo < hi) {
+      const mid = Math.floor((lo + hi + 1) / 2)
       const test = await fudoGet(token, 'sales', {
         'page[size]': String(PAGE_SIZE),
-        'page[number]': String(ultimaPagina),
+        'page[number]': String(mid),
       })
-      if (test.data.length > 0) break
-      ultimaPagina -= 5
+      if (test.data.length > 0) {
+        lo = mid   // hay datos en mid, la última página es >= mid
+      } else {
+        hi = mid - 1  // no hay datos en mid, la última es < mid
+      }
     }
-    if (ultimaPagina <= 0) ultimaPagina = 1
-    while (true) {
-      const next = await fudoGet(token, 'sales', {
-        'page[size]': String(PAGE_SIZE),
-        'page[number]': String(ultimaPagina + 1),
-      })
-      if (next.data.length === 0) break
-      ultimaPagina++
-    }
+    const ultimaPagina = lo
 
     // 2) Paginar hacia atrás recolectando ventas del día
     //    Fudo guarda closedAt en UTC. Argentina = UTC-3.
