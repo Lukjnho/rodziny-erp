@@ -8,7 +8,7 @@ interface Producto {
   id: string
   nombre: string
   codigo: string
-  tipo: 'pasta' | 'salsa' | 'postre' | 'relleno' | 'masa'
+  tipo: 'pasta' | 'salsa' | 'postre' | 'relleno' | 'masa' | 'panificado'
   unidad: string
   minimo_produccion: number | null
   local: 'vedia' | 'saavedra' | 'ambos'
@@ -16,9 +16,9 @@ interface Producto {
   created_at: string
 }
 
-const TIPOS = ['pasta', 'salsa', 'postre', 'relleno', 'masa'] as const
+const TIPOS = ['pasta', 'salsa', 'postre', 'relleno', 'masa', 'panificado'] as const
 const TIPO_LABEL: Record<string, string> = {
-  pasta: 'Pasta', salsa: 'Salsa', postre: 'Postre', relleno: 'Relleno', masa: 'Masa',
+  pasta: 'Pasta', salsa: 'Salsa', postre: 'Postre', relleno: 'Relleno', masa: 'Masa', panificado: 'Panificado',
 }
 
 type FiltroLocal = 'todos' | 'vedia' | 'saavedra' | 'ambos'
@@ -62,7 +62,7 @@ export function ProductosTab() {
       total: all.length,
       activos: all.filter((p) => p.activo).length,
       pastas: all.filter((p) => p.tipo === 'pasta').length,
-      salsas: all.filter((p) => p.tipo === 'salsa').length,
+      panificados: all.filter((p) => p.tipo === 'panificado').length,
     }
   }, [productos])
 
@@ -89,7 +89,7 @@ export function ProductosTab() {
         <KPICard label="Total productos" value={String(kpis.total)} color="blue" loading={isLoading} />
         <KPICard label="Activos" value={String(kpis.activos)} color="green" loading={isLoading} />
         <KPICard label="Pastas" value={String(kpis.pastas)} color="neutral" loading={isLoading} />
-        <KPICard label="Salsas" value={String(kpis.salsas)} color="neutral" loading={isLoading} />
+        <KPICard label="Panificados" value={String(kpis.panificados)} color="neutral" loading={isLoading} />
       </div>
 
       {/* Toolbar */}
@@ -232,6 +232,7 @@ function ModalProducto({ producto, onClose, onSaved }: { producto: Producto | nu
               <label className="block text-xs text-gray-500 mb-1">Unidad</label>
               <select value={unidad} onChange={(e) => setUnidad(e.target.value)} className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm">
                 <option value="porciones">Porciones</option>
+                <option value="unidades">Unidades</option>
                 <option value="kg">Kg</option>
                 <option value="litros">Litros</option>
               </select>
