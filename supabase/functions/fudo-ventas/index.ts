@@ -102,45 +102,38 @@ Deno.serve(async (req) => {
 
     const token = await autenticar(local)
 
-    // 1) Estimar última página
-    const primera = await fudoGet(token, 'sales', {
-      'page[size]': '1',
-      'page[number]': '1',
-    })
-    const total = primera.meta?.page?.total
-    let ultimaPagina = total ? Math.ceil(total / PAGE_SIZE) : 350
-
-    // Si no tenemos total, verificar que la página tenga datos
-    if (!total) {
+    // 1) Encontrar la última página con datos.
+    //    Estrategia: bajar de a 10 desde un hint alto hasta encontrar datos,
+    //    luego subir de a 1 hasta la última página con datos.
+    let ultimaPagina = 340
+    // Bajar de a 5 hasta encontrar una página con datos
+    while (ultimaPagina > 0) {
       const test = await fudoGet(token, 'sales', {
         'page[size]': String(PAGE_SIZE),
         'page[number]': String(ultimaPagina),
       })
-      if (test.data.length === 0) {
-        // Búsqueda binaria rápida
-        let low = 1, high = ultimaPagina
-        while (low < high) {
-          const mid = Math.ceil((low + high) / 2)
-          const probe = await fudoGet(token, 'sales', {
-            'page[size]': String(PAGE_SIZE),
-            'page[number]': String(mid),
-          })
-          if (probe.data.length > 0) low = mid + 1
-          else high = mid - 1
-        }
-        ultimaPagina = low
-        // Ajustar: si low está vacío, bajar 1
-        const check = await fudoGet(token, 'sales', {
-          'page[size]': String(PAGE_SIZE),
-          'page[number]': String(ultimaPagina),
-        })
-        if (check.data.length === 0 && ultimaPagina > 1) ultimaPagina--
-      }
+      if (test.data.length > 0) break
+      ultimaPagina -= 5
+    }
+    if (ultimaPagina <= 0) ultimaPagina = 1
+    // Subir de a 1 hasta encontrar la primera página vacía
+    while (true) {
+      const next = await fudoGet(token, 'sales', {
+        'page[size]': String(PAGE_SIZE),
+        'page[number]': String(ultimaPagina + 1),
+      })
+      if (next.data.length === 0) break
+      ultimaPagina++
     }
 
     // 2) Paginar hacia atrás recolectando ventas del día
-    const fechaInicio = `${fecha}T00:00:00`
-    const fechaFin = `${fecha}T23:59:59`
+    //    Fudo guarda closedAt en UTC. Argentina = UTC-3.
+    //    Para cubrir todo el día argentino, buscamos desde 03:00 UTC hasta 02:59:59 UTC del día siguiente.
+    const fechaInicio = `${fecha}T03:00:00Z`
+    const d = new Date(fecha + 'T12:00:00Z')
+    d.setUTCDate(d.getUTCDate() + 1)
+    const sigDia = d.toISOString().substring(0, 10)
+    const fechaFin = `${sigDia}T02:59:59Z`
     const ventasDelDia: JsonApiResource[] = []
     const paymentsMap = new Map<string, JsonApiResource>()
     let pag = ultimaPagina
@@ -170,8 +163,10 @@ Deno.serve(async (req) => {
         if (closedAt >= fechaInicio && closedAt <= fechaFin) {
           ventasDelDia.push(sale)
         } else if (closedAt < fechaInicio) {
+          // Hay ventas anteriores al rango en esta página.
+          // Marcamos para no seguir con páginas previas, pero NO cortamos
+          // el loop porque puede haber ventas del día más adelante en la página.
           terminamos = true
-          break
         }
       }
 
