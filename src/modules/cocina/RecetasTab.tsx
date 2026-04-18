@@ -1,7 +1,19 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, Fragment } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { KPICard } from '@/components/ui/KPICard'
+import { cn } from '@/lib/utils'
+
+interface Ingrediente {
+  id: string
+  receta_id: string
+  nombre: string
+  cantidad: number
+  unidad: string
+  observaciones: string | null
+  orden: number
+  producto_id: string | null
+}
 
 interface Receta {
   id: string
@@ -18,6 +30,14 @@ const TIPOS = ['relleno', 'masa', 'salsa', 'otro'] as const
 const TIPO_LABEL: Record<string, string> = {
   relleno: 'Relleno', masa: 'Masa', salsa: 'Salsa', otro: 'Otro',
 }
+const TIPO_COLOR: Record<string, string> = {
+  relleno: 'bg-green-100 text-green-700',
+  masa: 'bg-blue-100 text-blue-700',
+  salsa: 'bg-orange-100 text-orange-700',
+  otro: 'bg-gray-100 text-gray-700',
+}
+
+const UNIDADES = ['g', 'kg', 'ml', 'lt', 'unid', 'cdta', 'cda'] as const
 
 export function RecetasTab() {
   const qc = useQueryClient()
@@ -25,6 +45,7 @@ export function RecetasTab() {
   const [filtroTipo, setFiltroTipo] = useState<string>('todos')
   const [modalAbierto, setModalAbierto] = useState(false)
   const [editando, setEditando] = useState<Receta | null>(null)
+  const [fichaAbierta, setFichaAbierta] = useState<string | null>(null) // receta_id expandida
 
   const { data: recetas, isLoading } = useQuery({
     queryKey: ['cocina-recetas'],
@@ -35,6 +56,19 @@ export function RecetasTab() {
         .order('nombre')
       if (error) throw error
       return data as Receta[]
+    },
+  })
+
+  // Ingredientes de todas las recetas (para mostrar en fichas expandidas)
+  const { data: todosIngredientes } = useQuery({
+    queryKey: ['cocina-receta-ingredientes'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('cocina_receta_ingredientes')
+        .select('*')
+        .order('orden')
+      if (error) throw error
+      return data as Ingrediente[]
     },
   })
 
@@ -63,8 +97,20 @@ export function RecetasTab() {
       const { error } = await supabase.from('cocina_recetas').delete().eq('id', id)
       if (error) throw error
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['cocina-recetas'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['cocina-recetas'] })
+      qc.invalidateQueries({ queryKey: ['cocina-receta-ingredientes'] })
+    },
   })
+
+  const ingredientesPorReceta = useMemo(() => {
+    const mapa = new Map<string, Ingrediente[]>()
+    for (const ing of todosIngredientes ?? []) {
+      if (!mapa.has(ing.receta_id)) mapa.set(ing.receta_id, [])
+      mapa.get(ing.receta_id)!.push(ing)
+    }
+    return mapa
+  }, [todosIngredientes])
 
   return (
     <div className="space-y-4">
@@ -99,40 +145,74 @@ export function RecetasTab() {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-surface-border bg-gray-50 text-left text-xs text-gray-500 uppercase">
+              <th className="px-4 py-2 w-8"></th>
               <th className="px-4 py-2">Nombre</th>
               <th className="px-4 py-2">Tipo</th>
+              <th className="px-4 py-2 text-center">Ingredientes</th>
               <th className="px-4 py-2">Rinde (kg)</th>
               <th className="px-4 py-2">Rinde (porciones)</th>
-              <th className="px-4 py-2">Instrucciones</th>
               <th className="px-4 py-2">Acciones</th>
             </tr>
           </thead>
           <tbody>
-            {filtrados.map((r) => (
-              <tr key={r.id} className="border-b border-surface-border hover:bg-gray-50">
-                <td className="px-4 py-2 font-medium">{r.nombre}</td>
-                <td className="px-4 py-2">
-                  <span className="px-2 py-0.5 rounded-full text-xs bg-gray-100 text-gray-700">{TIPO_LABEL[r.tipo]}</span>
-                </td>
-                <td className="px-4 py-2">{r.rendimiento_kg != null ? `${r.rendimiento_kg} kg` : '—'}</td>
-                <td className="px-4 py-2">{r.rendimiento_porciones ?? '—'}</td>
-                <td className="px-4 py-2 text-gray-500 max-w-xs truncate">{r.instrucciones || '—'}</td>
-                <td className="px-4 py-2">
-                  <div className="flex gap-1">
-                    <button
-                      onClick={() => { setEditando(r); setModalAbierto(true) }}
-                      className="text-blue-600 hover:text-blue-800 text-xs"
-                    >Editar</button>
-                    <button
-                      onClick={() => { if (window.confirm(`¿Eliminar "${r.nombre}"?`)) eliminar.mutate(r.id) }}
-                      className="text-red-500 hover:text-red-700 text-xs"
-                    >Eliminar</button>
-                  </div>
-                </td>
-              </tr>
-            ))}
+            {filtrados.map((r) => {
+              const ings = ingredientesPorReceta.get(r.id) ?? []
+              const abierta = fichaAbierta === r.id
+              return (
+                <Fragment key={r.id}>
+                  <tr className={cn('border-b border-surface-border hover:bg-gray-50', abierta && 'bg-blue-50/30')}>
+                    <td className="px-4 py-2">
+                      <button
+                        onClick={() => setFichaAbierta(abierta ? null : r.id)}
+                        className={cn(
+                          'w-5 h-5 flex items-center justify-center rounded text-xs transition-colors',
+                          abierta ? 'bg-rodziny-100 text-rodziny-700' : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100',
+                        )}
+                        title="Ver ficha técnica"
+                      >
+                        {abierta ? '▾' : '▸'}
+                      </button>
+                    </td>
+                    <td className="px-4 py-2 font-medium text-gray-900">{r.nombre}</td>
+                    <td className="px-4 py-2">
+                      <span className={cn('px-2 py-0.5 rounded-full text-xs font-medium', TIPO_COLOR[r.tipo])}>
+                        {TIPO_LABEL[r.tipo]}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2 text-center">
+                      {ings.length > 0 ? (
+                        <span className="text-xs font-medium text-gray-600">{ings.length}</span>
+                      ) : (
+                        <span className="text-xs text-gray-300">—</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-2">{r.rendimiento_kg != null ? `${r.rendimiento_kg} kg` : '—'}</td>
+                    <td className="px-4 py-2">{r.rendimiento_porciones ?? '—'}</td>
+                    <td className="px-4 py-2">
+                      <div className="flex gap-1">
+                        <button
+                          onClick={() => { setEditando(r); setModalAbierto(true) }}
+                          className="text-blue-600 hover:text-blue-800 text-xs"
+                        >Editar</button>
+                        <button
+                          onClick={() => { if (window.confirm(`¿Eliminar "${r.nombre}"?`)) eliminar.mutate(r.id) }}
+                          className="text-red-500 hover:text-red-700 text-xs"
+                        >Eliminar</button>
+                      </div>
+                    </td>
+                  </tr>
+                  {abierta && (
+                    <tr className="bg-blue-50/20">
+                      <td colSpan={7} className="px-4 py-0">
+                        <FichaTecnica receta={r} ingredientes={ings} />
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              )
+            })}
             {filtrados.length === 0 && (
-              <tr><td colSpan={6} className="px-4 py-8 text-center text-gray-400">{isLoading ? 'Cargando...' : 'No hay recetas'}</td></tr>
+              <tr><td colSpan={7} className="px-4 py-8 text-center text-gray-400">{isLoading ? 'Cargando...' : 'No hay recetas'}</td></tr>
             )}
           </tbody>
         </table>
@@ -141,15 +221,126 @@ export function RecetasTab() {
       {modalAbierto && (
         <ModalReceta
           receta={editando}
+          ingredientes={editando ? (ingredientesPorReceta.get(editando.id) ?? []) : []}
           onClose={() => setModalAbierto(false)}
-          onSaved={() => { qc.invalidateQueries({ queryKey: ['cocina-recetas'] }); setModalAbierto(false) }}
+          onSaved={() => {
+            qc.invalidateQueries({ queryKey: ['cocina-recetas'] })
+            qc.invalidateQueries({ queryKey: ['cocina-receta-ingredientes'] })
+            setModalAbierto(false)
+          }}
         />
       )}
     </div>
   )
 }
 
-function ModalReceta({ receta, onClose, onSaved }: { receta: Receta | null; onClose: () => void; onSaved: () => void }) {
+// ─── Ficha Técnica (expandible) ─────────────────────────────────────────────
+function FichaTecnica({ receta, ingredientes }: { receta: Receta; ingredientes: Ingrediente[] }) {
+  const pasos = (receta.instrucciones ?? '')
+    .split('\n')
+    .map((s) => s.trim())
+    .filter(Boolean)
+
+  return (
+    <div className="py-4 space-y-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* Ingredientes */}
+        <div>
+          <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Ingredientes</h4>
+          {ingredientes.length === 0 ? (
+            <p className="text-xs text-gray-400 italic">Sin ingredientes cargados</p>
+          ) : (
+            <div className="bg-white rounded border border-gray-200 overflow-hidden">
+              <table className="w-full text-xs">
+                <thead className="bg-gray-50">
+                  <tr className="text-gray-500">
+                    <th className="text-left px-3 py-1.5 font-medium">Ingrediente</th>
+                    <th className="text-right px-3 py-1.5 font-medium">Cantidad</th>
+                    <th className="text-left px-3 py-1.5 font-medium">Unidad</th>
+                    <th className="text-left px-3 py-1.5 font-medium">Obs.</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {ingredientes.map((ing) => (
+                    <tr key={ing.id}>
+                      <td className="px-3 py-1.5 font-medium text-gray-800">{ing.nombre}</td>
+                      <td className="px-3 py-1.5 text-right tabular-nums text-gray-700">
+                        {formatCantidad(ing.cantidad)}
+                      </td>
+                      <td className="px-3 py-1.5 text-gray-500">{ing.unidad}</td>
+                      <td className="px-3 py-1.5 text-gray-400 max-w-[120px] truncate">{ing.observaciones || ''}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        {/* Procedimiento + Rendimiento */}
+        <div className="space-y-4">
+          {/* Rendimiento */}
+          <div>
+            <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Rendimiento</h4>
+            <div className="flex gap-3">
+              {receta.rendimiento_kg != null && (
+                <div className="bg-white rounded border border-gray-200 px-3 py-2 text-center">
+                  <div className="text-lg font-bold text-gray-800">{receta.rendimiento_kg} kg</div>
+                  <div className="text-[10px] text-gray-400 uppercase">Peso total</div>
+                </div>
+              )}
+              {receta.rendimiento_porciones != null && (
+                <div className="bg-white rounded border border-gray-200 px-3 py-2 text-center">
+                  <div className="text-lg font-bold text-gray-800">{receta.rendimiento_porciones}</div>
+                  <div className="text-[10px] text-gray-400 uppercase">Porciones</div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Procedimiento */}
+          {pasos.length > 0 && (
+            <div>
+              <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Procedimiento</h4>
+              <ol className="space-y-1.5">
+                {pasos.map((paso, i) => (
+                  <li key={i} className="flex gap-2 text-xs">
+                    <span className="flex-shrink-0 w-5 h-5 rounded-full bg-rodziny-100 text-rodziny-700 flex items-center justify-center text-[10px] font-bold mt-0.5">
+                      {i + 1}
+                    </span>
+                    <span className="text-gray-700 leading-relaxed">{paso}</span>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Modal crear/editar receta con ingredientes ─────────────────────────────
+interface IngredienteForm {
+  tempId: string
+  dbId: string | null // null = nuevo
+  nombre: string
+  cantidad: string
+  unidad: string
+  observaciones: string
+}
+
+function ModalReceta({
+  receta,
+  ingredientes: ingredientesExistentes,
+  onClose,
+  onSaved,
+}: {
+  receta: Receta | null
+  ingredientes: Ingrediente[]
+  onClose: () => void
+  onSaved: () => void
+}) {
   const [nombre, setNombre] = useState(receta?.nombre ?? '')
   const [tipo, setTipo] = useState(receta?.tipo ?? 'relleno')
   const [rendKg, setRendKg] = useState(receta?.rendimiento_kg ?? '')
@@ -157,68 +348,332 @@ function ModalReceta({ receta, onClose, onSaved }: { receta: Receta | null; onCl
   const [instrucciones, setInstrucciones] = useState(receta?.instrucciones ?? '')
   const [guardando, setGuardando] = useState(false)
   const [error, setError] = useState('')
+  const [tab, setTab] = useState<'general' | 'ingredientes' | 'procedimiento'>('general')
+
+  // Ingredientes editables
+  const [ings, setIngs] = useState<IngredienteForm[]>(() =>
+    ingredientesExistentes.map((ing) => ({
+      tempId: ing.id,
+      dbId: ing.id,
+      nombre: ing.nombre,
+      cantidad: String(ing.cantidad),
+      unidad: ing.unidad,
+      observaciones: ing.observaciones ?? '',
+    }))
+  )
+
+  function agregarIngrediente() {
+    setIngs([...ings, {
+      tempId: crypto.randomUUID(),
+      dbId: null,
+      nombre: '',
+      cantidad: '',
+      unidad: 'g',
+      observaciones: '',
+    }])
+  }
+
+  function actualizarIng(tempId: string, campo: keyof IngredienteForm, valor: string) {
+    setIngs(ings.map((i) => i.tempId === tempId ? { ...i, [campo]: valor } : i))
+  }
+
+  function eliminarIng(tempId: string) {
+    setIngs(ings.filter((i) => i.tempId !== tempId))
+  }
+
+  function moverIng(tempId: string, dir: -1 | 1) {
+    const idx = ings.findIndex((i) => i.tempId === tempId)
+    if (idx < 0) return
+    const newIdx = idx + dir
+    if (newIdx < 0 || newIdx >= ings.length) return
+    const copia = [...ings]
+    ;[copia[idx], copia[newIdx]] = [copia[newIdx], copia[idx]]
+    setIngs(copia)
+  }
 
   const guardar = async () => {
     if (!nombre.trim()) { setError('El nombre es obligatorio'); return }
     setGuardando(true)
     setError('')
-    const row = {
-      nombre: nombre.trim(),
-      tipo,
-      rendimiento_kg: rendKg !== '' ? Number(rendKg) : null,
-      rendimiento_porciones: rendPorciones !== '' ? Number(rendPorciones) : null,
-      instrucciones: instrucciones.trim() || null,
-      updated_at: new Date().toISOString(),
+
+    try {
+      // 1. Guardar receta
+      const row = {
+        nombre: nombre.trim(),
+        tipo,
+        rendimiento_kg: rendKg !== '' ? Number(rendKg) : null,
+        rendimiento_porciones: rendPorciones !== '' ? Number(rendPorciones) : null,
+        instrucciones: instrucciones.trim() || null,
+        updated_at: new Date().toISOString(),
+      }
+
+      let recetaId = receta?.id
+      if (receta) {
+        const { error: err } = await supabase.from('cocina_recetas').update(row).eq('id', receta.id)
+        if (err) throw err
+      } else {
+        const { data, error: err } = await supabase
+          .from('cocina_recetas')
+          .insert({ ...row, activo: true })
+          .select('id')
+          .single()
+        if (err) throw err
+        recetaId = data.id
+      }
+
+      // 2. Sync ingredientes
+      // Borrar los que ya no están
+      const idsActuales = ings.filter((i) => i.dbId).map((i) => i.dbId!)
+      const idsOriginales = ingredientesExistentes.map((i) => i.id)
+      const idsABorrar = idsOriginales.filter((id) => !idsActuales.includes(id))
+
+      if (idsABorrar.length > 0) {
+        const { error: delErr } = await supabase
+          .from('cocina_receta_ingredientes')
+          .delete()
+          .in('id', idsABorrar)
+        if (delErr) throw delErr
+      }
+
+      // Upsert ingredientes (update existentes + insert nuevos)
+      for (let i = 0; i < ings.length; i++) {
+        const ing = ings[i]
+        if (!ing.nombre.trim() || !ing.cantidad) continue
+
+        const payload = {
+          receta_id: recetaId!,
+          nombre: ing.nombre.trim(),
+          cantidad: Number(ing.cantidad),
+          unidad: ing.unidad,
+          observaciones: ing.observaciones.trim() || null,
+          orden: i,
+        }
+
+        if (ing.dbId) {
+          const { error: updErr } = await supabase
+            .from('cocina_receta_ingredientes')
+            .update(payload)
+            .eq('id', ing.dbId)
+          if (updErr) throw updErr
+        } else {
+          const { error: insErr } = await supabase
+            .from('cocina_receta_ingredientes')
+            .insert(payload)
+          if (insErr) throw insErr
+        }
+      }
+
+      onSaved()
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : (err as { message?: string })?.message ?? 'Error desconocido'
+      setError(msg)
+      setGuardando(false)
     }
-    const { error: err } = receta
-      ? await supabase.from('cocina_recetas').update(row).eq('id', receta.id)
-      : await supabase.from('cocina_recetas').insert({ ...row, activo: true })
-    if (err) { setError(err.message); setGuardando(false); return }
-    onSaved()
   }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={onClose}>
       <div className="absolute inset-0 bg-black/30" />
-      <div className="relative bg-white rounded-lg shadow-xl w-full max-w-md p-6" onClick={(e) => e.stopPropagation()}>
-        <h3 className="text-lg font-bold text-gray-800 mb-4">{receta ? 'Editar receta' : 'Nueva receta'}</h3>
-
-        <div className="space-y-3">
-          <div>
-            <label className="block text-xs text-gray-500 mb-1">Nombre</label>
-            <input value={nombre} onChange={(e) => setNombre(e.target.value)} className="w-full border border-gray-300 rounded px-3 py-1.5 text-sm" placeholder="Relleno Jamón y Queso" />
-          </div>
-          <div>
-            <label className="block text-xs text-gray-500 mb-1">Tipo</label>
-            <select value={tipo} onChange={(e) => setTipo(e.target.value as Receta['tipo'])} className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm">
-              {TIPOS.map((t) => <option key={t} value={t}>{TIPO_LABEL[t]}</option>)}
-            </select>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">Rendimiento (kg)</label>
-              <input type="number" step="0.1" value={rendKg} onChange={(e) => setRendKg(e.target.value)} className="w-full border border-gray-300 rounded px-3 py-1.5 text-sm" placeholder="2.5" />
-            </div>
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">Rendimiento (porciones)</label>
-              <input type="number" value={rendPorciones} onChange={(e) => setRendPorciones(e.target.value)} className="w-full border border-gray-300 rounded px-3 py-1.5 text-sm" placeholder="100" />
-            </div>
-          </div>
-          <div>
-            <label className="block text-xs text-gray-500 mb-1">Instrucciones</label>
-            <textarea value={instrucciones} onChange={(e) => setInstrucciones(e.target.value)} rows={4} className="w-full border border-gray-300 rounded px-3 py-1.5 text-sm" placeholder="Pasos de la receta..." />
+      <div
+        className="relative bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[90vh] flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="px-6 pt-5 pb-3 border-b border-gray-200">
+          <h3 className="text-lg font-bold text-gray-800">{receta ? 'Editar receta' : 'Nueva receta'}</h3>
+          {/* Tabs del modal */}
+          <div className="flex gap-1 mt-3">
+            {(['general', 'ingredientes', 'procedimiento'] as const).map((t) => (
+              <button
+                key={t}
+                onClick={() => setTab(t)}
+                className={cn(
+                  'px-3 py-1.5 text-xs rounded-t font-medium transition-colors',
+                  tab === t
+                    ? 'bg-rodziny-50 text-rodziny-700 border border-b-0 border-rodziny-200'
+                    : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50',
+                )}
+              >
+                {t === 'general' ? 'General' : t === 'ingredientes' ? `Ingredientes (${ings.length})` : 'Procedimiento'}
+              </button>
+            ))}
           </div>
         </div>
 
-        {error && <p className="text-red-500 text-xs mt-2">{error}</p>}
+        <div className="flex-1 overflow-y-auto px-6 py-4">
+          {/* Tab General */}
+          {tab === 'general' && (
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Nombre *</label>
+                <input
+                  value={nombre}
+                  onChange={(e) => setNombre(e.target.value)}
+                  className="w-full border border-gray-300 rounded px-3 py-1.5 text-sm"
+                  placeholder="Relleno Jamón, Queso y Cebolla"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Tipo</label>
+                <select
+                  value={tipo}
+                  onChange={(e) => setTipo(e.target.value as Receta['tipo'])}
+                  className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm"
+                >
+                  {TIPOS.map((t) => <option key={t} value={t}>{TIPO_LABEL[t]}</option>)}
+                </select>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Rendimiento (kg)</label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={rendKg}
+                    onChange={(e) => setRendKg(e.target.value)}
+                    className="w-full border border-gray-300 rounded px-3 py-1.5 text-sm"
+                    placeholder="5.5"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Rendimiento (porciones)</label>
+                  <input
+                    type="number"
+                    value={rendPorciones}
+                    onChange={(e) => setRendPorciones(e.target.value)}
+                    className="w-full border border-gray-300 rounded px-3 py-1.5 text-sm"
+                    placeholder="45"
+                  />
+                </div>
+              </div>
+            </div>
+          )}
 
-        <div className="flex justify-end gap-2 mt-5">
+          {/* Tab Ingredientes */}
+          {tab === 'ingredientes' && (
+            <div className="space-y-3">
+              {ings.length === 0 && (
+                <p className="text-xs text-gray-400 italic text-center py-4">
+                  No hay ingredientes todavía. Agregá el primero.
+                </p>
+              )}
+              {ings.map((ing, idx) => (
+                <div
+                  key={ing.tempId}
+                  className="flex items-start gap-2 bg-gray-50 rounded-lg p-2.5 border border-gray-200"
+                >
+                  <span className="text-[10px] text-gray-400 font-mono mt-2 w-4 text-right flex-shrink-0">
+                    {idx + 1}
+                  </span>
+                  <div className="flex-1 grid grid-cols-12 gap-2">
+                    <input
+                      value={ing.nombre}
+                      onChange={(e) => actualizarIng(ing.tempId, 'nombre', e.target.value)}
+                      placeholder="Nombre del ingrediente"
+                      className="col-span-5 border border-gray-300 rounded px-2 py-1 text-sm"
+                    />
+                    <input
+                      type="number"
+                      step="0.1"
+                      value={ing.cantidad}
+                      onChange={(e) => actualizarIng(ing.tempId, 'cantidad', e.target.value)}
+                      placeholder="Cant."
+                      className="col-span-2 border border-gray-300 rounded px-2 py-1 text-sm text-right"
+                    />
+                    <select
+                      value={ing.unidad}
+                      onChange={(e) => actualizarIng(ing.tempId, 'unidad', e.target.value)}
+                      className="col-span-2 border border-gray-300 rounded px-1 py-1 text-sm"
+                    >
+                      {UNIDADES.map((u) => <option key={u} value={u}>{u}</option>)}
+                    </select>
+                    <input
+                      value={ing.observaciones}
+                      onChange={(e) => actualizarIng(ing.tempId, 'observaciones', e.target.value)}
+                      placeholder="Obs."
+                      className="col-span-3 border border-gray-300 rounded px-2 py-1 text-sm text-gray-500"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-0.5 flex-shrink-0">
+                    <button
+                      onClick={() => moverIng(ing.tempId, -1)}
+                      disabled={idx === 0}
+                      className="text-gray-400 hover:text-gray-600 disabled:opacity-20 text-[10px] px-1"
+                      title="Subir"
+                    >▲</button>
+                    <button
+                      onClick={() => moverIng(ing.tempId, 1)}
+                      disabled={idx === ings.length - 1}
+                      className="text-gray-400 hover:text-gray-600 disabled:opacity-20 text-[10px] px-1"
+                      title="Bajar"
+                    >▼</button>
+                  </div>
+                  <button
+                    onClick={() => eliminarIng(ing.tempId)}
+                    className="text-red-400 hover:text-red-600 text-xs mt-1 flex-shrink-0"
+                    title="Eliminar ingrediente"
+                  >✕</button>
+                </div>
+              ))}
+              <button
+                onClick={agregarIngrediente}
+                className="w-full border-2 border-dashed border-gray-300 rounded-lg py-2 text-sm text-gray-500 hover:text-rodziny-700 hover:border-rodziny-300 transition-colors"
+              >
+                + Agregar ingrediente
+              </button>
+            </div>
+          )}
+
+          {/* Tab Procedimiento */}
+          {tab === 'procedimiento' && (
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">
+                Escribí cada paso en una línea separada. Se van a numerar automáticamente.
+              </label>
+              <textarea
+                value={instrucciones}
+                onChange={(e) => setInstrucciones(e.target.value)}
+                rows={12}
+                className="w-full border border-gray-300 rounded px-3 py-2 text-sm leading-relaxed"
+                placeholder={"Cortar cebolla en pluma\nPoner a calentar manteca y aceite\nAgregar la cebolla y cocinar 40 min a fuego bajo\n..."}
+              />
+              {instrucciones.trim() && (
+                <div className="mt-3 bg-gray-50 rounded-lg border border-gray-200 p-3">
+                  <p className="text-[10px] text-gray-400 uppercase font-medium mb-2">Vista previa</p>
+                  <ol className="space-y-1">
+                    {instrucciones.split('\n').filter((s) => s.trim()).map((paso, i) => (
+                      <li key={i} className="flex gap-2 text-xs">
+                        <span className="flex-shrink-0 w-4 h-4 rounded-full bg-rodziny-100 text-rodziny-700 flex items-center justify-center text-[9px] font-bold mt-0.5">
+                          {i + 1}
+                        </span>
+                        <span className="text-gray-700">{paso.trim()}</span>
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {error && <p className="text-red-500 text-xs px-6 pb-2">{error}</p>}
+
+        <div className="flex justify-end gap-2 px-6 py-4 border-t border-gray-200">
           <button onClick={onClose} className="px-4 py-1.5 text-sm text-gray-600 hover:text-gray-800">Cancelar</button>
-          <button onClick={guardar} disabled={guardando} className="bg-rodziny-700 hover:bg-rodziny-800 text-white text-sm rounded px-4 py-1.5 disabled:opacity-50">
+          <button
+            onClick={guardar}
+            disabled={guardando}
+            className="bg-rodziny-700 hover:bg-rodziny-800 text-white text-sm rounded px-4 py-1.5 disabled:opacity-50"
+          >
             {guardando ? 'Guardando...' : 'Guardar'}
           </button>
         </div>
       </div>
     </div>
   )
+}
+
+// ─── Helpers ────────────────────────────────────────────────────────────────
+function formatCantidad(n: number): string {
+  if (Number.isInteger(n)) return String(n)
+  return n.toLocaleString('es-AR', { maximumFractionDigits: 2 })
 }
