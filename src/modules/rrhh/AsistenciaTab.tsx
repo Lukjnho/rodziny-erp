@@ -19,7 +19,7 @@ import {
 type FiltroLocal = 'todos' | 'vedia' | 'saavedra' | 'ambos'
 type FiltroEstado = 'todos' | 'completas' | 'ausencias' | 'tardanzas' | 'incompletas'
 
-type EstadoEmpleadoDia = 'completa' | 'incompleta' | 'ausente' | 'franco' | 'sin_turno'
+type EstadoEmpleadoDia = 'completa' | 'incompleta' | 'en_turno' | 'ausente' | 'franco' | 'sin_turno'
 
 interface Cronograma {
   id: string
@@ -174,6 +174,7 @@ export function AsistenciaTab() {
     fichadasDelDia: Fichada[]
     cronoDelDia: Cronograma[]
     completos: number
+    enTurno: number
     incompletos: number
     ausencias: number
     tardanzas: number
@@ -192,6 +193,7 @@ export function AsistenciaTab() {
 
       let completos = 0
       let incompletos = 0
+      let enTurno = 0
       let ausencias = 0
       let tardanzas = 0
       let francos = 0
@@ -224,6 +226,9 @@ export function AsistenciaTab() {
         const tieneSalida = fs.some((f) => f.tipo === 'salida')
         if (tieneEntrada && tieneSalida && fs.length % 2 === 0) {
           completos++
+        } else if (tieneEntrada && !tieneSalida && fecha === hoyYmd) {
+          // Hoy y tiene entrada sin salida → está trabajando
+          enTurno++
         } else {
           incompletos++
           nombresAnomalias.push(`${emp.nombre} ${emp.apellido} (incompleto)`)
@@ -241,6 +246,7 @@ export function AsistenciaTab() {
         fichadasDelDia,
         cronoDelDia,
         completos,
+        enTurno,
         incompletos,
         ausencias,
         tardanzas,
@@ -361,7 +367,7 @@ export function AsistenciaTab() {
       <div className="bg-white rounded-lg border border-gray-200 divide-y divide-gray-100">
         {[...resumenPorDia].reverse().map((d) => {
           const expandido = diaExpandido === d.fecha
-          const tieneActividad = d.fichadasDelDia.length > 0 || d.ausencias > 0 || d.incompletos > 0
+          const tieneActividad = d.fichadasDelDia.length > 0 || d.ausencias > 0 || d.incompletos > 0 || d.enTurno > 0
           const fechaPasada = d.fecha <= ymd(new Date())
           return (
             <div key={d.fecha}>
@@ -380,6 +386,9 @@ export function AsistenciaTab() {
                       onClick={(e) => { e.stopPropagation(); setFiltroEstado(filtroEstado === 'completas' ? 'todos' : 'completas'); setDiaExpandido(d.fecha) }}
                       className={cn('text-green-700 hover:underline', filtroEstado === 'completas' && 'font-bold underline')}
                     >✓ {d.completos} completos</button>
+                  )}
+                  {d.enTurno > 0 && (
+                    <span className="text-blue-700">{d.enTurno} en turno</span>
                   )}
                   {d.incompletos > 0 && (
                     <button
@@ -498,7 +507,22 @@ function calcularEstadoEmpleado(
   if (tieneEntrada && tieneSalida && fs.length % 2 === 0) {
     return { estado: 'completa', tarde }
   }
+
+  // Si es hoy y tiene entrada sin salida → está trabajando (no "incompleta")
+  if (tieneEntrada && !tieneSalida && fecha === hoyYmd) {
+    return { estado: 'en_turno', tarde }
+  }
+
   return { estado: 'incompleta', tarde }
+}
+
+function formatDiferencia(min: number): string {
+  const abs = Math.abs(min)
+  const signo = min > 0 ? '+' : '-'
+  if (abs < 60) return `${signo}${abs} min`
+  const h = Math.floor(abs / 60)
+  const m = abs % 60
+  return m > 0 ? `${signo}${h}h ${m}m` : `${signo}${h}h`
 }
 
 function calcularHorasTrabajadas(fichadas: Fichada[]): string | null {
@@ -523,6 +547,7 @@ function BadgeEstado({ estado, tarde }: { estado: EstadoEmpleadoDia; tarde: bool
   const base = 'px-1.5 py-0.5 rounded text-[10px] font-medium'
   const cfg: Record<EstadoEmpleadoDia, { bg: string; label: string }> = {
     completa: { bg: 'bg-green-100 text-green-700', label: 'Completa' },
+    en_turno: { bg: 'bg-blue-100 text-blue-700', label: 'En turno' },
     incompleta: { bg: 'bg-amber-100 text-amber-700', label: 'Incompleta' },
     ausente: { bg: 'bg-red-100 text-red-700', label: 'Ausente' },
     franco: { bg: 'bg-blue-100 text-blue-700', label: 'Franco' },
@@ -571,7 +596,7 @@ function DetalleDia({
       if (filtroEstado === 'todos') return true
       if (filtroEstado === 'completas') return estado === 'completa'
       if (filtroEstado === 'ausencias') return estado === 'ausente'
-      if (filtroEstado === 'incompletas') return estado === 'incompleta'
+      if (filtroEstado === 'incompletas') return estado === 'incompleta' || estado === 'en_turno'
       if (filtroEstado === 'tardanzas') return tarde
       return true
     })
@@ -735,8 +760,8 @@ function FilaFichada({ fichada, onEdit, onCambio }: {
         <span className="capitalize w-14 text-gray-700">{fichada.tipo}</span>
         <span className="font-mono text-gray-900 w-12">{hora}</span>
         {dif !== null && (
-          <span className={cn('w-16', dentroTolerancia ? 'text-green-700' : 'text-amber-700')}>
-            {dif === 0 ? 'puntual' : dif > 0 ? `+${dif} min` : `${dif} min`}
+          <span className={cn('w-20', dentroTolerancia ? 'text-green-700' : 'text-amber-700')}>
+            {dif === 0 ? 'puntual' : formatDiferencia(dif)}
           </span>
         )}
         <span className={cn(
