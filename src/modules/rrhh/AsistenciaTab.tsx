@@ -481,6 +481,14 @@ function KpiMini({ label, value, color, activo, onClick }: {
 }
 
 // ─── Helpers de estado por empleado ─────────────────────────────────────────
+// Detecta si una fichada de madrugada (00:00-05:00) tipo "entrada" es en realidad
+// la salida del turno nocturno del día anterior (dato grabado antes del fix nocturno).
+function esSalidaNocturnaLegacy(f: Fichada): boolean {
+  if (f.tipo !== 'entrada') return false
+  const h = new Date(f.timestamp).getHours()
+  return h >= 0 && h < 5
+}
+
 function calcularEstadoEmpleado(
   emp: Empleado,
   fichadas: Fichada[],
@@ -488,7 +496,9 @@ function calcularEstadoEmpleado(
   fecha: string,
 ): { estado: EstadoEmpleadoDia; tarde: boolean } {
   const hoyYmd = ymd(new Date())
-  const fs = fichadas.filter((f) => f.empleado_id === emp.id)
+  const todas = fichadas.filter((f) => f.empleado_id === emp.id)
+  // Excluir fichadas legacy de madrugada (salidas nocturnas grabadas como entrada)
+  const fs = todas.filter((f) => !esSalidaNocturnaLegacy(f))
 
   if (crono?.es_franco) return { estado: 'franco', tarde: false }
   if (!crono?.publicado) return { estado: 'sin_turno', tarde: false }
@@ -627,7 +637,9 @@ function DetalleDia({
     const c = cronograma.find((x) => x.empleado_id === emp.id)
     const esFranco = estado === 'franco'
     const esAusente = estado === 'ausente'
-    const horasTrabajadas = calcularHorasTrabajadas(fs)
+    // Excluir fichadas legacy de madrugada del cálculo de horas
+    const fsParaHoras = fs.filter((f) => !esSalidaNocturnaLegacy(f))
+    const horasTrabajadas = calcularHorasTrabajadas(fsParaHoras)
 
     return (
       <div
@@ -757,13 +769,19 @@ function FilaFichada({ fichada, onEdit, onCambio }: {
   return (
     <>
       <div className="flex items-center gap-2 text-xs">
-        <span className="capitalize w-14 text-gray-700">{fichada.tipo}</span>
+        {esSalidaNocturnaLegacy(fichada) ? (
+          <span className="w-14 text-purple-600 font-medium" title="Salida del turno nocturno del día anterior">Salida</span>
+        ) : (
+          <span className="capitalize w-14 text-gray-700">{fichada.tipo}</span>
+        )}
         <span className="font-mono text-gray-900 w-12">{hora}</span>
-        {dif !== null && (
+        {esSalidaNocturnaLegacy(fichada) ? (
+          <span className="w-20 text-purple-500 text-[10px]">turno ant.</span>
+        ) : dif !== null ? (
           <span className={cn('w-20', dentroTolerancia ? 'text-green-700' : 'text-amber-700')}>
             {dif === 0 ? 'puntual' : formatDiferencia(dif)}
           </span>
-        )}
+        ) : null}
         <span className={cn(
           'px-1.5 py-0.5 rounded text-[10px] font-medium',
           fichada.origen === 'manual' ? 'bg-amber-100 text-amber-800' :
