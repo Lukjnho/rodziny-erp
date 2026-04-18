@@ -19,7 +19,7 @@ import {
 type FiltroLocal = 'todos' | 'vedia' | 'saavedra' | 'ambos'
 type FiltroEstado = 'todos' | 'completas' | 'ausencias' | 'tardanzas' | 'incompletas'
 
-type EstadoEmpleadoDia = 'completa' | 'incompleta' | 'en_turno' | 'ausente' | 'franco' | 'sin_turno'
+type EstadoEmpleadoDia = 'completa' | 'incompleta' | 'en_turno' | 'pendiente' | 'ausente' | 'franco' | 'sin_turno'
 
 interface Cronograma {
   id: string
@@ -214,7 +214,17 @@ export function AsistenciaTab() {
         if (!c?.publicado) return // sin turno publicado, no cuenta
 
         if (fs.length === 0) {
-          // Solo cuenta ausencia si la fecha ya pasó (o es hoy)
+          if (fecha === hoyYmd && c?.hora_entrada) {
+            // Si el turno de hoy todavía no empezó → pendiente, no ausente
+            const ahora = new Date()
+            const [he, me] = c.hora_entrada.split(':').map(Number)
+            const inicioTurno = new Date(ahora)
+            inicioTurno.setHours(he, me, 0, 0)
+            const limiteMin = TOLERANCIA_MIN + 15
+            if (ahora.getTime() - inicioTurno.getTime() < limiteMin * 60 * 1000) {
+              return // pendiente, no suma como ausencia
+            }
+          }
           if (fecha <= hoyYmd) {
             ausencias++
             nombresAnomalias.push(`${emp.nombre} ${emp.apellido} (ausente)`)
@@ -508,6 +518,19 @@ function calcularEstadoEmpleado(
   )
 
   if (fs.length === 0) {
+    if (fecha === hoyYmd && crono?.hora_entrada) {
+      // Si el turno de hoy todavía no empezó → pendiente, no ausente
+      const ahora = new Date()
+      const [he, me] = crono.hora_entrada.split(':').map(Number)
+      const inicioTurno = new Date(ahora)
+      inicioTurno.setHours(he, me, 0, 0)
+      // Dar margen de tolerancia antes de marcar ausente
+      const limiteMin = TOLERANCIA_MIN + 15 // 25 min después de hora_entrada
+      const diffMs = ahora.getTime() - inicioTurno.getTime()
+      if (diffMs < limiteMin * 60 * 1000) {
+        return { estado: 'pendiente', tarde: false }
+      }
+    }
     if (fecha <= hoyYmd) return { estado: 'ausente', tarde: false }
     return { estado: 'sin_turno', tarde: false }
   }
@@ -558,6 +581,7 @@ function BadgeEstado({ estado, tarde }: { estado: EstadoEmpleadoDia; tarde: bool
   const cfg: Record<EstadoEmpleadoDia, { bg: string; label: string }> = {
     completa: { bg: 'bg-green-100 text-green-700', label: 'Completa' },
     en_turno: { bg: 'bg-blue-100 text-blue-700', label: 'En turno' },
+    pendiente: { bg: 'bg-gray-100 text-gray-600', label: 'Pendiente' },
     incompleta: { bg: 'bg-amber-100 text-amber-700', label: 'Incompleta' },
     ausente: { bg: 'bg-red-100 text-red-700', label: 'Ausente' },
     franco: { bg: 'bg-blue-100 text-blue-700', label: 'Franco' },
