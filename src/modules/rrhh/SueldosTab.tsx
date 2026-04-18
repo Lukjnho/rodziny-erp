@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, Fragment } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { cn, formatARS } from '@/lib/utils'
@@ -112,6 +112,7 @@ export function SueldosTab() {
   const [filtroLocal, setFiltroLocal] = useState<FiltroLocal>('todos')
   const [busqueda, setBusqueda] = useState('')
   const [panel, setPanel] = useState<PanelEstado>(null)
+  const [expandido, setExpandido] = useState<string | null>(null) // empleado_id expandido
 
   const periodoActual = useMemo(() => periodoQuincena(year, month, quincena), [year, month, quincena])
   const periodoQ1 = useMemo(() => periodoQuincena(year, month, 'q1'), [year, month])
@@ -303,6 +304,18 @@ export function SueldosTab() {
   }, [empleados, filtroLocal, busqueda])
 
   // ── Filas calculadas ─────────────────────────────────────────────────────
+  // Stats de asistencia por empleado (para resumen inline)
+  type AsistenciaStats = {
+    diasLaborales: number
+    completos: number
+    ausencias: number
+    tardanzas: number
+    tardanzasGraves: number // >10 min
+    francos: number
+    detalleTardanzas: { fecha: string; minutos: number }[]
+    detalleFaltas: string[] // fechas de ausencia
+  }
+
   type Fila = {
     empleado: Empleado
     modalidad: 'quincenal' | 'mensual'
@@ -323,6 +336,7 @@ export function SueldosTab() {
     total: number
     pagado: boolean
     medioPago: MedioPagoSueldo | null
+    asistencia: AsistenciaStats
   }
 
   const hoyYmd = `${hoy.getFullYear()}-${String(hoy.getMonth() + 1).padStart(2, '0')}-${String(hoy.getDate()).padStart(2, '0')}`
@@ -388,6 +402,56 @@ export function SueldosTab() {
 
       const total = base - deduccionPresentismo - adelantosMonto - sancionesMonto - descuentosMonto
 
+      // ── Calcular stats de asistencia ──
+      const rangoPresentismo = modalidad === 'quincenal'
+        ? diasQuincenaActual
+        : esMensualEnQ2 ? diasMes : diasQuincenaActual
+      let statsAusencias = 0
+      let statsTardanzas = 0
+      let statsTardanzasGraves = 0
+      let statsCompletos = 0
+      let statsFrancos = 0
+      let statsLaborales = 0
+      const detalleTardanzas: { fecha: string; minutos: number }[] = []
+      const detalleFaltas: string[] = []
+
+      for (const fecha of rangoPresentismo) {
+        if (fecha > hoyYmd) continue
+        const crono = cronograma.find((c) => c.empleado_id === emp.id && c.fecha === fecha)
+        if (!crono || !crono.publicado) continue
+        if (crono.es_franco) { statsFrancos++; continue }
+        statsLaborales++
+
+        const fs = fichadas.filter((f) => f.empleado_id === emp.id && f.fecha === fecha)
+        if (fs.length === 0) {
+          statsAusencias++
+          detalleFaltas.push(fecha)
+          continue
+        }
+
+        const entrada = fs.find((f) => f.tipo === 'entrada')
+        if (entrada && entrada.minutos_diferencia !== null && entrada.minutos_diferencia > 0) {
+          statsTardanzas++
+          if (entrada.minutos_diferencia > 10) statsTardanzasGraves++
+          detalleTardanzas.push({ fecha, minutos: entrada.minutos_diferencia })
+        }
+
+        // Si tiene entrada y salida → completo
+        const tieneSalida = fs.some((f) => f.tipo === 'salida')
+        if (entrada && tieneSalida) statsCompletos++
+      }
+
+      const asistencia: AsistenciaStats = {
+        diasLaborales: statsLaborales,
+        completos: statsCompletos,
+        ausencias: statsAusencias,
+        tardanzas: statsTardanzas,
+        tardanzasGraves: statsTardanzasGraves,
+        francos: statsFrancos,
+        detalleTardanzas,
+        detalleFaltas,
+      }
+
       return {
         empleado: emp,
         modalidad,
@@ -408,6 +472,7 @@ export function SueldosTab() {
         total,
         pagado: !!liquidacion?.pagado,
         medioPago: (liquidacion?.medio_pago ?? null) as MedioPagoSueldo | null,
+        asistencia,
       }
     })
   }, [
@@ -552,43 +617,49 @@ export function SueldosTab() {
                 </tr>
               )}
               {filas.map((fila) => (
-                <FilaEmpleado
-                  key={fila.empleado.id}
-                  fila={fila}
-                  onTogglePresentismo={(nuevo) =>
-                    upsertLiquidacion.mutate({
-                      empleado_id: fila.empleado.id,
-                      periodo: periodoActual,
-                      patch: { cobra_presentismo: nuevo },
-                    })
-                  }
-                  onCambiarPago={(medio) =>
-                    upsertLiquidacion.mutate({
-                      empleado_id: fila.empleado.id,
-                      periodo: periodoActual,
-                      patch: {
-                        pagado: medio !== null,
-                        medio_pago: medio,
-                        fecha_pago: medio !== null ? hoyYmd : null,
-                      },
-                    })
-                  }
-                  onCambiarModalidad={(nuevo) =>
-                    updateModalidad.mutate({ id: fila.empleado.id, modalidad: nuevo })
-                  }
-                  onAbrirAdelantos={() =>
-                    setPanel({ tipo: 'adelantos', empleadoId: fila.empleado.id })
-                  }
-                  onAbrirSanciones={() =>
-                    setPanel({ tipo: 'sanciones', empleadoId: fila.empleado.id })
-                  }
-                  onAbrirDescuentos={() =>
-                    setPanel({ tipo: 'descuentos', empleadoId: fila.empleado.id })
-                  }
-                  onAbrirErroresCaja={() =>
-                    setPanel({ tipo: 'errores_caja', empleadoId: fila.empleado.id })
-                  }
-                />
+                <Fragment key={fila.empleado.id}>
+                  <FilaEmpleado
+                    fila={fila}
+                    expandido={expandido === fila.empleado.id}
+                    onToggleExpand={() => setExpandido(expandido === fila.empleado.id ? null : fila.empleado.id)}
+                    onTogglePresentismo={(nuevo) =>
+                      upsertLiquidacion.mutate({
+                        empleado_id: fila.empleado.id,
+                        periodo: periodoActual,
+                        patch: { cobra_presentismo: nuevo },
+                      })
+                    }
+                    onCambiarPago={(medio) =>
+                      upsertLiquidacion.mutate({
+                        empleado_id: fila.empleado.id,
+                        periodo: periodoActual,
+                        patch: {
+                          pagado: medio !== null,
+                          medio_pago: medio,
+                          fecha_pago: medio !== null ? hoyYmd : null,
+                        },
+                      })
+                    }
+                    onCambiarModalidad={(nuevo) =>
+                      updateModalidad.mutate({ id: fila.empleado.id, modalidad: nuevo })
+                    }
+                    onAbrirAdelantos={() =>
+                      setPanel({ tipo: 'adelantos', empleadoId: fila.empleado.id })
+                    }
+                    onAbrirSanciones={() =>
+                      setPanel({ tipo: 'sanciones', empleadoId: fila.empleado.id })
+                    }
+                    onAbrirDescuentos={() =>
+                      setPanel({ tipo: 'descuentos', empleadoId: fila.empleado.id })
+                    }
+                    onAbrirErroresCaja={() =>
+                      setPanel({ tipo: 'errores_caja', empleadoId: fila.empleado.id })
+                    }
+                  />
+                  {expandido === fila.empleado.id && (
+                    <FilaAsistencia asistencia={fila.asistencia} />
+                  )}
+                </Fragment>
               ))}
             </tbody>
           </table>
@@ -638,6 +709,8 @@ export function SueldosTab() {
 // ─── Fila empleado ──────────────────────────────────────────────────────────
 function FilaEmpleado({
   fila,
+  expandido,
+  onToggleExpand,
   onTogglePresentismo,
   onCambiarPago,
   onCambiarModalidad,
@@ -662,7 +735,17 @@ function FilaEmpleado({
     total: number
     pagado: boolean
     medioPago: MedioPagoSueldo | null
+    asistencia: {
+      diasLaborales: number
+      completos: number
+      ausencias: number
+      tardanzas: number
+      tardanzasGraves: number
+      francos: number
+    }
   }
+  expandido: boolean
+  onToggleExpand: () => void
   onTogglePresentismo: (v: boolean) => void
   onCambiarPago: (v: MedioPagoSueldo | null) => void
   onCambiarModalidad: (v: 'quincenal' | 'mensual') => void
@@ -671,17 +754,44 @@ function FilaEmpleado({
   onAbrirDescuentos: () => void
   onAbrirErroresCaja: () => void
 }) {
-  const { empleado, modalidad, esMensualEnQ1, base, cobraPresentismo, presentismoOverride, deduccionPresentismo, adelantosMonto, sancionesMonto, descuentosMonto, erroresCajaEmp, total, medioPago } = fila
+  const { empleado, modalidad, esMensualEnQ1, base, cobraPresentismo, presentismoOverride, deduccionPresentismo, adelantosMonto, sancionesMonto, descuentosMonto, erroresCajaEmp, total, medioPago, asistencia } = fila
+  const tieneProblemas = asistencia.ausencias > 0 || asistencia.tardanzasGraves > 0
 
   return (
-    <tr className={cn('hover:bg-gray-50', esMensualEnQ1 && 'bg-gray-50/60 text-gray-500')}>
+    <tr className={cn('hover:bg-gray-50', esMensualEnQ1 && 'bg-gray-50/60 text-gray-500', expandido && 'bg-blue-50/30')}>
       <td className="px-3 py-2">
         <div className="flex items-center gap-2">
           <div className="min-w-0">
-            <div className="font-medium text-gray-900 truncate">
-              {empleado.apellido}, {empleado.nombre}
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={onToggleExpand}
+                className={cn(
+                  'text-[10px] w-4 h-4 flex items-center justify-center rounded transition-colors',
+                  expandido ? 'bg-rodziny-100 text-rodziny-700' : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100',
+                )}
+                title="Ver resumen de asistencia"
+              >
+                {expandido ? '▾' : '▸'}
+              </button>
+              <span className="font-medium text-gray-900 truncate">
+                {empleado.apellido}, {empleado.nombre}
+              </span>
+              {tieneProblemas && !esMensualEnQ1 && (
+                <span className="flex items-center gap-0.5">
+                  {asistencia.ausencias > 0 && (
+                    <span className="text-[9px] bg-red-100 text-red-700 px-1 py-0.5 rounded-full font-medium" title={`${asistencia.ausencias} falta(s)`}>
+                      {asistencia.ausencias}F
+                    </span>
+                  )}
+                  {asistencia.tardanzasGraves > 0 && (
+                    <span className="text-[9px] bg-amber-100 text-amber-700 px-1 py-0.5 rounded-full font-medium" title={`${asistencia.tardanzasGraves} tardanza(s) grave(s)`}>
+                      {asistencia.tardanzasGraves}T
+                    </span>
+                  )}
+                </span>
+              )}
             </div>
-            <div className="flex items-center gap-2 text-[10px] text-gray-500 mt-0.5">
+            <div className="flex items-center gap-2 text-[10px] text-gray-500 mt-0.5 ml-5">
               <span>{empleado.puesto}</span>
               <select
                 value={modalidad}
@@ -801,6 +911,91 @@ function FilaEmpleado({
             <option value="transferencia">Transferencia</option>
           </select>
         )}
+      </td>
+    </tr>
+  )
+}
+
+// ─── Fila expandible de asistencia ──────────────────────────────────────────
+function FilaAsistencia({ asistencia }: {
+  asistencia: {
+    diasLaborales: number
+    completos: number
+    ausencias: number
+    tardanzas: number
+    tardanzasGraves: number
+    francos: number
+    detalleTardanzas: { fecha: string; minutos: number }[]
+    detalleFaltas: string[]
+  }
+}) {
+  const pctAsistencia = asistencia.diasLaborales > 0
+    ? Math.round((asistencia.completos / asistencia.diasLaborales) * 100)
+    : 100
+
+  return (
+    <tr className="bg-blue-50/40">
+      <td colSpan={10} className="px-4 py-2.5">
+        <div className="flex flex-wrap items-start gap-4 text-xs">
+          {/* Resumen general */}
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-1.5">
+              <div className={cn(
+                'w-2 h-2 rounded-full',
+                pctAsistencia >= 90 ? 'bg-green-500' : pctAsistencia >= 70 ? 'bg-amber-500' : 'bg-red-500',
+              )} />
+              <span className="font-medium text-gray-700">Asistencia: {pctAsistencia}%</span>
+            </div>
+            <span className="text-gray-400">|</span>
+            <span className="text-gray-600">{asistencia.diasLaborales} días laborales</span>
+            <span className="text-gray-400">|</span>
+            <span className="text-green-700 font-medium">{asistencia.completos} completos</span>
+            {asistencia.francos > 0 && (
+              <>
+                <span className="text-gray-400">|</span>
+                <span className="text-gray-500">{asistencia.francos} francos</span>
+              </>
+            )}
+          </div>
+
+          {/* Faltas */}
+          {asistencia.ausencias > 0 && (
+            <div className="flex items-center gap-1.5 bg-red-50 border border-red-200 rounded px-2 py-1">
+              <span className="font-medium text-red-700">{asistencia.ausencias} falta{asistencia.ausencias > 1 ? 's' : ''}</span>
+              <span className="text-red-500">—</span>
+              <span className="text-red-600">
+                {asistencia.detalleFaltas.map((f) => {
+                  const d = new Date(f + 'T12:00:00')
+                  return `${d.getDate()}/${d.getMonth() + 1}`
+                }).join(', ')}
+              </span>
+            </div>
+          )}
+
+          {/* Tardanzas */}
+          {asistencia.tardanzas > 0 && (
+            <div className="flex items-center gap-1.5 bg-amber-50 border border-amber-200 rounded px-2 py-1">
+              <span className="font-medium text-amber-700">
+                {asistencia.tardanzas} tardanza{asistencia.tardanzas > 1 ? 's' : ''}
+                {asistencia.tardanzasGraves > 0 && ` (${asistencia.tardanzasGraves} grave${asistencia.tardanzasGraves > 1 ? 's' : ''})`}
+              </span>
+              <span className="text-amber-500">—</span>
+              <span className="text-amber-600">
+                {asistencia.detalleTardanzas.map((t) => {
+                  const d = new Date(t.fecha + 'T12:00:00')
+                  return `${d.getDate()}/${d.getMonth() + 1} (+${t.minutos}min)`
+                }).join(', ')}
+              </span>
+            </div>
+          )}
+
+          {/* Sin problemas */}
+          {asistencia.ausencias === 0 && asistencia.tardanzas === 0 && (
+            <div className="flex items-center gap-1.5 bg-green-50 border border-green-200 rounded px-2 py-1">
+              <span className="text-green-700 font-medium">Sin faltas ni tardanzas</span>
+            </div>
+          )}
+        </div>
       </td>
     </tr>
   )
