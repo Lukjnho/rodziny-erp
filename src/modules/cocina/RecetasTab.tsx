@@ -1,4 +1,4 @@
-import { useState, useMemo, Fragment } from 'react'
+import { useState, useMemo, useRef, useEffect, Fragment } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { KPICard } from '@/components/ui/KPICard'
@@ -321,6 +321,13 @@ function FichaTecnica({ receta, ingredientes }: { receta: Receta; ingredientes: 
 }
 
 // ─── Modal crear/editar receta con ingredientes ─────────────────────────────
+interface ProductoCompras {
+  id: string
+  nombre: string
+  unidad: string
+  categoria: string | null
+}
+
 interface IngredienteForm {
   tempId: string
   dbId: string | null // null = nuevo
@@ -328,6 +335,7 @@ interface IngredienteForm {
   cantidad: string
   unidad: string
   observaciones: string
+  producto_id: string | null
 }
 
 function ModalReceta({
@@ -350,6 +358,20 @@ function ModalReceta({
   const [error, setError] = useState('')
   const [tab, setTab] = useState<'general' | 'ingredientes' | 'procedimiento'>('general')
 
+  // Productos de compras (para autocomplete)
+  const { data: productosCompras } = useQuery({
+    queryKey: ['productos-compras-recetas'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('productos')
+        .select('id, nombre, unidad, categoria')
+        .eq('activo', true)
+        .order('nombre')
+      if (error) throw error
+      return data as ProductoCompras[]
+    },
+  })
+
   // Ingredientes editables
   const [ings, setIngs] = useState<IngredienteForm[]>(() =>
     ingredientesExistentes.map((ing) => ({
@@ -359,6 +381,7 @@ function ModalReceta({
       cantidad: String(ing.cantidad),
       unidad: ing.unidad,
       observaciones: ing.observaciones ?? '',
+      producto_id: ing.producto_id,
     }))
   )
 
@@ -370,11 +393,21 @@ function ModalReceta({
       cantidad: '',
       unidad: 'g',
       observaciones: '',
+      producto_id: null,
     }])
   }
 
   function actualizarIng(tempId: string, campo: keyof IngredienteForm, valor: string) {
     setIngs(ings.map((i) => i.tempId === tempId ? { ...i, [campo]: valor } : i))
+  }
+
+  function seleccionarProducto(tempId: string, producto: ProductoCompras) {
+    setIngs(ings.map((i) => i.tempId === tempId ? {
+      ...i,
+      nombre: producto.nombre,
+      producto_id: producto.id,
+      unidad: mapearUnidad(producto.unidad),
+    } : i))
   }
 
   function eliminarIng(tempId: string) {
@@ -447,6 +480,7 @@ function ModalReceta({
           unidad: ing.unidad,
           observaciones: ing.observaciones.trim() || null,
           orden: i,
+          producto_id: ing.producto_id || null,
         }
 
         if (ing.dbId) {
@@ -565,12 +599,14 @@ function ModalReceta({
                     {idx + 1}
                   </span>
                   <div className="flex-1 grid grid-cols-12 gap-2">
-                    <input
-                      value={ing.nombre}
-                      onChange={(e) => actualizarIng(ing.tempId, 'nombre', e.target.value)}
-                      placeholder="Nombre del ingrediente"
-                      className="col-span-5 border border-gray-300 rounded px-2 py-1 text-sm"
-                    />
+                    <div className="col-span-5">
+                      <AutocompleteIngrediente
+                        valor={ing.nombre}
+                        productos={productosCompras ?? []}
+                        onChange={(v) => actualizarIng(ing.tempId, 'nombre', v)}
+                        onSelect={(p) => seleccionarProducto(ing.tempId, p)}
+                      />
+                    </div>
                     <input
                       type="number"
                       step="0.1"
@@ -672,7 +708,90 @@ function ModalReceta({
   )
 }
 
+// ─── Autocomplete de ingredientes (busca en productos de Compras) ───────────
+function AutocompleteIngrediente({
+  valor,
+  productos,
+  onChange,
+  onSelect,
+}: {
+  valor: string
+  productos: ProductoCompras[]
+  onChange: (v: string) => void
+  onSelect: (p: ProductoCompras) => void
+}) {
+  const [abierto, setAbierto] = useState(false)
+  const [focused, setFocused] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  const filtrados = useMemo(() => {
+    if (!valor.trim()) return productos.slice(0, 15)
+    const q = valor.toLowerCase()
+    return productos.filter((p) => p.nombre.toLowerCase().includes(q)).slice(0, 10)
+  }, [valor, productos])
+
+  // Cerrar al hacer click afuera
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setAbierto(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [])
+
+  return (
+    <div className="relative" ref={ref}>
+      <input
+        value={valor}
+        onChange={(e) => {
+          onChange(e.target.value)
+          setAbierto(true)
+        }}
+        onFocus={() => { setFocused(true); setAbierto(true) }}
+        onBlur={() => setFocused(false)}
+        placeholder="Buscar ingrediente..."
+        className={cn(
+          'w-full border rounded px-2 py-1 text-sm',
+          focused ? 'border-rodziny-400 ring-1 ring-rodziny-200' : 'border-gray-300',
+        )}
+      />
+      {abierto && filtrados.length > 0 && (
+        <div className="absolute z-50 top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+          {filtrados.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              className="w-full text-left px-3 py-1.5 text-sm hover:bg-rodziny-50 flex items-center justify-between gap-2"
+              onMouseDown={(e) => {
+                e.preventDefault() // evitar blur antes del click
+                onSelect(p)
+                setAbierto(false)
+              }}
+            >
+              <span className="truncate text-gray-800">{p.nombre}</span>
+              <span className="text-[10px] text-gray-400 flex-shrink-0">{p.unidad}{p.categoria ? ` · ${p.categoria}` : ''}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Helpers ────────────────────────────────────────────────────────────────
+// Mapear unidades de Compras → unidades de receta
+function mapearUnidad(unidadCompras: string): string {
+  const u = unidadCompras.toLowerCase().trim()
+  if (u === 'kg' || u === 'kgs') return 'kg'
+  if (u === 'g' || u === 'gr' || u === 'grs' || u === 'gramos') return 'g'
+  if (u === 'lt' || u === 'l' || u === 'lts' || u === 'litros' || u === 'litro') return 'lt'
+  if (u === 'ml' || u === 'mililitros') return 'ml'
+  if (u === 'unid.' || u === 'unid' || u === 'u' || u === 'unidades' || u === 'unidad') return 'unid'
+  return 'g' // default
+}
+
 function formatCantidad(n: number): string {
   if (Number.isInteger(n)) return String(n)
   return n.toLocaleString('es-AR', { maximumFractionDigits: 2 })
