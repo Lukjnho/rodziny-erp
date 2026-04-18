@@ -27,27 +27,42 @@ const PRODUCTOS_COCINA: ProductoCocina[] = [
   { nombre: 'Rose',          tipo: 'salsa',  gramosporcion: 200, porcionesporunidad: 1, unidadstock: 'kg', diasObjetivo: 3 },
   { nombre: 'Crema Blanca',  tipo: 'salsa',  gramosporcion: 200, porcionesporunidad: 1, unidadstock: 'kg', diasObjetivo: 3 },
 
-  // ── Pastas Salón (stock en porciones / bateas) ──
-  { nombre: 'Sorrentino Jamón, Queso y Cebollas', fudoNombres: ['Sorrentino Jamón, Queso y Cebollas', 'Scarpinocc de Jamón, Quesos y cebollas caramelizadas'], tipo: 'pasta', gramosporcion: 0, porcionesporunidad: 1, unidadstock: 'porciones', diasObjetivo: 2 },
-  { nombre: 'Ñoquis de Papa', fudoNombres: ['Ñoquis de Papa', 'Ñoquis de papa'], tipo: 'pasta', gramosporcion: 0, porcionesporunidad: 1, unidadstock: 'porciones', diasObjetivo: 2 },
-  { nombre: 'Ñoquis rellenos', tipo: 'pasta', gramosporcion: 0, porcionesporunidad: 1, unidadstock: 'porciones', diasObjetivo: 2 },
-  { nombre: 'Tagliatelles mix', fudoNombres: ['Tagliatelles mix', 'Spaghetti al huevo', 'Spaghettis al huevo'], tipo: 'pasta', gramosporcion: 0, porcionesporunidad: 1, unidadstock: 'porciones', diasObjetivo: 2 },
-  { nombre: 'Mezzelune de Bondiola', fudoNombres: ['Mezzelune de Bondiola Braseada', 'Mezzelune de Bondiola Braseada VIANDA', 'Mezzelune de Bondiola Braseada CONGELADA'], tipo: 'pasta', gramosporcion: 0, porcionesporunidad: 1, unidadstock: 'porciones', diasObjetivo: 2, local: 'vedia' },
+  // ── Pastas Vedia (stock en porciones) ──
+  { nombre: 'Sorrentino J&Q', fudoNombres: ['Sorrentino Jamón, Queso y Cebollas', 'Sorrentino de Jamón, Quesos y Cebollas Confitadas CONGELADA'], tipo: 'pasta', gramosporcion: 0, porcionesporunidad: 1, unidadstock: 'porciones', diasObjetivo: 2, local: 'vedia' },
+  { nombre: 'Ñoquis de Papa', fudoNombres: ['Ñoquis de Papa', 'Ñoquis de Papa VIANDA', 'Ñoquis de papa'], tipo: 'pasta', gramosporcion: 0, porcionesporunidad: 1, unidadstock: 'porciones', diasObjetivo: 2, local: 'vedia' },
+  { nombre: 'Ñoquis rellenos', fudoNombres: ['Ñoquis rellenos', 'Ñoquis rellenos VIANDA'], tipo: 'pasta', gramosporcion: 0, porcionesporunidad: 1, unidadstock: 'porciones', diasObjetivo: 2 },
+  { nombre: 'Tagliatelles mix', fudoNombres: ['Tagliatelles mix', 'Tagliatelles Mixtos VIANDA', 'Tagliatelles mix CONGELADA'], tipo: 'pasta', gramosporcion: 0, porcionesporunidad: 1, unidadstock: 'porciones', diasObjetivo: 2, local: 'vedia' },
+  { nombre: 'Tagliatelles al Huevo', fudoNombres: ['Tagliatelles al Huevo', 'Tagliatelles al Huevo VIANDA'], tipo: 'pasta', gramosporcion: 0, porcionesporunidad: 1, unidadstock: 'porciones', diasObjetivo: 2, local: 'vedia' },
+  { nombre: 'Ravioli espinaca y quesos', fudoNombres: ['Ravioli de espinaca y quesos'], tipo: 'pasta', gramosporcion: 0, porcionesporunidad: 1, unidadstock: 'porciones', diasObjetivo: 2, local: 'vedia' },
+  { nombre: 'Scapinocc Vacio de cerdo', fudoNombres: ['Scapinocc Vacio de cerdo, cerveza y barbacoa'], tipo: 'pasta', gramosporcion: 0, porcionesporunidad: 1, unidadstock: 'porciones', diasObjetivo: 2, local: 'vedia' },
+  { nombre: 'Cappelletti pollo y puerro', fudoNombres: ['Cappelletti de pollo y puerro'], tipo: 'pasta', gramosporcion: 0, porcionesporunidad: 1, unidadstock: 'porciones', diasObjetivo: 2, local: 'vedia' },
+
+  // ── Pastas Saavedra ──
   { nombre: 'Cappelletti Capresse', tipo: 'pasta', gramosporcion: 0, porcionesporunidad: 1, unidadstock: 'porciones', diasObjetivo: 2, local: 'saavedra' },
+  { nombre: 'Scarpinocc J&Q', fudoNombres: ['Scarpinocc de Jamón, Quesos y cebollas caramelizadas', 'Scarpinocc de Jamón, Quesos y cebollas caramelizadas (CONGELADA)'], tipo: 'pasta', gramosporcion: 0, porcionesporunidad: 1, unidadstock: 'porciones', diasObjetivo: 2, local: 'saavedra' },
+  { nombre: 'Mezzelune de Bondiola', fudoNombres: ['Mezzelune de Bondiola Braseada', 'Mezzelune de Bondiola Braseada (CONGELADA)'], tipo: 'pasta', gramosporcion: 0, porcionesporunidad: 1, unidadstock: 'porciones', diasObjetivo: 2, local: 'saavedra' },
+  { nombre: 'Spaghetti al huevo', fudoNombres: ['Spaghetti al huevo', 'Spaghettis al huevo (CONGELADOS)'], tipo: 'pasta', gramosporcion: 0, porcionesporunidad: 1, unidadstock: 'porciones', diasObjetivo: 2, local: 'saavedra' },
+  { nombre: 'Ñoquis de papa', fudoNombres: ['Ñoquis de papa'], tipo: 'pasta', gramosporcion: 0, porcionesporunidad: 1, unidadstock: 'porciones', diasObjetivo: 2, local: 'saavedra' },
 
-  // ── Pastas Viandas (se suman con salón, ya incluidas arriba via fudoNombres) ──
-
-  // ── Postres (stock en unidades enteras, 8 porciones cada una) ──
+  // ── Postres Vedia (stock en unidades enteras, 8 porciones cada una) ──
   { nombre: 'Tiramisú', fudoNombres: ['Tiramisú', 'Tiramisu'], tipo: 'postre', gramosporcion: 0, porcionesporunidad: 8, unidadstock: 'unidades', diasObjetivo: 2 },
   { nombre: 'Flan', tipo: 'postre', gramosporcion: 0, porcionesporunidad: 8, unidadstock: 'unidades', diasObjetivo: 2 },
   { nombre: 'Budín de pan', tipo: 'postre', gramosporcion: 0, porcionesporunidad: 8, unidadstock: 'unidades', diasObjetivo: 2, local: 'vedia' },
-  // Saavedra
+
+  // ── Helados Vedia (stock en litros, porción = 1 servida) ──
+  { nombre: 'Helado soft americana', tipo: 'postre', gramosporcion: 0, porcionesporunidad: 1, unidadstock: 'porciones', diasObjetivo: 2, local: 'vedia' },
+  { nombre: 'Helado soft pistacho', tipo: 'postre', gramosporcion: 0, porcionesporunidad: 1, unidadstock: 'porciones', diasObjetivo: 2, local: 'vedia' },
+  { nombre: 'Helado soft mixto', tipo: 'postre', gramosporcion: 0, porcionesporunidad: 1, unidadstock: 'porciones', diasObjetivo: 2, local: 'vedia' },
+
+  // ── Postres Saavedra ──
   { nombre: 'Matilda', fudoNombres: ['Matilda (porcion)'], tipo: 'postre', gramosporcion: 0, porcionesporunidad: 8, unidadstock: 'unidades', diasObjetivo: 2, local: 'saavedra' },
   { nombre: 'Carrot cake', fudoNombres: ['Carrot cake (porcion)'], tipo: 'postre', gramosporcion: 0, porcionesporunidad: 8, unidadstock: 'unidades', diasObjetivo: 2, local: 'saavedra' },
   { nombre: 'Brownie', fudoNombres: ['Brownie (porcion)'], tipo: 'postre', gramosporcion: 0, porcionesporunidad: 8, unidadstock: 'unidades', diasObjetivo: 2, local: 'saavedra' },
   { nombre: 'Lemon pie', fudoNombres: ['Lemon pie (porcion)'], tipo: 'postre', gramosporcion: 0, porcionesporunidad: 8, unidadstock: 'unidades', diasObjetivo: 2, local: 'saavedra' },
   { nombre: 'Cheese cake', fudoNombres: ['Cheese cake (porcion)'], tipo: 'postre', gramosporcion: 0, porcionesporunidad: 8, unidadstock: 'unidades', diasObjetivo: 2, local: 'saavedra' },
   { nombre: 'Tarta Vasca', tipo: 'postre', gramosporcion: 0, porcionesporunidad: 8, unidadstock: 'unidades', diasObjetivo: 2, local: 'saavedra' },
+  { nombre: 'Cookies choco', fudoNombres: ['Cookies con chips de chocolate'], tipo: 'postre', gramosporcion: 0, porcionesporunidad: 1, unidadstock: 'unidades', diasObjetivo: 2, local: 'saavedra' },
+  { nombre: 'Cookies avellanas', fudoNombres: ['Cookies de chocolate con crema de avellanas'], tipo: 'postre', gramosporcion: 0, porcionesporunidad: 1, unidadstock: 'unidades', diasObjetivo: 2, local: 'saavedra' },
 ]
 
 interface ConteoStock {
