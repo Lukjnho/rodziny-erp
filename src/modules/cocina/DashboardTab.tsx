@@ -5,27 +5,49 @@ import { formatARS, cn } from '@/lib/utils'
 import { LocalSelector } from '@/components/ui/LocalSelector'
 
 // ── Productos que el chef controla ──────────────────────────────────────────
-// tipo: 'salsa' | 'postre' — determina unidad de medida y cálculo de porciones
+// tipo determina unidad de medida y cálculo de porciones
+type TipoProducto = 'salsa' | 'postre' | 'pasta'
+
 interface ProductoCocina {
-  nombre: string              // Nombre exacto en Fudo
-  tipo: 'salsa' | 'postre'
-  gramosporcion: number       // Salsas: ~200g, para referencia
-  porcionesporunidad: number  // Postres: 8 porciones por unidad entera
-  unidadstock: string         // 'kg' para salsas, 'unidades' para postres
+  nombre: string              // Nombre exacto en Fudo (o variantes para match)
+  fudoNombres?: string[]      // Nombres alternativos en Fudo para sumar ventas
+  tipo: TipoProducto
+  gramosporcion: number       // Salsas: ~200g, para referencia. Pastas/postres: 0
+  porcionesporunidad: number  // Postres: 8 porc/unidad. Pastas: 1 (se mide en porciones)
+  unidadstock: string         // 'kg', 'unidades', 'porciones'
   diasObjetivo: number        // Días de stock mínimo objetivo
+  local?: 'vedia' | 'saavedra' // Si es exclusivo de un local
 }
 
 const PRODUCTOS_COCINA: ProductoCocina[] = [
-  // Salsas (stock en kg, porción referencia ~200g)
+  // ── Salsas (stock en kg, porción referencia ~200g) ──
   { nombre: 'Bolognesa',     tipo: 'salsa',  gramosporcion: 200, porcionesporunidad: 1, unidadstock: 'kg', diasObjetivo: 3 },
-  { nombre: 'Parisienne',    tipo: 'salsa',  gramosporcion: 200, porcionesporunidad: 1, unidadstock: 'kg', diasObjetivo: 3 },
+  { nombre: 'Parisienne',    tipo: 'salsa',  gramosporcion: 200, porcionesporunidad: 1, unidadstock: 'kg', diasObjetivo: 3, local: 'vedia' },
   { nombre: 'Scarparo',      tipo: 'salsa',  gramosporcion: 200, porcionesporunidad: 1, unidadstock: 'kg', diasObjetivo: 3 },
   { nombre: 'Rose',          tipo: 'salsa',  gramosporcion: 200, porcionesporunidad: 1, unidadstock: 'kg', diasObjetivo: 3 },
   { nombre: 'Crema Blanca',  tipo: 'salsa',  gramosporcion: 200, porcionesporunidad: 1, unidadstock: 'kg', diasObjetivo: 3 },
-  // Postres (stock en unidades enteras, 8 porciones cada una)
-  { nombre: 'Tiramisú',      tipo: 'postre', gramosporcion: 0, porcionesporunidad: 8, unidadstock: 'unidades', diasObjetivo: 2 },
-  { nombre: 'Flan',           tipo: 'postre', gramosporcion: 0, porcionesporunidad: 8, unidadstock: 'unidades', diasObjetivo: 2 },
-  { nombre: 'Budín de pan',   tipo: 'postre', gramosporcion: 0, porcionesporunidad: 8, unidadstock: 'unidades', diasObjetivo: 2 },
+
+  // ── Pastas Salón (stock en porciones / bateas) ──
+  { nombre: 'Sorrentino Jamón, Queso y Cebollas', fudoNombres: ['Sorrentino Jamón, Queso y Cebollas', 'Scarpinocc de Jamón, Quesos y cebollas caramelizadas'], tipo: 'pasta', gramosporcion: 0, porcionesporunidad: 1, unidadstock: 'porciones', diasObjetivo: 2 },
+  { nombre: 'Ñoquis de Papa', fudoNombres: ['Ñoquis de Papa', 'Ñoquis de papa'], tipo: 'pasta', gramosporcion: 0, porcionesporunidad: 1, unidadstock: 'porciones', diasObjetivo: 2 },
+  { nombre: 'Ñoquis rellenos', tipo: 'pasta', gramosporcion: 0, porcionesporunidad: 1, unidadstock: 'porciones', diasObjetivo: 2 },
+  { nombre: 'Tagliatelles mix', fudoNombres: ['Tagliatelles mix', 'Spaghetti al huevo', 'Spaghettis al huevo'], tipo: 'pasta', gramosporcion: 0, porcionesporunidad: 1, unidadstock: 'porciones', diasObjetivo: 2 },
+  { nombre: 'Mezzelune de Bondiola', fudoNombres: ['Mezzelune de Bondiola Braseada', 'Mezzelune de Bondiola Braseada VIANDA', 'Mezzelune de Bondiola Braseada CONGELADA'], tipo: 'pasta', gramosporcion: 0, porcionesporunidad: 1, unidadstock: 'porciones', diasObjetivo: 2, local: 'vedia' },
+  { nombre: 'Cappelletti Capresse', tipo: 'pasta', gramosporcion: 0, porcionesporunidad: 1, unidadstock: 'porciones', diasObjetivo: 2, local: 'saavedra' },
+
+  // ── Pastas Viandas (se suman con salón, ya incluidas arriba via fudoNombres) ──
+
+  // ── Postres (stock en unidades enteras, 8 porciones cada una) ──
+  { nombre: 'Tiramisú', fudoNombres: ['Tiramisú', 'Tiramisu'], tipo: 'postre', gramosporcion: 0, porcionesporunidad: 8, unidadstock: 'unidades', diasObjetivo: 2 },
+  { nombre: 'Flan', tipo: 'postre', gramosporcion: 0, porcionesporunidad: 8, unidadstock: 'unidades', diasObjetivo: 2 },
+  { nombre: 'Budín de pan', tipo: 'postre', gramosporcion: 0, porcionesporunidad: 8, unidadstock: 'unidades', diasObjetivo: 2, local: 'vedia' },
+  // Saavedra
+  { nombre: 'Matilda', fudoNombres: ['Matilda (porcion)'], tipo: 'postre', gramosporcion: 0, porcionesporunidad: 8, unidadstock: 'unidades', diasObjetivo: 2, local: 'saavedra' },
+  { nombre: 'Carrot cake', fudoNombres: ['Carrot cake (porcion)'], tipo: 'postre', gramosporcion: 0, porcionesporunidad: 8, unidadstock: 'unidades', diasObjetivo: 2, local: 'saavedra' },
+  { nombre: 'Brownie', fudoNombres: ['Brownie (porcion)'], tipo: 'postre', gramosporcion: 0, porcionesporunidad: 8, unidadstock: 'unidades', diasObjetivo: 2, local: 'saavedra' },
+  { nombre: 'Lemon pie', fudoNombres: ['Lemon pie (porcion)'], tipo: 'postre', gramosporcion: 0, porcionesporunidad: 8, unidadstock: 'unidades', diasObjetivo: 2, local: 'saavedra' },
+  { nombre: 'Cheese cake', fudoNombres: ['Cheese cake (porcion)'], tipo: 'postre', gramosporcion: 0, porcionesporunidad: 8, unidadstock: 'unidades', diasObjetivo: 2, local: 'saavedra' },
+  { nombre: 'Tarta Vasca', tipo: 'postre', gramosporcion: 0, porcionesporunidad: 8, unidadstock: 'unidades', diasObjetivo: 2, local: 'saavedra' },
 ]
 
 interface ConteoStock {
@@ -107,18 +129,27 @@ export function DashboardTab() {
 
   // ── Calcular datos por producto ──
   const filas = useMemo(() => {
-    return PRODUCTOS_COCINA.map((prod) => {
+    // Filtrar productos por local
+    const productosLocal = PRODUCTOS_COCINA.filter((p) => !p.local || p.local === local)
+
+    return productosLocal.map((prod) => {
       // Stock actual (último conteo)
       const conteo = conteos?.get(prod.nombre)
       const stockCantidad = conteo?.cantidad ?? null
       const stockFecha = conteo?.fecha ?? null
 
       // Ventas diarias promedio desde Fudo
-      const fudoProd = fudoData?.ranking.find((r) =>
-        r.nombre.toLowerCase() === prod.nombre.toLowerCase()
-      )
-      const ventasDiarias = fudoProd && fudoData
-        ? fudoProd.cantidad / fudoData.dias
+      // Sumar todas las variantes de nombre (salón + vianda + congelada)
+      const nombres = prod.fudoNombres ?? [prod.nombre]
+      let ventasTotal = 0
+      for (const n of nombres) {
+        const fudoProd = fudoData?.ranking.find((r) =>
+          r.nombre.toLowerCase() === n.toLowerCase()
+        )
+        if (fudoProd) ventasTotal += fudoProd.cantidad
+      }
+      const ventasDiarias = fudoData && fudoData.dias > 0
+        ? ventasTotal / fudoData.dias
         : 0
 
       // Calcular porciones aprox del stock
@@ -175,6 +206,7 @@ export function DashboardTab() {
   }, [conteos, fudoData])
 
   const salsas = filas.filter((f) => f.tipo === 'salsa')
+  const pastas = filas.filter((f) => f.tipo === 'pasta')
   const postres = filas.filter((f) => f.tipo === 'postre')
 
   // ── Estado inline para edición rápida ──
@@ -207,6 +239,19 @@ export function DashboardTab() {
           </span>
         )}
       </div>
+
+      {/* ── PASTAS ── */}
+      <SeccionProductos
+        titulo="Pastas"
+        subtitulo="Stock en porciones — incluye salón, vianda y congelada"
+        filas={pastas}
+        editando={editando}
+        valorEdit={valorEdit}
+        onIniciarEdicion={iniciarEdicion}
+        onCambiarValor={setValorEdit}
+        onGuardar={guardar}
+        onCancelar={() => setEditando(null)}
+      />
 
       {/* ── SALSAS ── */}
       <SeccionProductos
