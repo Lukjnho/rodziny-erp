@@ -504,7 +504,15 @@ function Fichando({ empleado, onCancelar, onListo }: {
           await videoRef.current.play().catch(() => {})
         }
       } catch (e: any) {
-        setMensaje('No pude acceder a la cámara: ' + (e?.message || e))
+        const msg = e?.name === 'NotAllowedError' || (e?.message || '').includes('denied')
+          ? 'La cámara está bloqueada para este sitio.'
+          : 'No pude acceder a la cámara.'
+        setMensaje(msg)
+        setWarning(
+          'En iPhone: Ajustes → Safari → Cámara → Permitir. ' +
+          'En Android: tocá el candado en la barra de dirección → Permisos → Cámara → Permitir. ' +
+          'Después tocá Reintentar.'
+        )
         setPaso('error')
       }
     })()
@@ -706,9 +714,12 @@ function Fichando({ empleado, onCancelar, onListo }: {
         <div className="text-center py-4">
           <div className="text-3xl mb-2">⚠</div>
           <p className="text-sm text-red-700">{mensaje}</p>
+          {warning && (
+            <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded p-2.5 mt-3 text-left">{warning}</p>
+          )}
           <div className="grid grid-cols-2 gap-2 mt-4">
             <button onClick={onCancelar} className="bg-gray-100 hover:bg-gray-200 text-gray-700 py-2.5 rounded text-sm">Volver</button>
-            <button onClick={() => setPaso('foto')} className="bg-rodziny-700 text-white py-2.5 rounded text-sm">Reintentar</button>
+            <button onClick={() => { setWarning(null); setPaso('foto') }} className="bg-rodziny-700 text-white py-2.5 rounded text-sm">Reintentar</button>
           </div>
         </div>
       )}
