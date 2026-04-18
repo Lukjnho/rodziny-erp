@@ -14,6 +14,7 @@ const MODULOS: { key: Modulo; label: string; campo: keyof Perfil }[] = [
   { key: 'rrhh', label: 'RRHH', campo: 'puede_ver_rrhh' },
   { key: 'compras', label: 'Compras', campo: 'puede_ver_compras' },
   { key: 'cocina', label: 'Cocina', campo: 'puede_ver_cocina' },
+  { key: 'almacen', label: 'Almacén', campo: 'puede_ver_almacen' },
   { key: 'usuarios', label: 'Usuarios', campo: 'puede_ver_usuarios' },
 ]
 

@@ -9,7 +9,7 @@ const LOCALES = {
   vedia:    { nombre: 'Rodziny Vedia',    lat: -27.45042, lng: -58.98962 },
   saavedra: { nombre: 'Rodziny Saavedra', lat: -27.44856, lng: -58.97886 },
 } as const
-const RADIO_METROS = 50
+const RADIO_METROS = 120
 const FOTO_MAX_LADO = 640        // px
 const FOTO_QUALITY  = 0.7
 
@@ -270,19 +270,28 @@ function Inicio({ empleado, onIrAFichar, onIrAHorarios, onIrAQuincena }: {
 }) {
   const [crono, setCrono] = useState<Cronograma | null>(null)
   const [fichadasHoy, setFichadasHoy] = useState<Fichada[]>([])
+  const [entradaAbiertaAyer, setEntradaAbiertaAyer] = useState(false)
   const [debugInfo, setDebugInfo] = useState<string>('')
   const ahoraDev = new Date()
   const hoy = ymd(ahoraDev)
+  const ayerDt = new Date(ahoraDev); ayerDt.setDate(ayerDt.getDate() - 1)
+  const ayer = ymd(ayerDt)
   const debugOn = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('debug') === '1'
 
   useEffect(() => {
     (async () => {
-      const [{ data: c }, { data: f }] = await Promise.all([
+      const [{ data: c }, { data: f }, { data: fAyer }] = await Promise.all([
         supabase.from('cronograma').select('*').eq('empleado_id', empleado.id).eq('fecha', hoy).maybeSingle(),
         supabase.from('fichadas').select('*').eq('empleado_id', empleado.id).eq('fecha', hoy).order('timestamp'),
+        // Fichadas de ayer para detectar entrada sin salida (turno nocturno)
+        supabase.from('fichadas').select('*').eq('empleado_id', empleado.id).eq('fecha', ayer).order('timestamp'),
       ])
       setCrono((c as Cronograma) || null)
       setFichadasHoy((f as Fichada[]) || [])
+
+      // Si ayer tiene cantidad impar de fichadas, hay una entrada abierta (sin salida)
+      const fichadasAyer = (fAyer as Fichada[]) || []
+      setEntradaAbiertaAyer(fichadasAyer.length > 0 && fichadasAyer.length % 2 !== 0)
 
       if (debugOn) {
         // Verificar si hay sesión auth activa en el cliente principal (hipótesis del bug RLS)
@@ -375,7 +384,12 @@ function Inicio({ empleado, onIrAFichar, onIrAHorarios, onIrAQuincena }: {
     })()
   }, [empleado.id, hoy, debugOn])
 
-  const proximoTipo: 'entrada' | 'salida' = fichadasHoy.length % 2 === 0 ? 'entrada' : 'salida'
+  // Si hoy no tiene fichadas pero ayer quedó una entrada abierta (turno nocturno),
+  // el próximo fichaje es SALIDA, no entrada
+  const proximoTipo: 'entrada' | 'salida' =
+    fichadasHoy.length === 0 && entradaAbiertaAyer
+      ? 'salida'
+      : fichadasHoy.length % 2 === 0 ? 'entrada' : 'salida'
 
   return (
     <>
@@ -435,17 +449,17 @@ function Inicio({ empleado, onIrAFichar, onIrAHorarios, onIrAQuincena }: {
 }
 
 // ─── Flujo de fichaje ───────────────────────────────────────────────────────
-type PasoFichaje = 'gps' | 'foto' | 'subiendo' | 'ok' | 'error'
+type PasoFichaje = 'foto' | 'subiendo' | 'ok' | 'error'
 
 function Fichando({ empleado, onCancelar, onListo }: {
   empleado: Empleado
   onCancelar: () => void
   onListo: () => void
 }) {
-  const [paso, setPaso] = useState<PasoFichaje>('gps')
-  const [mensaje, setMensaje] = useState<string>('Detectando ubicación...')
-  const [localDetectado, setLocalDetectado] = useState<LocalKey | null>(null)
+  const [paso, setPaso] = useState<PasoFichaje>('foto')
+  const [mensaje, setMensaje] = useState<string>('')
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null)
+  const [localDetectado, setLocalDetectado] = useState<LocalKey | null>(null)
   const [warning, setWarning] = useState<string | null>(null)
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
@@ -453,63 +467,27 @@ function Fichando({ empleado, onCancelar, onListo }: {
   const [fotoPreview, setFotoPreview] = useState<string | null>(null)
   const [resultado, setResultado] = useState<{ tipo: string; minutos: number | null } | null>(null)
 
-  // Paso 1: GPS
+  // GPS silencioso en background — no bloquea, solo registra
   useEffect(() => {
-    if (paso !== 'gps') return
-
-    // Modo dev: bypass GPS, simula Vedia
     if (import.meta.env.DEV) {
       const v = LOCALES.vedia
       setCoords({ lat: v.lat, lng: v.lng })
       setLocalDetectado('vedia')
-      setMensaje('Modo dev: ubicación simulada (Vedia)')
-      setPaso('foto')
       return
     }
+    if (!navigator.geolocation) return
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude })
+        const det = detectarLocal(pos.coords.latitude, pos.coords.longitude)
+        if (det) setLocalDetectado(det.key)
+      },
+      () => { /* GPS falló silenciosamente, no pasa nada */ },
+      { enableHighAccuracy: false, timeout: 10000 }
+    )
+  }, [])
 
-    if (!navigator.geolocation) {
-      setMensaje('Tu navegador no soporta GPS')
-      setPaso('error')
-      return
-    }
-    function onPosOk(pos: GeolocationPosition) {
-      const { latitude, longitude } = pos.coords
-      setCoords({ lat: latitude, lng: longitude })
-      const det = detectarLocal(latitude, longitude)
-      if (!det) {
-        setMensaje('No estás dentro del radio de ningún local. Acercate a la entrada o avisá a RRHH.')
-        setPaso('error')
-        return
-      }
-      setLocalDetectado(det.key)
-      setMensaje(`Detectado: ${LOCALES[det.key].nombre} (${Math.round(det.distancia)}m)`)
-      setPaso('foto')
-    }
-
-    function onPosError(err: GeolocationPositionError) {
-      // PERMISSION_DENIED: el navegador bloqueó el permiso del sitio
-      if (err.code === 1) {
-        setMensaje('El navegador tiene bloqueada la ubicación para este sitio.')
-        setWarning('En iPhone: Ajustes → Safari → Ubicación → Permitir. En Android: tocá el candado en la barra de dirección → Permisos → Ubicación → Permitir. Después tocá Reintentar.')
-        setPaso('error')
-        return
-      }
-      // TIMEOUT con alta precisión: reintentar sin enableHighAccuracy
-      if (err.code === 3) {
-        navigator.geolocation.getCurrentPosition(onPosOk, (err2) => {
-          setMensaje(`Error de GPS: ${err2.message}. Activá la ubicación.`)
-          setPaso('error')
-        }, { enableHighAccuracy: false, timeout: 10000 })
-        return
-      }
-      setMensaje(`Error de GPS: ${err.message}. Activá la ubicación.`)
-      setPaso('error')
-    }
-
-    navigator.geolocation.getCurrentPosition(onPosOk, onPosError, { enableHighAccuracy: true, timeout: 15000 })
-  }, [paso])
-
-  // Paso 2: cámara
+  // Cámara — arranca directo
   useEffect(() => {
     if (paso !== 'foto') return
     let cancelado = false
@@ -559,27 +537,47 @@ function Fichando({ empleado, onCancelar, onListo }: {
   }
 
   async function confirmarFichaje() {
-    if (!fotoBlob || !localDetectado || !coords) return
+    if (!fotoBlob) return
     setPaso('subiendo')
     setMensaje('Guardando...')
     try {
       const ahora = new Date()
-      const fecha = ymd(ahora)
+      const fechaHoy = ymd(ahora)
+      const ayerDt2 = new Date(ahora); ayerDt2.setDate(ayerDt2.getDate() - 1)
+      const fechaAyer = ymd(ayerDt2)
+
+      // Verificar si hay entrada abierta de ayer (turno nocturno)
+      const { data: fichadasAyer } = await supabase
+        .from('fichadas')
+        .select('id')
+        .eq('empleado_id', empleado.id)
+        .eq('fecha', fechaAyer)
+      const entradaAbiertaDeAyer = (fichadasAyer?.length ?? 0) > 0 && (fichadasAyer?.length ?? 0) % 2 !== 0
 
       // Determinar tipo (entrada o salida)
       const { data: yaHoy } = await supabase
         .from('fichadas')
         .select('id')
         .eq('empleado_id', empleado.id)
-        .eq('fecha', fecha)
-      const tipo: 'entrada' | 'salida' = (yaHoy?.length ?? 0) % 2 === 0 ? 'entrada' : 'salida'
+        .eq('fecha', fechaHoy)
 
-      // Cronograma del día (para diferencia)
+      let tipo: 'entrada' | 'salida'
+      let fechaFichada: string
+
+      if ((yaHoy?.length ?? 0) === 0 && entradaAbiertaDeAyer) {
+        tipo = 'salida'
+        fechaFichada = fechaAyer
+      } else {
+        tipo = (yaHoy?.length ?? 0) % 2 === 0 ? 'entrada' : 'salida'
+        fechaFichada = fechaHoy
+      }
+
+      // Cronograma del día correspondiente (para diferencia)
       const { data: crono } = await supabase
         .from('cronograma')
         .select('hora_entrada, hora_salida, es_franco, publicado')
         .eq('empleado_id', empleado.id)
-        .eq('fecha', fecha)
+        .eq('fecha', fechaFichada)
         .maybeSingle()
 
       const horaProgramada = tipo === 'entrada' ? crono?.hora_entrada ?? null : crono?.hora_salida ?? null
@@ -594,24 +592,27 @@ function Fichando({ empleado, onCancelar, onListo }: {
         w = `Estás ${minutosDif > 0 ? 'tarde' : 'antes'} ${Math.abs(minutosDif)} min vs tu horario.`
       setWarning(w)
 
-      // Subir foto comprimida (path con nonce para evitar colisiones en ms idénticos)
+      // Subir foto comprimida
       const comprimida = await comprimirImagen(fotoBlob)
       const nonce = Math.random().toString(36).slice(2, 8)
-      const path = `${empleado.id}/${fecha}/${ahora.getTime()}_${nonce}_${tipo}.jpg`
+      const path = `${empleado.id}/${fechaFichada}/${ahora.getTime()}_${nonce}_${tipo}.jpg`
       const { error: upErr } = await supabase.storage
         .from('fichadas-fotos')
         .upload(path, comprimida, { contentType: 'image/jpeg', upsert: false })
       if (upErr) throw upErr
 
-      // Insertar fichada — si falla, borrar la foto que quedó huérfana
+      // Detectar local más cercano (si GPS llegó) — solo informativo
+      const localParaGuardar = localDetectado ?? (empleado.local !== 'ambos' ? empleado.local as LocalKey : null)
+
+      // Insertar fichada
       const { error: insErr } = await supabase.from('fichadas').insert({
         empleado_id: empleado.id,
-        fecha,
+        fecha: fechaFichada,
         tipo,
         timestamp: ahora.toISOString(),
-        local: localDetectado,
-        lat: coords.lat,
-        lng: coords.lng,
+        local: localParaGuardar,
+        lat: coords?.lat ?? null,
+        lng: coords?.lng ?? null,
         foto_path: path,
         minutos_diferencia: minutosDif,
         origen: 'pwa',
@@ -631,15 +632,8 @@ function Fichando({ empleado, onCancelar, onListo }: {
 
   return (
     <div className="bg-white rounded-lg border border-gray-200 p-4">
-      {paso === 'gps' && (
-        <div className="text-center py-6">
-          <p className="text-sm text-gray-700">{mensaje}</p>
-        </div>
-      )}
-
       {paso === 'foto' && (
         <>
-          <p className="text-xs text-gray-500 mb-2">{mensaje}</p>
           {!fotoPreview ? (
             <>
               <video ref={videoRef} playsInline muted className="w-full rounded bg-black aspect-[3/4] object-cover" />
@@ -696,6 +690,8 @@ function Fichando({ empleado, onCancelar, onListo }: {
                   : `${resultado.minutos} min vs horario`}
             </p>
           )}
+          {/* Mensaje disuasorio — el empleado cree que se verifica la ubicación */}
+          <p className="text-[10px] text-gray-400 mt-2">Ubicación y foto registradas</p>
           {warning && <p className="text-xs text-amber-700 mt-2">{warning}</p>}
           <button
             onClick={onListo}
@@ -710,12 +706,9 @@ function Fichando({ empleado, onCancelar, onListo }: {
         <div className="text-center py-4">
           <div className="text-3xl mb-2">⚠</div>
           <p className="text-sm text-red-700">{mensaje}</p>
-          {warning && (
-            <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded p-2.5 mt-3 text-left">{warning}</p>
-          )}
           <div className="grid grid-cols-2 gap-2 mt-4">
             <button onClick={onCancelar} className="bg-gray-100 hover:bg-gray-200 text-gray-700 py-2.5 rounded text-sm">Volver</button>
-            <button onClick={() => { setWarning(null); setPaso('gps') }} className="bg-rodziny-700 text-white py-2.5 rounded text-sm">Reintentar</button>
+            <button onClick={() => setPaso('foto')} className="bg-rodziny-700 text-white py-2.5 rounded text-sm">Reintentar</button>
           </div>
         </div>
       )}
