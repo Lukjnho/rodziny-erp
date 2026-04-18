@@ -18,7 +18,7 @@ interface Ingrediente {
 interface Receta {
   id: string
   nombre: string
-  tipo: 'relleno' | 'masa' | 'salsa' | 'otro'
+  tipo: 'relleno' | 'masa' | 'salsa' | 'subreceta' | 'otro'
   rendimiento_kg: number | null
   rendimiento_porciones: number | null
   instrucciones: string | null
@@ -26,14 +26,15 @@ interface Receta {
   created_at: string
 }
 
-const TIPOS = ['relleno', 'masa', 'salsa', 'otro'] as const
+const TIPOS = ['relleno', 'masa', 'salsa', 'subreceta', 'otro'] as const
 const TIPO_LABEL: Record<string, string> = {
-  relleno: 'Relleno', masa: 'Masa', salsa: 'Salsa', otro: 'Otro',
+  relleno: 'Relleno', masa: 'Masa', salsa: 'Salsa', subreceta: 'Subreceta', otro: 'Otro',
 }
 const TIPO_COLOR: Record<string, string> = {
   relleno: 'bg-green-100 text-green-700',
   masa: 'bg-blue-100 text-blue-700',
   salsa: 'bg-orange-100 text-orange-700',
+  subreceta: 'bg-purple-100 text-purple-700',
   otro: 'bg-gray-100 text-gray-700',
 }
 
@@ -89,6 +90,7 @@ export function RecetasTab() {
       rellenos: all.filter((r) => r.tipo === 'relleno').length,
       masas: all.filter((r) => r.tipo === 'masa').length,
       salsas: all.filter((r) => r.tipo === 'salsa').length,
+      subrecetas: all.filter((r) => r.tipo === 'subreceta').length,
     }
   }, [recetas])
 
@@ -115,11 +117,12 @@ export function RecetasTab() {
   return (
     <div className="space-y-4">
       {/* KPIs */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         <KPICard label="Total recetas" value={String(kpis.total)} color="blue" loading={isLoading} />
         <KPICard label="Rellenos" value={String(kpis.rellenos)} color="green" loading={isLoading} />
         <KPICard label="Masas" value={String(kpis.masas)} color="neutral" loading={isLoading} />
         <KPICard label="Salsas" value={String(kpis.salsas)} color="neutral" loading={isLoading} />
+        <KPICard label="Subrecetas" value={String(kpis.subrecetas)} color="neutral" loading={isLoading} />
       </div>
 
       {/* Toolbar */}
@@ -222,6 +225,7 @@ export function RecetasTab() {
         <ModalReceta
           receta={editando}
           ingredientes={editando ? (ingredientesPorReceta.get(editando.id) ?? []) : []}
+          todasLasRecetas={recetas ?? []}
           onClose={() => setModalAbierto(false)}
           onSaved={() => {
             qc.invalidateQueries({ queryKey: ['cocina-recetas'] })
@@ -341,11 +345,13 @@ interface IngredienteForm {
 function ModalReceta({
   receta,
   ingredientes: ingredientesExistentes,
+  todasLasRecetas,
   onClose,
   onSaved,
 }: {
   receta: Receta | null
   ingredientes: Ingrediente[]
+  todasLasRecetas: Receta[]
   onClose: () => void
   onSaved: () => void
 }) {
@@ -509,7 +515,7 @@ function ModalReceta({
     <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={onClose}>
       <div className="absolute inset-0 bg-black/30" />
       <div
-        className="relative bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[90vh] flex flex-col"
+        className="relative bg-white rounded-lg shadow-xl w-full max-w-3xl max-h-[90vh] flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="px-6 pt-5 pb-3 border-b border-gray-200">
@@ -593,61 +599,65 @@ function ModalReceta({
               {ings.map((ing, idx) => (
                 <div
                   key={ing.tempId}
-                  className="flex items-start gap-2 bg-gray-50 rounded-lg p-2.5 border border-gray-200"
+                  className="bg-gray-50 rounded-lg p-2.5 border border-gray-200 space-y-2"
                 >
-                  <span className="text-[10px] text-gray-400 font-mono mt-2 w-4 text-right flex-shrink-0">
-                    {idx + 1}
-                  </span>
-                  <div className="flex-1 grid grid-cols-12 gap-2">
-                    <div className="col-span-5">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] text-gray-400 font-mono w-4 text-right flex-shrink-0">
+                      {idx + 1}
+                    </span>
+                    <div className="flex-1">
                       <AutocompleteIngrediente
                         valor={ing.nombre}
                         productos={productosCompras ?? []}
+                        recetas={todasLasRecetas}
+                        recetaActualId={receta?.id ?? null}
                         onChange={(v) => actualizarIng(ing.tempId, 'nombre', v)}
                         onSelect={(p) => seleccionarProducto(ing.tempId, p)}
                       />
                     </div>
+                    <div className="flex items-center gap-1 flex-shrink-0">
+                      <button
+                        onClick={() => moverIng(ing.tempId, -1)}
+                        disabled={idx === 0}
+                        className="text-gray-400 hover:text-gray-600 disabled:opacity-20 text-[10px] px-1"
+                        title="Subir"
+                      >▲</button>
+                      <button
+                        onClick={() => moverIng(ing.tempId, 1)}
+                        disabled={idx === ings.length - 1}
+                        className="text-gray-400 hover:text-gray-600 disabled:opacity-20 text-[10px] px-1"
+                        title="Bajar"
+                      >▼</button>
+                      <button
+                        onClick={() => eliminarIng(ing.tempId)}
+                        className="text-red-400 hover:text-red-600 text-xs ml-1"
+                        title="Eliminar ingrediente"
+                      >✕</button>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 ml-6">
                     <input
                       type="number"
                       step="0.1"
                       value={ing.cantidad}
                       onChange={(e) => actualizarIng(ing.tempId, 'cantidad', e.target.value)}
-                      placeholder="Cant."
-                      className="col-span-2 border border-gray-300 rounded px-2 py-1 text-sm text-right"
+                      placeholder="Cantidad"
+                      className="w-24 border border-gray-300 rounded px-2 py-1 text-sm text-right"
                     />
                     <select
                       value={ing.unidad}
                       onChange={(e) => actualizarIng(ing.tempId, 'unidad', e.target.value)}
-                      className="col-span-2 border border-gray-300 rounded px-1 py-1 text-sm"
+                      className="w-16 border border-gray-300 rounded px-1 py-1 text-sm"
                     >
                       {UNIDADES.map((u) => <option key={u} value={u}>{u}</option>)}
                     </select>
                     <input
                       value={ing.observaciones}
                       onChange={(e) => actualizarIng(ing.tempId, 'observaciones', e.target.value)}
-                      placeholder="Obs."
-                      className="col-span-3 border border-gray-300 rounded px-2 py-1 text-sm text-gray-500"
+                      placeholder="Observaciones..."
+                      className="flex-1 border border-gray-300 rounded px-2 py-1 text-sm text-gray-500"
                     />
                   </div>
-                  <div className="flex flex-col gap-0.5 flex-shrink-0">
-                    <button
-                      onClick={() => moverIng(ing.tempId, -1)}
-                      disabled={idx === 0}
-                      className="text-gray-400 hover:text-gray-600 disabled:opacity-20 text-[10px] px-1"
-                      title="Subir"
-                    >▲</button>
-                    <button
-                      onClick={() => moverIng(ing.tempId, 1)}
-                      disabled={idx === ings.length - 1}
-                      className="text-gray-400 hover:text-gray-600 disabled:opacity-20 text-[10px] px-1"
-                      title="Bajar"
-                    >▼</button>
-                  </div>
-                  <button
-                    onClick={() => eliminarIng(ing.tempId)}
-                    className="text-red-400 hover:text-red-600 text-xs mt-1 flex-shrink-0"
-                    title="Eliminar ingrediente"
-                  >✕</button>
                 </div>
               ))}
               <button
@@ -708,15 +718,27 @@ function ModalReceta({
   )
 }
 
-// ─── Autocomplete de ingredientes (busca en productos de Compras) ───────────
+// ─── Autocomplete de ingredientes (busca en productos de Compras + recetas) ─
+interface OpcionAutocomplete {
+  id: string
+  nombre: string
+  unidad: string
+  tipo: 'producto' | 'receta'
+  detalle: string // categoría o tipo de receta
+}
+
 function AutocompleteIngrediente({
   valor,
   productos,
+  recetas,
+  recetaActualId,
   onChange,
   onSelect,
 }: {
   valor: string
   productos: ProductoCompras[]
+  recetas: Receta[]
+  recetaActualId: string | null
   onChange: (v: string) => void
   onSelect: (p: ProductoCompras) => void
 }) {
@@ -724,11 +746,46 @@ function AutocompleteIngrediente({
   const [focused, setFocused] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
 
+  // Combinar productos + recetas en una sola lista
+  const opciones = useMemo(() => {
+    const lista: OpcionAutocomplete[] = []
+
+    // Recetas primero (excluyendo la receta actual para evitar referencia circular)
+    for (const r of recetas) {
+      if (r.id === recetaActualId) continue
+      lista.push({
+        id: r.id,
+        nombre: r.nombre,
+        unidad: r.rendimiento_kg != null ? 'kg' : 'unid',
+        tipo: 'receta',
+        detalle: TIPO_LABEL[r.tipo] ?? r.tipo,
+      })
+    }
+
+    // Productos de compras
+    for (const p of productos) {
+      lista.push({
+        id: p.id,
+        nombre: p.nombre,
+        unidad: p.unidad,
+        tipo: 'producto',
+        detalle: p.categoria ?? '',
+      })
+    }
+
+    return lista
+  }, [productos, recetas, recetaActualId])
+
   const filtrados = useMemo(() => {
-    if (!valor.trim()) return productos.slice(0, 15)
+    if (!valor.trim()) {
+      // Sin búsqueda: mostrar recetas primero, luego productos
+      const recs = opciones.filter((o) => o.tipo === 'receta').slice(0, 5)
+      const prods = opciones.filter((o) => o.tipo === 'producto').slice(0, 10)
+      return [...recs, ...prods]
+    }
     const q = valor.toLowerCase()
-    return productos.filter((p) => p.nombre.toLowerCase().includes(q)).slice(0, 10)
-  }, [valor, productos])
+    return opciones.filter((o) => o.nombre.toLowerCase().includes(q)).slice(0, 12)
+  }, [valor, opciones])
 
   // Cerrar al hacer click afuera
   useEffect(() => {
@@ -751,29 +808,45 @@ function AutocompleteIngrediente({
         }}
         onFocus={() => { setFocused(true); setAbierto(true) }}
         onBlur={() => setFocused(false)}
-        placeholder="Buscar ingrediente..."
+        placeholder="Buscar ingrediente o subreceta..."
         className={cn(
           'w-full border rounded px-2 py-1 text-sm',
           focused ? 'border-rodziny-400 ring-1 ring-rodziny-200' : 'border-gray-300',
         )}
       />
       {abierto && filtrados.length > 0 && (
-        <div className="absolute z-50 top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
-          {filtrados.map((p) => (
-            <button
-              key={p.id}
-              type="button"
-              className="w-full text-left px-3 py-1.5 text-sm hover:bg-rodziny-50 flex items-center justify-between gap-2"
-              onMouseDown={(e) => {
-                e.preventDefault() // evitar blur antes del click
-                onSelect(p)
-                setAbierto(false)
-              }}
-            >
-              <span className="truncate text-gray-800">{p.nombre}</span>
-              <span className="text-[10px] text-gray-400 flex-shrink-0">{p.unidad}{p.categoria ? ` · ${p.categoria}` : ''}</span>
-            </button>
-          ))}
+        <div className="absolute z-50 top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-56 overflow-y-auto">
+          {filtrados.map((o, i) => {
+            // Separador visual entre recetas y productos
+            const prevTipo = i > 0 ? filtrados[i - 1].tipo : null
+            const mostrarSeparador = prevTipo && prevTipo !== o.tipo
+            return (
+              <Fragment key={`${o.tipo}-${o.id}`}>
+                {mostrarSeparador && <div className="border-t border-gray-100 mx-2" />}
+                <button
+                  type="button"
+                  className="w-full text-left px-3 py-1.5 text-sm hover:bg-rodziny-50 flex items-center justify-between gap-2"
+                  onMouseDown={(e) => {
+                    e.preventDefault()
+                    onSelect({ id: o.id, nombre: o.nombre, unidad: o.unidad, categoria: o.detalle })
+                    setAbierto(false)
+                  }}
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    {o.tipo === 'receta' && (
+                      <span className="text-[9px] bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded font-medium flex-shrink-0">
+                        Receta
+                      </span>
+                    )}
+                    <span className="truncate text-gray-800">{o.nombre}</span>
+                  </div>
+                  <span className="text-[10px] text-gray-400 flex-shrink-0">
+                    {o.unidad}{o.detalle ? ` · ${o.detalle}` : ''}
+                  </span>
+                </button>
+              </Fragment>
+            )
+          })}
         </div>
       )}
     </div>
