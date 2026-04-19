@@ -328,6 +328,7 @@ function FichaTecnica({ receta, ingredientes }: { receta: Receta; ingredientes: 
 interface ProductoCompras {
   id: string
   nombre: string
+  marca: string | null
   unidad: string
   categoria: string | null
 }
@@ -370,7 +371,7 @@ function ModalReceta({
     queryFn: async () => {
       const { data, error } = await supabase
         .from('productos')
-        .select('id, nombre, unidad, categoria')
+        .select('id, nombre, marca, unidad, categoria')
         .eq('activo', true)
         .order('nombre')
       if (error) throw error
@@ -762,11 +763,15 @@ function AutocompleteIngrediente({
       })
     }
 
-    // Productos de compras
+    // Productos de compras (deduplicar por nombre+marca)
+    const vistos = new Set<string>()
     for (const p of productos) {
+      const clave = `${p.nombre.toLowerCase()}|${(p.marca ?? '').toLowerCase()}`
+      if (vistos.has(clave)) continue
+      vistos.add(clave)
       lista.push({
         id: p.id,
-        nombre: p.nombre,
+        nombre: p.marca ? `${p.nombre} ${p.marca}` : p.nombre,
         unidad: p.unidad,
         tipo: 'producto',
         detalle: p.categoria ?? '',
@@ -828,7 +833,7 @@ function AutocompleteIngrediente({
                   className="w-full text-left px-3 py-1.5 text-sm hover:bg-rodziny-50 flex items-center justify-between gap-2"
                   onMouseDown={(e) => {
                     e.preventDefault()
-                    onSelect({ id: o.id, nombre: o.nombre, unidad: o.unidad, categoria: o.detalle })
+                    onSelect({ id: o.id, nombre: o.nombre, marca: null, unidad: o.unidad, categoria: o.detalle })
                     setAbierto(false)
                   }}
                 >

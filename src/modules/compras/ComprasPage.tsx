@@ -14,9 +14,9 @@ type Tab = 'gastos' | 'stock' | 'movimientos' | 'importar' | 'recepcion' | 'pago
 type FiltroEstado = 'todos' | 'bajo_minimo' | 'sin_stock' | 'inactivos'
 
 interface Producto {
-  id: string; nombre: string; categoria: string; unidad: string
+  id: string; nombre: string; marca: string | null; categoria: string; unidad: string
   stock_actual: number; stock_minimo: number; proveedor: string
-  costo_unitario: number; activo: boolean
+  costo_unitario: number; activo: boolean; local: string
 }
 
 interface Movimiento {
@@ -923,6 +923,7 @@ export function ComprasPage() {
                   <thead>
                     <tr className="bg-gray-50 border-b border-gray-200">
                       <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600">Producto</th>
+                      <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600">Marca</th>
                       <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600">Categoría</th>
                       <th className="px-4 py-2.5 text-right text-xs font-semibold text-gray-600">Stock</th>
                       <th className="px-4 py-2.5 text-right text-xs font-semibold text-gray-600">Mínimo</th>
@@ -945,6 +946,7 @@ export function ComprasPage() {
                           bajoMin && !sinStock && 'bg-orange-50'
                         )}>
                           <td className="px-4 py-2 font-medium text-gray-900">{p.nombre}</td>
+                          <td className="px-4 py-2 text-gray-500 text-xs">{p.marca || <span className="text-gray-300">—</span>}</td>
                           <td className="px-4 py-2 text-gray-600">{p.categoria}</td>
                           <td className="px-4 py-2 text-right font-medium">
                             <span className={sinStock ? 'text-red-600' : bajoMin ? 'text-orange-600' : 'text-gray-900'}>
