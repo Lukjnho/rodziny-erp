@@ -106,7 +106,8 @@ export function CierreCaja() {
       const resumen = await obtenerVentasFudo(local, fFecha, setFudoProgreso, cajaFudoId, horaDesde, horaHasta, fudoUserId)
       setFudoResumen(resumen)
       // Auto-completar campos del formulario
-      setFFudoEfvo(resumen.efectivo > 0 ? String(Math.round(resumen.efectivo)) : '')
+      // Efectivo NO se auto-completa: el cajero lo carga manualmente del arqueo/ticket
+      // porque incluye monto inicial, retiros, y tickets de otros cajeros en la misma caja
       setFFudoQR(resumen.qr > 0 ? String(Math.round(resumen.qr)) : '')
       setFFudoDebito(resumen.debito > 0 ? String(Math.round(resumen.debito)) : '')
       setFFudoCredito(resumen.credito > 0 ? String(Math.round(resumen.credito)) : '')
