@@ -23,6 +23,29 @@ const TURNOS: Record<string, { key: string; label: string; horaDesde: string; ho
   ],
 }
 
+// Cajeros de Fudo por local (nombre → ID de usuario en Fudo)
+const CAJEROS_FUDO: Record<string, { id: string; nombre: string }[]> = {
+  vedia: [
+    { id: '', nombre: 'Todos' },
+    { id: '1', nombre: 'Marcos' },
+    { id: '3', nombre: 'Brian' },
+    { id: '5', nombre: 'Martín' },
+    { id: '6', nombre: 'Tamara' },
+    { id: '7', nombre: 'Tomás Lis' },
+    { id: '8', nombre: 'Lucas Lis' },
+  ],
+  saavedra: [
+    { id: '', nombre: 'Todos' },
+    { id: '20', nombre: 'Ian' },
+    { id: '15', nombre: 'Leandro' },
+    { id: '5', nombre: 'Lily' },
+    { id: '2', nombre: 'Karen' },
+    { id: '16', nombre: 'Selene' },
+    { id: '18', nombre: 'Emanuel' },
+    { id: '19', nombre: 'Gerardo' },
+  ],
+}
+
 interface CierreRow {
   id: string; local: string; fecha: string; turno: string; caja: string | null
   hora_inicio: string | null; hora_cierre: string | null
@@ -59,6 +82,7 @@ export function CierreCaja() {
   const [fOtrosRetiros, setFOtrosRetiros] = useState('')
   const [fOtrosRetNota, setFOtrosRetNota] = useState('')
   const [fNota, setFNota]       = useState('')
+  const [fCajeroId, setFCajeroId] = useState('') // ID usuario Fudo (vacío = todos)
 
   // Fudo API state
   const [fudoCargando, setFudoCargando] = useState(false)
@@ -78,7 +102,8 @@ export function CierreCaja() {
       const turnoConfig = TURNOS[local]?.find((t) => t.key === fTurno)
       const horaDesde = turnoConfig?.horaDesde
       const horaHasta = turnoConfig?.horaHasta
-      const resumen = await obtenerVentasFudo(local, fFecha, setFudoProgreso, cajaFudoId, horaDesde, horaHasta)
+      const fudoUserId = fCajeroId || undefined
+      const resumen = await obtenerVentasFudo(local, fFecha, setFudoProgreso, cajaFudoId, horaDesde, horaHasta, fudoUserId)
       setFudoResumen(resumen)
       // Auto-completar campos del formulario
       setFFudoEfvo(resumen.efectivo > 0 ? String(Math.round(resumen.efectivo)) : '')
@@ -251,7 +276,7 @@ export function CierreCaja() {
     <div className="space-y-4">
       {/* Filtros */}
       <div className="flex items-center gap-4 flex-wrap">
-        <LocalSelector value={local} onChange={(v) => { setLocal(v as 'vedia' | 'saavedra'); setFTurno(TURNOS[v]?.[0]?.key ?? '') }} />
+        <LocalSelector value={local} onChange={(v) => { setLocal(v as 'vedia' | 'saavedra'); setFTurno(TURNOS[v]?.[0]?.key ?? ''); setFCajeroId('') }} />
         <div className="flex items-center gap-2">
           <label className="text-xs font-medium text-gray-500">Período</label>
           <input
@@ -329,6 +354,14 @@ export function CierreCaja() {
               <select value={fTurno} onChange={(e) => setFTurno(e.target.value)}
                 className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500">
                 {TURNOS[local]?.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Cajero (Fudo)</label>
+              <select value={fCajeroId} onChange={(e) => setFCajeroId(e.target.value)}
+                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500">
+                {CAJEROS_FUDO[local]?.map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}
               </select>
             </div>
 

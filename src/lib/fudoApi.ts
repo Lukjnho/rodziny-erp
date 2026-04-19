@@ -74,11 +74,12 @@ export async function obtenerVentasFudo(
   cajaId?: string,
   horaDesde?: string,
   horaHasta?: string,
+  userId?: string,
 ): Promise<VentasFudoResumen> {
   onProgreso?.('Consultando ventas en Fudo...')
 
   const { data, error } = await supabase.functions.invoke('fudo-ventas', {
-    body: { local, fecha, cajaId, horaDesde, horaHasta },
+    body: { local, fecha, cajaId, horaDesde, horaHasta, userId },
   })
 
   if (error) {

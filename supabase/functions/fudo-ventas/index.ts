@@ -158,6 +158,7 @@ Deno.serve(async (req) => {
     const cajaId: string | undefined = body.cajaId // CashRegister ID de Fudo (opcional)
     const horaDesde: string | undefined = body.horaDesde // HH:MM (hora local Argentina, opcional)
     const horaHasta: string | undefined = body.horaHasta // HH:MM (hora local Argentina, opcional)
+    const userId: string | undefined = body.userId // ID del usuario/cajero de Fudo (opcional)
 
     // 1) Encontrar la última página con datos (búsqueda binaria).
     //    Funciona tanto para Vedia (~340 páginas) como Saavedra (~25 páginas).
@@ -212,6 +213,7 @@ Deno.serve(async (req) => {
       const sigDia = d.toISOString().substring(0, 10)
       fechaFin = `${sigDia}T02:59:59Z`
     }
+    console.log('=== RANGO ===', JSON.stringify({ fechaInicio, fechaFin, turnoFiltrado: !!(horaDesde && horaHasta) }))
     const ventasDelDia: JsonApiResource[] = []
     const paymentsMap = new Map<string, JsonApiResource>()
     const usersMap = new Map<string, JsonApiResource>()
@@ -246,6 +248,12 @@ Deno.serve(async (req) => {
             const crData = sale.relationships?.cashRegister?.data
             const saleCajaId = crData && !Array.isArray(crData) ? crData.id : null
             if (saleCajaId !== cajaId) continue
+          }
+          // Filtrar por cajero/usuario si se especificó
+          if (userId) {
+            const cbData = sale.relationships?.closedBy?.data
+            const saleUserId = cbData && !Array.isArray(cbData) ? cbData.id : null
+            if (saleUserId !== userId) continue
           }
           ventasDelDia.push(sale)
         } else if (closedAt < fechaInicio) {
