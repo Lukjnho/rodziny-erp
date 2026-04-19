@@ -14,14 +14,12 @@ const CAJAS: Record<string, string[]> = {
 
 const TURNOS: Record<string, { key: string; label: string; horaDesde: string; horaHasta: string }[]> = {
   vedia: [
-    { key: 'almuerzo', label: 'Almuerzo',  horaDesde: '07:00', horaHasta: '16:00' },
-    { key: 'cena',     label: 'Cena',      horaDesde: '16:00', horaHasta: '23:59' },
+    { key: 'mediodia', label: 'Mediodía (11 a 16h)',  horaDesde: '11:00', horaHasta: '16:00' },
+    { key: 'noche',    label: 'Noche (20 a 01h)',      horaDesde: '20:00', horaHasta: '01:00' },
   ],
   saavedra: [
-    { key: 'desayuno',  label: 'Desayuno',  horaDesde: '07:00', horaHasta: '11:30' },
-    { key: 'almuerzo',  label: 'Almuerzo',  horaDesde: '07:00', horaHasta: '16:00' },
-    { key: 'merienda',  label: 'Merienda',  horaDesde: '16:00', horaHasta: '19:00' },
-    { key: 'cena',      label: 'Cena',      horaDesde: '19:00', horaHasta: '23:59' },
+    { key: 'manana', label: 'Mañana (7:30 a 15:30h)',   horaDesde: '07:00', horaHasta: '15:30' },
+    { key: 'tarde',  label: 'Tarde-Noche (17 a 00:30h)', horaDesde: '16:30', horaHasta: '00:30' },
   ],
 }
 

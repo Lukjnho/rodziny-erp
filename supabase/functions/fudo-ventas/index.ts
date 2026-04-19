@@ -174,25 +174,23 @@ Deno.serve(async (req) => {
       // Filtrar por turno: convertir hora local Argentina a UTC (+3h)
       const [hd, md] = horaDesde.split(':').map(Number)
       const [hh, mh] = horaHasta.split(':').map(Number)
-      const utcHd = hd + 3 // Argentina = UTC-3
-      const utcHh = hh + 3
-      // Si la hora UTC pasa de 24, es el día siguiente
-      if (utcHd >= 24) {
-        const d2 = new Date(fecha + 'T12:00:00Z')
-        d2.setUTCDate(d2.getUTCDate() + 1)
-        const sig = d2.toISOString().substring(0, 10)
-        fechaInicio = `${sig}T${String(utcHd - 24).padStart(2, '0')}:${String(md).padStart(2, '0')}:00Z`
-      } else {
-        fechaInicio = `${fecha}T${String(utcHd).padStart(2, '0')}:${String(md).padStart(2, '0')}:00Z`
-      }
-      if (utcHh >= 24) {
-        const d2 = new Date(fecha + 'T12:00:00Z')
-        d2.setUTCDate(d2.getUTCDate() + 1)
-        const sig = d2.toISOString().substring(0, 10)
-        fechaFin = `${sig}T${String(utcHh - 24).padStart(2, '0')}:${String(mh).padStart(2, '0')}:59Z`
-      } else {
-        fechaFin = `${fecha}T${String(utcHh).padStart(2, '0')}:${String(mh).padStart(2, '0')}:59Z`
-      }
+
+      // Hora inicio → UTC
+      const utcHd = hd + 3
+      const inicioSigDia = utcHd >= 24
+      const inicioFecha = inicioSigDia
+        ? (() => { const d2 = new Date(fecha + 'T12:00:00Z'); d2.setUTCDate(d2.getUTCDate() + 1); return d2.toISOString().substring(0, 10) })()
+        : fecha
+      fechaInicio = `${inicioFecha}T${String(utcHd % 24).padStart(2, '0')}:${String(md).padStart(2, '0')}:00Z`
+
+      // Hora fin → UTC. Si horaHasta < horaDesde, cruza medianoche (ej: 20:00-01:00)
+      const cruzaMedianoche = hh < hd
+      const utcHh = hh + 3 + (cruzaMedianoche ? 24 : 0)
+      const finSigDia = utcHh >= 24
+      const finFecha = finSigDia
+        ? (() => { const d2 = new Date(fecha + 'T12:00:00Z'); d2.setUTCDate(d2.getUTCDate() + 1); return d2.toISOString().substring(0, 10) })()
+        : fecha
+      fechaFin = `${finFecha}T${String(utcHh % 24).padStart(2, '0')}:${String(mh).padStart(2, '0')}:59Z`
     } else {
       // Sin turno: día completo
       fechaInicio = `${fecha}T03:00:00Z`
