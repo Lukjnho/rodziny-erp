@@ -44,7 +44,7 @@ export function CierreCaja() {
   // Form state
   const hoy = new Date().toISOString().split('T')[0]
   const [fFecha, setFFecha]     = useState(hoy)
-  const [fTurno, setFTurno]     = useState('')
+  const [fTurno, setFTurno]     = useState(() => TURNOS['vedia'][0].key)
   const [fCaja, setFCaja]       = useState('')
   const [fHoraInicio, setFHoraInicio] = useState('')
   const [fHoraCierre, setFHoraCierre] = useState('')
@@ -251,7 +251,7 @@ export function CierreCaja() {
     <div className="space-y-4">
       {/* Filtros */}
       <div className="flex items-center gap-4 flex-wrap">
-        <LocalSelector value={local} onChange={(v) => setLocal(v as 'vedia' | 'saavedra')} />
+        <LocalSelector value={local} onChange={(v) => { setLocal(v as 'vedia' | 'saavedra'); setFTurno(TURNOS[v]?.[0]?.key ?? '') }} />
         <div className="flex items-center gap-2">
           <label className="text-xs font-medium text-gray-500">Período</label>
           <input
