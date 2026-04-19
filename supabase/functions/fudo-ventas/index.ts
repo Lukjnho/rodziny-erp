@@ -26,16 +26,26 @@ const AUTH_URL = 'https://auth.fu.do/api'
 const BASE_URL = 'https://api.fu.do/v1alpha1'
 const PAGE_SIZE = 500
 
-// IDs de medios de pago
-const PM = {
-  efectivo: '1',
-  qr: '14',
-  debito: '15',
-  credito: '16',
-  transferencia: '8',
-  mpLucas: '7',
-  ctaCte: '2',
-} as const
+// IDs de medios de pago POR LOCAL (cada local de Fudo tiene sus propios IDs)
+const PM_POR_LOCAL: Record<string, Record<string, string>> = {
+  vedia: {
+    efectivo: '1',
+    qr: '14',
+    debito: '15',
+    credito: '16',
+    transferencia: '8',
+    mpLucas: '7',
+    ctaCte: '2',
+  },
+  saavedra: {
+    efectivo: '1',
+    qr: '5',
+    debito: '8',
+    credito: '9',
+    transferencia: '6',
+    ctaCte: '2',
+  },
+}
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -118,9 +128,11 @@ Deno.serve(async (req) => {
       let cashRegisters = null
       let users = null
       let cashiers = null
-      try { cashRegisters = await fudoGet(token, 'cash-registers', { 'page[size]': '5' }) } catch { /* no existe */ }
-      try { users = await fudoGet(token, 'users', { 'page[size]': '5' }) } catch { /* no existe */ }
-      try { cashiers = await fudoGet(token, 'cashiers', { 'page[size]': '5' }) } catch { /* no existe */ }
+      let paymentMethods = null
+      try { cashRegisters = await fudoGet(token, 'cash-registers', { 'page[size]': '20' }) } catch { /* no existe */ }
+      try { users = await fudoGet(token, 'users', { 'page[size]': '20' }) } catch { /* no existe */ }
+      try { cashiers = await fudoGet(token, 'cashiers', { 'page[size]': '20' }) } catch { /* no existe */ }
+      try { paymentMethods = await fudoGet(token, 'payment-methods', { 'page[size]': '20' }) } catch { /* no existe */ }
 
       return new Response(
         JSON.stringify({
@@ -132,6 +144,7 @@ Deno.serve(async (req) => {
             cashRegisters,
             users,
             cashiers,
+            paymentMethods,
           },
         }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
@@ -297,20 +310,22 @@ Deno.serve(async (req) => {
       }
     }
 
-    const pmVals = Object.values(PM) as string[]
+    // Usar mapeo de medios de pago del local correspondiente
+    const pm = PM_POR_LOCAL[local] ?? PM_POR_LOCAL['vedia']
+    const pmVals = Object.values(pm)
     const resultado = {
       fecha,
       local,
       totalVentas,
       cantidadTickets: ventasDelDia.length,
       porMedioPago,
-      efectivo: porMedioPago[PM.efectivo] ?? 0,
-      qr: porMedioPago[PM.qr] ?? 0,
-      debito: porMedioPago[PM.debito] ?? 0,
-      credito: porMedioPago[PM.credito] ?? 0,
-      transferencia: porMedioPago[PM.transferencia] ?? 0,
-      mpLucas: porMedioPago[PM.mpLucas] ?? 0,
-      ctaCte: porMedioPago[PM.ctaCte] ?? 0,
+      efectivo: porMedioPago[pm.efectivo] ?? 0,
+      qr: porMedioPago[pm.qr] ?? 0,
+      debito: porMedioPago[pm.debito] ?? 0,
+      credito: porMedioPago[pm.credito] ?? 0,
+      transferencia: porMedioPago[pm.transferencia] ?? 0,
+      mpLucas: porMedioPago[pm.mpLucas ?? ''] ?? 0,
+      ctaCte: porMedioPago[pm.ctaCte] ?? 0,
       otros: Object.entries(porMedioPago)
         .filter(([id]) => !pmVals.includes(id))
         .reduce((s, [, v]) => s + v, 0),
