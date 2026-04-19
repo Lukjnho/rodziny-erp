@@ -143,6 +143,8 @@ Deno.serve(async (req) => {
     }
 
     const cajaId: string | undefined = body.cajaId // CashRegister ID de Fudo (opcional)
+    const horaDesde: string | undefined = body.horaDesde // HH:MM (hora local Argentina, opcional)
+    const horaHasta: string | undefined = body.horaHasta // HH:MM (hora local Argentina, opcional)
 
     // 1) Encontrar la última página con datos (búsqueda binaria).
     //    Funciona tanto para Vedia (~340 páginas) como Saavedra (~25 páginas).
@@ -164,11 +166,41 @@ Deno.serve(async (req) => {
 
     // 2) Paginar hacia atrás recolectando ventas del día
     //    Fudo guarda closedAt en UTC. Argentina = UTC-3.
-    const fechaInicio = `${fecha}T03:00:00Z`
-    const d = new Date(fecha + 'T12:00:00Z')
-    d.setUTCDate(d.getUTCDate() + 1)
-    const sigDia = d.toISOString().substring(0, 10)
-    const fechaFin = `${sigDia}T02:59:59Z`
+    //    Si se pasan horaDesde/horaHasta, filtrar por rango horario (turno).
+    let fechaInicio: string
+    let fechaFin: string
+
+    if (horaDesde && horaHasta) {
+      // Filtrar por turno: convertir hora local Argentina a UTC (+3h)
+      const [hd, md] = horaDesde.split(':').map(Number)
+      const [hh, mh] = horaHasta.split(':').map(Number)
+      const utcHd = hd + 3 // Argentina = UTC-3
+      const utcHh = hh + 3
+      // Si la hora UTC pasa de 24, es el día siguiente
+      if (utcHd >= 24) {
+        const d2 = new Date(fecha + 'T12:00:00Z')
+        d2.setUTCDate(d2.getUTCDate() + 1)
+        const sig = d2.toISOString().substring(0, 10)
+        fechaInicio = `${sig}T${String(utcHd - 24).padStart(2, '0')}:${String(md).padStart(2, '0')}:00Z`
+      } else {
+        fechaInicio = `${fecha}T${String(utcHd).padStart(2, '0')}:${String(md).padStart(2, '0')}:00Z`
+      }
+      if (utcHh >= 24) {
+        const d2 = new Date(fecha + 'T12:00:00Z')
+        d2.setUTCDate(d2.getUTCDate() + 1)
+        const sig = d2.toISOString().substring(0, 10)
+        fechaFin = `${sig}T${String(utcHh - 24).padStart(2, '0')}:${String(mh).padStart(2, '0')}:59Z`
+      } else {
+        fechaFin = `${fecha}T${String(utcHh).padStart(2, '0')}:${String(mh).padStart(2, '0')}:59Z`
+      }
+    } else {
+      // Sin turno: día completo
+      fechaInicio = `${fecha}T03:00:00Z`
+      const d = new Date(fecha + 'T12:00:00Z')
+      d.setUTCDate(d.getUTCDate() + 1)
+      const sigDia = d.toISOString().substring(0, 10)
+      fechaFin = `${sigDia}T02:59:59Z`
+    }
     const ventasDelDia: JsonApiResource[] = []
     const paymentsMap = new Map<string, JsonApiResource>()
     const usersMap = new Map<string, JsonApiResource>()

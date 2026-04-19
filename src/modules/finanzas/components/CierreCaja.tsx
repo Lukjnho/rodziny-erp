@@ -12,16 +12,16 @@ const CAJAS: Record<string, string[]> = {
   saavedra: ['Caja Principal'],
 }
 
-const TURNOS: Record<string, { key: string; label: string }[]> = {
+const TURNOS: Record<string, { key: string; label: string; horaDesde: string; horaHasta: string }[]> = {
   vedia: [
-    { key: 'almuerzo', label: 'Almuerzo' },
-    { key: 'cena',     label: 'Cena' },
+    { key: 'almuerzo', label: 'Almuerzo',  horaDesde: '07:00', horaHasta: '16:00' },
+    { key: 'cena',     label: 'Cena',      horaDesde: '16:00', horaHasta: '23:59' },
   ],
   saavedra: [
-    { key: 'desayuno',  label: 'Desayuno' },
-    { key: 'almuerzo',  label: 'Almuerzo' },
-    { key: 'merienda',  label: 'Merienda' },
-    { key: 'cena',      label: 'Cena' },
+    { key: 'desayuno',  label: 'Desayuno',  horaDesde: '07:00', horaHasta: '11:30' },
+    { key: 'almuerzo',  label: 'Almuerzo',  horaDesde: '07:00', horaHasta: '16:00' },
+    { key: 'merienda',  label: 'Merienda',  horaDesde: '16:00', horaHasta: '19:00' },
+    { key: 'cena',      label: 'Cena',      horaDesde: '19:00', horaHasta: '23:59' },
   ],
 }
 
@@ -76,7 +76,11 @@ export function CierreCaja() {
     try {
       // Buscar el CashRegister ID de Fudo para la caja seleccionada
       const cajaFudoId = fCaja ? CAJA_FUDO_ID[local]?.[fCaja] : undefined
-      const resumen = await obtenerVentasFudo(local, fFecha, setFudoProgreso, cajaFudoId)
+      // Buscar horarios del turno seleccionado para filtrar ventas
+      const turnoConfig = TURNOS[local]?.find((t) => t.key === fTurno)
+      const horaDesde = turnoConfig?.horaDesde
+      const horaHasta = turnoConfig?.horaHasta
+      const resumen = await obtenerVentasFudo(local, fFecha, setFudoProgreso, cajaFudoId, horaDesde, horaHasta)
       setFudoResumen(resumen)
       // Auto-completar campos del formulario
       setFFudoEfvo(resumen.efectivo > 0 ? String(Math.round(resumen.efectivo)) : '')
@@ -84,7 +88,8 @@ export function CierreCaja() {
       setFFudoDebito(resumen.debito > 0 ? String(Math.round(resumen.debito)) : '')
       setFFudoCredito(resumen.credito > 0 ? String(Math.round(resumen.credito)) : '')
       setFFudoTransf(resumen.transferencia > 0 ? String(Math.round(resumen.transferencia)) : '')
-      setFudoProgreso(`${resumen.cantidadTickets} tickets cargados`)
+      const turnoLabel = turnoConfig ? ` (${turnoConfig.label})` : ''
+      setFudoProgreso(`${resumen.cantidadTickets} tickets del ${fFecha}${turnoLabel} — Total: ${new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(resumen.totalVentas)}`)
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Error desconocido'
       if (msg.includes('Failed to fetch') || msg.includes('NetworkError') || msg.includes('CORS')) {
