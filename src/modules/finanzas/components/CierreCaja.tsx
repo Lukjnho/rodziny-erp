@@ -458,7 +458,7 @@ export function CierreCaja() {
               <label className="block text-xs font-medium text-gray-600 mb-1">Total Fudo</label>
               {(() => {
                 const parse = (v: string) => parseFloat((v || '0').replace(/\./g, '').replace(',', '.')) || 0
-                const total = parse(fFudoEfvo) + parse(fFudoQR) + parse(fFudoDebito) + parse(fFudoCredito) + parse(fFudoTransf)
+                const total = parse(fFudoEfvo) + parse(fFudoQR) + parse(fFudoDebito) + parse(fFudoCredito) + parse(fFudoTransf) + parse(fFondoAp)
                 return (
                   <div className="w-full rounded-md px-3 py-2 text-sm font-semibold bg-gray-100 text-gray-800">
                     {total > 0 ? formatARS(total) : '—'}
@@ -486,10 +486,12 @@ export function CierreCaja() {
               {(() => {
                 const parse = (v: string) => parseFloat((v || '0').replace(/\./g, '').replace(',', '.')) || 0
                 const fudoEfvo = parse(fFudoEfvo)
+                const fondoAp = parse(fFondoAp)
                 const cont = parse(fContado)
                 const otrosRet = parse(fOtrosRetiros)
+                const esperado = fudoEfvo + fondoAp
                 const mostrar = fudoEfvo > 0 && cont > 0
-                const dif = mostrar ? (cont + otrosRet) - fudoEfvo : 0
+                const dif = mostrar ? (cont + otrosRet) - esperado : 0
                 return (
                   <div className={cn(
                     'w-full rounded-md px-3 py-2 text-sm font-medium',
@@ -499,7 +501,7 @@ export function CierreCaja() {
                   </div>
                 )
               })()}
-              <p className="text-[10px] text-gray-400 mt-0.5">Contado real + retiros vs. efectivo Fudo (ambos incluyen cambio de apertura)</p>
+              <p className="text-[10px] text-gray-400 mt-0.5">Contado real + retiros vs. (efectivo Fudo + cambio apertura)</p>
             </div>
 
             {/* Fila 2: Cambio siguiente, Retiro, Otros retiros */}
