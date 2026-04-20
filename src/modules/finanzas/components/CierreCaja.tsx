@@ -403,7 +403,7 @@ export function CierreCaja() {
                 <div className="bg-green-50 border border-green-200 rounded-md px-3 py-2 mb-3">
                   <p className="text-xs text-green-700">
                     {fudoResumen.cantidadTickets} tickets del {new Date(fudoResumen.fecha + 'T12:00:00').toLocaleDateString('es-AR')}
-                    {' — '}Total: {formatARS(fudoResumen.totalVentas)}
+                    {' — '}Total: {formatARS(fudoResumen.totalVentas + (parseFloat((fFondoAp || '0').replace(/\./g, '').replace(',', '.')) || 0))}
                     {fudoResumen.cajero && ` — Cajero: ${fudoResumen.cajero}`}
                     {fudoResumen.mpLucas > 0 && ` — MP Lucas: ${formatARS(fudoResumen.mpLucas)}`}
                     {fudoResumen.ctaCte > 0 && ` — Cta.Cte: ${formatARS(fudoResumen.ctaCte)}`}
