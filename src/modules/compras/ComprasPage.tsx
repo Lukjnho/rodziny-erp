@@ -325,6 +325,9 @@ export function ComprasPage() {
   // Modal ajuste individual (legacy)
   const [modalAjuste, setModalAjuste] = useState(false)
 
+  // Modal crear/editar producto
+  const [productoModal, setProductoModal] = useState<Producto | 'nuevo' | null>(null)
+
   const [filtroPagos, setFiltroPagos] = useState<'todos' | 'pendientes' | 'pagados' | 'vencidos' | 'semana'>('todos')
   const [filtroProveedor, setFiltroProveedor] = useState('')
 
@@ -450,6 +453,13 @@ export function ComprasPage() {
     const valorTotal = activos.reduce((s, p) => s + (p.stock_actual * p.costo_unitario), 0)
     return { total: activos.length, bajoMinimo: bajoMinimo.length, sinStock: sinStock.length, valorTotal, inactivos: inactivos.length }
   }, [productos])
+
+  const categoriasExistentes = useMemo(() =>
+    [...new Set((productos ?? []).map((p) => p.categoria).filter(Boolean))].sort(),
+    [productos])
+  const proveedoresExistentes = useMemo(() =>
+    [...new Set((productos ?? []).map((p) => p.proveedor).filter(Boolean))].sort(),
+    [productos])
 
   // ── Recepción de mercadería ──────────────────────────────────────────────
   interface DetalleConMatch extends DetalleRow {
@@ -759,10 +769,16 @@ export function ComprasPage() {
             )}
             <span className="text-xs text-gray-400">{productosFiltrados.length} productos</span>
             {!modoConteo ? (
-              <button
-                onClick={() => { setModoConteo(true); setConteos({}); setConteoResultado(null) }}
-                className="ml-auto bg-blue-600 hover:bg-blue-700 text-white text-sm rounded px-3 py-1.5"
-              >Conteo de inventario</button>
+              <div className="ml-auto flex gap-2">
+                <button
+                  onClick={() => setProductoModal('nuevo')}
+                  className="bg-rodziny-700 hover:bg-rodziny-800 text-white text-sm rounded px-3 py-1.5"
+                >+ Nuevo producto</button>
+                <button
+                  onClick={() => { setModoConteo(true); setConteos({}); setConteoResultado(null) }}
+                  className="bg-blue-600 hover:bg-blue-700 text-white text-sm rounded px-3 py-1.5"
+                >Conteo de inventario</button>
+              </div>
             ) : (
               <div className="ml-auto flex gap-2">
                 <button
@@ -989,6 +1005,7 @@ export function ComprasPage() {
                       <th className="px-4 py-2.5 text-right text-xs font-semibold text-gray-600">Valor</th>
                       <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-600">Estado</th>
                       <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-600">Activo</th>
+                      <th className="px-4 py-2.5 w-10"></th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1072,6 +1089,17 @@ export function ComprasPage() {
                               )} />
                             </button>
                           </td>
+                          <td className="px-2 py-2 text-center">
+                            <button
+                              onClick={() => setProductoModal(p)}
+                              className="text-gray-400 hover:text-rodziny-700 transition-colors"
+                              title="Editar producto"
+                            >
+                              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+                                <path d="M2.695 14.763l-1.262 3.154a.5.5 0 00.65.65l3.155-1.262a4 4 0 001.343-.885L17.5 5.5a2.121 2.121 0 00-3-3L3.58 13.42a4 4 0 00-.885 1.343z" />
+                              </svg>
+                            </button>
+                          </td>
                         </tr>
                       )
                     })}
@@ -1080,6 +1108,22 @@ export function ComprasPage() {
               </div>
             )}
           </div>}
+
+          {/* Modal crear/editar producto */}
+          {productoModal && (
+            <ModalProducto
+              producto={productoModal === 'nuevo' ? null : productoModal}
+              local={local}
+              categoriasExistentes={categoriasExistentes}
+              proveedoresExistentes={proveedoresExistentes}
+              onClose={() => setProductoModal(null)}
+              onSaved={() => {
+                setProductoModal(null)
+                qc.invalidateQueries({ queryKey: ['productos_stock'] })
+                qc.invalidateQueries({ queryKey: ['productos_activos'] })
+              }}
+            />
+          )}
         </>
       )}
 
@@ -1731,6 +1775,143 @@ export function ComprasPage() {
         </div>
       )}
     </PageContainer>
+  )
+}
+
+// ── Modal: Crear / Editar producto ─────────────────────────────────────────
+
+function ModalProducto({ producto, local, categoriasExistentes, proveedoresExistentes, onClose, onSaved }: {
+  producto: Producto | null // null = nuevo
+  local: string
+  categoriasExistentes: string[]
+  proveedoresExistentes: string[]
+  onClose: () => void
+  onSaved: () => void
+}) {
+  const [nombre, setNombre] = useState(producto?.nombre ?? '')
+  const [marca, setMarca] = useState(producto?.marca ?? '')
+  const [categoria, setCategoria] = useState(producto?.categoria ?? '')
+  const [unidad, setUnidad] = useState(producto?.unidad ?? 'unidad')
+  const [stockMinimo, setStockMinimo] = useState(producto ? String(producto.stock_minimo) : '0')
+  const [proveedor, setProveedor] = useState(producto?.proveedor ?? '')
+  const [costoUnitario, setCostoUnitario] = useState(producto ? String(producto.costo_unitario) : '0')
+  const [guardando, setGuardando] = useState(false)
+  const [error, setError] = useState('')
+
+  async function guardar() {
+    if (!nombre.trim()) { setError('El nombre es obligatorio'); return }
+    if (!categoria.trim()) { setError('La categoría es obligatoria'); return }
+    setGuardando(true)
+    setError('')
+
+    const payload = {
+      nombre: nombre.trim(),
+      marca: marca.trim() || null,
+      categoria: categoria.trim(),
+      unidad: unidad.trim() || 'unidad',
+      stock_minimo: parseFloat(stockMinimo.replace(',', '.')) || 0,
+      proveedor: proveedor.trim() || '',
+      costo_unitario: parseFloat(costoUnitario.replace(',', '.')) || 0,
+      local,
+      updated_at: new Date().toISOString(),
+    }
+
+    try {
+      if (producto) {
+        const { error: err } = await supabase.from('productos').update(payload).eq('id', producto.id)
+        if (err) throw err
+      } else {
+        const { error: err } = await supabase.from('productos').insert({ ...payload, stock_actual: 0, activo: true })
+        if (err) throw err
+      }
+      onSaved()
+    } catch (e: any) {
+      setError(e.message ?? 'Error al guardar')
+      setGuardando(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
+      <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-lg space-y-4" onClick={(e) => e.stopPropagation()}>
+        <h3 className="text-sm font-semibold text-gray-800">
+          {producto ? 'Editar producto' : 'Nuevo producto'}
+        </h3>
+
+        {error && <div className="text-xs text-red-600 bg-red-50 rounded px-3 py-2">{error}</div>}
+
+        <div className="grid grid-cols-2 gap-3">
+          <div className="col-span-2">
+            <label className="block text-xs font-medium text-gray-600 mb-1">Nombre *</label>
+            <input value={nombre} onChange={(e) => setNombre(e.target.value)}
+              className="w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm" />
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Marca</label>
+            <input value={marca} onChange={(e) => setMarca(e.target.value)}
+              placeholder="Ej: La Salteña"
+              className="w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm" />
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Categoría *</label>
+            <input list="cats-list" value={categoria} onChange={(e) => setCategoria(e.target.value)}
+              className="w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm" />
+            <datalist id="cats-list">
+              {categoriasExistentes.map((c) => <option key={c} value={c} />)}
+            </datalist>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Unidad</label>
+            <select value={unidad} onChange={(e) => setUnidad(e.target.value)}
+              className="w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm">
+              <option value="unidad">unidad</option>
+              <option value="kg">kg</option>
+              <option value="litro">litro</option>
+              <option value="paquete">paquete</option>
+              <option value="caja">caja</option>
+              <option value="bolsa">bolsa</option>
+              <option value="botella">botella</option>
+              <option value="lata">lata</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Stock mínimo</label>
+            <input type="number" step="any" value={stockMinimo} onChange={(e) => setStockMinimo(e.target.value)}
+              className="w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm" />
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Proveedor</label>
+            <input list="provs-list" value={proveedor} onChange={(e) => setProveedor(e.target.value)}
+              className="w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm" />
+            <datalist id="provs-list">
+              {proveedoresExistentes.map((p) => <option key={p} value={p} />)}
+            </datalist>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Costo unitario ($)</label>
+            <input type="number" step="any" value={costoUnitario} onChange={(e) => setCostoUnitario(e.target.value)}
+              className="w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm" />
+          </div>
+        </div>
+
+        <div className="flex justify-end gap-2 pt-2">
+          <button onClick={onClose}
+            className="px-3 py-1.5 text-xs text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50">
+            Cancelar
+          </button>
+          <button onClick={guardar} disabled={guardando}
+            className="px-3 py-1.5 text-xs text-white bg-rodziny-700 rounded-md hover:bg-rodziny-800 font-medium disabled:opacity-50">
+            {guardando ? 'Guardando...' : producto ? 'Guardar cambios' : 'Crear producto'}
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }
 
