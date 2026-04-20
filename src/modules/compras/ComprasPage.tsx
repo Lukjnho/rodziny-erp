@@ -189,6 +189,30 @@ export function ComprasPage() {
     enabled: tab === 'pagos',
   })
 
+  interface PagoGastoRow {
+    id: string; gasto_id: string; fecha_pago: string; monto: number; medio_pago: string
+  }
+
+  const { data: pagosGastosData } = useQuery({
+    queryKey: ['pagos_gastos_compras', local],
+    queryFn: async () => {
+      const ids = (gastosPagos ?? []).map((g) => g.id)
+      if (!ids.length) return []
+      const { data } = await supabase
+        .from('pagos_gastos')
+        .select('id,gasto_id,fecha_pago,monto,medio_pago')
+        .in('gasto_id', ids)
+      return (data ?? []) as PagoGastoRow[]
+    },
+    enabled: tab === 'pagos' && !!(gastosPagos && gastosPagos.length > 0),
+  })
+
+  const pagosGastosMap = useMemo(() => {
+    const m = new Map<string, PagoGastoRow>()
+    for (const p of pagosGastosData ?? []) m.set(p.gasto_id, p)
+    return m
+  }, [pagosGastosData])
+
   interface ItemRecepcion {
     producto_id: string
     producto_nombre: string
@@ -258,6 +282,7 @@ export function ComprasPage() {
     })
     setGastoAPagar(null)
     qc.invalidateQueries({ queryKey: ['gastos_pagos'] })
+    qc.invalidateQueries({ queryKey: ['pagos_gastos_compras'] })
     qc.invalidateQueries({ queryKey: ['pagos_gastos'] })
   }
 
@@ -300,7 +325,7 @@ export function ComprasPage() {
   // Modal ajuste individual (legacy)
   const [modalAjuste, setModalAjuste] = useState(false)
 
-  const [filtroPagos, setFiltroPagos] = useState<'todos' | 'pendientes' | 'vencidos' | 'semana'>('pendientes')
+  const [filtroPagos, setFiltroPagos] = useState<'todos' | 'pendientes' | 'pagados' | 'vencidos' | 'semana'>('todos')
   const [filtroProveedor, setFiltroProveedor] = useState('')
 
   // Mes seleccionado para el resumen (default: mes actual)
@@ -328,6 +353,7 @@ export function ComprasPage() {
     }
 
     if (filtroPagos === 'pendientes') lista = lista.filter((g) => g.estado_pago?.toLowerCase() !== 'pagado')
+    else if (filtroPagos === 'pagados') lista = lista.filter((g) => g.estado_pago?.toLowerCase() === 'pagado')
     else if (filtroPagos === 'vencidos') lista = lista.filter((g) => g.estado_pago?.toLowerCase() !== 'pagado' && g.fecha_vencimiento && g.fecha_vencimiento < hoy)
     else if (filtroPagos === 'semana') lista = lista.filter((g) => g.estado_pago?.toLowerCase() !== 'pagado' && g.fecha_vencimiento && g.fecha_vencimiento >= hoy && g.fecha_vencimiento <= en7dias)
 
@@ -1427,7 +1453,7 @@ export function ComprasPage() {
           </div>
 
           {/* KPIs de estado */}
-          <div className="grid grid-cols-3 gap-3 mb-4">
+          <div className="grid grid-cols-4 gap-3 mb-4">
             <button
               onClick={() => setFiltroPagos(filtroPagos === 'pendientes' ? 'todos' : 'pendientes')}
               className={cn('bg-white rounded-lg border p-4 text-left transition-colors',
@@ -1458,6 +1484,15 @@ export function ComprasPage() {
               <p className={cn('text-lg font-semibold', pagosKpis.cantSemana > 0 ? 'text-orange-600' : 'text-green-600')}>
                 {formatARS(pagosKpis.totalSemana)}
               </p>
+            </button>
+            <button
+              onClick={() => setFiltroPagos(filtroPagos === 'pagados' ? 'todos' : 'pagados')}
+              className={cn('bg-white rounded-lg border p-4 text-left transition-colors',
+                filtroPagos === 'pagados' ? 'border-green-500 ring-1 ring-green-200 bg-green-50' : 'border-surface-border hover:border-gray-300'
+              )}
+            >
+              <p className="text-xs text-gray-500 mb-1">Pagados ({pagosKpis.cantPagadoMes})</p>
+              <p className="text-lg font-semibold text-green-600">{formatARS(pagosKpis.pagadoMes)}</p>
             </button>
           </div>
 
@@ -1547,13 +1582,14 @@ export function ComprasPage() {
                     <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600">Categoría</th>
                     <th className="px-4 py-2.5 text-right text-xs font-semibold text-gray-600">Importe</th>
                     <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-600">Estado</th>
-                    <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600">Fecha compra</th>
-                    <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-600 w-24">Acción</th>
+                    <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-600">Medio pago</th>
+                    <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-600">Fecha pago</th>
+                    <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-600 w-28">Acción</th>
                   </tr>
                 </thead>
                 <tbody>
                   {pagosFiltrados.length === 0 ? (
-                    <tr><td colSpan={7} className="px-4 py-8 text-center text-gray-400">
+                    <tr><td colSpan={8} className="px-4 py-8 text-center text-gray-400">
                       {filtroPagos === 'todos' ? 'No hay gastos cargados' : 'No hay pagos en esta categoría'}
                     </td></tr>
                   ) : pagosFiltrados.map((g) => {
@@ -1562,10 +1598,11 @@ export function ComprasPage() {
                     const pagado = g.estado_pago?.toLowerCase() === 'pagado'
                     const vencido = !pagado && g.fecha_vencimiento && g.fecha_vencimiento < hoy
                     const proxSemana = !pagado && !vencido && g.fecha_vencimiento && g.fecha_vencimiento <= en7dias
+                    const pagoInfo = pagosGastosMap.get(g.id)
                     return (
                       <tr key={g.id} className={cn(
                         'border-b border-gray-50 hover:bg-gray-50',
-                        pagado && 'opacity-50',
+                        pagado && 'bg-green-50/40',
                         vencido && 'bg-red-50',
                         proxSemana && 'bg-orange-50'
                       )}>
@@ -1594,16 +1631,33 @@ export function ComprasPage() {
                             <span className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-700">A pagar</span>
                           )}
                         </td>
-                        <td className="px-4 py-2 text-gray-500 text-xs">
-                          {g.fecha ? new Date(g.fecha + 'T12:00:00').toLocaleDateString('es-AR', { day: '2-digit', month: 'short' }) : '—'}
+                        <td className="px-4 py-2 text-center text-xs text-gray-600">
+                          {pagoInfo ? (MEDIO_PAGO_LABEL[pagoInfo.medio_pago as MedioPago] ?? pagoInfo.medio_pago) : '—'}
+                        </td>
+                        <td className="px-4 py-2 text-center text-xs text-gray-600 whitespace-nowrap">
+                          {pagoInfo ? new Date(pagoInfo.fecha_pago + 'T12:00:00').toLocaleDateString('es-AR', { day: '2-digit', month: 'short' }) : '—'}
                         </td>
                         <td className="px-4 py-2 text-center">
-                          {!pagado && (
+                          {!pagado ? (
                             <button
                               onClick={() => abrirModalPagoCompra(g)}
                               className="px-2 py-1 text-xs rounded border border-green-300 text-green-700 hover:bg-green-50 transition-colors"
                             >
                               Registrar pago
+                            </button>
+                          ) : (
+                            <button
+                              onClick={async () => {
+                                if (!window.confirm(`¿Revertir el pago de ${g.proveedor || 'sin proveedor'} por ${formatARS(g.importe_total)}?`)) return
+                                await supabase.from('gastos').update({ estado_pago: 'pendiente', fecha_vencimiento: null }).eq('id', g.id)
+                                await supabase.from('pagos_gastos').delete().eq('gasto_id', g.id)
+                                qc.invalidateQueries({ queryKey: ['gastos_pagos'] })
+                                qc.invalidateQueries({ queryKey: ['pagos_gastos_compras'] })
+                                qc.invalidateQueries({ queryKey: ['pagos_gastos'] })
+                              }}
+                              className="px-2 py-1 text-xs rounded border border-red-200 text-red-600 hover:bg-red-50 transition-colors"
+                            >
+                              Revertir
                             </button>
                           )}
                         </td>
