@@ -239,12 +239,16 @@ export function CierreCaja() {
     setFormOpen(true)
   }
 
+  // ── helper: diferencia real = (contado + retiros) - (efectivo fudo + cambio apertura) ──
+  const calcDif = (c: CierreRow) =>
+    (c.monto_contado + (c.otros_retiros ?? 0)) - (c.fudo_efectivo + c.fondo_apertura)
+
   // ── resumen del mes ────────────────────────────────────────────────────────
   const resumen = useMemo(() => {
     if (!cierres) return { total: 0, positivos: 0, negativos: 0, cantidad: 0, verificados: 0, pendientes: 0, totalRetiros: 0, totalOtrosRetiros: 0, totalFudo: 0 }
     let total = 0, positivos = 0, negativos = 0, verificados = 0, totalRetiros = 0, totalOtrosRetiros = 0, totalFudo = 0
     for (const c of cierres) {
-      const dif = c.diferencia ?? 0
+      const dif = calcDif(c)
       total += dif
       if (dif > 0) positivos += dif
       if (dif < 0) negativos += dif
@@ -573,7 +577,7 @@ export function CierreCaja() {
               </thead>
               <tbody>
                 {porFecha.map(([fecha, rows]) => {
-                  const difDia = rows.reduce((s, r) => s + (r.diferencia ?? 0), 0)
+                  const difDia = rows.reduce((s, r) => s + calcDif(r), 0)
                   const efectivoDia = rows.reduce((s, r) => s + (r.retiro > 0 ? r.retiro : r.monto_contado) + (r.otros_retiros ?? 0), 0)
                   const fudoDia = rows.reduce((s, r) => s + (r.monto_esperado ?? 0), 0)
                   return rows.map((c, i) => (
@@ -623,15 +627,18 @@ export function CierreCaja() {
                         ) : '—'}
                       </td>
                       <td className="px-4 py-2 text-right">
-                        {c.diferencia != null ? (
-                          <span className={cn(
-                            'inline-block px-2 py-0.5 rounded text-xs font-medium',
-                            c.diferencia === 0 ? 'bg-green-50 text-green-700' :
-                            c.diferencia > 0 ? 'bg-blue-50 text-blue-700' : 'bg-red-50 text-red-700'
-                          )}>
-                            {c.diferencia === 0 ? '$0' : formatARS(c.diferencia)}
-                          </span>
-                        ) : '—'}
+                        {(() => {
+                          const dif = calcDif(c)
+                          return (
+                            <span className={cn(
+                              'inline-block px-2 py-0.5 rounded text-xs font-medium',
+                              dif === 0 ? 'bg-green-50 text-green-700' :
+                              dif > 0 ? 'bg-blue-50 text-blue-700' : 'bg-red-50 text-red-700'
+                            )}>
+                              {dif === 0 ? '$0' : formatARS(dif)}
+                            </span>
+                          )
+                        })()}
                       </td>
                       <td className="px-4 py-2 text-gray-400 text-xs max-w-[200px] truncate">{c.nota || ''}</td>
                       <td className="px-4 py-2 text-center">
