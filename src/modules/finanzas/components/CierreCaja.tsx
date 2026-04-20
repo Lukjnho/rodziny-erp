@@ -78,7 +78,7 @@ export function CierreCaja() {
   const [fFudoTransf, setFFudoTransf] = useState('')
   const [fContado, setFContado] = useState('')
   const [fFondoAp, setFFondoAp] = useState('')
-  const [fFondoSig, setFFondoSig] = useState('')
+  // fFondoSig removido — retiros se manejan en un solo campo
   const [fOtrosRetiros, setFOtrosRetiros] = useState('')
   const [fOtrosRetNota, setFOtrosRetNota] = useState('')
   const [fNota, setFNota]       = useState('')
@@ -151,7 +151,6 @@ export function CierreCaja() {
       const parse = (v: string) => parseFloat((v || '0').replace(/\./g, '').replace(',', '.')) || 0
       const contado = parse(fContado)
       const fondoAp = parse(fFondoAp)
-      const fondoSig = parse(fFondoSig)
       const otrosRet = parse(fOtrosRetiros)
       const fudoEfvo = parse(fFudoEfvo)
       const fudoQR = parse(fFudoQR)
@@ -159,7 +158,6 @@ export function CierreCaja() {
       const fudoCredito = parse(fFudoCredito)
       const fudoTransf = parse(fFudoTransf)
       const totalFudo = fudoEfvo + fudoQR + fudoDebito + fudoCredito + fudoTransf
-      const retiro = contado - fondoSig
 
       const { error } = await supabase.from('cierres_caja').upsert({
         local,
@@ -176,8 +174,8 @@ export function CierreCaja() {
         monto_esperado: totalFudo > 0 ? totalFudo : null,
         monto_contado: contado,
         fondo_apertura: fondoAp,
-        fondo_siguiente: fondoSig,
-        retiro: retiro > 0 ? retiro : 0,
+        fondo_siguiente: 0,
+        retiro: otrosRet,
         otros_retiros: otrosRet,
         otros_retiros_nota: fOtrosRetNota || null,
         nota: fNota || null,
@@ -504,43 +502,19 @@ export function CierreCaja() {
               <p className="text-[10px] text-gray-400 mt-0.5">Contado real + retiros vs. (efectivo Fudo + cambio apertura)</p>
             </div>
 
-            {/* Fila 2: Cambio siguiente, Retiro, Otros retiros */}
+            {/* Fila 2: Retiros y nota */}
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Cambio próximo turno</label>
-              <input type="text" value={fFondoSig} onChange={(e) => setFFondoSig(e.target.value)}
-                placeholder="0"
-                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500" />
-              <p className="text-[10px] text-gray-400 mt-0.5">Plata que se deja para el próximo turno</p>
-            </div>
-
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Retiro de efectivo</label>
-              {(() => {
-                const cont = parseFloat((fContado || '0').replace(/\./g, '').replace(',', '.')) || 0
-                const fondoSig = parseFloat((fFondoSig || '0').replace(/\./g, '').replace(',', '.')) || 0
-                const retiro = cont - fondoSig
-                return (
-                  <div className="w-full rounded-md px-3 py-2 text-sm font-medium bg-green-50 text-green-800">
-                    {cont > 0 ? formatARS(retiro > 0 ? retiro : 0) : '—'}
-                  </div>
-                )
-              })()}
-              <p className="text-[10px] text-gray-400 mt-0.5">Lo que admin se lleva</p>
-            </div>
-
-            {/* Otros retiros eventuales */}
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Otros retiros</label>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Retiros</label>
               <input type="text" value={fOtrosRetiros} onChange={(e) => setFOtrosRetiros(e.target.value)}
                 placeholder="0"
                 className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500" />
-              <p className="text-[10px] text-gray-400 mt-0.5">Dinero sacado de caja durante el turno</p>
+              <p className="text-[10px] text-gray-400 mt-0.5">Plata sacada de caja durante el turno (cambio, pagos, etc.)</p>
             </div>
 
             <div className="col-span-1 md:col-span-2">
-              <label className="block text-xs font-medium text-gray-600 mb-1">Motivo del retiro extra</label>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Motivo del retiro</label>
               <input type="text" value={fOtrosRetNota} onChange={(e) => setFOtrosRetNota(e.target.value)}
-                placeholder="Ej: Pago proveedor hielo"
+                placeholder="Ej: Pago proveedor hielo, cambio para próximo turno"
                 className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500" />
             </div>
 
@@ -636,7 +610,6 @@ export function CierreCaja() {
                       <td className="px-4 py-2 text-right font-medium text-gray-900">{formatARS(c.monto_contado)}</td>
                       <td className="px-4 py-2 text-right text-gray-500 text-xs">
                         {c.fondo_apertura > 0 && <div>Inicio: {formatARS(c.fondo_apertura)}</div>}
-                        {c.fondo_siguiente > 0 && <div>Deja: {formatARS(c.fondo_siguiente)}</div>}
                       </td>
                       <td className="px-4 py-2 text-right font-medium text-green-700">
                         {c.retiro > 0 ? formatARS(c.retiro) : '—'}
