@@ -225,7 +225,6 @@ export function CierreCaja() {
     setFFudoTransf('')
     setFContado('')
     setFFondoAp('')
-    setFFondoSig('')
     setFOtrosRetiros('')
     setFOtrosRetNota('')
     setFNota('')
