@@ -18,9 +18,10 @@ function ultimoDiaDelMes(d: Date) {
 
 type Preset = 'mes_actual' | 'mes_pasado' | 'ultimos_30' | 'anio' | 'personalizado'
 
-export function ListadoGastos() {
+export function ListadoGastos({ localExterno }: { localExterno?: 'vedia' | 'saavedra' } = {}) {
   const qc = useQueryClient()
-  const [local, setLocal] = useState<'ambos' | 'vedia' | 'saavedra'>('vedia')
+  const [localInterno, setLocalInterno] = useState<'ambos' | 'vedia' | 'saavedra'>('vedia')
+  const local = localExterno ?? localInterno
   const [preset, setPreset] = useState<Preset>('mes_actual')
   const [desde, setDesde] = useState(() => primerDiaDelMes(HOY))
   const [hasta, setHasta] = useState(() => ultimoDiaDelMes(HOY))
@@ -130,7 +131,7 @@ export function ListadoGastos() {
     <div>
       {/* Filtros principales (línea 1) */}
       <div className="flex items-center gap-3 mb-3 flex-wrap">
-        <LocalSelector value={local} onChange={(v) => setLocal(v as 'ambos' | 'vedia' | 'saavedra')} options={['vedia', 'saavedra', 'ambos']} />
+        {!localExterno && <LocalSelector value={localInterno} onChange={(v) => setLocalInterno(v as 'ambos' | 'vedia' | 'saavedra')} options={['vedia', 'saavedra', 'ambos']} />}
         <select
           value={preset}
           onChange={(e) => aplicarPreset(e.target.value as Preset)}

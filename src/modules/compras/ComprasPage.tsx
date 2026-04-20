@@ -688,7 +688,7 @@ export function ComprasPage() {
       {ayudaAbierta && <AyudaPanel tab={tab} onClose={() => setAyudaAbierta(false)} />}
 
       {/* ═══ TAB: GASTOS ═══ */}
-      {tab === 'gastos' && <ListadoGastos />}
+      {tab === 'gastos' && <ListadoGastos localExterno={local} />}
 
       {/* ═══ TAB: STOCK ═══ */}
       {tab === 'stock' && (
