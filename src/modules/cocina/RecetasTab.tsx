@@ -443,9 +443,6 @@ function ModalReceta({
   const [tipo, setTipo] = useState(receta?.tipo ?? 'relleno')
   const [rendKg, setRendKg] = useState(receta?.rendimiento_kg ?? '')
   const [rendPorciones, setRendPorciones] = useState(receta?.rendimiento_porciones ?? '')
-  const [margenPct, setMargenPct] = useState<string>(
-    receta?.margen_seguridad_pct != null ? String(Math.round(receta.margen_seguridad_pct * 10000) / 100) : ''
-  )
   const [instrucciones, setInstrucciones] = useState(receta?.instrucciones ?? '')
   const [guardando, setGuardando] = useState(false)
   const [error, setError] = useState('')
@@ -523,14 +520,12 @@ function ModalReceta({
     setError('')
 
     try {
-      // 1. Guardar receta
-      const margenNum = margenPct !== '' ? Number(margenPct) / 100 : 0
+      // 1. Guardar receta (margen_seguridad_pct se edita desde Finanzas > Costeo)
       const row = {
         nombre: nombre.trim(),
         tipo,
         rendimiento_kg: rendKg !== '' ? Number(rendKg) : null,
         rendimiento_porciones: rendPorciones !== '' ? Number(rendPorciones) : null,
-        margen_seguridad_pct: margenNum,
         instrucciones: instrucciones.trim() || null,
         updated_at: new Date().toISOString(),
       }
@@ -673,21 +668,6 @@ function ModalReceta({
                     placeholder="45"
                   />
                 </div>
-              </div>
-              <div>
-                <label className="block text-xs text-gray-500 mb-1">
-                  Margen de seguridad (%)
-                  <span className="text-gray-400 ml-1">· colchón sobre el costo base por merma/variación de precio</span>
-                </label>
-                <input
-                  type="number"
-                  step="0.5"
-                  min="0"
-                  value={margenPct}
-                  onChange={(e) => setMargenPct(e.target.value)}
-                  className="w-full border border-gray-300 rounded px-3 py-1.5 text-sm"
-                  placeholder="0"
-                />
               </div>
             </div>
           )}

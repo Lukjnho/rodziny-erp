@@ -108,24 +108,13 @@ export function ProductosTab() {
 
   const kpis = useMemo(() => {
     const all = productos ?? []
-    let conReceta = 0
-    let margenSum = 0
-    let margenN = 0
-    for (const p of all) {
-      if (p.receta_id) conReceta++
-      const info = costoProducto.get(p.id)
-      if (p.precio_venta && info?.costo && p.precio_venta > 0) {
-        margenSum += (p.precio_venta - info.costo) / p.precio_venta
-        margenN++
-      }
-    }
     return {
       total: all.length,
       activos: all.filter((p) => p.activo).length,
-      conReceta,
-      margenProm: margenN > 0 ? (margenSum / margenN) * 100 : null,
+      conReceta: all.filter((p) => !!p.receta_id).length,
+      pastas: all.filter((p) => p.tipo === 'pasta').length,
     }
-  }, [productos, costoProducto])
+  }, [productos])
 
   const toggleActivo = useMutation({
     mutationFn: async ({ id, activo }: { id: string; activo: boolean }) => {
@@ -150,12 +139,7 @@ export function ProductosTab() {
         <KPICard label="Total productos" value={String(kpis.total)} color="blue" loading={isLoading} />
         <KPICard label="Activos" value={String(kpis.activos)} color="green" loading={isLoading} />
         <KPICard label="Con receta" value={String(kpis.conReceta)} color="neutral" loading={isLoading} />
-        <KPICard
-          label="Margen promedio"
-          value={kpis.margenProm != null ? `${kpis.margenProm.toFixed(1)}%` : '—'}
-          color={kpis.margenProm != null && kpis.margenProm > 60 ? 'green' : kpis.margenProm != null && kpis.margenProm > 40 ? 'yellow' : 'neutral'}
-          loading={isLoading}
-        />
+        <KPICard label="Pastas" value={String(kpis.pastas)} color="neutral" loading={isLoading} />
       </div>
 
       {/* Toolbar */}
@@ -193,8 +177,6 @@ export function ProductosTab() {
               <th className="px-4 py-2">Local</th>
               <th className="px-4 py-2">Receta</th>
               <th className="px-4 py-2 text-right">Costo</th>
-              <th className="px-4 py-2 text-right">Precio venta</th>
-              <th className="px-4 py-2 text-right">Margen</th>
               <th className="px-4 py-2">Activo</th>
               <th className="px-4 py-2">Acciones</th>
             </tr>
@@ -204,8 +186,6 @@ export function ProductosTab() {
               const rec = recetas?.find((r) => r.id === p.receta_id) ?? null
               const info = costoProducto.get(p.id)
               const costo = info?.costo ?? null
-              const margenAbs = p.precio_venta && costo ? p.precio_venta - costo : null
-              const margenPct = p.precio_venta && costo && p.precio_venta > 0 ? ((p.precio_venta - costo) / p.precio_venta) * 100 : null
               return (
                 <tr key={p.id} className="border-b border-surface-border hover:bg-gray-50">
                   <td className="px-4 py-2">
@@ -229,21 +209,6 @@ export function ProductosTab() {
                       <div>
                         <div className="font-medium text-gray-800">{formatARS(costo)}</div>
                         <div className="text-[10px] text-gray-400">/{info?.costoBase}</div>
-                      </div>
-                    ) : (
-                      <span className="text-gray-300">—</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-2 text-right tabular-nums">
-                    {p.precio_venta != null ? formatARS(p.precio_venta) : <span className="text-gray-300">—</span>}
-                  </td>
-                  <td className="px-4 py-2 text-right tabular-nums">
-                    {margenPct != null ? (
-                      <div>
-                        <div className={cn('font-semibold', margenPct > 60 ? 'text-green-600' : margenPct > 40 ? 'text-amber-600' : 'text-red-600')}>
-                          {margenPct.toFixed(1)}%
-                        </div>
-                        {margenAbs != null && <div className="text-[10px] text-gray-400">{formatARS(margenAbs)}</div>}
                       </div>
                     ) : (
                       <span className="text-gray-300">—</span>
@@ -273,7 +238,7 @@ export function ProductosTab() {
               )
             })}
             {filtrados.length === 0 && (
-              <tr><td colSpan={10} className="px-4 py-8 text-center text-gray-400">{isLoading ? 'Cargando...' : 'No hay productos'}</td></tr>
+              <tr><td colSpan={8} className="px-4 py-8 text-center text-gray-400">{isLoading ? 'Cargando...' : 'No hay productos'}</td></tr>
             )}
           </tbody>
         </table>
@@ -283,7 +248,6 @@ export function ProductosTab() {
         <ModalProducto
           producto={editando}
           recetas={recetas ?? []}
-          costoProducto={costoProducto}
           onClose={() => setModalAbierto(false)}
           onSaved={() => { qc.invalidateQueries({ queryKey: ['cocina-productos'] }); setModalAbierto(false) }}
         />
@@ -295,13 +259,11 @@ export function ProductosTab() {
 function ModalProducto({
   producto,
   recetas,
-  costoProducto,
   onClose,
   onSaved,
 }: {
   producto: Producto | null
   recetas: RecetaOpcion[]
-  costoProducto: Map<string, { costo: number | null; costoBase: string | null }>
   onClose: () => void
   onSaved: () => void
 }) {
@@ -312,13 +274,11 @@ function ModalProducto({
   const [minimo, setMinimo] = useState(producto?.minimo_produccion ?? 100)
   const [local, setLocal] = useState(producto?.local ?? 'vedia')
   const [recetaId, setRecetaId] = useState<string>(producto?.receta_id ?? '')
-  const [precioVenta, setPrecioVenta] = useState<string>(producto?.precio_venta != null ? String(producto.precio_venta) : '')
   const [guardando, setGuardando] = useState(false)
   const [error, setError] = useState('')
 
   const { costos } = useCostosRecetas()
 
-  // costo vivo según receta y unidad seleccionadas
   const costoPreview = useMemo(() => {
     if (!recetaId) return null
     const c = costos.get(recetaId)
@@ -329,11 +289,6 @@ function ModalProducto({
     if (!esPeso && c.costoPorPorcion != null) return { costo: c.costoPorPorcion, base: 'porción' }
     return null
   }, [recetaId, unidad, costos])
-
-  const precioNum = parseFloat(precioVenta.replace(',', '.'))
-  const margenPct = costoPreview && precioNum > 0 ? ((precioNum - costoPreview.costo) / precioNum) * 100 : null
-  const _ = costoProducto // evitar warning de parámetro unused
-  void _
 
   const guardar = async () => {
     if (!nombre.trim() || !codigo.trim()) { setError('Nombre y código son obligatorios'); return }
@@ -347,7 +302,6 @@ function ModalProducto({
       minimo_produccion: minimo,
       local,
       receta_id: recetaId || null,
-      precio_venta: precioVenta !== '' ? parseFloat(precioVenta.replace(',', '.')) : null,
     }
     const { error: err } = producto
       ? await supabase.from('cocina_productos').update(row).eq('id', producto.id)
@@ -403,10 +357,9 @@ function ModalProducto({
             </div>
           </div>
 
-          {/* Vinculación con receta + precio venta */}
-          <div className="border-t border-gray-200 pt-3 mt-3 space-y-3">
+          <div className="border-t border-gray-200 pt-3 mt-3 space-y-2">
             <div>
-              <label className="block text-xs text-gray-500 mb-1">Receta vinculada (para calcular costo)</label>
+              <label className="block text-xs text-gray-500 mb-1">Receta vinculada</label>
               <select
                 value={recetaId}
                 onChange={(e) => setRecetaId(e.target.value)}
@@ -418,38 +371,17 @@ function ModalProducto({
                 ))}
               </select>
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs text-gray-500 mb-1">Precio de venta (por {unidad})</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={precioVenta}
-                  onChange={(e) => setPrecioVenta(e.target.value)}
-                  className="w-full border border-gray-300 rounded px-3 py-1.5 text-sm"
-                  placeholder="0"
-                />
+            {costoPreview && (
+              <div className="bg-gray-50 rounded px-3 py-1.5 text-xs flex justify-between">
+                <span className="text-gray-500">Costo calculado:</span>
+                <span className="tabular-nums font-medium text-gray-800">
+                  {formatARS(costoPreview.costo)} / {costoPreview.base}
+                </span>
               </div>
-              <div className="bg-gray-50 rounded px-3 py-1.5 text-xs space-y-0.5">
-                <div className="flex justify-between">
-                  <span className="text-gray-500">Costo:</span>
-                  <span className="tabular-nums font-medium text-gray-800">
-                    {costoPreview ? formatARS(costoPreview.costo) : '—'}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-500">Margen:</span>
-                  <span className={cn(
-                    'tabular-nums font-semibold',
-                    margenPct == null ? 'text-gray-300' :
-                    margenPct > 60 ? 'text-green-600' :
-                    margenPct > 40 ? 'text-amber-600' : 'text-red-600'
-                  )}>
-                    {margenPct != null ? `${margenPct.toFixed(1)}%` : '—'}
-                  </span>
-                </div>
-              </div>
-            </div>
+            )}
+            <p className="text-[10px] text-gray-400 italic">
+              Para cargar precio de venta y margen, ir a <strong>Finanzas → Costeo</strong>.
+            </p>
           </div>
         </div>
 
