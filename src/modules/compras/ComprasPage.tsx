@@ -4,7 +4,6 @@ import { supabase } from '@/lib/supabase'
 import { PageContainer } from '@/components/layout/PageContainer'
 import { LocalSelector } from '@/components/ui/LocalSelector'
 import { formatARS, cn } from '@/lib/utils'
-import { parseStockFudo } from './parsers/parseStock'
 import { parseFudoGastos, type DetalleRow, type GastoRow } from '@/modules/finanzas/parsers/parseFudoGastos'
 import { NuevoGastoModal, type PrefillGasto } from '@/modules/gastos/NuevoGastoModal'
 import { ProveedoresPanel } from '@/modules/gastos/ProveedoresPanel'
@@ -12,7 +11,7 @@ import { ListadoGastos } from '@/modules/gastos/ListadoGastos'
 import type { MedioPago } from '@/modules/gastos/types'
 import { MEDIO_PAGO_LABEL } from '@/modules/gastos/types'
 
-type Tab = 'gastos' | 'stock' | 'movimientos' | 'importar' | 'recepcion' | 'pagos' | 'proveedores'
+type Tab = 'gastos' | 'stock' | 'movimientos' | 'recepcion' | 'pagos' | 'proveedores'
 type FiltroEstado = 'todos' | 'bajo_minimo' | 'sin_stock' | 'inactivos'
 
 interface Producto {
@@ -54,15 +53,6 @@ const ayudaPorTab: Record<Tab, { titulo: string; pasos: string[] }> = {
       'Acá se registran todas las entradas y salidas de mercadería.',
       'Cada vez que confirmás una recepción, se crean movimientos de entrada automáticamente.',
       'Podés ver quién registró cada movimiento, la fecha y el motivo.',
-    ],
-  },
-  importar: {
-    titulo: 'Importar productos',
-    pasos: [
-      'Usá esta pestaña para cargar el listado de productos desde un export de Fudo.',
-      'Paso 1: Exportá el archivo de Stock desde Fudo (formato .xls o .xlsx).',
-      'Paso 2: Arrastrá el archivo acá o hacé clic para seleccionarlo.',
-      'Los productos se actualizan por nombre — si ya existen, se pisan con los nuevos datos.',
     ],
   },
   recepcion: {
@@ -611,60 +601,23 @@ export function ComprasPage() {
   }
 
   // ── Import stock ───────────────────────────────────────────────────────────
-  const inputRef = useRef<HTMLInputElement>(null)
-  const [importing, setImporting] = useState(false)
-  const [importResult, setImportResult] = useState<{ insertados: number; error?: string } | null>(null)
-
-  async function importarStock(file: File) {
-    setImporting(true)
-    setImportResult(null)
-    try {
-      const buffer = await file.arrayBuffer()
-      const items = parseStockFudo(buffer)
-      if (!items.length) throw new Error('No se encontraron productos en el archivo')
-
-      const rows = items.map((p) => ({
-        local,
-        fudo_id: p.fudo_id || null,
-        categoria: p.categoria,
-        nombre: p.nombre,
-        unidad: p.unidad,
-        stock_actual: p.disponibilidad,
-        stock_minimo: p.stock_minimo,
-        proveedor: p.proveedor || null,
-        costo_unitario: p.costo_unitario,
-        activo: true,
-        updated_at: new Date().toISOString(),
-      }))
-
-      const { error } = await supabase
-        .from('productos')
-        .upsert(rows, { onConflict: 'local,nombre' })
-
-      if (error) throw new Error(error.message)
-      setImportResult({ insertados: rows.length })
-      qc.invalidateQueries({ queryKey: ['productos_stock'] })
-      qc.invalidateQueries({ queryKey: ['productos_activos'] })
-    } catch (e) {
-      setImportResult({ insertados: 0, error: (e as Error).message })
-    } finally {
-      setImporting(false)
-    }
-  }
 
   return (
     <PageContainer title="Gastos-Compras" subtitle="Gastos, stock, proveedores y pagos">
       {/* Filtros */}
       <div className="flex items-center gap-4 mb-4 flex-wrap">
-        <LocalSelector value={local} onChange={(v) => setLocal(v as 'vedia' | 'saavedra')} />
+        <LocalSelector value={local} onChange={(v) => {
+          const l = v as 'vedia' | 'saavedra'
+          setLocal(l)
+          if (l === 'vedia' && tab === 'recepcion') setTab('stock')
+        }} />
 
         <div className="flex gap-1 border-b border-gray-200">
           {([
             ['stock',       '📦 Stock'],
             ['gastos',      '🧾 Gastos'],
             ['movimientos', '📋 Movimientos'],
-            ['importar',    '📥 Importar'],
-            ['recepcion',   '📬 Recepción'],
+            ...(local === 'saavedra' ? [['recepcion', '📬 Recepción']] : []),
             ['pagos',       '💰 Pagos'],
             ['proveedores', '🏢 Proveedores'],
           ] as [Tab, string][]).map(([t, label]) => (
@@ -1215,46 +1168,7 @@ export function ComprasPage() {
       )}
 
       {/* ═══ TAB: IMPORTAR ═══ */}
-      {tab === 'importar' && (
-        <div className="max-w-xl">
-          <div className="bg-white rounded-lg border border-surface-border p-6">
-            <h3 className="font-semibold text-gray-900 mb-1">Importar stock desde Fudo</h3>
-            <p className="text-xs text-gray-400 mb-3">
-              Subí el export de stock/ingredientes de Fudo (.xls/.xlsx). Se actualizarán los productos existentes y se crearán los nuevos.
-            </p>
-            <div className="mb-4 p-3 bg-rodziny-50 border border-rodziny-200 rounded-lg text-sm">
-              Importando para: <span className="font-semibold text-rodziny-800">{local === 'vedia' ? 'Rodziny Vedia' : 'Rodziny Saavedra'}</span>
-              <span className="text-xs text-gray-500 ml-2">(cambiá el local arriba si necesitás importar para el otro)</span>
-            </div>
-
-            <div
-              className={cn(
-                'border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors',
-                'border-gray-300 hover:border-rodziny-500'
-              )}
-              onClick={() => inputRef.current?.click()}
-            >
-              <div className="text-2xl mb-2">📦</div>
-              <p className="text-sm text-gray-600">
-                Arrastrá el archivo acá o <span className="text-rodziny-700 font-medium">hacé clic para seleccionar</span>
-              </p>
-              <input
-                ref={inputRef} type="file" className="hidden" accept=".xls,.xlsx"
-                onChange={(e) => { const f = e.target.files?.[0]; if (f) importarStock(f) }}
-              />
-            </div>
-
-            {importing && <p className="mt-3 text-sm text-blue-600 animate-pulse">Procesando archivo...</p>}
-
-            {importResult && (
-              <div className={cn('mt-3 p-3 rounded-md text-sm', importResult.error ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-800')}>
-                {importResult.error ? `Error: ${importResult.error}` : `${importResult.insertados} productos importados/actualizados`}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-      {/* ═══ TAB: RECEPCIÓN ═══ */}
+      {/* ═══ TAB: RECEPCIÓN (solo Saavedra) ═══ */}
       {tab === 'recepcion' && (
         <div>
           {/* Pagos pendientes de cargar (mercadería ya recibida desde la PWA) */}
