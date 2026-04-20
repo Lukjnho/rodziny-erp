@@ -2,7 +2,8 @@ import { useState, useMemo, useRef, useEffect, Fragment } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { KPICard } from '@/components/ui/KPICard'
-import { cn } from '@/lib/utils'
+import { cn, formatARS } from '@/lib/utils'
+import { useCostosRecetas, type CostoReceta } from './hooks/useCostosRecetas'
 
 interface Ingrediente {
   id: string
@@ -23,6 +24,7 @@ interface Receta {
   rendimiento_porciones: number | null
   instrucciones: string | null
   activo: boolean
+  margen_seguridad_pct: number | null
   created_at: string
 }
 
@@ -60,6 +62,8 @@ export function RecetasTab() {
     },
   })
 
+  const { costos } = useCostosRecetas()
+
   // Ingredientes de todas las recetas (para mostrar en fichas expandidas)
   const { data: todosIngredientes } = useQuery({
     queryKey: ['cocina-receta-ingredientes'],
@@ -83,28 +87,6 @@ export function RecetasTab() {
     return lista
   }, [recetas, filtroTipo, busqueda])
 
-  const kpis = useMemo(() => {
-    const all = recetas ?? []
-    return {
-      total: all.length,
-      rellenos: all.filter((r) => r.tipo === 'relleno').length,
-      masas: all.filter((r) => r.tipo === 'masa').length,
-      salsas: all.filter((r) => r.tipo === 'salsa').length,
-      subrecetas: all.filter((r) => r.tipo === 'subreceta').length,
-    }
-  }, [recetas])
-
-  const eliminar = useMutation({
-    mutationFn: async (id: string) => {
-      const { error } = await supabase.from('cocina_recetas').delete().eq('id', id)
-      if (error) throw error
-    },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['cocina-recetas'] })
-      qc.invalidateQueries({ queryKey: ['cocina-receta-ingredientes'] })
-    },
-  })
-
   const ingredientesPorReceta = useMemo(() => {
     const mapa = new Map<string, Ingrediente[]>()
     for (const ing of todosIngredientes ?? []) {
@@ -114,15 +96,49 @@ export function RecetasTab() {
     return mapa
   }, [todosIngredientes])
 
+  const kpis = useMemo(() => {
+    const all = recetas ?? []
+    let conCosto = 0
+    let sinCosto = 0
+    for (const r of all) {
+      const c = costos.get(r.id)
+      if (c && c.costoBase > 0) conCosto++
+      else if ((ingredientesPorReceta.get(r.id)?.length ?? 0) > 0) sinCosto++
+    }
+    return {
+      total: all.length,
+      rellenos: all.filter((r) => r.tipo === 'relleno').length,
+      masas: all.filter((r) => r.tipo === 'masa').length,
+      salsas: all.filter((r) => r.tipo === 'salsa').length,
+      subrecetas: all.filter((r) => r.tipo === 'subreceta').length,
+      conCosto,
+      sinCosto,
+    }
+  }, [recetas, costos, ingredientesPorReceta])
+
+  const eliminar = useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase.from('cocina_recetas').delete().eq('id', id)
+      if (error) throw error
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['cocina-recetas'] })
+      qc.invalidateQueries({ queryKey: ['cocina-receta-ingredientes'] })
+      qc.invalidateQueries({ queryKey: ['cocina-recetas-costeo'] })
+      qc.invalidateQueries({ queryKey: ['cocina-receta-ingredientes-costeo'] })
+    },
+  })
+
   return (
     <div className="space-y-4">
       {/* KPIs */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
         <KPICard label="Total recetas" value={String(kpis.total)} color="blue" loading={isLoading} />
+        <KPICard label="Subrecetas" value={String(kpis.subrecetas)} color="neutral" loading={isLoading} />
         <KPICard label="Rellenos" value={String(kpis.rellenos)} color="green" loading={isLoading} />
         <KPICard label="Masas" value={String(kpis.masas)} color="neutral" loading={isLoading} />
-        <KPICard label="Salsas" value={String(kpis.salsas)} color="neutral" loading={isLoading} />
-        <KPICard label="Subrecetas" value={String(kpis.subrecetas)} color="neutral" loading={isLoading} />
+        <KPICard label="Con costeo" value={String(kpis.conCosto)} color="green" loading={isLoading} />
+        <KPICard label="Sin match" value={String(kpis.sinCosto)} color={kpis.sinCosto > 0 ? 'yellow' : 'neutral'} loading={isLoading} />
       </div>
 
       {/* Toolbar */}
@@ -154,6 +170,9 @@ export function RecetasTab() {
               <th className="px-4 py-2 text-center">Ingredientes</th>
               <th className="px-4 py-2">Rinde (kg)</th>
               <th className="px-4 py-2">Rinde (porciones)</th>
+              <th className="px-4 py-2 text-right">Costo total</th>
+              <th className="px-4 py-2 text-right">$/kg</th>
+              <th className="px-4 py-2 text-right">$/porción</th>
               <th className="px-4 py-2">Acciones</th>
             </tr>
           </thead>
@@ -161,6 +180,8 @@ export function RecetasTab() {
             {filtrados.map((r) => {
               const ings = ingredientesPorReceta.get(r.id) ?? []
               const abierta = fichaAbierta === r.id
+              const costo = costos.get(r.id)
+              const tieneAdv = costo?.advertencias && costo.advertencias.length > 0
               return (
                 <Fragment key={r.id}>
                   <tr className={cn('border-b border-surface-border hover:bg-gray-50', abierta && 'bg-blue-50/30')}>
@@ -176,7 +197,14 @@ export function RecetasTab() {
                         {abierta ? '▾' : '▸'}
                       </button>
                     </td>
-                    <td className="px-4 py-2 font-medium text-gray-900">{r.nombre}</td>
+                    <td className="px-4 py-2 font-medium text-gray-900">
+                      <div className="flex items-center gap-1.5">
+                        <span>{r.nombre}</span>
+                        {tieneAdv && (
+                          <span title={costo!.advertencias.join('\n')} className="text-amber-500 text-xs">⚠</span>
+                        )}
+                      </div>
+                    </td>
                     <td className="px-4 py-2">
                       <span className={cn('px-2 py-0.5 rounded-full text-xs font-medium', TIPO_COLOR[r.tipo])}>
                         {TIPO_LABEL[r.tipo]}
@@ -191,6 +219,15 @@ export function RecetasTab() {
                     </td>
                     <td className="px-4 py-2">{r.rendimiento_kg != null ? `${r.rendimiento_kg} kg` : '—'}</td>
                     <td className="px-4 py-2">{r.rendimiento_porciones ?? '—'}</td>
+                    <td className="px-4 py-2 text-right tabular-nums font-medium text-gray-800">
+                      {costo && costo.costoConMargen > 0 ? formatARS(costo.costoConMargen) : <span className="text-gray-300">—</span>}
+                    </td>
+                    <td className="px-4 py-2 text-right tabular-nums text-gray-700">
+                      {costo?.costoPorKg != null ? formatARS(costo.costoPorKg) : <span className="text-gray-300">—</span>}
+                    </td>
+                    <td className="px-4 py-2 text-right tabular-nums text-gray-700">
+                      {costo?.costoPorPorcion != null ? formatARS(costo.costoPorPorcion) : <span className="text-gray-300">—</span>}
+                    </td>
                     <td className="px-4 py-2">
                       <div className="flex gap-1">
                         <button
@@ -206,8 +243,8 @@ export function RecetasTab() {
                   </tr>
                   {abierta && (
                     <tr className="bg-blue-50/20">
-                      <td colSpan={7} className="px-4 py-0">
-                        <FichaTecnica receta={r} ingredientes={ings} />
+                      <td colSpan={10} className="px-4 py-0">
+                        <FichaTecnica receta={r} ingredientes={ings} costo={costo} />
                       </td>
                     </tr>
                   )}
@@ -215,7 +252,7 @@ export function RecetasTab() {
               )
             })}
             {filtrados.length === 0 && (
-              <tr><td colSpan={7} className="px-4 py-8 text-center text-gray-400">{isLoading ? 'Cargando...' : 'No hay recetas'}</td></tr>
+              <tr><td colSpan={10} className="px-4 py-8 text-center text-gray-400">{isLoading ? 'Cargando...' : 'No hay recetas'}</td></tr>
             )}
           </tbody>
         </table>
@@ -239,18 +276,20 @@ export function RecetasTab() {
 }
 
 // ─── Ficha Técnica (expandible) ─────────────────────────────────────────────
-function FichaTecnica({ receta, ingredientes }: { receta: Receta; ingredientes: Ingrediente[] }) {
+function FichaTecnica({ receta, ingredientes, costo }: { receta: Receta; ingredientes: Ingrediente[]; costo: CostoReceta | undefined }) {
   const pasos = (receta.instrucciones ?? '')
     .split('\n')
     .map((s) => s.trim())
     .filter(Boolean)
 
+  const detallePorIng = new Map(costo?.detalles.map((d) => [d.id, d]) ?? [])
+
   return (
     <div className="py-4 space-y-4">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {/* Ingredientes */}
+        {/* Ingredientes con costos */}
         <div>
-          <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Ingredientes</h4>
+          <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Ingredientes y costeo</h4>
           {ingredientes.length === 0 ? (
             <p className="text-xs text-gray-400 italic">Sin ingredientes cargados</p>
           ) : (
@@ -260,43 +299,87 @@ function FichaTecnica({ receta, ingredientes }: { receta: Receta; ingredientes: 
                   <tr className="text-gray-500">
                     <th className="text-left px-3 py-1.5 font-medium">Ingrediente</th>
                     <th className="text-right px-3 py-1.5 font-medium">Cantidad</th>
-                    <th className="text-left px-3 py-1.5 font-medium">Unidad</th>
-                    <th className="text-left px-3 py-1.5 font-medium">Obs.</th>
+                    <th className="text-left px-3 py-1.5 font-medium">Un.</th>
+                    <th className="text-right px-3 py-1.5 font-medium">Costo</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {ingredientes.map((ing) => (
-                    <tr key={ing.id}>
-                      <td className="px-3 py-1.5 font-medium text-gray-800">{ing.nombre}</td>
-                      <td className="px-3 py-1.5 text-right tabular-nums text-gray-700">
-                        {formatCantidad(ing.cantidad)}
-                      </td>
-                      <td className="px-3 py-1.5 text-gray-500">{ing.unidad}</td>
-                      <td className="px-3 py-1.5 text-gray-400 max-w-[120px] truncate">{ing.observaciones || ''}</td>
-                    </tr>
-                  ))}
+                  {ingredientes.map((ing) => {
+                    const det = detallePorIng.get(ing.id)
+                    return (
+                      <tr key={ing.id}>
+                        <td className="px-3 py-1.5 text-gray-800">
+                          <div className="flex items-center gap-1.5">
+                            {det?.esSubreceta && (
+                              <span className="text-[9px] bg-purple-100 text-purple-700 px-1 py-0.5 rounded font-medium">Sub</span>
+                            )}
+                            <span className="font-medium">{ing.nombre}</span>
+                          </div>
+                          {det?.error && <div className="text-[10px] text-amber-600 mt-0.5">⚠ {det.error}</div>}
+                          {!det?.error && det?.productoNombre && det.productoNombre.toLowerCase() !== ing.nombre.toLowerCase() && (
+                            <div className="text-[10px] text-gray-400 mt-0.5">→ {det.productoNombre}</div>
+                          )}
+                        </td>
+                        <td className="px-3 py-1.5 text-right tabular-nums text-gray-700">
+                          {formatCantidad(ing.cantidad)}
+                        </td>
+                        <td className="px-3 py-1.5 text-gray-500">{ing.unidad}</td>
+                        <td className="px-3 py-1.5 text-right tabular-nums font-medium text-gray-800">
+                          {det?.costoTotal != null ? formatARS(det.costoTotal) : <span className="text-gray-300">—</span>}
+                        </td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
+                {costo && (
+                  <tfoot className="bg-gray-50 border-t-2 border-gray-200">
+                    <tr>
+                      <td colSpan={3} className="px-3 py-1.5 font-semibold text-gray-700">Costo base</td>
+                      <td className="px-3 py-1.5 text-right tabular-nums font-semibold text-gray-800">{formatARS(costo.costoBase)}</td>
+                    </tr>
+                    {costo.margenPct > 0 && (
+                      <>
+                        <tr>
+                          <td colSpan={3} className="px-3 py-1 text-gray-500">Margen de seguridad ({(costo.margenPct * 100).toFixed(1)}%)</td>
+                          <td className="px-3 py-1 text-right tabular-nums text-gray-600">
+                            +{formatARS(costo.costoConMargen - costo.costoBase)}
+                          </td>
+                        </tr>
+                        <tr>
+                          <td colSpan={3} className="px-3 py-1.5 font-bold text-rodziny-700">Total con margen</td>
+                          <td className="px-3 py-1.5 text-right tabular-nums font-bold text-rodziny-700">{formatARS(costo.costoConMargen)}</td>
+                        </tr>
+                      </>
+                    )}
+                  </tfoot>
+                )}
               </table>
             </div>
           )}
         </div>
 
-        {/* Procedimiento + Rendimiento */}
+        {/* Procedimiento + Rendimiento + Costo unitario */}
         <div className="space-y-4">
-          {/* Rendimiento */}
+          {/* Rendimiento y costo unitario */}
           <div>
             <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Rendimiento</h4>
-            <div className="flex gap-3">
+            <div className="flex flex-wrap gap-3">
               {receta.rendimiento_kg != null && (
                 <div className="bg-white rounded border border-gray-200 px-3 py-2 text-center">
                   <div className="text-lg font-bold text-gray-800">{receta.rendimiento_kg} kg</div>
                   <div className="text-[10px] text-gray-400 uppercase">Peso total</div>
+                  {costo?.costoPorKg != null && (
+                    <div className="text-[11px] text-rodziny-700 font-semibold mt-1">{formatARS(costo.costoPorKg)}/kg</div>
+                  )}
                 </div>
               )}
               {receta.rendimiento_porciones != null && (
                 <div className="bg-white rounded border border-gray-200 px-3 py-2 text-center">
                   <div className="text-lg font-bold text-gray-800">{receta.rendimiento_porciones}</div>
                   <div className="text-[10px] text-gray-400 uppercase">Porciones</div>
+                  {costo?.costoPorPorcion != null && (
+                    <div className="text-[11px] text-rodziny-700 font-semibold mt-1">{formatARS(costo.costoPorPorcion)}/u</div>
+                  )}
                 </div>
               )}
             </div>
@@ -360,6 +443,9 @@ function ModalReceta({
   const [tipo, setTipo] = useState(receta?.tipo ?? 'relleno')
   const [rendKg, setRendKg] = useState(receta?.rendimiento_kg ?? '')
   const [rendPorciones, setRendPorciones] = useState(receta?.rendimiento_porciones ?? '')
+  const [margenPct, setMargenPct] = useState<string>(
+    receta?.margen_seguridad_pct != null ? String(Math.round(receta.margen_seguridad_pct * 10000) / 100) : ''
+  )
   const [instrucciones, setInstrucciones] = useState(receta?.instrucciones ?? '')
   const [guardando, setGuardando] = useState(false)
   const [error, setError] = useState('')
@@ -438,11 +524,13 @@ function ModalReceta({
 
     try {
       // 1. Guardar receta
+      const margenNum = margenPct !== '' ? Number(margenPct) / 100 : 0
       const row = {
         nombre: nombre.trim(),
         tipo,
         rendimiento_kg: rendKg !== '' ? Number(rendKg) : null,
         rendimiento_porciones: rendPorciones !== '' ? Number(rendPorciones) : null,
+        margen_seguridad_pct: margenNum,
         instrucciones: instrucciones.trim() || null,
         updated_at: new Date().toISOString(),
       }
@@ -585,6 +673,21 @@ function ModalReceta({
                     placeholder="45"
                   />
                 </div>
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">
+                  Margen de seguridad (%)
+                  <span className="text-gray-400 ml-1">· colchón sobre el costo base por merma/variación de precio</span>
+                </label>
+                <input
+                  type="number"
+                  step="0.5"
+                  min="0"
+                  value={margenPct}
+                  onChange={(e) => setMargenPct(e.target.value)}
+                  className="w-full border border-gray-300 rounded px-3 py-1.5 text-sm"
+                  placeholder="0"
+                />
               </div>
             </div>
           )}
