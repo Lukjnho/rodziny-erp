@@ -7,6 +7,7 @@ import { VentasPage } from '@/modules/ventas/VentasPage'
 import { GastosPage } from '@/modules/gastos/GastosPage'
 import { EstadoResultados } from './edr/EstadoResultados'
 import { AmortizacionesPage } from './amortizaciones/AmortizacionesPage'
+import { ChecklistPagos } from './components/ChecklistPagos'
 import { useAuth, type Modulo } from '@/lib/auth'
 import { cn } from '@/lib/utils'
 
@@ -16,6 +17,7 @@ type Tab =
   | 'edr'
   | 'flujo'
   | 'amortizaciones'
+  | 'checklist'
   | 'cierres'
   | 'importar'
 
@@ -32,6 +34,7 @@ const TABS: TabDef[] = [
   { id: 'compras',        label: 'Resumen de Compras', icon: '🧾', subtitle: 'Gastos, proveedores y análisis',           modulo: 'gastos' },
   { id: 'edr',            label: 'EdR',                icon: '📋', subtitle: 'Estado de Resultados mensual por local',   modulo: 'edr' },
   { id: 'flujo',          label: 'Flujo de caja',      icon: '💰', subtitle: 'Movimientos bancarios y efectivo',         modulo: 'finanzas' },
+  { id: 'checklist',      label: 'Pagos Fijos',         icon: '✅', subtitle: 'Checklist mensual de gastos fijos',        modulo: 'finanzas' },
   { id: 'amortizaciones', label: 'Amortizaciones',     icon: '📉', subtitle: 'Inversiones y depreciación mensual',       modulo: 'amortizaciones' },
   { id: 'cierres',        label: 'Cierres de caja',    icon: '📦', subtitle: 'Cierres diarios por local',                modulo: 'finanzas' },
   { id: 'importar',       label: 'Importar datos',     icon: '📂', subtitle: 'Importar exports de Fudo / bancos',        modulo: 'finanzas' },
@@ -83,6 +86,7 @@ export function FinanzasPage() {
       {tab === 'compras'        && <GastosPage embedded />}
       {tab === 'edr'            && <EstadoResultados embedded />}
       {tab === 'flujo'          && <FlujoCaja />}
+      {tab === 'checklist'      && <ChecklistPagos />}
       {tab === 'amortizaciones' && <AmortizacionesPage embedded />}
       {tab === 'cierres'        && <CierreCaja />}
       {tab === 'importar'       && <UploadFudo />}
