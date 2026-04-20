@@ -11,7 +11,6 @@ interface Receta {
   tipo: string
   rendimiento_kg: number | null
   rendimiento_porciones: number | null
-  margen_seguridad_pct: number | null
   activo: boolean
 }
 
@@ -319,19 +318,18 @@ function VistaProductos() {
   )
 }
 
-// ─── Vista Recetas: margen de seguridad editable ────────────────────────────
+// ─── Vista Recetas: margen de seguridad global ──────────────────────────────
 function VistaRecetas() {
   const qc = useQueryClient()
   const [busqueda, setBusqueda] = useState('')
   const [filtroTipo, setFiltroTipo] = useState<string>('todos')
-  const [editando, setEditando] = useState<{ id: string; valor: string } | null>(null)
 
   const { data: recetas } = useQuery({
     queryKey: ['cocina-recetas'],
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cocina_recetas')
-        .select('id, nombre, tipo, rendimiento_kg, rendimiento_porciones, margen_seguridad_pct, activo')
+        .select('id, nombre, tipo, rendimiento_kg, rendimiento_porciones, activo')
         .eq('activo', true)
         .order('nombre')
       if (error) throw error
@@ -339,18 +337,39 @@ function VistaRecetas() {
     },
   })
 
-  const { costos } = useCostosRecetas()
+  const { costos, margenGlobal } = useCostosRecetas()
 
-  const actualizarMargen = useMutation({
-    mutationFn: async ({ id, pct }: { id: string; pct: number }) => {
-      const { error } = await supabase.from('cocina_recetas').update({ margen_seguridad_pct: pct }).eq('id', id)
+  const [margenInput, setMargenInput] = useState<string>('')
+  const [guardando, setGuardando] = useState(false)
+  const [guardadoOk, setGuardadoOk] = useState(false)
+
+  // Cuando carga el margen global, precargar el input
+  const margenActualDisplay = (margenGlobal * 100).toFixed(1)
+
+  const actualizarMargenGlobal = useMutation({
+    mutationFn: async (pct: number) => {
+      const { error } = await supabase
+        .from('configuracion')
+        .upsert({ clave: 'margen_seguridad_pct', valor: pct, updated_at: new Date().toISOString() }, { onConflict: 'clave' })
       if (error) throw error
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['cocina-recetas'] })
-      qc.invalidateQueries({ queryKey: ['cocina-recetas-costeo'] })
+      qc.invalidateQueries({ queryKey: ['config-margen-seguridad'] })
+      setGuardando(false)
+      setGuardadoOk(true)
+      setTimeout(() => setGuardadoOk(false), 2000)
+      setMargenInput('')
     },
+    onError: () => setGuardando(false),
   })
+
+  function guardarMargen() {
+    const raw = margenInput === '' ? margenActualDisplay : margenInput
+    const num = parseFloat(raw.replace(',', '.'))
+    const pct = !isNaN(num) && num >= 0 ? num / 100 : 0
+    setGuardando(true)
+    actualizarMargenGlobal.mutate(pct)
+  }
 
   const filtrados = useMemo(() => {
     let lista = recetas ?? []
@@ -362,15 +381,57 @@ function VistaRecetas() {
     return lista
   }, [recetas, filtroTipo, busqueda])
 
-  function guardarMargen(id: string, valor: string) {
-    const num = parseFloat(valor.replace(',', '.'))
-    const pct = !isNaN(num) ? num / 100 : 0
-    actualizarMargen.mutate({ id, pct })
-    setEditando(null)
-  }
-
   return (
     <div className="space-y-4">
+      {/* Card margen global */}
+      <div className="bg-gradient-to-br from-rodziny-50 to-white border border-rodziny-200 rounded-lg p-4">
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div className="flex-1 min-w-[240px]">
+            <h3 className="text-sm font-semibold text-rodziny-800 flex items-center gap-1.5">
+              🛡 Margen de seguridad global
+            </h3>
+            <p className="text-xs text-gray-600 mt-1 leading-relaxed">
+              Colchón aplicado al costo base de <strong>todas las recetas</strong>. Cubre variación de precios
+              de insumos, merma y pequeños desperdicios. Afecta todos los costos de productos.
+            </p>
+          </div>
+          <div className="flex items-end gap-2">
+            <div>
+              <label className="block text-[10px] text-gray-500 uppercase mb-1 font-medium">Actual</label>
+              <div className="px-3 py-1.5 bg-white border border-gray-300 rounded text-sm font-bold text-gray-700 tabular-nums min-w-[70px] text-right">
+                {margenActualDisplay}%
+              </div>
+            </div>
+            <div>
+              <label className="block text-[10px] text-gray-500 uppercase mb-1 font-medium">Nuevo valor</label>
+              <div className="flex items-center gap-1">
+                <input
+                  type="number"
+                  step="0.5"
+                  min="0"
+                  value={margenInput}
+                  onChange={(e) => setMargenInput(e.target.value)}
+                  placeholder={margenActualDisplay}
+                  onKeyDown={(e) => { if (e.key === 'Enter') guardarMargen() }}
+                  className="w-20 border border-gray-300 rounded px-2 py-1.5 text-sm text-right"
+                />
+                <span className="text-sm text-gray-500">%</span>
+              </div>
+            </div>
+            <button
+              onClick={guardarMargen}
+              disabled={guardando || margenInput === ''}
+              className="bg-rodziny-700 hover:bg-rodziny-800 text-white text-sm rounded px-4 py-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {guardando ? 'Guardando...' : 'Aplicar'}
+            </button>
+            {guardadoOk && (
+              <span className="text-xs text-green-600 font-medium self-center">✓ Guardado</span>
+            )}
+          </div>
+        </div>
+      </div>
+
       {/* Toolbar */}
       <div className="bg-white rounded-lg border border-surface-border p-3 flex flex-wrap gap-2 items-center">
         <input
@@ -387,9 +448,6 @@ function VistaRecetas() {
           <option value="salsa">Salsas</option>
           <option value="otro">Otro</option>
         </select>
-        <div className="ml-auto text-xs text-gray-400">
-          Click en el margen para editarlo · colchón sobre el costo base por merma/variación
-        </div>
       </div>
 
       {/* Tabla */}
@@ -401,8 +459,7 @@ function VistaRecetas() {
               <th className="px-4 py-2">Tipo</th>
               <th className="px-4 py-2 text-right">Rinde</th>
               <th className="px-4 py-2 text-right">Costo base</th>
-              <th className="px-4 py-2 text-right">Margen seg.</th>
-              <th className="px-4 py-2 text-right">Costo total</th>
+              <th className="px-4 py-2 text-right">Costo c/margen</th>
               <th className="px-4 py-2 text-right">$/kg</th>
               <th className="px-4 py-2 text-right">$/porción</th>
             </tr>
@@ -410,8 +467,6 @@ function VistaRecetas() {
           <tbody>
             {filtrados.map((r) => {
               const c = costos.get(r.id)
-              const enEdicion = editando?.id === r.id
-              const margenDisplay = r.margen_seguridad_pct != null ? (r.margen_seguridad_pct * 100).toFixed(1) : '0'
               return (
                 <tr key={r.id} className="border-b border-surface-border hover:bg-gray-50">
                   <td className="px-4 py-2 font-medium text-gray-900">
@@ -433,34 +488,6 @@ function VistaRecetas() {
                   <td className="px-4 py-2 text-right tabular-nums text-gray-700">
                     {c && c.costoBase > 0 ? formatARS(c.costoBase) : <span className="text-gray-300">—</span>}
                   </td>
-                  <td className="px-4 py-2 text-right tabular-nums">
-                    {enEdicion ? (
-                      <div className="inline-flex items-center gap-0.5">
-                        <input
-                          autoFocus
-                          type="number"
-                          step="0.5"
-                          min="0"
-                          value={editando.valor}
-                          onChange={(e) => setEditando({ id: r.id, valor: e.target.value })}
-                          onBlur={() => guardarMargen(r.id, editando.valor)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') guardarMargen(r.id, editando.valor)
-                            if (e.key === 'Escape') setEditando(null)
-                          }}
-                          className="w-16 border border-rodziny-400 rounded px-2 py-0.5 text-sm text-right"
-                        />
-                        <span className="text-xs text-gray-500">%</span>
-                      </div>
-                    ) : (
-                      <button
-                        onClick={() => setEditando({ id: r.id, valor: margenDisplay })}
-                        className="hover:bg-rodziny-50 rounded px-2 py-0.5 min-w-[60px] text-right font-medium text-gray-700"
-                      >
-                        {margenDisplay}%
-                      </button>
-                    )}
-                  </td>
                   <td className="px-4 py-2 text-right tabular-nums font-semibold text-gray-800">
                     {c && c.costoConMargen > 0 ? formatARS(c.costoConMargen) : <span className="text-gray-300">—</span>}
                   </td>
@@ -474,7 +501,7 @@ function VistaRecetas() {
               )
             })}
             {filtrados.length === 0 && (
-              <tr><td colSpan={8} className="px-4 py-8 text-center text-gray-400">No hay recetas</td></tr>
+              <tr><td colSpan={7} className="px-4 py-8 text-center text-gray-400">No hay recetas</td></tr>
             )}
           </tbody>
         </table>

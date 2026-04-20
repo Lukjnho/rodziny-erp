@@ -8,7 +8,6 @@ interface RecetaRow {
   tipo: string
   rendimiento_kg: number | null
   rendimiento_porciones: number | null
-  margen_seguridad_pct: number | null
 }
 
 interface IngredienteRow {
@@ -90,9 +89,24 @@ export function useCostosRecetas() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cocina_recetas')
-        .select('id, nombre, tipo, rendimiento_kg, rendimiento_porciones, margen_seguridad_pct')
+        .select('id, nombre, tipo, rendimiento_kg, rendimiento_porciones')
       if (error) throw error
       return data as RecetaRow[]
+    },
+  })
+
+  const margenGlobalQ = useQuery({
+    queryKey: ['config-margen-seguridad'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('configuracion')
+        .select('valor')
+        .eq('clave', 'margen_seguridad_pct')
+        .maybeSingle()
+      if (error) throw error
+      const v = data?.valor
+      const num = typeof v === 'number' ? v : typeof v === 'string' ? parseFloat(v) : 0
+      return isNaN(num) ? 0 : num
     },
   })
 
@@ -125,6 +139,7 @@ export function useCostosRecetas() {
     const recetas = recetasQ.data
     const ings = ingredientesQ.data
     const prods = productosQ.data
+    const margenGlobal = margenGlobalQ.data ?? 0
     if (!recetas || !ings || !prods) return mapa
 
     // Index de productos por id
@@ -357,7 +372,7 @@ export function useCostosRecetas() {
         })
       }
 
-      const margenPct = receta.margen_seguridad_pct ?? 0
+      const margenPct = margenGlobal
       const costoConMargen = costoBase * (1 + margenPct)
       const costoPorKg = receta.rendimiento_kg && receta.rendimiento_kg > 0 ? costoConMargen / receta.rendimiento_kg : null
       const costoPorPorcion = receta.rendimiento_porciones && receta.rendimiento_porciones > 0 ? costoConMargen / receta.rendimiento_porciones : null
@@ -379,11 +394,12 @@ export function useCostosRecetas() {
 
     for (const r of recetas) costearReceta(r.id)
     return mapa
-  }, [recetasQ.data, ingredientesQ.data, productosQ.data])
+  }, [recetasQ.data, ingredientesQ.data, productosQ.data, margenGlobalQ.data])
 
   return {
     costos,
-    isLoading: recetasQ.isLoading || ingredientesQ.isLoading || productosQ.isLoading,
-    error: recetasQ.error || ingredientesQ.error || productosQ.error,
+    margenGlobal: margenGlobalQ.data ?? 0,
+    isLoading: recetasQ.isLoading || ingredientesQ.isLoading || productosQ.isLoading || margenGlobalQ.isLoading,
+    error: recetasQ.error || ingredientesQ.error || productosQ.error || margenGlobalQ.error,
   }
 }
