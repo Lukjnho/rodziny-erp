@@ -114,8 +114,17 @@ export function ListadoGastos({ localExterno }: { localExterno?: 'vedia' | 'saav
 
   async function abrirComprobante(g: Gasto) {
     if (!g.comprobante_path) return
-    const { data, error } = await supabase.storage.from('gastos-comprobantes').createSignedUrl(g.comprobante_path, 60)
-    if (error || !data) { window.alert('No se pudo abrir el comprobante'); return }
+    const path = g.comprobante_path
+    // Intentar primero en bucket 'gastos-comprobantes', luego en 'comprobantes'
+    let { data, error } = await supabase.storage.from('gastos-comprobantes').createSignedUrl(path, 300)
+    if (error) {
+      const r2 = await supabase.storage.from('comprobantes').createSignedUrl(path, 300)
+      data = r2.data; error = r2.error
+    }
+    if (error || !data) {
+      window.alert(`No se pudo abrir el comprobante.\n\nPath: ${path}\nError: ${error?.message ?? 'sin datos'}`)
+      return
+    }
     window.open(data.signedUrl, '_blank')
   }
 
