@@ -1,0 +1,259 @@
+nombre,marca,categoria,unidad,proveedor,precio_pack,formato
+Aceite de Girasol,Natura,Aceites y vinagres,L,Don Vitto,16423.1,5
+Aceite de Oliva,Olivares de la costa riojana,Aceites y vinagres,L,Don Vitto,24899.15,5
+Vinagre de Alcohol,Marvavic,Aceites y vinagres,L,Don Vitto,5253.15,5
+7 Locos La Coja,,Bebidas para venta,unid.,Cleto Almacen de vinos,51000,6
+7 Up Lata 354cc,,Bebidas para venta,unid.,CLARG,26837.52,24
+Agua con Gas 500cc,Eco de los Andes,Bebidas para venta,unid.,CLARG,15443.88,12
+Agua sin Gas 500cc,Eco de los Andes,Bebidas para venta,unid.,CLARG,14435.04,12
+Amber Deposito,El perro,Bebidas para venta,L,,167500,50
+APA Deposito,El perro,Bebidas para venta,L,,160000,50
+Aperol Botella 750cc,,Bebidas para venta,unid.,,40746.06,6
+Bolsa de Hielo 10kg,Polo Sur,Bebidas para venta,kg,Polo Sur,4000,10
+Campari Botella 750cc,,Bebidas para venta,unid.,,81494.16,12
+Cynar Botella 750cc,,Bebidas para venta,unid.,,35362.86,6
+Dorada Deposito,El perro,Bebidas para venta,L,,137500,50
+Dos Makila Chardonnay,,Bebidas para venta,unid.,Cleto Almacen de vinos,39000,6
+Dos Makila Malbec,,Bebidas para venta,unid.,Cleto Almacen de vinos,27000,6
+Fernet Branca 750 ml,,Bebidas para venta,unid.,,156776.4,12
+Gin botella 750cc,AD Libitum,Bebidas para venta,unid.,AD Libitum,180000,12
+H2O Manzana,,Bebidas para venta,unid.,CLARG,20817,6
+H2O Pomelo 1.5 L,,Bebidas para venta,unid.,CLARG,43606.44,6
+H2O POMELO 500 cc,,Bebidas para venta,unid.,CLARG,36125.28,6
+Huelga de Amores Chardonnay Dulce,,Bebidas para venta,unid.,Cleto Almacen de vinos,39000,6
+Huelga de Amores Malbec Reserva,,Bebidas para venta,unid.,Cleto Almacen de vinos,42000,6
+Jarabe Granadina 1L,,Bebidas para venta,unid.,,64800,12
+Jean Rivier Tocai Legendario,,Bebidas para venta,unid.,Cleto Almacen de vinos,25200,6
+Kilari Patero,,Bebidas para venta,unid.,Cleto Almacen de vinos,39000,6
+La Iride Chardonnay dulce,,Bebidas para venta,unid.,Cleto Almacen de vinos,42000,6
+La Iride Malbec Rose Dulce,,Bebidas para venta,unid.,Cleto Almacen de vinos,39000,6
+Lote AB Chardonnay,,Bebidas para venta,unid.,Cleto Almacen de vinos,26400,6
+Marco Zunino Blend,,Bebidas para venta,unid.,Cleto Almacen de vinos,48900,6
+Marco Zunino C. Sauvignon,,Bebidas para venta,unid.,Cleto Almacen de vinos,55800,6
+Marco Zunino Malbec Bonarda,,Bebidas para venta,unid.,Cleto Almacen de vinos,33000,6
+Marco Zunino Malbec Cerezo,,Bebidas para venta,unid.,Cleto Almacen de vinos,63000,6
+Marco Zunino Reserva Malbec,,Bebidas para venta,unid.,Cleto Almacen de vinos,81600,6
+Mirinda Lata 354cc,,Bebidas para venta,unid.,CLARG,23415.6,24
+Nepa Deposito,,Bebidas para venta,L,,205000,50
+Paso de los toros Pomelo 2.250,,Bebidas para venta,unid.,CLARG,20987.84,8
+Paso de los Toros Pomelo Lata,,Bebidas para venta,unid.,CLARG,18371.04,24
+Paso de los Toros Tonica 1500cc,,Bebidas para venta,unid.,CLARG,13042.14,6
+Paso de los Toros Tonica Lata,,Bebidas para venta,unid.,CLARG,18371.04,24
+Pepsi Lata 354cc,,Bebidas para venta,unid.,CLARG,26757.6,24
+Pepsi Light Lata 350cc,,Bebidas para venta,unid.,CLARG,25226.88,24
+Pepsi Light x500cc,,Bebidas para venta,unid.,CLARG,11100.36,6
+Pulpa Anana 1kg,,Bebidas para venta,unid.,,99600,12
+Pulpa Durazno 1kg,,Bebidas para venta,unid.,,64800,12
+Pulpa Mango 1kg,,Bebidas para venta,unid.,,64800,12
+Pulpa Maracuya 1kg,,Bebidas para venta,unid.,,84000,12
+Session IPA Deposito,,Bebidas para venta,L,,185000,50
+Soda sifon,,Bebidas para venta,unid.,,7113.18,6
+Vermu Feriado Rojo,,Bebidas para venta,unid.,,52800,6
+Vermu Feriado Rosado,,Bebidas para venta,unid.,,52800,6
+La Iride Chardonnay (DEPOSITO),,Bebidas para venta,unid.,Cleto Almacen de vinos,42000,6
+Bondiola,,"Carnes, embutidos y pescados",kg,FrigoPorc,9397.5,1
+Carne Molida,,"Carnes, embutidos y pescados",kg,La Esperanza,13846.15,1
+Carre de cerdo,,"Carnes, embutidos y pescados",kg,FrigoPorc,6100,1
+Chorizo,,"Carnes, embutidos y pescados",kg,La Esperanza,7088.36,1
+Cuadril,,"Carnes, embutidos y pescados",kg,La Esperanza,16900,1
+Jamon cocido,,"Carnes, embutidos y pescados",kg,FrigoPorc,44594.03,5.1
+Lomo,,"Carnes, embutidos y pescados",kg,La Esperanza,21000,1
+Osobuco,,"Carnes, embutidos y pescados",kg,La Esperanza,7000,1
+Panceta,,"Carnes, embutidos y pescados",kg,FrigoPorc,57000,3
+Pata muslo,,"Carnes, embutidos y pescados",kg,La Esperanza,4296,1
+Roast Beef,,"Carnes, embutidos y pescados",kg,La Esperanza,14860.04,1
+Suprema de Pollo,,"Carnes, embutidos y pescados",kg,Santa Ana,93665.16,15
+Surubi,,"Carnes, embutidos y pescados",kg,,13999.99,1
+Vacio,,"Carnes, embutidos y pescados",kg,La Esperanza,22000,1
+Colita de cuadril,,"Carnes, embutidos y pescados",kg,La Esperanza,17460,1
+Vacio de cerdo,,"Carnes, embutidos y pescados",kg,FrigoPorc,8502.5,1
+Guanciale,,"Carnes, embutidos y pescados",kg,,9000,1
+Aji Molido,Almacen de condimentos,"Condimentos, agregados y aderezos",kg,Almacen de condimentos,6200,1
+Ajo en Polvo,La Virginia,"Condimentos, agregados y aderezos",kg,La Virginia,4700,1
+Ajo granulado,La Virginia,"Condimentos, agregados y aderezos",kg,La Virginia,9800,1
+Albahaca Seca,Almacen de condimentos,"Condimentos, agregados y aderezos",kg,Almacen de condimentos,9500,1
+Azucar,Cristo,"Condimentos, agregados y aderezos",kg,Biasoni,10000,10
+Bicarbonato de sodio,,"Condimentos, agregados y aderezos",kg,Almacen de condimentos,4500,1
+Botella de Miel,,"Condimentos, agregados y aderezos",unid.,El Eden,7500,1
+Caja de Caldos,Molto,"Condimentos, agregados y aderezos",unid.,,772,6
+Canela en polvo,Almacen de condimentos,"Condimentos, agregados y aderezos",kg,Almacen de condimentos,5600,1
+Cerveza lata (cocina),Quilmes,"Condimentos, agregados y aderezos",unid.,CLARG,71035.2,24
+Colorante carbon vegetal,PastelAR,"Condimentos, agregados y aderezos",kg,Nardelli,96696.6,0.9
+Curcuma,Almacen de condimentos,"Condimentos, agregados y aderezos",kg,Almacen de condimentos,6600,1
+Eneldo,Almacen de condimentos,"Condimentos, agregados y aderezos",kg,Almacen de condimentos,12000,1
+Ketchup,Natura,"Condimentos, agregados y aderezos",kg,Don Vitto,42688.08,12
+Laurel en Hoja Seco,Almacen de condimentos,"Condimentos, agregados y aderezos",kg,Almacen de condimentos,10600,1
+Mostaza,Natura,"Condimentos, agregados y aderezos",kg,Don Vitto,23432.1,12
+Nuez Moscada,La Virginia,"Condimentos, agregados y aderezos",kg,La Virginia,156073.36,4
+Oregano,Almacen de condimentos,"Condimentos, agregados y aderezos",kg,La Virginia,6600,1
+Pimenton Dulce,La Virginia,"Condimentos, agregados y aderezos",kg,La Virginia,40961.52,4
+Pimienta blanca,,"Condimentos, agregados y aderezos",kg,La Virginia,6300,4
+Pimienta Negra,La Virginia,"Condimentos, agregados y aderezos",kg,La Virginia,75647.92,4
+Pimienta Negra en grano,Almacen de condimentos,"Condimentos, agregados y aderezos",kg,La Virginia,20000,1
+Romero seco,Almacen de condimentos,"Condimentos, agregados y aderezos",kg,Almacen de condimentos,9500,1
+Sal entrefina,Tresal,"Condimentos, agregados y aderezos",kg,Biasoni,11125,25
+Sal Fina,Tresal,"Condimentos, agregados y aderezos",kg,Biasoni,12635,25
+Salsa Barbacoa,,"Condimentos, agregados y aderezos",kg,Mili Ana,44988.99,12
+Tomillo,Almacen de condimentos,"Condimentos, agregados y aderezos",kg,Almacen de condimentos,9800,2
+Vino Blanco x ud.(COCINA),Jean Rivier,"Condimentos, agregados y aderezos",unid.,Cleto Almacen de vinos,26100,6
+Vino Tinto x ud.(COCINA),Jean Rivier,"Condimentos, agregados y aderezos",unid.,Cleto Almacen de vinos,26100,6
+Bandeja Aluminio F275,Resipack,Costos de empaque directos,unid.,RESIPACK,161.07,1
+Bolsa Camiseta 45*60 x20u,Resipack,Costos de empaque directos,unid.,RESIPACK,3115.59,20
+Bolsa Emblocadas 20*30 x1000u,Resipack,Costos de empaque directos,unid.,RESIPACK,5612.4,1000
+Bolsa Papel Kraft 31*20*9 x50ud.,Resipack,Costos de empaque directos,unid.,RESIPACK,4576.8,50
+Bolsa polipropileno,Resipack,Costos de empaque directos,unid.,RESIPACK,30.6,1
+Bolsa zipper 15*20 x 100ud.,Resipack,Costos de empaque directos,unid.,RESIPACK,3238,100
+Caja Carton 18*18*6,Resipack,Costos de empaque directos,unid.,RESIPACK,55451,100
+Portavaso 2 Vasos,Resipack,Costos de empaque directos,unid.,RESIPACK,63.72,1
+Pote bisagra 250gr,Resipack,Costos de empaque directos,unid.,RESIPACK,99.67,1
+Tapa Alumnio F275,Resipack,Costos de empaque directos,unid.,RESIPACK,119.17,1
+Tapa vaso termico 180 cc,Resipack,Costos de empaque directos,unid.,RESIPACK,49.02,1
+Vaso termico 180cc,Resipack,Costos de empaque directos,unid.,RESIPACK,66.5,1
+Etiquetas p/Congeladas x80u,,Costos de empaque directos,unid.,Norte Grafica,6600,80
+Bobina Toalla Papel 25cmx400m,Elegante,Descartables/Plasticos,unid.,RESIPACK,16016.17,2
+Bolsa de arranque 45*60,Resipack,Descartables/Plasticos,unid.,RESIPACK,3891.15,1
+Cinta Blanca x ud.,Resipack,Descartables/Plasticos,unid.,RESIPACK,29039.04,12
+Cinta scotch x ud.,Resipack,Descartables/Plasticos,unid.,RESIPACK,635.18,12
+Cofia x ud.,Resipack,Descartables/Plasticos,unid.,RESIPACK,62.15,1
+Folex 25*35 x1kg,Son buenas,Descartables/Plasticos,unid.,RESIPACK,3906.88,1
+Folex 37*50 x1kg,Son buenas,Descartables/Plasticos,unid.,RESIPACK,3488.29,1
+Guantes de nitrilo x100u,Resipack,Descartables/Plasticos,unid.,RESIPACK,51680,10
+Guantes Latex Mediano x100u,NP,Descartables/Plasticos,unid.,RESIPACK,47462.2,10
+Mangas descartables 30*50 x10ud,Resipack,Descartables/Plasticos,unid.,RESIPACK,2251.62,10
+Papel higienico x8u.,Tobaut,Descartables/Plasticos,unid.,RESIPACK,18298.48,8
+Rollo de film x1000,Resipack,Descartables/Plasticos,unid.,RESIPACK,37745.06,1
+Rollo de papel aluminio 38cm x1kg,Resipack,Descartables/Plasticos,unid.,RESIPACK,7126.66,1
+Servilletas de servicio 24*24 x1300u,MRC,Descartables/Plasticos,unid.,RESIPACK,6555.25,1300
+Sorbete Negro XL x 1000ud.,SUR,Descartables/Plasticos,unid.,RESIPACK,4960,1000
+Toallas Intercaladas x8paq. (Bano),,Descartables/Plasticos,unid.,RESIPACK,7920.06,8
+Vasos descartables 330 cc,Resipack,Descartables/Plasticos,unid.,RESIPACK,29.49,1
+Pote Helado Soft,,Descartables/Plasticos,unid.,,844680,4950
+Harina 000,Molino Matilde S.A,Harinas y huevos,kg,Biasoni,14700,25
+Harina 0000,Molino Matilde S.A,Harinas y huevos,kg,Biasoni,17500,25
+Huevos,Santa Ana,Harinas y huevos,unid.,Santa Ana,25619.83,180
+Semolin,Molino Matilde S.A,Harinas y huevos,kg,Biasoni,16515.84,25
+Cacao Amargo en polvo,,Ingredientes para postres,kg,,26162.14,1
+Cafe al Conac,,Ingredientes para postres,L,,4106.51,1
+Cafe en sobre x20u,,Ingredientes para postres,unid.,,3539,20
+Chocolate semi amargo x 500gr.,,Ingredientes para postres,unid.,,9531,1
+Chocolinas x170gr,,Ingredientes para postres,unid.,,46160,40
+Chocolinas x255gr,,Ingredientes para postres,unid.,,38475,25
+DPO Estabilizante,,Ingredientes para postres,kg,,51420.6,2
+Dulce de leche,,Ingredientes para postres,kg,Biasoni,77220,25
+Galletitas Vainilla x6ud.,,Ingredientes para postres,unid.,,17100,36
+Helado soft Milkaut,,Ingredientes para postres,L,,3233.69,1
+Licor de Dulce de leche,,Ingredientes para postres,L,,11876.04,6
+Pasta de pistacho,,Ingredientes para postres,kg,,228170.35,3.5
+Polvo soft Jamer,,Ingredientes para postres,kg,,11984.41,1.5
+Vainilla en liquido,Prindal,Ingredientes para postres,L,Biasoni,6840,5
+Whisky licor,,Ingredientes para postres,unid.,,38460,12
+Fructosoft,Aromitalia,Ingredientes para postres,kg,Lucero,28943.93,4
+Burrata,Mozzari,Lacteos y quesos,kg,,44000,1
+Crema de Leche,Tonadita,Lacteos y quesos,kg,Don Vitto,22346.92,4
+Leche descremada en polvo,Purisima,Lacteos y quesos,kg,Don Vitto,6026.15,0.8
+Leche entera en polvo,Purisima,Lacteos y quesos,kg,Don Vitto,5958.4,0.8
+Leche Sachet x 1 L,Silvia,Lacteos y quesos,L,Don Vitto,17363.52,18
+Manteca,Tonadita,Lacteos y quesos,kg,Don Vitto,54988.07,6
+Queso Cheddar,Milkaut,Lacteos y quesos,kg,Don Vitto,11448,1
+Queso crema,Tonadita,Lacteos y quesos,kg,Don Vitto,21926.4,3.5
+Queso Danbo,Noal,Lacteos y quesos,kg,Don Vitto,85867.43,10.5
+Queso Fontina,,Lacteos y quesos,kg,Don Vitto,11605.89,1
+Queso Muzzarella,Cremigal,Lacteos y quesos,kg,Don Vitto,60906.51,9
+Queso Provoleta,,Lacteos y quesos,kg,Don Vitto,13381.2,1
+Queso Reggianito,,Lacteos y quesos,kg,Don Vitto,11760,1
+Queso Roquefort,,Lacteos y quesos,kg,Don Vitto,11601.62,1
+Queso Sardo,Herbal,Lacteos y quesos,kg,Don Vitto,8700.83,1
+Queso cremoso,Noal,Lacteos y quesos,kg,Don Vitto,22399.96,4.4
+Queso Sardo Silvia,Silvia,Lacteos y quesos,kg,Don Vitto,9629.21,1
+Ricota,Silvia,Lacteos y quesos,kg,Don Vitto,6595.32,3
+Straciatella,Mozzari,Lacteos y quesos,kg,Jamon del medio,9500,0.25
+Queso Provolone,,Lacteos y quesos,kg,Victorello,9839.79,1
+Queso Parmesano,,Lacteos y quesos,kg,,21743.77,1
+Aerosol p/difusor x ud.,Saphirus,Productos de limpieza,unid.,SyG Limpieza,5900,1
+Bidon Alcohol 70% x4.5L,,Productos de limpieza,unid.,SyG Limpieza,12200,3
+Bolsas 60*90 x10u,,Productos de limpieza,unid.,SyG Limpieza,100000,50
+Bolsas 80*110 x10u,,Productos de limpieza,unid.,SyG Limpieza,77500,25
+Bolsas de residuos 45*60 x30u,,Productos de limpieza,unid.,SyG Limpieza,39000,30
+Cepillo de mango,,Productos de limpieza,unid.,SyG Limpieza,3700,1
+CIF Mueble Respuesto,,Productos de limpieza,unid.,SyG Limpieza,2500,1
+Desengrasante,,Productos de limpieza,unid.,SyG Limpieza,7200,1
+Desodorante de ambiente x ud.,,Productos de limpieza,unid.,SyG Limpieza,34800,12
+Desodorante de piso x5L,,Productos de limpieza,unid.,SyG Limpieza,2300,1
+Detergente Suelto x5L,,Productos de limpieza,unid.,SyG Limpieza,5000,1
+Escobillon,,Productos de limpieza,unid.,SyG Limpieza,5200,1
+Escurridor de goma negra,,Productos de limpieza,unid.,SyG Limpieza,3900,1
+Esponja,,Productos de limpieza,unid.,SyG Limpieza,1500,1
+Esponja de acero,,Productos de limpieza,unid.,SyG Limpieza,14400,12
+Esponja fibra verde,,Productos de limpieza,unid.,SyG Limpieza,2500,2
+Esponja p/antiadherente,,Productos de limpieza,unid.,SyG Limpieza,1500,1
+Franela Naranja,,Productos de limpieza,unid.,SyG Limpieza,1600,1
+Insecticida aerosol,Selton,Productos de limpieza,unid.,SyG Limpieza,25800,6
+Jabon blanco,,Productos de limpieza,unid.,SyG Limpieza,600,1
+Jabon liquido para manos x 5L,,Productos de limpieza,unid.,SyG Limpieza,10500,1
+Lavandina en gel,,Productos de limpieza,L,SyG Limpieza,11500,5
+Lavandina Suelta x 5L,,Productos de limpieza,unid.,SyG Limpieza,2500,1
+Limpia Vidrios x 5L,,Productos de limpieza,unid.,SyG Limpieza,5000,1
+Naftalina,,Productos de limpieza,unid.,SyG Limpieza,5800,1
+Pano multiuso amarillo,,Productos de limpieza,unid.,SyG Limpieza,1166.67,1
+Rejilla Doble (bacha),,Productos de limpieza,unid.,SyG Limpieza,2200,1
+Rejilla Mingitorio,,Productos de limpieza,unid.,SyG Limpieza,2600,1
+Rejilla simple (Salon),,Productos de limpieza,unid.,SyG Limpieza,1500,1
+Repasador de fibrana,,Productos de limpieza,unid.,SyG Limpieza,3800,1
+Repuesto de gatillo,,Productos de limpieza,unid.,SyG Limpieza,500,1
+Sectisol x5 Lts,,Productos de limpieza,unid.,SyG Limpieza,11800,1
+Trapo de Piso,,Productos de limpieza,unid.,SyG Limpieza,3000,1
+Trapos Fajinadores,,Productos de limpieza,unid.,SyG Limpieza,8200,10
+Ajo,,"Verduras, frutas, hongos y enlatados",unid.,Natalia Piceda,52000,100
+Albahaca fresca,,"Verduras, frutas, hongos y enlatados",unid.,Natalia Piceda,2000,1
+Apio,,"Verduras, frutas, hongos y enlatados",unid.,Natalia Piceda,3000,1
+Arandanos,,"Verduras, frutas, hongos y enlatados",unid.,Natalia Piceda,3000,1
+Arandanos congelados,,"Verduras, frutas, hongos y enlatados",kg,Polo Sur,8235,0.25
+Arveja congelada,,"Verduras, frutas, hongos y enlatados",kg,Polo Sur,6051.39,2
+Arveja x400g,,"Verduras, frutas, hongos y enlatados",unid.,,413.22,1
+Boniato,,"Verduras, frutas, hongos y enlatados",kg,Natalia Piceda,2480,1
+Cebolla,,"Verduras, frutas, hongos y enlatados",kg,Natalia Piceda,13000,16
+Cebolla morada,,"Verduras, frutas, hongos y enlatados",kg,Natalia Piceda,5000,1
+Cebollita de Verdeo,,"Verduras, frutas, hongos y enlatados",unid.,Natalia Piceda,4000,1
+Champignones lata x460gr.,,"Verduras, frutas, hongos y enlatados",kg,Mili Ana,15803.98,1.85
+Ciboulette,,"Verduras, frutas, hongos y enlatados",unid.,Natalia Piceda,3000,1
+Espinaca,,"Verduras, frutas, hongos y enlatados",unid.,Natalia Piceda,5271.3,1
+Espinaca Congelada,,"Verduras, frutas, hongos y enlatados",kg,Polo Sur,54085.3,10
+Frambuesa congelada,,"Verduras, frutas, hongos y enlatados",kg,Polo Sur,20362.96,6
+Frutilla congelada,,"Verduras, frutas, hongos y enlatados",kg,Polo Sur,35640,6
+Hongo de pino,,"Verduras, frutas, hongos y enlatados",kg,El Eden,45000,1
+Hongos portobello,,"Verduras, frutas, hongos y enlatados",kg,El Eden,25000,10
+Jengibre,,"Verduras, frutas, hongos y enlatados",kg,Natalia Piceda,12000,1
+Kiwi,,"Verduras, frutas, hongos y enlatados",kg,Natalia Piceda,5500,1
+Lata de jardinera x340g,,"Verduras, frutas, hongos y enlatados",unid.,,915.89,1
+Lata tomate italiano 2.5kg,,"Verduras, frutas, hongos y enlatados",kg,Oeste Pizzas,95444.7,15
+Lentejas x 400gr,,"Verduras, frutas, hongos y enlatados",kg,,1714.71,1
+Limon en fruta,,"Verduras, frutas, hongos y enlatados",unid.,Natalia Piceda,16000,130
+Mamon,,"Verduras, frutas, hongos y enlatados",kg,,4666.67,1
+Manzana roja,,"Verduras, frutas, hongos y enlatados",kg,Natalia Piceda,2300,1
+Manzana verde,,"Verduras, frutas, hongos y enlatados",kg,Natalia Piceda,2300,1
+Menta fresca,,"Verduras, frutas, hongos y enlatados",unid.,El Eden,4500,1
+Mix frutas congeladas,,"Verduras, frutas, hongos y enlatados",kg,Polo Sur,43004.53,4
+Morron Rojo,,"Verduras, frutas, hongos y enlatados",kg,Natalia Piceda,3500,1
+Morron Verde,,"Verduras, frutas, hongos y enlatados",kg,Natalia Piceda,2000,1
+Naranjas,,"Verduras, frutas, hongos y enlatados",unid.,Natalia Piceda,26000,120
+Nuez Mariposa,,"Verduras, frutas, hongos y enlatados",kg,El Eden,18299.12,1
+Palta,,"Verduras, frutas, hongos y enlatados",kg,El Eden,3000,1
+Papas,,"Verduras, frutas, hongos y enlatados",kg,Natalia Piceda,16000,17
+Pepino,,"Verduras, frutas, hongos y enlatados",kg,Natalia Piceda,1500,1
+Perejil,,"Verduras, frutas, hongos y enlatados",unid.,Natalia Piceda,4000,1
+Pistachos naturales,,"Verduras, frutas, hongos y enlatados",kg,Natalia Piceda,51300,1
+Remolacha,,"Verduras, frutas, hongos y enlatados",kg,Natalia Piceda,1860.47,1
+Rucula,,"Verduras, frutas, hongos y enlatados",unid.,Natalia Piceda,1000,1
+Tomate en extracto x150g,,"Verduras, frutas, hongos y enlatados",unid.,CHEEK,19500,30
+Tomates cherry,,"Verduras, frutas, hongos y enlatados",kg,El Eden,6500,1
+Tomates Perita,,"Verduras, frutas, hongos y enlatados",kg,Natalia Piceda,23000,19
+Zanahoria,,"Verduras, frutas, hongos y enlatados",kg,Natalia Piceda,28000,18
+Zapallo brasilero,,"Verduras, frutas, hongos y enlatados",kg,Natalia Piceda,800,1
+Pan,,Otros,kg,,1200,1
+Choclo,,"Verduras, frutas, hongos y enlatados",unid.,Natalia Piceda,460,1
+Pan rallado,,Otros,kg,Panaderia ELENA,1400,1
+Durazno,,"Verduras, frutas, hongos y enlatados",kg,,3500,1
+Pera,,"Verduras, frutas, hongos y enlatados",kg,,2000,1
+Zucchini,,"Verduras, frutas, hongos y enlatados",kg,El Eden,2500,1
+Choclo Congelado,,"Verduras, frutas, hongos y enlatados",kg,Polo Sur,11416.59,2
+Puerro,,"Verduras, frutas, hongos y enlatados",kg,El Eden,9500,1
