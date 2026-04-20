@@ -1,6 +1,7 @@
 import { NavLink } from 'react-router-dom'
 import { cn } from '@/lib/utils'
 import { useAuth, type Modulo } from '@/lib/auth'
+import { usePagosAlertas } from '@/modules/finanzas/hooks/usePagosAlertas'
 
 // Modulos que viven dentro del tab de Finanzas. Si el usuario tiene permiso
 // a cualquiera de estos, mostramos el item Finanzas en el sidebar.
@@ -18,6 +19,7 @@ const NAV: { to: string; label: string; icon: string; modulo: Modulo | 'finanzas
 
 export function Sidebar() {
   const { perfil, signOut, tienePermiso } = useAuth()
+  const { data: alertas } = usePagosAlertas()
   const items = NAV.filter((n) =>
     n.modulo === 'finanzas-grupo'
       ? MODULOS_FINANZAS.some((m) => tienePermiso(m))
@@ -42,23 +44,35 @@ export function Sidebar() {
 
       {/* Nav */}
       <nav className="flex-1 px-3 py-3 space-y-0.5">
-        {items.map(({ to, label, icon }) => (
-          <NavLink
-            key={to}
-            to={to}
-            end={to === '/'}
-            className={({ isActive }) => cn(
-              'flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-all',
-              isActive
-                ? 'text-white border-l-2 border-rodziny-500'
-                : 'text-sidebar-text hover:text-white hover:bg-sidebar-hover'
-            )}
-            style={({ isActive }) => isActive ? { background: '#1e2a14' } : {}}
-          >
-            <span className="text-base">{icon}</span>
-            <span>{label}</span>
-          </NavLink>
-        ))}
+        {items.map(({ to, label, icon, modulo }) => {
+          const mostrarBadge = modulo === 'finanzas-grupo' && (alertas?.urgentesTotal ?? 0) > 0
+          const badgeColor = (alertas?.vencidos ?? 0) > 0 ? 'bg-red-500' : 'bg-amber-500'
+          return (
+            <NavLink
+              key={to}
+              to={to}
+              end={to === '/'}
+              className={({ isActive }) => cn(
+                'flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-all',
+                isActive
+                  ? 'text-white border-l-2 border-rodziny-500'
+                  : 'text-sidebar-text hover:text-white hover:bg-sidebar-hover'
+              )}
+              style={({ isActive }) => isActive ? { background: '#1e2a14' } : {}}
+            >
+              <span className="text-base">{icon}</span>
+              <span className="flex-1">{label}</span>
+              {mostrarBadge && (
+                <span className={cn(
+                  'min-w-[20px] h-5 px-1.5 flex items-center justify-center rounded-full text-white text-[10px] font-bold',
+                  badgeColor
+                )}>
+                  {alertas!.urgentesTotal}
+                </span>
+              )}
+            </NavLink>
+          )
+        })}
       </nav>
 
       {/* Footer */}

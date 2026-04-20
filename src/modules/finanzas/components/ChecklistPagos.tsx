@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { formatARS, cn } from '@/lib/utils'
 import { type MedioPago, MEDIO_PAGO_LABEL } from '@/modules/gastos/types'
+import { urgenciaPago, type UrgenciaPago } from '@/modules/finanzas/hooks/usePagosAlertas'
 
 // ── tipos ────────────────────────────────────────────────────────────────────
 interface PagoFijo {
@@ -303,6 +304,21 @@ export function ChecklistPagos() {
     return { totalEstimado, totalPagado, pendiente: totalEstimado - totalPagado, itemsPagados, itemsTotal }
   }, [pagos])
 
+  // Alertas por urgencia (solo pagos no pagados del mes actual)
+  const alertasUrgencia = useMemo(() => {
+    const pendientes = (pagos ?? []).filter((p) => !p.pagado && p.fecha_vencimiento)
+    const porUrgencia = { vencido: [] as PagoFijo[], hoy: [] as PagoFijo[], semana: [] as PagoFijo[] }
+    for (const p of pendientes) {
+      const u = urgenciaPago(p.fecha_vencimiento)
+      if (u === 'vencido') porUrgencia.vencido.push(p)
+      else if (u === 'hoy') porUrgencia.hoy.push(p)
+      else if (u === 'semana') porUrgencia.semana.push(p)
+    }
+    return porUrgencia
+  }, [pagos])
+
+  const tieneAlertas = alertasUrgencia.vencido.length + alertasUrgencia.hoy.length + alertasUrgencia.semana.length > 0
+
   const tieneItems = (pagos?.length ?? 0) > 0
 
   function toggleSeccion(cat: string) {
@@ -370,6 +386,60 @@ export function ChecklistPagos() {
               />
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Banner de alertas por urgencia */}
+      {tieneAlertas && (
+        <div className="space-y-2">
+          {alertasUrgencia.vencido.length > 0 && (
+            <div className="bg-red-50 border border-red-300 rounded-lg p-3 flex items-start gap-3">
+              <div className="text-xl">🔴</div>
+              <div className="flex-1">
+                <p className="text-sm font-semibold text-red-900">
+                  {alertasUrgencia.vencido.length} pago{alertasUrgencia.vencido.length > 1 ? 's' : ''} vencido{alertasUrgencia.vencido.length > 1 ? 's' : ''}
+                </p>
+                <p className="text-xs text-red-700 mt-0.5">
+                  {alertasUrgencia.vencido.map((p) => p.concepto).join(', ')}
+                </p>
+              </div>
+              <div className="text-sm font-bold text-red-900">
+                {formatARS(alertasUrgencia.vencido.reduce((s, p) => s + (p.monto ?? 0), 0))}
+              </div>
+            </div>
+          )}
+          {alertasUrgencia.hoy.length > 0 && (
+            <div className="bg-amber-50 border border-amber-300 rounded-lg p-3 flex items-start gap-3">
+              <div className="text-xl">⚠️</div>
+              <div className="flex-1">
+                <p className="text-sm font-semibold text-amber-900">
+                  {alertasUrgencia.hoy.length} pago{alertasUrgencia.hoy.length > 1 ? 's' : ''} vence{alertasUrgencia.hoy.length > 1 ? 'n' : ''} HOY
+                </p>
+                <p className="text-xs text-amber-700 mt-0.5">
+                  {alertasUrgencia.hoy.map((p) => p.concepto).join(', ')}
+                </p>
+              </div>
+              <div className="text-sm font-bold text-amber-900">
+                {formatARS(alertasUrgencia.hoy.reduce((s, p) => s + (p.monto ?? 0), 0))}
+              </div>
+            </div>
+          )}
+          {alertasUrgencia.semana.length > 0 && (
+            <div className="bg-orange-50 border border-orange-300 rounded-lg p-3 flex items-start gap-3">
+              <div className="text-xl">📅</div>
+              <div className="flex-1">
+                <p className="text-sm font-semibold text-orange-900">
+                  {alertasUrgencia.semana.length} pago{alertasUrgencia.semana.length > 1 ? 's' : ''} próximo{alertasUrgencia.semana.length > 1 ? 's' : ''} a vencer (7 días)
+                </p>
+                <p className="text-xs text-orange-700 mt-0.5">
+                  {alertasUrgencia.semana.map((p) => p.concepto).join(', ')}
+                </p>
+              </div>
+              <div className="text-sm font-bold text-orange-900">
+                {formatARS(alertasUrgencia.semana.reduce((s, p) => s + (p.monto ?? 0), 0))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -494,9 +564,16 @@ function FilaPago({
   const [notasLocal, setNotasLocal] = useState(pago.notas ?? '')
 
   const subcatNombre = subcategorias.find((c) => c.id === pago.categoria_gasto_id)?.nombre ?? ''
+  const urg: UrgenciaPago = pago.pagado ? 'ok' : urgenciaPago(pago.fecha_vencimiento)
 
   return (
-    <tr className={cn('border-b border-gray-50 hover:bg-gray-50/50', pago.pagado && 'bg-green-50/30')}>
+    <tr className={cn(
+      'border-b border-gray-50 hover:bg-gray-50/50',
+      pago.pagado && 'bg-green-50/30',
+      !pago.pagado && urg === 'vencido' && 'bg-red-50',
+      !pago.pagado && urg === 'hoy' && 'bg-amber-50',
+      !pago.pagado && urg === 'semana' && 'bg-orange-50/60',
+    )}>
       <td className="px-4 py-2">
         <span className={cn('text-gray-700', pago.pagado && 'line-through text-gray-400')}>
           {pago.concepto}
@@ -536,13 +613,24 @@ function FilaPago({
         />
       </td>
       <td className="px-4 py-2 text-center">
-        <input
-          type="date"
-          className="text-xs border border-gray-200 rounded px-1.5 py-1 focus:border-rodziny-500 focus:outline-none"
-          value={pago.fecha_vencimiento ?? ''}
-          onChange={(e) => onUpdate({ fecha_vencimiento: e.target.value || null })}
-          disabled={pago.pagado}
-        />
+        <div className="flex items-center gap-1.5 justify-center">
+          <input
+            type="date"
+            className="text-xs border border-gray-200 rounded px-1.5 py-1 focus:border-rodziny-500 focus:outline-none"
+            value={pago.fecha_vencimiento ?? ''}
+            onChange={(e) => onUpdate({ fecha_vencimiento: e.target.value || null })}
+            disabled={pago.pagado}
+          />
+          {!pago.pagado && urg === 'vencido' && (
+            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-200 text-red-800">VENCIDO</span>
+          )}
+          {!pago.pagado && urg === 'hoy' && (
+            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-200 text-amber-800">HOY</span>
+          )}
+          {!pago.pagado && urg === 'semana' && (
+            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-orange-200 text-orange-800">7 días</span>
+          )}
+        </div>
       </td>
       <td className="px-4 py-2 text-center">
         <input
