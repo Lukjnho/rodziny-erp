@@ -244,19 +244,20 @@ export function CierreCaja() {
 
   // ── resumen del mes ────────────────────────────────────────────────────────
   const resumen = useMemo(() => {
-    if (!cierres) return { total: 0, positivos: 0, negativos: 0, cantidad: 0, verificados: 0, pendientes: 0, totalRetiros: 0, totalOtrosRetiros: 0, totalFudo: 0 }
-    let total = 0, positivos = 0, negativos = 0, verificados = 0, totalRetiros = 0, totalOtrosRetiros = 0, totalFudo = 0
+    if (!cierres) return { total: 0, positivos: 0, negativos: 0, cantidad: 0, verificados: 0, pendientes: 0, totalContado: 0, totalRetiros: 0, totalOtrosRetiros: 0, totalFudo: 0 }
+    let total = 0, positivos = 0, negativos = 0, verificados = 0, totalContado = 0, totalRetiros = 0, totalOtrosRetiros = 0, totalFudo = 0
     for (const c of cierres) {
       const dif = calcDif(c)
       total += dif
       if (dif > 0) positivos += dif
       if (dif < 0) negativos += dif
       if (c.verificado) verificados++
+      totalContado += c.monto_contado ?? 0
       totalRetiros += c.retiro ?? 0
       totalOtrosRetiros += c.otros_retiros ?? 0
       totalFudo += c.monto_esperado ?? 0
     }
-    return { total, positivos, negativos, cantidad: cierres.length, verificados, pendientes: cierres.length - verificados, totalRetiros, totalOtrosRetiros, totalFudo }
+    return { total, positivos, negativos, cantidad: cierres.length, verificados, pendientes: cierres.length - verificados, totalContado, totalRetiros, totalOtrosRetiros, totalFudo }
   }, [cierres])
 
   // Agrupar por fecha
@@ -300,8 +301,8 @@ export function CierreCaja() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <div className="bg-white rounded-lg border border-surface-border p-4">
           <p className="text-xs text-gray-500 mb-1">Efectivo del mes</p>
-          <p className="text-lg font-semibold text-green-700">{formatARS(resumen.totalRetiros)}</p>
-          <p className="text-[10px] text-gray-400 mt-0.5">{resumen.cantidad} cierres</p>
+          <p className="text-lg font-semibold text-green-700">{formatARS(resumen.totalContado - resumen.totalRetiros)}</p>
+          <p className="text-[10px] text-gray-400 mt-0.5">Contado - retiros de cambio</p>
         </div>
         <div className="bg-white rounded-lg border border-surface-border p-4">
           <p className="text-xs text-gray-500 mb-1">Total Fudo del mes</p>
