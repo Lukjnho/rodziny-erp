@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { formatARS, cn } from '@/lib/utils'
@@ -89,6 +89,13 @@ export function ChecklistPagos() {
   const [showModal, setShowModal] = useState(false)
   const [seccionesAbiertas, setSeccionesAbiertas] = useState<Set<string>>(new Set(CATEGORIAS))
   const [medioPagoModal, setMedioPagoModal] = useState<{ pagoId: string; concepto: string } | null>(null)
+  const [toast, setToast] = useState<{ tipo: 'pagado' | 'desmarcado'; concepto: string; monto: number } | null>(null)
+
+  useEffect(() => {
+    if (!toast) return
+    const t = setTimeout(() => setToast(null), 5000)
+    return () => clearTimeout(t)
+  }, [toast])
 
   // ── queries ──────────────────────────────────────────────────────────────
   const { data: pagos, isLoading } = useQuery({
@@ -256,6 +263,7 @@ export function ChecklistPagos() {
     qc.invalidateQueries({ queryKey: ['pagos_fijos', periodo] })
     qc.invalidateQueries({ queryKey: ['fc_pagos'] })
     qc.invalidateQueries({ queryKey: ['edr_gastos_resumen'] })
+    setToast({ tipo: 'pagado', concepto: pago.concepto, monto: pago.monto ?? 0 })
   }
 
   // Desmarcar pagado: elimina gasto + pago_gasto
@@ -274,6 +282,7 @@ export function ChecklistPagos() {
     qc.invalidateQueries({ queryKey: ['pagos_fijos', periodo] })
     qc.invalidateQueries({ queryKey: ['fc_pagos'] })
     qc.invalidateQueries({ queryKey: ['edr_gastos_resumen'] })
+    setToast({ tipo: 'desmarcado', concepto: pago.concepto, monto: pago.monto ?? 0 })
   }
 
   // ── datos derivados ──────────────────────────────────────────────────────
@@ -360,6 +369,15 @@ export function ChecklistPagos() {
       {copiarMesAnterior.isError && (
         <div className="text-sm text-red-600 bg-red-50 rounded px-3 py-2">{(copiarMesAnterior.error as Error).message}</div>
       )}
+
+      {/* Hint explicativo */}
+      <div className="bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 flex items-start gap-2 text-xs text-blue-800">
+        <span className="text-base leading-none">ℹ️</span>
+        <span>
+          Al marcar un pago como <strong>Pagado</strong> se crea automáticamente un gasto que impacta en <strong>Flujo de Caja</strong> y <strong>EdR</strong>.
+          Si lo desmarcás, el gasto se elimina.
+        </span>
+      </div>
 
       {/* KPIs */}
       {tieneItems && (
@@ -531,6 +549,35 @@ export function ChecklistPagos() {
           }}
           onClose={() => setShowModal(false)}
         />
+      )}
+
+      {/* Toast flotante */}
+      {toast && (
+        <div className="fixed bottom-4 right-4 z-50 max-w-sm animate-in fade-in slide-in-from-bottom-4">
+          <div className={cn(
+            'rounded-lg shadow-lg border px-4 py-3 flex items-start gap-3',
+            toast.tipo === 'pagado' ? 'bg-green-50 border-green-300' : 'bg-gray-50 border-gray-300'
+          )}>
+            <span className="text-xl leading-none">{toast.tipo === 'pagado' ? '✅' : '↩️'}</span>
+            <div className="flex-1 min-w-0">
+              <p className={cn(
+                'text-sm font-semibold',
+                toast.tipo === 'pagado' ? 'text-green-900' : 'text-gray-800'
+              )}>
+                {toast.tipo === 'pagado' ? 'Pago registrado' : 'Pago desmarcado'}
+              </p>
+              <p className={cn(
+                'text-xs mt-0.5',
+                toast.tipo === 'pagado' ? 'text-green-700' : 'text-gray-600'
+              )}>
+                {toast.tipo === 'pagado'
+                  ? `Se creó un gasto de ${formatARS(toast.monto)} por "${toast.concepto}" — impacta en Flujo de Caja y EdR.`
+                  : `Se eliminó el gasto de "${toast.concepto}" de Flujo de Caja y EdR.`}
+              </p>
+            </div>
+            <button onClick={() => setToast(null)} className="text-gray-400 hover:text-gray-600 text-sm leading-none">×</button>
+          </div>
+        </div>
       )}
 
       {/* Modal medio de pago (al marcar pagado sin medio) */}
