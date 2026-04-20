@@ -9,6 +9,8 @@ import { parseFudoGastos, type DetalleRow, type GastoRow } from '@/modules/finan
 import { NuevoGastoModal, type PrefillGasto } from '@/modules/gastos/NuevoGastoModal'
 import { ProveedoresPanel } from '@/modules/gastos/ProveedoresPanel'
 import { ListadoGastos } from '@/modules/gastos/ListadoGastos'
+import type { MedioPago } from '@/modules/gastos/types'
+import { MEDIO_PAGO_LABEL } from '@/modules/gastos/types'
 
 type Tab = 'gastos' | 'stock' | 'movimientos' | 'importar' | 'recepcion' | 'pagos' | 'proveedores'
 type FiltroEstado = 'todos' | 'bajo_minimo' | 'sin_stock' | 'inactivos'
@@ -229,6 +231,35 @@ export function ComprasPage() {
   // Modal de Nuevo Gasto desde recepción pendiente
   const [modalGastoOpen, setModalGastoOpen] = useState(false)
   const [prefillGasto, setPrefillGasto] = useState<PrefillGasto | undefined>(undefined)
+
+  // Modal de pago en tab Pagos
+  const [gastoAPagar, setGastoAPagar] = useState<GastoPago | null>(null)
+  const [pagoFecha, setPagoFecha] = useState(() => new Date().toISOString().split('T')[0])
+  const [pagoMedio, setPagoMedio] = useState<MedioPago>('efectivo')
+
+  function abrirModalPagoCompra(g: GastoPago) {
+    setGastoAPagar(g)
+    setPagoFecha(new Date().toISOString().split('T')[0])
+    setPagoMedio('efectivo')
+  }
+
+  async function confirmarPagoCompra() {
+    if (!gastoAPagar) return
+    const { error } = await supabase.from('gastos').update({
+      estado_pago: 'Pagado',
+      fecha_vencimiento: pagoFecha,
+    }).eq('id', gastoAPagar.id)
+    if (error) { window.alert(error.message); return }
+    await supabase.from('pagos_gastos').insert({
+      gasto_id: gastoAPagar.id,
+      fecha_pago: pagoFecha,
+      monto: gastoAPagar.importe_total,
+      medio_pago: pagoMedio,
+    })
+    setGastoAPagar(null)
+    qc.invalidateQueries({ queryKey: ['gastos_pagos'] })
+    qc.invalidateQueries({ queryKey: ['pagos_gastos'] })
+  }
 
   function abrirGastoDesdeRecepcion(r: RecepcionPendiente) {
     setPrefillGasto({
@@ -1569,13 +1600,10 @@ export function ComprasPage() {
                         <td className="px-4 py-2 text-center">
                           {!pagado && (
                             <button
-                              onClick={async () => {
-                                await supabase.from('gastos').update({ estado_pago: 'Pagado' }).eq('id', g.id)
-                                qc.invalidateQueries({ queryKey: ['gastos_pagos'] })
-                              }}
+                              onClick={() => abrirModalPagoCompra(g)}
                               className="px-2 py-1 text-xs rounded border border-green-300 text-green-700 hover:bg-green-50 transition-colors"
                             >
-                              Marcar pagado
+                              Registrar pago
                             </button>
                           )}
                         </td>
@@ -1598,6 +1626,56 @@ export function ComprasPage() {
         onClose={() => { setModalGastoOpen(false); setPrefillGasto(undefined) }}
         prefill={prefillGasto}
       />
+
+      {/* Modal de pago para tab Pagos */}
+      {gastoAPagar && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-sm space-y-4">
+            <h3 className="text-sm font-semibold text-gray-800">Registrar pago</h3>
+            <p className="text-xs text-gray-500">
+              {gastoAPagar.proveedor || 'Sin proveedor'} — {formatARS(gastoAPagar.importe_total)}
+            </p>
+
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Fecha de pago</label>
+              <input
+                type="date"
+                value={pagoFecha}
+                onChange={(e) => setPagoFecha(e.target.value)}
+                className="w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Medio de pago</label>
+              <select
+                value={pagoMedio}
+                onChange={(e) => setPagoMedio(e.target.value as MedioPago)}
+                className="w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm"
+              >
+                {Object.entries(MEDIO_PAGO_LABEL).map(([k, v]) => (
+                  <option key={k} value={k}>{v}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                onClick={() => setGastoAPagar(null)}
+                className="px-3 py-1.5 text-xs text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={confirmarPagoCompra}
+                className="px-3 py-1.5 text-xs text-white bg-green-600 rounded-md hover:bg-green-700 font-medium"
+              >
+                Confirmar pago
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </PageContainer>
   )
 }
