@@ -292,6 +292,29 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
     },
   })
 
+  // Sueldos pagados desde RRHH (pagos_sueldos)
+  const { data: sueldosPagadosRaw } = useQuery({
+    queryKey: ['edr_sueldos_pagados', año, localEdr],
+    queryFn: async () => {
+      const results = await Promise.all(locales.map(async (loc) => {
+        const { data } = await supabase
+          .from('pagos_sueldos')
+          .select('fecha_pago, monto, local')
+          .gte('fecha_pago', `${año}-01-01`)
+          .lte('fecha_pago', `${año}-12-31`)
+          .or(`local.eq.${loc},local.eq.ambos`)
+        // Agrupar por periodo (YYYY-MM)
+        const porMes = new Map<string, number>()
+        for (const r of data ?? []) {
+          const p = (r.fecha_pago as string).substring(0, 7)
+          porMes.set(p, (porMes.get(p) ?? 0) + Number(r.monto))
+        }
+        return [...porMes.entries()].map(([periodo, sueldos_total]) => ({ periodo, sueldos_total }))
+      }))
+      return esConsolidado ? mergeByPeriodo(results, ['sueldos_total']) : results[0]
+    },
+  })
+
   const { data: partidasRaw } = useQuery({
     queryKey: ['edr_partidas', año, localEdr],
     queryFn: async () => {
@@ -393,8 +416,17 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
         map.set(a.periodo, { ...EMPTY_AUTO, difArqueo: Number(a.dif_total) })
       }
     }
+    // Sueldos pagados desde RRHH (pagos_sueldos) — se suma a lo que ya venga del RPC
+    for (const s of sueldosPagadosRaw ?? []) {
+      const existing = map.get(s.periodo)
+      if (existing) {
+        existing.sueldos += Number(s.sueldos_total)
+      } else {
+        map.set(s.periodo, { ...EMPTY_AUTO, sueldos: Number(s.sueldos_total) })
+      }
+    }
     return map
-  }, [ticketsRaw, gastosIvaRaw, gastosResumen, amortRaw, arqueosRaw])
+  }, [ticketsRaw, gastosIvaRaw, gastosResumen, amortRaw, arqueosRaw, sueldosPagadosRaw])
 
   const manualMap = useMemo(() => {
     const map = new Map<string, Map<string, number>>()

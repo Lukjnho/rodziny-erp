@@ -59,6 +59,11 @@ interface PagoMP {
   local: string; periodo: string
 }
 
+interface PagoSueldo {
+  id: string; empleado_id: string; periodo: string; fecha_pago: string
+  monto: number; medio_pago: string; local: string; empleado_nombre: string | null
+}
+
 const MEDIO_PAGO_MP_LABEL: Record<string, string> = {
   account_money: 'QR / Saldo MP',
   debit_card: 'Tarjeta débito',
@@ -219,6 +224,21 @@ export function FlujoCaja() {
     },
   })
 
+  // Pagos de sueldos (RRHH)
+  const { data: pagosSueldos } = useQuery({
+    queryKey: ['fc_pagos_sueldos', periodo],
+    queryFn: async () => {
+      const [y, m] = periodo.split('-').map(Number)
+      const lastDay = new Date(y, m, 0).getDate()
+      const { data } = await supabase
+        .from('pagos_sueldos')
+        .select('id, empleado_id, periodo, fecha_pago, monto, medio_pago, local, empleado_nombre')
+        .gte('fecha_pago', `${periodo}-01`)
+        .lte('fecha_pago', `${periodo}-${lastDay}`)
+      return (data ?? []) as PagoSueldo[]
+    },
+  })
+
   // ── sync MP ────────────────────────────────────────────────────────────────
   const sincronizarMP = async () => {
     setSyncing(true)
@@ -284,6 +304,12 @@ export function FlujoCaja() {
     if (local === 'ambos') return dividendos ?? []
     return (dividendos ?? []).filter((d) => d.local === local || !d.local)
   }, [dividendos, local])
+
+  const sueldosFiltrados = useMemo(() => {
+    const pagos = pagosSueldos ?? []
+    if (local === 'ambos') return pagos
+    return pagos.filter((p) => p.local === local || p.local === 'ambos')
+  }, [pagosSueldos, local])
 
   const pagosMPFiltrados = useMemo(() => {
     const pagos = pagosMP ?? []
@@ -438,7 +464,20 @@ export function FlujoCaja() {
 
     const totalDebitosBanc = bancarios.reduce((s, b) => s + b.monto, 0)
 
-    // 3) Dividendos
+    // 3) Sueldos (RRHH) — individual por empleado, se suma al grupo existente
+    const totalSueldos = sueldosFiltrados.reduce((s, p) => s + Number(p.monto), 0)
+    if (totalSueldos > 0) {
+      if (!grupos.has('rrhh')) grupos.set('rrhh', { total: 0, items: [] })
+      const entry = grupos.get('rrhh')!
+      // Agrupar por medio de pago para el resumen
+      const sueldoEfectivo = sueldosFiltrados.filter((p) => p.medio_pago === 'efectivo').reduce((s, p) => s + Number(p.monto), 0)
+      const sueldoTransf = sueldosFiltrados.filter((p) => p.medio_pago === 'transferencia').reduce((s, p) => s + Number(p.monto), 0)
+      if (sueldoEfectivo > 0) entry.items.push({ nombre: 'Sueldos en efectivo', monto: sueldoEfectivo })
+      if (sueldoTransf > 0) entry.items.push({ nombre: 'Sueldos por transferencia', monto: sueldoTransf })
+      entry.total += totalSueldos
+    }
+
+    // 4) Dividendos
     const totalDivs = divsFiltrados.reduce((s, d) => s + Number(d.monto), 0)
     if (totalDivs > 0) {
       const divItems = SOCIOS.map((s) => ({
@@ -449,10 +488,10 @@ export function FlujoCaja() {
     }
 
     const totalPagos = pagosFiltrados.reduce((s, p) => s + Number(p.monto), 0)
-    const total = totalPagos + totalDebitosBanc + totalDivs
+    const total = totalPagos + totalDebitosBanc + totalDivs + totalSueldos
 
-    return { grupos, bancarios, totalPagos, totalDebitosBanc, totalDivs, total }
-  }, [pagosFiltrados, movimientosClasificados, pagosMPFiltrados, divsFiltrados, catMap])
+    return { grupos, bancarios, totalPagos, totalDebitosBanc, totalDivs, totalSueldos, total }
+  }, [pagosFiltrados, movimientosClasificados, pagosMPFiltrados, divsFiltrados, sueldosFiltrados, catMap])
 
   // ── NO OPERATIVO ───────────────────────────────────────────────────────────
 
@@ -510,8 +549,13 @@ export function FlujoCaja() {
       byDay.set(m.fecha, d)
     }
 
-    // Egresos: pagos realizados + débitos bancarios (Galicia/ICBC) + dividendos
+    // Egresos: pagos realizados + sueldos + débitos bancarios (Galicia/ICBC) + dividendos
     for (const p of pagosFiltrados) {
+      const d = byDay.get(p.fecha_pago) ?? { ingresos: 0, egresos: 0 }
+      d.egresos += Number(p.monto)
+      byDay.set(p.fecha_pago, d)
+    }
+    for (const p of sueldosFiltrados) {
       const d = byDay.get(p.fecha_pago) ?? { ingresos: 0, egresos: 0 }
       d.egresos += Number(p.monto)
       byDay.set(p.fecha_pago, d)
@@ -534,7 +578,7 @@ export function FlujoCaja() {
         acum += vals.ingresos - vals.egresos
         return { fecha: fecha.substring(8), saldo: acum }
       })
-  }, [cierresFiltrados, movimientosClasificados, pagosMPFiltrados, pagosFiltrados, divsFiltrados])
+  }, [cierresFiltrados, movimientosClasificados, pagosMPFiltrados, pagosFiltrados, sueldosFiltrados, divsFiltrados])
 
   // ── semáforo ───────────────────────────────────────────────────────────────
 

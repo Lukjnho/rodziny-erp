@@ -4,8 +4,8 @@ import { supabase } from '@/lib/supabase'
 import { LocalSelector } from '@/components/ui/LocalSelector'
 import { formatARS, formatFecha, cn } from '@/lib/utils'
 import { NuevoGastoModal } from './NuevoGastoModal'
-import type { Gasto } from './types'
-import { TIPO_COMPROBANTE_LABEL } from './types'
+import type { Gasto, MedioPago } from './types'
+import { TIPO_COMPROBANTE_LABEL, MEDIO_PAGO_LABEL } from './types'
 
 const HOY = new Date()
 
@@ -30,6 +30,11 @@ export function ListadoGastos() {
   const [busqueda, setBusqueda] = useState('')
   const [modalOpen, setModalOpen] = useState(false)
   const [editandoGasto, setEditandoGasto] = useState<Gasto | null>(null)
+
+  // Modal de pago
+  const [gastoAPagar, setGastoAPagar] = useState<Gasto | null>(null)
+  const [pagoFecha, setPagoFecha] = useState(() => new Date().toISOString().split('T')[0])
+  const [pagoMedio, setPagoMedio] = useState<MedioPago>('efectivo')
 
   function aplicarPreset(p: Preset) {
     setPreset(p)
@@ -124,20 +129,26 @@ export function ListadoGastos() {
     qc.invalidateQueries({ queryKey: ['gastos_listado'] })
   }
 
-  async function marcarPagado(g: Gasto) {
-    const fecha = window.prompt('Fecha de pago (YYYY-MM-DD)', new Date().toISOString().split('T')[0])
-    if (!fecha) return
+  function abrirModalPago(g: Gasto) {
+    setGastoAPagar(g)
+    setPagoFecha(new Date().toISOString().split('T')[0])
+    setPagoMedio('efectivo')
+  }
+
+  async function confirmarPago() {
+    if (!gastoAPagar) return
     const { error } = await supabase.from('gastos').update({
       estado_pago: 'Pagado',
-      fecha_vencimiento: fecha,
-    }).eq('id', g.id)
+      fecha_vencimiento: pagoFecha,
+    }).eq('id', gastoAPagar.id)
     if (error) { window.alert(error.message); return }
     await supabase.from('pagos_gastos').insert({
-      gasto_id: g.id,
-      fecha_pago: fecha,
-      monto: g.importe_total,
-      medio_pago: 'transferencia_mp',
+      gasto_id: gastoAPagar.id,
+      fecha_pago: pagoFecha,
+      monto: gastoAPagar.importe_total,
+      medio_pago: pagoMedio,
     })
+    setGastoAPagar(null)
     qc.invalidateQueries({ queryKey: ['gastos_listado'] })
     qc.invalidateQueries({ queryKey: ['pagos_gastos'] })
   }
@@ -299,7 +310,7 @@ export function ListadoGastos() {
                     <td className="px-3 py-2 text-right whitespace-nowrap">
                       {!pagado && (
                         <button
-                          onClick={() => marcarPagado(g)}
+                          onClick={() => abrirModalPago(g)}
                           className="text-[10px] px-1.5 py-0.5 bg-green-100 text-green-800 rounded hover:bg-green-200 mr-1"
                           title="Marcar como pagado"
                         >
@@ -344,6 +355,56 @@ export function ListadoGastos() {
           onClose={() => { setModalOpen(false); setEditandoGasto(null) }}
           gastoEditando={editandoGasto}
         />
+      )}
+
+      {/* Modal de pago */}
+      {gastoAPagar && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-sm space-y-4">
+            <h3 className="text-sm font-semibold text-gray-800">Registrar pago</h3>
+            <p className="text-xs text-gray-500">
+              {gastoAPagar.proveedor || 'Sin proveedor'} — {formatARS(gastoAPagar.importe_total)}
+            </p>
+
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Fecha de pago</label>
+              <input
+                type="date"
+                value={pagoFecha}
+                onChange={(e) => setPagoFecha(e.target.value)}
+                className="w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Medio de pago</label>
+              <select
+                value={pagoMedio}
+                onChange={(e) => setPagoMedio(e.target.value as MedioPago)}
+                className="w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm"
+              >
+                {Object.entries(MEDIO_PAGO_LABEL).map(([k, v]) => (
+                  <option key={k} value={k}>{v}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                onClick={() => setGastoAPagar(null)}
+                className="px-3 py-1.5 text-xs text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={confirmarPago}
+                className="px-3 py-1.5 text-xs text-white bg-green-600 rounded-md hover:bg-green-700 font-medium"
+              >
+                Confirmar pago
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

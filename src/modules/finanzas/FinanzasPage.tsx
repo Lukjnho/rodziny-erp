@@ -7,7 +7,6 @@ import { VentasPage } from '@/modules/ventas/VentasPage'
 import { GastosPage } from '@/modules/gastos/GastosPage'
 import { EstadoResultados } from './edr/EstadoResultados'
 import { AmortizacionesPage } from './amortizaciones/AmortizacionesPage'
-import { ConciliacionBancaria } from './conciliacion/ConciliacionBancaria'
 import { useAuth, type Modulo } from '@/lib/auth'
 import { cn } from '@/lib/utils'
 
@@ -17,7 +16,6 @@ type Tab =
   | 'edr'
   | 'flujo'
   | 'amortizaciones'
-  | 'conciliacion'
   | 'cierres'
   | 'importar'
 
@@ -35,7 +33,6 @@ const TABS: TabDef[] = [
   { id: 'edr',            label: 'EdR',                icon: '📋', subtitle: 'Estado de Resultados mensual por local',   modulo: 'edr' },
   { id: 'flujo',          label: 'Flujo de caja',      icon: '💰', subtitle: 'Movimientos bancarios y efectivo',         modulo: 'finanzas' },
   { id: 'amortizaciones', label: 'Amortizaciones',     icon: '📉', subtitle: 'Inversiones y depreciación mensual',       modulo: 'amortizaciones' },
-  { id: 'conciliacion',   label: 'Conciliación',       icon: '🏦', subtitle: 'Conciliación bancaria con MercadoPago',    modulo: 'finanzas' },
   { id: 'cierres',        label: 'Cierres de caja',    icon: '📦', subtitle: 'Cierres diarios por local',                modulo: 'finanzas' },
   { id: 'importar',       label: 'Importar datos',     icon: '📂', subtitle: 'Importar exports de Fudo / bancos',        modulo: 'finanzas' },
 ]
@@ -87,7 +84,6 @@ export function FinanzasPage() {
       {tab === 'edr'            && <EstadoResultados embedded />}
       {tab === 'flujo'          && <FlujoCaja />}
       {tab === 'amortizaciones' && <AmortizacionesPage embedded />}
-      {tab === 'conciliacion'   && <ConciliacionBancaria />}
       {tab === 'cierres'        && <CierreCaja />}
       {tab === 'importar'       && <UploadFudo />}
     </PageContainer>

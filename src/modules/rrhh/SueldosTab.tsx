@@ -1,4 +1,4 @@
-import { useState, useMemo, Fragment } from 'react'
+import { useState, useMemo, useEffect, useRef, Fragment } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { cn, formatARS } from '@/lib/utils'
@@ -252,6 +252,66 @@ export function SueldosTab() {
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['liquidaciones'] }),
     onError: (e: Error) => window.alert(`Error: ${e.message}`),
+  })
+
+  // Mutación específica para cambio de pago: actualiza liquidación + sincroniza pagos_sueldos
+  const cambiarPago = useMutation({
+    mutationFn: async (payload: {
+      empleado_id: string
+      periodo: string
+      medio: MedioPagoSueldo | null
+      monto: number
+      local: string
+      empleado_nombre: string
+    }) => {
+      // 1) Actualizar liquidación
+      const { error: errLiq } = await supabase
+        .from('liquidaciones_quincenales')
+        .upsert(
+          {
+            empleado_id: payload.empleado_id,
+            periodo: payload.periodo,
+            pagado: payload.medio !== null,
+            medio_pago: payload.medio,
+            fecha_pago: payload.medio !== null ? hoyYmd : null,
+          },
+          { onConflict: 'empleado_id,periodo' },
+        )
+      if (errLiq) throw errLiq
+
+      // 2) Sincronizar pagos_sueldos
+      if (payload.medio !== null) {
+        // Upsert: crear o actualizar el pago
+        const { error: errPago } = await supabase
+          .from('pagos_sueldos')
+          .upsert(
+            {
+              empleado_id: payload.empleado_id,
+              periodo: payload.periodo,
+              fecha_pago: hoyYmd,
+              monto: payload.monto,
+              medio_pago: payload.medio,
+              local: payload.local,
+              empleado_nombre: payload.empleado_nombre,
+              updated_at: new Date().toISOString(),
+            },
+            { onConflict: 'empleado_id,periodo' },
+          )
+        if (errPago) throw errPago
+      } else {
+        // Desmarcar pago: eliminar de pagos_sueldos
+        await supabase
+          .from('pagos_sueldos')
+          .delete()
+          .eq('empleado_id', payload.empleado_id)
+          .eq('periodo', payload.periodo)
+      }
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['liquidaciones'] })
+      qc.invalidateQueries({ queryKey: ['fc_pagos_sueldos'] })
+    },
+    onError: (e: Error) => window.alert(`Error al registrar pago: ${e.message}`),
   })
 
   const updateModalidad = useMutation({
@@ -520,6 +580,41 @@ export function SueldosTab() {
     }
   }, [filas])
 
+  // ── Sync pagos_sueldos cuando cambia el monto de un empleado ya pagado ──
+  // (ej: se togglea presentismo, se agrega adelanto, etc. después de marcar pagado)
+  const syncRef = useRef(false)
+  useEffect(() => {
+    if (!filas.length || syncRef.current) return
+    const pagadosConCambio = filas.filter(
+      (f) => f.pagado && f.medioPago && f.total > 0 && !f.esMensualEnQ1,
+    )
+    if (!pagadosConCambio.length) return
+
+    // Debounce: solo sincronizar una vez por ciclo de render
+    syncRef.current = true
+    const timeout = setTimeout(async () => {
+      for (const fila of pagadosConCambio) {
+        await supabase
+          .from('pagos_sueldos')
+          .upsert(
+            {
+              empleado_id: fila.empleado.id,
+              periodo: periodoActual,
+              fecha_pago: fila.liquidacion?.fecha_pago ?? hoyYmd,
+              monto: fila.total,
+              medio_pago: fila.medioPago!,
+              local: fila.empleado.local,
+              empleado_nombre: `${fila.empleado.apellido}, ${fila.empleado.nombre}`,
+              updated_at: new Date().toISOString(),
+            },
+            { onConflict: 'empleado_id,periodo' },
+          )
+      }
+      syncRef.current = false
+    }, 2000) // esperar 2s para no bombardear en cada re-render
+    return () => { clearTimeout(timeout); syncRef.current = false }
+  }, [filas, periodoActual, hoyYmd])
+
   // ── Navegación ───────────────────────────────────────────────────────────
   function navegarQuincena(delta: number) {
     if (delta > 0) {
@@ -630,14 +725,13 @@ export function SueldosTab() {
                       })
                     }
                     onCambiarPago={(medio) =>
-                      upsertLiquidacion.mutate({
+                      cambiarPago.mutate({
                         empleado_id: fila.empleado.id,
                         periodo: periodoActual,
-                        patch: {
-                          pagado: medio !== null,
-                          medio_pago: medio,
-                          fecha_pago: medio !== null ? hoyYmd : null,
-                        },
+                        medio,
+                        monto: fila.total,
+                        local: fila.empleado.local,
+                        empleado_nombre: `${fila.empleado.apellido}, ${fila.empleado.nombre}`,
                       })
                     }
                     onCambiarModalidad={(nuevo) =>
