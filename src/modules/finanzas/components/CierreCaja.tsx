@@ -448,6 +448,13 @@ export function CierreCaja() {
                 placeholder="0" className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500" />
             </div>
             <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Cambio apertura</label>
+              <input type="text" value={fFondoAp} onChange={(e) => setFFondoAp(e.target.value)}
+                placeholder="0"
+                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500" />
+              <p className="text-[10px] text-gray-400 mt-0.5">Monto inicial de caja (aparece en el ticket Fudo)</p>
+            </div>
+            <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Total Fudo</label>
               {(() => {
                 const parse = (v: string) => parseFloat((v || '0').replace(/\./g, '').replace(',', '.')) || 0
@@ -466,15 +473,7 @@ export function CierreCaja() {
               <p className="text-[10px] text-gray-400 mb-3">Solo se compara el efectivo físico en caja contra lo que Fudo registró como pago en efectivo</p>
             </div>
 
-            {/* Fila 1: Cambio apertura, Contado real, Otros retiros */}
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Cambio apertura</label>
-              <input type="text" value={fFondoAp} onChange={(e) => setFFondoAp(e.target.value)}
-                placeholder="0"
-                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500" />
-              <p className="text-[10px] text-gray-400 mt-0.5">Plata que había al abrir la caja</p>
-            </div>
-
+            {/* Fila 1: Contado real, Diferencia, Otros retiros */}
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Contado real <span className="text-red-500">*</span></label>
               <input type="text" value={fContado} onChange={(e) => setFContado(e.target.value)}
@@ -488,11 +487,9 @@ export function CierreCaja() {
                 const parse = (v: string) => parseFloat((v || '0').replace(/\./g, '').replace(',', '.')) || 0
                 const fudoEfvo = parse(fFudoEfvo)
                 const cont = parse(fContado)
-                const fondoAp = parse(fFondoAp)
                 const otrosRet = parse(fOtrosRetiros)
-                const ventasReales = cont + otrosRet - fondoAp
                 const mostrar = fudoEfvo > 0 && cont > 0
-                const dif = mostrar ? ventasReales - fudoEfvo : 0
+                const dif = mostrar ? (cont + otrosRet) - fudoEfvo : 0
                 return (
                   <div className={cn(
                     'w-full rounded-md px-3 py-2 text-sm font-medium',
@@ -502,7 +499,7 @@ export function CierreCaja() {
                   </div>
                 )
               })()}
-              <p className="text-[10px] text-gray-400 mt-0.5">Contado + retiros - cambio apertura vs. efectivo Fudo</p>
+              <p className="text-[10px] text-gray-400 mt-0.5">Contado real + retiros vs. efectivo Fudo (ambos incluyen cambio de apertura)</p>
             </div>
 
             {/* Fila 2: Cambio siguiente, Retiro, Otros retiros */}
