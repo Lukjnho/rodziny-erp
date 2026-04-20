@@ -2,13 +2,15 @@ import { useState } from 'react'
 import { PageContainer } from '@/components/layout/PageContainer'
 import { cn } from '@/lib/utils'
 import { ListadoGastos } from './ListadoGastos'
+import { PagosPanel } from './PagosPanel'
 import { AnalisisGastos } from './AnalisisGastos'
 import { CategoriasPanel } from './CategoriasPanel'
 
-type Tab = 'listado' | 'analisis' | 'categorias'
+type Tab = 'listado' | 'pagos' | 'analisis' | 'categorias'
 
 const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: 'listado',    label: 'Listado',    icon: '📋' },
+  { id: 'pagos',      label: 'Pagos',      icon: '💳' },
   { id: 'analisis',   label: 'Análisis',   icon: '📊' },
   { id: 'categorias', label: 'Categorías', icon: '🏷' },
 ]
@@ -36,6 +38,7 @@ export function GastosPage({ embedded = false }: { embedded?: boolean } = {}) {
       </div>
 
       {tab === 'listado'    && <ListadoGastos />}
+      {tab === 'pagos'      && <PagosPanel />}
       {tab === 'analisis'   && <AnalisisGastos />}
       {tab === 'categorias' && <CategoriasPanel />}
     </>
