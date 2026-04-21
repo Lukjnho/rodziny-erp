@@ -7,8 +7,9 @@ import { StockTab } from './StockTab'
 import { TraspasosTab } from './TraspasosTab'
 import { RecetasTab } from './RecetasTab'
 import { ProductosTab } from './ProductosTab'
+import { AnalisisTab } from './AnalisisTab'
 
-type Tab = 'dashboard' | 'produccion' | 'stock' | 'traspasos' | 'recetas' | 'productos' | 'historico'
+type Tab = 'dashboard' | 'produccion' | 'stock' | 'traspasos' | 'recetas' | 'productos' | 'analisis'
 
 const ayudaPorTab: Record<Tab, { titulo: string; pasos: string[] }> = {
   dashboard: {
@@ -61,9 +62,14 @@ const ayudaPorTab: Record<Tab, { titulo: string; pasos: string[] }> = {
       'El mínimo de producción indica cuánto producir como mínimo.',
     ],
   },
-  historico: {
-    titulo: 'Histórico',
-    pasos: ['Próximamente: tendencias de producción, rendimientos y exportación.'],
+  analisis: {
+    titulo: 'Análisis',
+    pasos: [
+      'Rendimiento real vs. teórico: compara lo que rindió cada receta contra lo que tendría que rendir según la ficha.',
+      'Desvíos >10% en rojo sugieren actualizar la receta o revisar el proceso.',
+      'Merma por producto: muestra qué se descarta más y por qué. Lo que aparece en rojo requiere atención.',
+      'Cambiá el período (7/30/90 días) para ver tendencias más o menos recientes.',
+    ],
   },
 }
 
@@ -80,7 +86,7 @@ export function CocinaPage() {
         <TabButton activo={tab === 'traspasos'} onClick={() => setTab('traspasos')}>Traspasos</TabButton>
         <TabButton activo={tab === 'recetas'} onClick={() => setTab('recetas')}>Recetas</TabButton>
         <TabButton activo={tab === 'productos'} onClick={() => setTab('productos')}>Productos</TabButton>
-        <TabButton activo={tab === 'historico'} onClick={() => setTab('historico')}>Histórico</TabButton>
+        <TabButton activo={tab === 'analisis'} onClick={() => setTab('analisis')}>Análisis</TabButton>
         <button
           onClick={() => setAyudaAbierta(true)}
           className="ml-auto mb-2 w-8 h-8 rounded-full bg-rodziny-100 text-rodziny-700 hover:bg-rodziny-200 flex items-center justify-center text-sm font-bold transition-colors"
@@ -94,7 +100,7 @@ export function CocinaPage() {
       {tab === 'traspasos' && <TraspasosTab />}
       {tab === 'recetas' && <RecetasTab />}
       {tab === 'productos' && <ProductosTab />}
-      {tab === 'historico' && <HistoricoPlaceholder />}
+      {tab === 'analisis' && <AnalisisTab />}
 
       {ayudaAbierta && <AyudaPanel tab={tab} onClose={() => setAyudaAbierta(false)} />}
     </PageContainer>
@@ -114,16 +120,6 @@ function TabButton({ activo, onClick, children }: { activo: boolean; onClick: ()
     >
       {children}
     </button>
-  )
-}
-
-function HistoricoPlaceholder() {
-  return (
-    <div className="bg-white rounded-lg border border-surface-border p-12 text-center">
-      <div className="text-4xl mb-3">📊</div>
-      <h3 className="text-lg font-semibold text-gray-700 mb-1">Histórico de producción</h3>
-      <p className="text-sm text-gray-500">Próximamente: tendencias, gráficos y exportación.</p>
-    </div>
   )
 }
 
