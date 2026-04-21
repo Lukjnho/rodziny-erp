@@ -92,15 +92,14 @@ function CardParametros({ config }: { config: ConfigCosteo | undefined }) {
   const items: { key: keyof ConfigCosteo; label: string; hint: string }[] = [
     { key: 'margen_seguridad_pct', label: 'Margen de seguridad', hint: 'Colchón sobre costo base (merma, variación)' },
     { key: 'iva_pct', label: 'IVA', hint: 'Para calcular precio neto sin impuesto' },
-    { key: 'comision_pago_vedia_pct', label: 'Comisión Vedia', hint: 'Promedio medios de pago' },
-    { key: 'comision_pago_saavedra_pct', label: 'Comisión Saavedra', hint: 'Promedio medios de pago' },
+    { key: 'comision_pago_pct', label: 'Comisión bancaria', hint: 'MercadoPago / tarjeta sobre el neto' },
   ]
 
   return (
     <div className="bg-gradient-to-br from-rodziny-50 to-white border border-rodziny-200 rounded-lg p-4">
       <h3 className="text-sm font-semibold text-rodziny-800 mb-1">⚙ Parámetros globales de costeo</h3>
       <p className="text-xs text-gray-600 mb-3">Aplican a todos los productos. Cambiá el valor y hacé click en ✓ para guardar.</p>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
         {items.map((it) => {
           const actual = display(config, it.key)
           const nuevo = edits[it.key]
@@ -172,7 +171,7 @@ function VistaProductos() {
   })
 
   const { costos } = useCostosRecetas()
-  const { config, comisionPorLocal } = useConfigCosteo()
+  const { config, comision } = useConfigCosteo()
 
   const actualizar = useMutation({
     mutationFn: async ({ id, campo, valor }: { id: string; campo: 'precio_venta' | 'costo_empaque'; valor: number | null }) => {
@@ -194,7 +193,6 @@ function VistaProductos() {
       precioRecibido: number | null
       margenPct: number | null
       margenAbs: number | null
-      comisionLocal: number
     }>()
     for (const p of productos ?? []) {
       const empaque = p.costo_empaque ?? 0
@@ -210,19 +208,18 @@ function VistaProductos() {
         }
       }
       const costoTotal = costoReceta != null ? costoReceta + empaque : null
-      const comLocal = comisionPorLocal(p.local)
       const precioNeto = p.precio_venta != null && ivaPct >= 0 ? p.precio_venta / (1 + ivaPct) : null
-      const precioRecibido = precioNeto != null ? precioNeto * (1 - comLocal) : null
+      const precioRecibido = precioNeto != null ? precioNeto * (1 - comision) : null
       let margenPct: number | null = null
       let margenAbs: number | null = null
       if (precioRecibido != null && costoTotal != null && precioRecibido > 0) {
         margenAbs = precioRecibido - costoTotal
         margenPct = (margenAbs / precioRecibido) * 100
       }
-      map.set(p.id, { costoReceta, costoBase, empaque, costoTotal, precioNeto, precioRecibido, margenPct, margenAbs, comisionLocal: comLocal })
+      map.set(p.id, { costoReceta, costoBase, empaque, costoTotal, precioNeto, precioRecibido, margenPct, margenAbs })
     }
     return map
-  }, [productos, costos, config, comisionPorLocal])
+  }, [productos, costos, config, comision])
 
   const filtrados = useMemo(() => {
     let lista = productos ?? []
@@ -343,12 +340,7 @@ function VistaProductos() {
                   <td className="px-3 py-2">
                     <span className="px-2 py-0.5 rounded-full text-[10px] bg-gray-100 text-gray-700">{TIPO_PRODUCTO_LABEL[p.tipo] ?? p.tipo}</span>
                   </td>
-                  <td className="px-3 py-2 capitalize text-[11px] text-gray-500">
-                    {p.local}
-                    {a && a.comisionLocal > 0 && (
-                      <div className="text-[9px] text-gray-400">com {(a.comisionLocal * 100).toFixed(1)}%</div>
-                    )}
-                  </td>
+                  <td className="px-3 py-2 capitalize text-[11px] text-gray-500">{p.local}</td>
                   <td className="px-3 py-2 text-[11px]">
                     {rec ? (
                       <span className="text-gray-700">{rec.nombre}</span>
@@ -461,7 +453,7 @@ function VistaProductos() {
         <div className="font-mono text-[10px] space-y-0.5">
           <div>costo_total = costo_insumo (con margen seguridad) + empaque</div>
           <div>precio_neto = precio_venta ÷ (1 + IVA)</div>
-          <div>recibido = precio_neto × (1 − comisión del local)</div>
+          <div>recibido = precio_neto × (1 − comisión bancaria)</div>
           <div>margen = recibido − costo_total</div>
         </div>
       </div>

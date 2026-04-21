@@ -4,8 +4,7 @@ import { supabase } from '@/lib/supabase'
 const CLAVES = [
   'margen_seguridad_pct',
   'iva_pct',
-  'comision_pago_vedia_pct',
-  'comision_pago_saavedra_pct',
+  'comision_pago_pct',
 ] as const
 
 type Clave = typeof CLAVES[number]
@@ -13,8 +12,7 @@ type Clave = typeof CLAVES[number]
 export interface ConfigCosteo {
   margen_seguridad_pct: number
   iva_pct: number
-  comision_pago_vedia_pct: number
-  comision_pago_saavedra_pct: number
+  comision_pago_pct: number
 }
 
 function toNumber(v: unknown): number {
@@ -42,8 +40,7 @@ export function useConfigCosteo() {
       return {
         margen_seguridad_pct: toNumber(map.margen_seguridad_pct),
         iva_pct: toNumber(map.iva_pct),
-        comision_pago_vedia_pct: toNumber(map.comision_pago_vedia_pct),
-        comision_pago_saavedra_pct: toNumber(map.comision_pago_saavedra_pct),
+        comision_pago_pct: toNumber(map.comision_pago_pct),
       }
     },
   })
@@ -64,23 +61,11 @@ export function useConfigCosteo() {
     },
   })
 
-  function comisionPorLocal(local: string | undefined | null): number {
-    if (!data) return 0
-    const l = (local ?? '').toLowerCase()
-    if (l === 'vedia') return data.comision_pago_vedia_pct
-    if (l === 'saavedra') return data.comision_pago_saavedra_pct
-    if (l === 'ambos') {
-      // Promedio simple; cada local pesa 50%
-      return (data.comision_pago_vedia_pct + data.comision_pago_saavedra_pct) / 2
-    }
-    return 0
-  }
-
   return {
     config: data,
     isLoading,
     error,
     actualizar,
-    comisionPorLocal,
+    comision: data?.comision_pago_pct ?? 0,
   }
 }
