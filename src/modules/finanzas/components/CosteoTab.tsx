@@ -13,6 +13,7 @@ interface Receta {
   rendimiento_kg: number | null
   rendimiento_porciones: number | null
   activo: boolean
+  local: string | null
 }
 
 interface Producto {
@@ -477,13 +478,14 @@ function VistaProductos() {
 function VistaRecetas() {
   const [busqueda, setBusqueda] = useState('')
   const [filtroTipo, setFiltroTipo] = useState<string>('todos')
+  const [filtroLocal, setFiltroLocal] = useState<string>('todos')
 
   const { data: recetas } = useQuery({
     queryKey: ['cocina-recetas'],
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cocina_recetas')
-        .select('id, nombre, tipo, rendimiento_kg, rendimiento_porciones, activo')
+        .select('id, nombre, tipo, rendimiento_kg, rendimiento_porciones, activo, local')
         .eq('activo', true)
         .order('nombre')
       if (error) throw error
@@ -497,12 +499,13 @@ function VistaRecetas() {
   const filtrados = useMemo(() => {
     let lista = recetas ?? []
     if (filtroTipo !== 'todos') lista = lista.filter((r) => r.tipo === filtroTipo)
+    if (filtroLocal !== 'todos') lista = lista.filter((r) => (r.local ?? '') === filtroLocal)
     if (busqueda.trim()) {
       const q = busqueda.toLowerCase()
       lista = lista.filter((r) => r.nombre.toLowerCase().includes(q))
     }
     return lista
-  }, [recetas, filtroTipo, busqueda])
+  }, [recetas, filtroTipo, filtroLocal, busqueda])
 
   return (
     <div className="space-y-4">
@@ -524,6 +527,11 @@ function VistaRecetas() {
           <option value="masa">Masas</option>
           <option value="salsa">Salsas</option>
           <option value="otro">Otro</option>
+        </select>
+        <select value={filtroLocal} onChange={(e) => setFiltroLocal(e.target.value)} className="border border-gray-300 rounded px-2 py-1.5 text-sm">
+          <option value="todos">Todos los locales</option>
+          <option value="vedia">Vedia</option>
+          <option value="saavedra">Saavedra</option>
         </select>
       </div>
 

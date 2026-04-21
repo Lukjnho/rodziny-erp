@@ -25,6 +25,7 @@ interface Receta {
   instrucciones: string | null
   activo: boolean
   margen_seguridad_pct: number | null
+  local: string | null
   created_at: string
 }
 
@@ -46,6 +47,7 @@ export function RecetasTab() {
   const qc = useQueryClient()
   const [busqueda, setBusqueda] = useState('')
   const [filtroTipo, setFiltroTipo] = useState<string>('todos')
+  const [filtroLocal, setFiltroLocal] = useState<string>('todos')
   const [modalAbierto, setModalAbierto] = useState(false)
   const [editando, setEditando] = useState<Receta | null>(null)
   const [fichaAbierta, setFichaAbierta] = useState<string | null>(null) // receta_id expandida
@@ -80,12 +82,13 @@ export function RecetasTab() {
   const filtrados = useMemo(() => {
     let lista = recetas ?? []
     if (filtroTipo !== 'todos') lista = lista.filter((r) => r.tipo === filtroTipo)
+    if (filtroLocal !== 'todos') lista = lista.filter((r) => (r.local ?? '') === filtroLocal)
     if (busqueda.trim()) {
       const q = busqueda.toLowerCase()
       lista = lista.filter((r) => r.nombre.toLowerCase().includes(q))
     }
     return lista
-  }, [recetas, filtroTipo, busqueda])
+  }, [recetas, filtroTipo, filtroLocal, busqueda])
 
   const ingredientesPorReceta = useMemo(() => {
     const mapa = new Map<string, Ingrediente[]>()
@@ -153,6 +156,11 @@ export function RecetasTab() {
           <option value="todos">Todos los tipos</option>
           {TIPOS.map((t) => <option key={t} value={t}>{TIPO_LABEL[t]}</option>)}
         </select>
+        <select value={filtroLocal} onChange={(e) => setFiltroLocal(e.target.value)} className="border border-gray-300 rounded px-2 py-1.5 text-sm">
+          <option value="todos">Todos los locales</option>
+          <option value="vedia">Vedia</option>
+          <option value="saavedra">Saavedra</option>
+        </select>
         <button
           onClick={() => { setEditando(null); setModalAbierto(true) }}
           className="ml-auto bg-rodziny-700 hover:bg-rodziny-800 text-white text-sm rounded px-3 py-1.5"
@@ -166,6 +174,7 @@ export function RecetasTab() {
             <tr className="border-b border-surface-border bg-gray-50 text-left text-xs text-gray-500 uppercase">
               <th className="px-4 py-2 w-8"></th>
               <th className="px-4 py-2">Nombre</th>
+              <th className="px-4 py-2">Local</th>
               <th className="px-4 py-2">Tipo</th>
               <th className="px-4 py-2 text-center">Ingredientes</th>
               <th className="px-4 py-2">Rinde (kg)</th>
@@ -206,6 +215,13 @@ export function RecetasTab() {
                       </div>
                     </td>
                     <td className="px-4 py-2">
+                      {r.local ? (
+                        <span className="px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-700 capitalize">{r.local}</span>
+                      ) : (
+                        <span className="text-xs text-gray-300">—</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-2">
                       <span className={cn('px-2 py-0.5 rounded-full text-xs font-medium', TIPO_COLOR[r.tipo])}>
                         {TIPO_LABEL[r.tipo]}
                       </span>
@@ -243,7 +259,7 @@ export function RecetasTab() {
                   </tr>
                   {abierta && (
                     <tr className="bg-blue-50/20">
-                      <td colSpan={10} className="px-4 py-0">
+                      <td colSpan={11} className="px-4 py-0">
                         <FichaTecnica receta={r} ingredientes={ings} costo={costo} />
                       </td>
                     </tr>
@@ -252,7 +268,7 @@ export function RecetasTab() {
               )
             })}
             {filtrados.length === 0 && (
-              <tr><td colSpan={10} className="px-4 py-8 text-center text-gray-400">{isLoading ? 'Cargando...' : 'No hay recetas'}</td></tr>
+              <tr><td colSpan={11} className="px-4 py-8 text-center text-gray-400">{isLoading ? 'Cargando...' : 'No hay recetas'}</td></tr>
             )}
           </tbody>
         </table>
