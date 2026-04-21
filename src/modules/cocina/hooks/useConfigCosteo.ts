@@ -53,7 +53,10 @@ export function useConfigCosteo() {
           { clave, valor, updated_at: new Date().toISOString() },
           { onConflict: 'clave' }
         )
-      if (error) throw error
+      if (error) {
+        const parts = [error.message, error.details, error.hint, error.code].filter(Boolean)
+        throw new Error(parts.join(' · ') || 'Supabase devolvió un error sin mensaje')
+      }
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['config-costeo'] })
