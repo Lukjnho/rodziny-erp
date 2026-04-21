@@ -69,6 +69,7 @@ function CardParametros({ config }: { config: ConfigCosteo | undefined }) {
   const { actualizar } = useConfigCosteo()
   const [edits, setEdits] = useState<Partial<Record<keyof ConfigCosteo, string>>>({})
   const [guardado, setGuardado] = useState<string | null>(null)
+  const [errorKey, setErrorKey] = useState<{ key: string; msg: string } | null>(null)
 
   function display(c: ConfigCosteo | undefined, k: keyof ConfigCosteo): string {
     if (!c) return '0.0'
@@ -80,11 +81,17 @@ function CardParametros({ config }: { config: ConfigCosteo | undefined }) {
     if (raw == null) return
     const num = parseFloat(raw.replace(',', '.'))
     if (isNaN(num) || num < 0) return
+    setErrorKey(null)
     actualizar.mutate({ clave: k, valor: num / 100 }, {
       onSuccess: () => {
         setEdits((s) => ({ ...s, [k]: undefined }))
         setGuardado(k)
         setTimeout(() => setGuardado(null), 1500)
+      },
+      onError: (err: unknown) => {
+        const msg = err instanceof Error ? err.message : 'Error desconocido'
+        setErrorKey({ key: k, msg })
+        console.error('[config-costeo] error guardando', k, err)
       },
     })
   }
@@ -99,6 +106,11 @@ function CardParametros({ config }: { config: ConfigCosteo | undefined }) {
     <div className="bg-gradient-to-br from-rodziny-50 to-white border border-rodziny-200 rounded-lg p-4">
       <h3 className="text-sm font-semibold text-rodziny-800 mb-1">⚙ Parámetros globales de costeo</h3>
       <p className="text-xs text-gray-600 mb-3">Aplican a todos los productos. Cambiá el valor y hacé click en ✓ para guardar.</p>
+      {errorKey && (
+        <div className="mb-3 bg-red-50 border border-red-200 rounded px-3 py-2 text-xs text-red-700">
+          <strong>Error guardando {errorKey.key}:</strong> {errorKey.msg}
+        </div>
+      )}
       <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
         {items.map((it) => {
           const actual = display(config, it.key)
