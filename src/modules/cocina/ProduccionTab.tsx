@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { KPICard } from '@/components/ui/KPICard'
+import { StockProduccionSection } from './components/StockProduccionSection'
 
 // Badge que muestra si un lote tiene ingredientes reales guardados y un popover con el detalle
 function IngredientesRealesBadge({ ingredientes }: { ingredientes: IngredienteRealRow[] | null }) {
@@ -509,6 +510,9 @@ export function ProduccionTab() {
           </table>
         </div>
       </div>
+
+      {/* ── Sección: Stock de producción (salsas/postres en stock con FIFO + Fudo) ─── */}
+      <StockProduccionSection filtroLocal={filtroLocal} />
 
       {/* ── Sección: Producción adicional (salsa/postre/pastelería/panadería/prueba) ─── */}
       <div>

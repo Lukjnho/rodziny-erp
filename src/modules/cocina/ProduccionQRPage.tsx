@@ -933,6 +933,7 @@ function FormGenerico({ local, categoria, recetas, permitirLibre, permitirLitros
   const [notas, setNotas] = useState('')
   const [filtroReceta, setFiltroReceta] = useState('')
   const [ingredientesReales, setIngredientesReales] = useState<IngredienteReal[]>([])
+  const [enStock, setEnStock] = useState(true)
   const [guardando, setGuardando] = useState(false)
   const [error, setError] = useState('')
   const onGrillaChange = useCallback((ings: IngredienteReal[]) => setIngredientesReales(ings), [])
@@ -966,6 +967,7 @@ function FormGenerico({ local, categoria, recetas, permitirLibre, permitirLitros
       responsable: responsable.trim() || null,
       notas: notas.trim() || null,
       ingredientes_reales: ingredientesReales.length > 0 ? ingredientesReales : null,
+      en_stock: enStock,
     })
 
     if (err) { setError(err.message); setGuardando(false); return }
@@ -1101,6 +1103,21 @@ function FormGenerico({ local, categoria, recetas, permitirLibre, permitirLitros
             className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
           />
         </div>
+
+        <label className="flex items-center gap-2 cursor-pointer select-none bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
+          <input
+            type="checkbox"
+            checked={enStock}
+            onChange={(e) => setEnStock(e.target.checked)}
+            className="w-4 h-4 accent-rodziny-700"
+          />
+          <div className="flex-1">
+            <p className="text-sm font-medium text-gray-800">Cargar a stock</p>
+            <p className="text-[10px] text-gray-500">
+              {enStock ? 'Este lote queda disponible para venta/servicio' : 'Solo se registra como producción, no cuenta para stock'}
+            </p>
+          </div>
+        </label>
 
         {error && <p className="text-xs text-red-600">{error}</p>}
 

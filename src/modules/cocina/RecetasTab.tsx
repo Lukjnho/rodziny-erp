@@ -26,6 +26,8 @@ interface Receta {
   activo: boolean
   margen_seguridad_pct: number | null
   local: string | null
+  gramos_por_porcion: number | null
+  fudo_productos: string[] | null
   created_at: string
 }
 
@@ -487,6 +489,8 @@ function ModalReceta({
   const [rendKg, setRendKg] = useState(receta?.rendimiento_kg ?? '')
   const [rendPorciones, setRendPorciones] = useState(receta?.rendimiento_porciones ?? '')
   const [local, setLocal] = useState<string>(receta?.local ?? 'vedia')
+  const [gramosPorcion, setGramosPorcion] = useState<string>(receta?.gramos_por_porcion != null ? String(receta.gramos_por_porcion) : '')
+  const [fudoProductos, setFudoProductos] = useState<string>((receta?.fudo_productos ?? []).join(', '))
   const [instrucciones, setInstrucciones] = useState(receta?.instrucciones ?? '')
   const [guardando, setGuardando] = useState(false)
   const [error, setError] = useState('')
@@ -565,12 +569,15 @@ function ModalReceta({
 
     try {
       // 1. Guardar receta (margen_seguridad_pct se edita desde Finanzas > Costeo)
+      const fudoArr = fudoProductos.split(',').map((s) => s.trim()).filter(Boolean)
       const row = {
         nombre: nombre.trim(),
         tipo,
         rendimiento_kg: rendKg !== '' ? Number(rendKg) : null,
         rendimiento_porciones: rendPorciones !== '' ? Number(rendPorciones) : null,
         local,
+        gramos_por_porcion: gramosPorcion !== '' ? Number(gramosPorcion) : null,
+        fudo_productos: fudoArr.length > 0 ? fudoArr : null,
         instrucciones: instrucciones.trim() || null,
         updated_at: new Date().toISOString(),
       }
@@ -726,6 +733,34 @@ function ModalReceta({
                     className="w-full border border-gray-300 rounded px-3 py-1.5 text-sm"
                     placeholder="45"
                   />
+                </div>
+              </div>
+
+              <div className="pt-3 border-t border-gray-100">
+                <p className="text-[11px] font-medium text-gray-600 mb-2">Proyección de stock (salsas/postres)</p>
+                <div className="grid grid-cols-1 gap-3">
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">Gramos por porción servida</label>
+                    <input
+                      type="number"
+                      value={gramosPorcion}
+                      onChange={(e) => setGramosPorcion(e.target.value)}
+                      className="w-full border border-gray-300 rounded px-3 py-1.5 text-sm"
+                      placeholder="200"
+                    />
+                    <p className="text-[10px] text-gray-400 mt-1">Para salsas ~200g. Dejar vacío si se vende por unidad (postres).</p>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">Productos Fudo asociados</label>
+                    <textarea
+                      value={fudoProductos}
+                      onChange={(e) => setFudoProductos(e.target.value)}
+                      rows={2}
+                      className="w-full border border-gray-300 rounded px-3 py-1.5 text-sm"
+                      placeholder="Spaghetti Scarparo, Ñoquis Scarparo, Sorrentino Scarparo"
+                    />
+                    <p className="text-[10px] text-gray-400 mt-1">Separar con comas. Match case-insensitive con el nombre que sale en Fudo.</p>
+                  </div>
                 </div>
               </div>
             </div>
