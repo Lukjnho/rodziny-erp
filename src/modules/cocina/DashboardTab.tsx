@@ -134,6 +134,7 @@ const DIAS_SEMANA = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb']
 export function DashboardTab() {
   const qc = useQueryClient()
   const [local, setLocal] = useState<'vedia' | 'saavedra'>('vedia')
+  const [ventanaDias, setVentanaDias] = useState<1 | 3 | 7>(3)
   const hoy = new Date().toISOString().split('T')[0]
 
   // ── Query: último conteo de stock por producto ──
@@ -170,13 +171,15 @@ export function DashboardTab() {
     staleTime: 10 * 60 * 1000,
   })
 
-  // ── Query: ventas de AYER (para comparar con promedio) ──
-  const ayer = new Date(Date.now() - 86400000).toISOString().split('T')[0]
-  const { data: fudoAyer } = useQuery({
-    queryKey: ['fudo-consumo-ayer', local, ayer],
+  // ── Query: ventas de la VENTANA reciente (configurable: 1/3/7 días) ──
+  // Termina ayer (no incluye hoy porque el día está incompleto).
+  const ventanaHasta = new Date(Date.now() - 86400000).toISOString().split('T')[0]
+  const ventanaDesde = new Date(Date.now() - ventanaDias * 86400000).toISOString().split('T')[0]
+  const { data: fudoReciente } = useQuery({
+    queryKey: ['fudo-consumo-reciente', local, ventanaDesde, ventanaHasta],
     queryFn: async () => {
       const { data, error } = await supabase.functions.invoke('fudo-productos', {
-        body: { local, fechaDesde: ayer, fechaHasta: ayer },
+        body: { local, fechaDesde: ventanaDesde, fechaHasta: ventanaHasta },
       })
       if (error) return null
       if (!data?.ok) return null
@@ -245,14 +248,18 @@ export function DashboardTab() {
       // Venta ajustada por día de semana (para sugerencia de producción)
       const ventasDiariasAjustadas = ventasDiariasPromedio * factorManana
 
-      // Ventas de ayer para este producto
-      let ventasAyer = 0
-      if (fudoAyer?.ranking) {
+      // Ventas de la ventana reciente para este producto (promedio diario)
+      let ventasReciente = 0
+      if (fudoReciente?.ranking) {
         for (const n of nombres) {
-          const p = fudoAyer.ranking.find((r) => r.nombre.toLowerCase() === n.toLowerCase())
-          if (p) ventasAyer += p.cantidad
+          const p = fudoReciente.ranking.find((r) => r.nombre.toLowerCase() === n.toLowerCase())
+          if (p) ventasReciente += p.cantidad
         }
       }
+      const diasReciente = fudoReciente?.dias ?? ventanaDias
+      const ventasRecientePromedio = diasReciente > 0
+        ? Math.round((ventasReciente / diasReciente) * 10) / 10
+        : 0
 
       // Calcular porciones aprox del stock
       let porcionesStock = 0
@@ -304,14 +311,14 @@ export function DashboardTab() {
         porcionesStock,
         ventasDiariasPromedio: Math.round(ventasDiariasPromedio * 10) / 10,
         ventasDiariasAjustadas: Math.round(ventasDiariasAjustadas * 10) / 10,
-        ventasAyer,
+        ventasReciente: ventasRecientePromedio,
         diasRestantes: diasRestantes !== null ? Math.round(diasRestantes * 10) / 10 : null,
         producirLabel,
         producirCantidad,
         estado,
       }
     })
-  }, [conteos, fudoData, fudoAyer, factorManana])
+  }, [conteos, fudoData, fudoReciente, factorManana, ventanaDias])
 
   // Agrupar filas por categoría, en orden definido
   const categorias = useMemo(() => {
@@ -435,6 +442,23 @@ export function DashboardTab() {
         >
           Pizarron
         </button>
+        <div className="flex items-center gap-1 border border-gray-200 rounded-lg bg-white p-0.5">
+          <span className="text-[10px] text-gray-500 px-2">Comparar:</span>
+          {([1, 3, 7] as const).map((n) => (
+            <button
+              key={n}
+              onClick={() => setVentanaDias(n)}
+              className={cn(
+                'px-2.5 py-1 text-xs rounded transition-colors',
+                ventanaDias === n
+                  ? 'bg-rodziny-700 text-white font-medium'
+                  : 'text-gray-600 hover:bg-gray-100'
+              )}
+            >
+              {n === 1 ? 'Ayer' : `${n}d`}
+            </button>
+          ))}
+        </div>
         {fudoLoading && <span className="text-xs text-gray-400 animate-pulse">Cargando ventas de Fudo...</span>}
         {fudoData && (
           <span className="text-xs text-gray-400 ml-auto">
@@ -613,7 +637,7 @@ function CategoriaAccordion({
                 <th className="px-4 py-2.5 text-center">Estado</th>
                 <th className="px-4 py-2.5 text-right">Stock actual</th>
                 <th className="px-4 py-2.5 text-right">Porc. aprox</th>
-                <th className="px-4 py-2.5 text-right">Ayer</th>
+                <th className="px-4 py-2.5 text-right">{ventanaDias === 1 ? 'Ayer' : `Últ. ${ventanaDias}d`}</th>
                 <th className="px-4 py-2.5 text-right">Prom/día</th>
                 <th className="px-4 py-2.5 text-right">Días rest.</th>
                 <th className="px-4 py-2.5 text-right">{'Producir (' + diaManana + ')'}</th>
@@ -659,16 +683,16 @@ function CategoriaAccordion({
                       {f.porcionesStock > 0 ? `~${f.porcionesStock} porc.` : '—'}
                     </td>
                     <td className="px-4 py-3 text-right">
-                      {f.ventasAyer > 0 ? (
+                      {f.ventasReciente > 0 ? (
                         <div>
                           <span className={cn(
                             'font-medium',
-                            f.ventasAyer > f.ventasDiariasPromedio * 1.2 ? 'text-green-700' :
-                            f.ventasAyer < f.ventasDiariasPromedio * 0.8 ? 'text-red-600' : 'text-gray-700'
-                          )}>{f.ventasAyer}</span>
-                          {f.ventasDiariasPromedio > 0 && f.ventasAyer !== f.ventasDiariasPromedio && (
+                            f.ventasReciente > f.ventasDiariasPromedio * 1.2 ? 'text-green-700' :
+                            f.ventasReciente < f.ventasDiariasPromedio * 0.8 ? 'text-red-600' : 'text-gray-700'
+                          )}>{f.ventasReciente}</span>
+                          {f.ventasDiariasPromedio > 0 && f.ventasReciente !== f.ventasDiariasPromedio && (
                             <span className="text-[10px] text-gray-400 ml-1">
-                              {f.ventasAyer > f.ventasDiariasPromedio ? '+' : ''}{Math.round(((f.ventasAyer / f.ventasDiariasPromedio) - 1) * 100)}%
+                              {f.ventasReciente > f.ventasDiariasPromedio ? '+' : ''}{Math.round(((f.ventasReciente / f.ventasDiariasPromedio) - 1) * 100)}%
                             </span>
                           )}
                         </div>
