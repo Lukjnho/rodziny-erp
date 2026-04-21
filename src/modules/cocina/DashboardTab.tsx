@@ -36,24 +36,24 @@ const PRODUCTOS_COCINA: ProductoCocina[] = [
   // ════════════════════════════════════════════════════════════════
   // PASTAS — Vedia (salón + vianda + congelada se suman)
   // ════════════════════════════════════════════════════════════════
-  { nombre: 'Sorrentino J&Q', fudoNombres: ['Sorrentino Jamón, Queso y Cebollas', 'Sorrentino Jamón, Cebollas y Quesos VIANDA', 'Sorrentino de Jamón, Quesos y Cebollas Confitadas CONGELADA'], categoria: 'Pastas', tipo: 'pasta', gramosporcion: 0, porcionesporunidad: 1, unidadstock: 'porciones', diasObjetivo: 2, local: 'vedia' },
-  { nombre: 'Ñoquis de Papa', fudoNombres: ['Ñoquis de Papa', 'Ñoquis de Papa VIANDA'], categoria: 'Pastas', tipo: 'pasta', gramosporcion: 0, porcionesporunidad: 1, unidadstock: 'porciones', diasObjetivo: 2, local: 'vedia' },
-  { nombre: 'Ravioli espinaca y quesos', fudoNombres: ['Ravioli de espinaca y quesos', 'Ravioli de espinaca y quesos VIANDA', 'Ravioli espinaca y quesos CONGELADA'], categoria: 'Pastas', tipo: 'pasta', gramosporcion: 0, porcionesporunidad: 1, unidadstock: 'porciones', diasObjetivo: 2, local: 'vedia' },
-  { nombre: 'Ñoquis rellenos', fudoNombres: ['Ñoquis rellenos', 'Ñoquis rellenos VIANDA'], categoria: 'Pastas', tipo: 'pasta', gramosporcion: 0, porcionesporunidad: 1, unidadstock: 'porciones', diasObjetivo: 2 },
-  { nombre: 'Scapinocc Vacio', fudoNombres: ['Scapinocc Vacio de cerdo, cerveza y barbacoa', 'Scapinocc Vacio de cerdo, cerveza y barbacoa VIANDA'], categoria: 'Pastas', tipo: 'pasta', gramosporcion: 0, porcionesporunidad: 1, unidadstock: 'porciones', diasObjetivo: 2, local: 'vedia' },
-  { nombre: 'Cappelletti pollo', fudoNombres: ['Cappelletti de pollo y puerro', 'Cappelletti de pollo y puerro VIANDA'], categoria: 'Pastas', tipo: 'pasta', gramosporcion: 0, porcionesporunidad: 1, unidadstock: 'porciones', diasObjetivo: 2, local: 'vedia' },
-  { nombre: 'Tagliatelles al Huevo', fudoNombres: ['Tagliatelles al Huevo', 'Tagliatelles al Huevo VIANDA'], categoria: 'Pastas', tipo: 'pasta', gramosporcion: 0, porcionesporunidad: 1, unidadstock: 'porciones', diasObjetivo: 2, local: 'vedia' },
-  { nombre: 'Tagliatelles mix', fudoNombres: ['Tagliatelles mix', 'Tagliatelles Mixtos VIANDA', 'Tagliatelles mix CONGELADA'], categoria: 'Pastas', tipo: 'pasta', gramosporcion: 0, porcionesporunidad: 1, unidadstock: 'porciones', diasObjetivo: 2, local: 'vedia' },
+  { nombre: 'Sorrentino J&Q', fudoNombres: ['Sorrentino Jamón, Queso y Cebollas', 'Sorrentino Jamón, Cebollas y Quesos VIANDA', 'Sorrentino de Jamón, Quesos y Cebollas Confitadas CONGELADA'], categoria: 'Pastas', tipo: 'pasta', gramosporcion: 0, porcionesporunidad: 1, unidadstock: 'porciones', diasObjetivo: 3, local: 'vedia' },
+  { nombre: 'Ñoquis de Papa', fudoNombres: ['Ñoquis de Papa', 'Ñoquis de Papa VIANDA'], categoria: 'Pastas', tipo: 'pasta', gramosporcion: 0, porcionesporunidad: 1, unidadstock: 'porciones', diasObjetivo: 3, local: 'vedia' },
+  { nombre: 'Ravioli espinaca y quesos', fudoNombres: ['Ravioli de espinaca y quesos', 'Ravioli de espinaca y quesos VIANDA', 'Ravioli espinaca y quesos CONGELADA'], categoria: 'Pastas', tipo: 'pasta', gramosporcion: 0, porcionesporunidad: 1, unidadstock: 'porciones', diasObjetivo: 3, local: 'vedia' },
+  { nombre: 'Ñoquis rellenos', fudoNombres: ['Ñoquis rellenos', 'Ñoquis rellenos VIANDA'], categoria: 'Pastas', tipo: 'pasta', gramosporcion: 0, porcionesporunidad: 1, unidadstock: 'porciones', diasObjetivo: 3 },
+  { nombre: 'Scapinocc Vacio', fudoNombres: ['Scapinocc Vacio de cerdo, cerveza y barbacoa', 'Scapinocc Vacio de cerdo, cerveza y barbacoa VIANDA'], categoria: 'Pastas', tipo: 'pasta', gramosporcion: 0, porcionesporunidad: 1, unidadstock: 'porciones', diasObjetivo: 3, local: 'vedia' },
+  { nombre: 'Cappelletti pollo', fudoNombres: ['Cappelletti de pollo y puerro', 'Cappelletti de pollo y puerro VIANDA'], categoria: 'Pastas', tipo: 'pasta', gramosporcion: 0, porcionesporunidad: 1, unidadstock: 'porciones', diasObjetivo: 3, local: 'vedia' },
+  { nombre: 'Tagliatelles al Huevo', fudoNombres: ['Tagliatelles al Huevo', 'Tagliatelles al Huevo VIANDA'], categoria: 'Pastas', tipo: 'pasta', gramosporcion: 0, porcionesporunidad: 1, unidadstock: 'porciones', diasObjetivo: 3, local: 'vedia' },
+  { nombre: 'Tagliatelles mix', fudoNombres: ['Tagliatelles mix', 'Tagliatelles Mixtos VIANDA', 'Tagliatelles mix CONGELADA'], categoria: 'Pastas', tipo: 'pasta', gramosporcion: 0, porcionesporunidad: 1, unidadstock: 'porciones', diasObjetivo: 3, local: 'vedia' },
 
   // ════════════════════════════════════════════════════════════════
   // PASTAS — Saavedra (salón + congelada se suman)
   // ════════════════════════════════════════════════════════════════
-  { nombre: 'Mila napo + fideos', categoria: 'Pastas', tipo: 'pasta', gramosporcion: 0, porcionesporunidad: 1, unidadstock: 'porciones', diasObjetivo: 2, local: 'saavedra' },
-  { nombre: 'Ñoquis de papa', fudoNombres: ['Ñoquis de papa'], categoria: 'Pastas', tipo: 'pasta', gramosporcion: 0, porcionesporunidad: 1, unidadstock: 'porciones', diasObjetivo: 2, local: 'saavedra' },
-  { nombre: 'Cappelletti Capresse', fudoNombres: ['Cappelletti Capresse', 'Cappelletti Capresse (CONGELADA)'], categoria: 'Pastas', tipo: 'pasta', gramosporcion: 0, porcionesporunidad: 1, unidadstock: 'porciones', diasObjetivo: 2, local: 'saavedra' },
-  { nombre: 'Scarpinocc J&Q', fudoNombres: ['Scarpinocc de Jamón, Quesos y cebollas caramelizadas', 'Scarpinocc de Jamón, Quesos y cebollas caramelizadas (CONGELADA)'], categoria: 'Pastas', tipo: 'pasta', gramosporcion: 0, porcionesporunidad: 1, unidadstock: 'porciones', diasObjetivo: 2, local: 'saavedra' },
-  { nombre: 'Mezzelune de Bondiola', fudoNombres: ['Mezzelune de Bondiola Braseada', 'Mezzelune de Bondiola Braseada (CONGELADA)'], categoria: 'Pastas', tipo: 'pasta', gramosporcion: 0, porcionesporunidad: 1, unidadstock: 'porciones', diasObjetivo: 2, local: 'saavedra' },
-  { nombre: 'Spaghetti al huevo', fudoNombres: ['Spaghetti al huevo', 'Spaghettis al huevo (CONGELADOS)'], categoria: 'Pastas', tipo: 'pasta', gramosporcion: 0, porcionesporunidad: 1, unidadstock: 'porciones', diasObjetivo: 2, local: 'saavedra' },
+  { nombre: 'Mila napo + fideos', categoria: 'Pastas', tipo: 'pasta', gramosporcion: 0, porcionesporunidad: 1, unidadstock: 'porciones', diasObjetivo: 3, local: 'saavedra' },
+  { nombre: 'Ñoquis de papa', fudoNombres: ['Ñoquis de papa'], categoria: 'Pastas', tipo: 'pasta', gramosporcion: 0, porcionesporunidad: 1, unidadstock: 'porciones', diasObjetivo: 3, local: 'saavedra' },
+  { nombre: 'Cappelletti Capresse', fudoNombres: ['Cappelletti Capresse', 'Cappelletti Capresse (CONGELADA)'], categoria: 'Pastas', tipo: 'pasta', gramosporcion: 0, porcionesporunidad: 1, unidadstock: 'porciones', diasObjetivo: 3, local: 'saavedra' },
+  { nombre: 'Scarpinocc J&Q', fudoNombres: ['Scarpinocc de Jamón, Quesos y cebollas caramelizadas', 'Scarpinocc de Jamón, Quesos y cebollas caramelizadas (CONGELADA)'], categoria: 'Pastas', tipo: 'pasta', gramosporcion: 0, porcionesporunidad: 1, unidadstock: 'porciones', diasObjetivo: 3, local: 'saavedra' },
+  { nombre: 'Mezzelune de Bondiola', fudoNombres: ['Mezzelune de Bondiola Braseada', 'Mezzelune de Bondiola Braseada (CONGELADA)'], categoria: 'Pastas', tipo: 'pasta', gramosporcion: 0, porcionesporunidad: 1, unidadstock: 'porciones', diasObjetivo: 3, local: 'saavedra' },
+  { nombre: 'Spaghetti al huevo', fudoNombres: ['Spaghetti al huevo', 'Spaghettis al huevo (CONGELADOS)'], categoria: 'Pastas', tipo: 'pasta', gramosporcion: 0, porcionesporunidad: 1, unidadstock: 'porciones', diasObjetivo: 3, local: 'saavedra' },
 
   // ════════════════════════════════════════════════════════════════
   // PIZZAS — Saavedra
@@ -128,6 +128,29 @@ interface FudoData {
   porHora: Record<number, { tickets: number; total: number }>
 }
 
+interface ProductoDB {
+  nombre: string
+  local: string
+  tipo: string
+  receta_id: string | null
+  minimo_produccion: number | null
+  receta_nombre: string | null
+  rendimiento_porciones: number | null
+  rendimiento_kg: number | null
+}
+
+// Normaliza nombres para matchear entre PRODUCTOS_COCINA y la tabla cocina_productos.
+function normNombre(s: string): string {
+  return s
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '')
+}
+
+// Piso de producción para pastas: siempre al menos 100 porciones si hay que producir.
+const PISO_PORCIONES_PASTA = 100
+
 const DIAS_SEMANA = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb']
 
 // ── Componente ──────────────────────────────────────────────────────────────
@@ -136,6 +159,32 @@ export function DashboardTab() {
   const [local, setLocal] = useState<'vedia' | 'saavedra'>('vedia')
   const [ventanaDias, setVentanaDias] = useState<1 | 3 | 7>(3)
   const hoy = new Date().toISOString().split('T')[0]
+
+  // ── Query: productos BD con receta vinculada (para saber rendimiento y mínimos) ──
+  const { data: productosDB } = useQuery({
+    queryKey: ['cocina_productos_dashboard', local],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('cocina_productos')
+        .select('nombre, local, tipo, receta_id, minimo_produccion, receta:cocina_recetas(nombre, rendimiento_porciones, rendimiento_kg)')
+        .eq('local', local)
+        .eq('activo', true)
+      if (error) throw error
+      const filas: ProductoDB[] = (data as any[]).map((r) => ({
+        nombre: r.nombre,
+        local: r.local,
+        tipo: r.tipo,
+        receta_id: r.receta_id,
+        minimo_produccion: r.minimo_produccion,
+        receta_nombre: r.receta?.nombre ?? null,
+        rendimiento_porciones: r.receta?.rendimiento_porciones ?? null,
+        rendimiento_kg: r.receta?.rendimiento_kg ?? null,
+      }))
+      const m = new Map<string, ProductoDB>()
+      for (const p of filas) m.set(normNombre(p.nombre), p)
+      return m
+    },
+  })
 
   // ── Query: último conteo de stock por producto ──
   const { data: conteos } = useQuery({
@@ -277,23 +326,56 @@ export function DashboardTab() {
         ? porcionesStock / ventasParaCalculo
         : null
 
-      // Producción sugerida (usar venta ajustada para mañana)
-      const porcionesObjetivo = ventasDiariasAjustadas * prod.diasObjetivo
+      // Match con tabla BD para obtener receta vinculada y mínimos
+      const prodDB = productosDB?.get(normNombre(prod.nombre)) ?? null
+      const rendPorciones = prodDB?.rendimiento_porciones ?? null
+      const rendKg = prodDB?.rendimiento_kg ?? null
+      const minimoBD = prodDB?.minimo_produccion ?? null
+
+      // Producción sugerida: demanda proyectada × días de cobertura
+      // Con piso: para pastas, mínimo 100 porciones (o lo configurado en BD). Para otros, usar minimo_produccion si está.
+      let porcionesObjetivo = ventasDiariasAjustadas * prod.diasObjetivo
+      if (prod.tipo === 'pasta') {
+        const piso = minimoBD ?? PISO_PORCIONES_PASTA
+        porcionesObjetivo = Math.max(porcionesObjetivo, piso)
+      } else if (minimoBD != null && minimoBD > 0) {
+        porcionesObjetivo = Math.max(porcionesObjetivo, minimoBD)
+      }
       const porcionesFaltantes = Math.max(0, porcionesObjetivo - porcionesStock)
 
-      // Convertir a unidad de stock
+      // Convertir a unidad de stock + armar label en "N recetas" si hay rendimiento.
       let producirCantidad = 0
       let producirLabel = ''
       if (prod.tipo === 'salsa') {
         const kgNecesarios = (porcionesFaltantes * prod.gramosporcion) / 1000
-        producirCantidad = Math.ceil(kgNecesarios * 10) / 10
-        producirLabel = `${producirCantidad} kg`
+        if (rendKg && rendKg > 0 && kgNecesarios > 0) {
+          const recetas = Math.ceil(kgNecesarios / rendKg)
+          producirCantidad = recetas
+          producirLabel = `${recetas} receta${recetas !== 1 ? 's' : ''} (~${Math.ceil(kgNecesarios * 10) / 10} kg)`
+        } else {
+          producirCantidad = Math.ceil(kgNecesarios * 10) / 10
+          producirLabel = `${producirCantidad} kg`
+        }
       } else if (prod.tipo === 'pasta') {
-        producirCantidad = Math.ceil(porcionesFaltantes)
-        producirLabel = `${producirCantidad} porc.`
+        const porcReales = Math.ceil(porcionesFaltantes)
+        if (rendPorciones && rendPorciones > 0 && porcReales > 0) {
+          const recetas = Math.ceil(porcReales / rendPorciones)
+          producirCantidad = recetas
+          producirLabel = `${recetas} receta${recetas !== 1 ? 's' : ''} (~${recetas * rendPorciones} porc.)`
+        } else {
+          producirCantidad = porcReales
+          producirLabel = `${producirCantidad} porc.`
+        }
       } else {
-        producirCantidad = Math.ceil(porcionesFaltantes / prod.porcionesporunidad)
-        producirLabel = `${producirCantidad} unidad${producirCantidad !== 1 ? 'es' : ''}`
+        const unidades = Math.ceil(porcionesFaltantes / prod.porcionesporunidad)
+        if (rendPorciones && rendPorciones > 0 && porcionesFaltantes > 0) {
+          const recetas = Math.ceil(porcionesFaltantes / rendPorciones)
+          producirCantidad = recetas
+          producirLabel = `${recetas} receta${recetas !== 1 ? 's' : ''} (~${recetas * rendPorciones} porc.)`
+        } else {
+          producirCantidad = unidades
+          producirLabel = `${unidades} unidad${unidades !== 1 ? 'es' : ''}`
+        }
       }
 
       // Estado semáforo
@@ -316,9 +398,11 @@ export function DashboardTab() {
         producirLabel,
         producirCantidad,
         estado,
+        recetaNombre: prodDB?.receta_nombre ?? null,
+        rendPorciones,
       }
     })
-  }, [conteos, fudoData, fudoReciente, factorManana, ventanaDias])
+  }, [conteos, fudoData, fudoReciente, factorManana, ventanaDias, productosDB, local])
 
   // Agrupar filas por categoría, en orden definido
   const categorias = useMemo(() => {
@@ -386,7 +470,7 @@ export function DashboardTab() {
 
     // Producir hoy — agrupado por categoría
     if (planProduccion.length > 0) {
-      txt += 'PRODUCIR HOY:\n'
+      txt += `PRODUCIR PARA ${diaManana.toUpperCase()}:\n`
       let lastCat = ''
       for (const f of planProduccion) {
         if (f.categoria !== lastCat) {
@@ -394,7 +478,8 @@ export function DashboardTab() {
           lastCat = f.categoria
         }
         const urgencia = f.estado === 'critico' ? ' !!' : ''
-        txt += `    * ${f.producirLabel} ${f.nombre}${urgencia}\n`
+        const verbo = f.rendPorciones && f.rendPorciones > 0 ? 'Hacer' : 'Producir'
+        txt += `    * ${verbo} ${f.producirLabel} de ${f.nombre}${urgencia}\n`
       }
       txt += '\n'
     }
@@ -490,27 +575,34 @@ export function DashboardTab() {
       {/* ── PLAN DE PRODUCCIÓN DEL DÍA ── */}
       {planProduccion.length > 0 && (
         <div className="bg-rodziny-50 border border-rodziny-200 rounded-lg p-4">
-          <h3 className="text-sm font-bold text-rodziny-800 mb-2">
+          <h3 className="text-sm font-bold text-rodziny-800 mb-1">
             Plan de producción — preparar para {diaManana}
           </h3>
+          <p className="text-[11px] text-rodziny-600 mb-2">
+            Sugerencias en base a ventas y stock. El cheff decide qué y cuánto hacer.
+          </p>
           <div className="flex flex-wrap gap-2">
-            {planProduccion.map((item) => (
-              <span
-                key={item.nombre}
-                className={cn(
-                  'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium',
-                  item.estado === 'critico'
-                    ? 'bg-red-100 text-red-800 ring-1 ring-red-300'
-                    : 'bg-amber-100 text-amber-800 ring-1 ring-amber-300'
-                )}
-              >
-                <span className="font-bold">{item.producirLabel}</span>
-                <span>{item.nombre}</span>
-                {item.diasRestantes !== null && (
-                  <span className="text-[10px] opacity-70">({item.diasRestantes}d)</span>
-                )}
-              </span>
-            ))}
+            {planProduccion.map((item) => {
+              const usaRecetas = item.rendPorciones && item.rendPorciones > 0
+              const verboSug = usaRecetas ? 'Hacer' : 'Producir'
+              return (
+                <span
+                  key={item.nombre}
+                  className={cn(
+                    'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium',
+                    item.estado === 'critico'
+                      ? 'bg-red-100 text-red-800 ring-1 ring-red-300'
+                      : 'bg-amber-100 text-amber-800 ring-1 ring-amber-300'
+                  )}
+                >
+                  <span className="font-bold">{verboSug} {item.producirLabel}</span>
+                  <span>de {item.nombre}</span>
+                  {item.diasRestantes !== null && (
+                    <span className="text-[10px] opacity-70">· te dura {item.diasRestantes}d</span>
+                  )}
+                </span>
+              )
+            })}
           </div>
         </div>
       )}
