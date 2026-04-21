@@ -326,6 +326,9 @@ export function ComprasPage() {
   // Modal crear/editar producto
   const [productoModal, setProductoModal] = useState<Producto | 'nuevo' | null>(null)
 
+  // Modal fusión de productos duplicados
+  const [fusionando, setFusionando] = useState<Producto | null>(null)
+
   const [filtroPagos, setFiltroPagos] = useState<'todos' | 'pendientes' | 'pagados' | 'vencidos' | 'semana'>('todos')
   const [filtroProveedor, setFiltroProveedor] = useState('')
 
@@ -1051,15 +1054,27 @@ export function ComprasPage() {
                             </button>
                           </td>
                           <td className="px-2 py-2 text-center">
-                            <button
-                              onClick={() => setProductoModal(p)}
-                              className="text-gray-400 hover:text-rodziny-700 transition-colors"
-                              title="Editar producto"
-                            >
-                              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
-                                <path d="M2.695 14.763l-1.262 3.154a.5.5 0 00.65.65l3.155-1.262a4 4 0 001.343-.885L17.5 5.5a2.121 2.121 0 00-3-3L3.58 13.42a4 4 0 00-.885 1.343z" />
-                              </svg>
-                            </button>
+                            <div className="inline-flex items-center gap-1">
+                              <button
+                                onClick={() => setProductoModal(p)}
+                                className="text-gray-400 hover:text-rodziny-700 transition-colors"
+                                title="Editar producto"
+                              >
+                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+                                  <path d="M2.695 14.763l-1.262 3.154a.5.5 0 00.65.65l3.155-1.262a4 4 0 001.343-.885L17.5 5.5a2.121 2.121 0 00-3-3L3.58 13.42a4 4 0 00-.885 1.343z" />
+                                </svg>
+                              </button>
+                              <button
+                                onClick={() => setFusionando(p)}
+                                className="text-gray-400 hover:text-purple-600 transition-colors"
+                                title="Fusionar con otro producto (eliminar este duplicado)"
+                              >
+                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+                                  <path d="M10 2a1 1 0 011 1v5a1 1 0 01-1 1H5a1 1 0 110-2h3V3a1 1 0 011-1zm0 16a1 1 0 01-1-1v-5a1 1 0 011-1h5a1 1 0 110 2h-3v3a1 1 0 01-1 1z" />
+                                  <path d="M3 10a1 1 0 011-1h5a1 1 0 010 2H5v3a1 1 0 11-2 0v-4zm14 0a1 1 0 01-1 1h-5a1 1 0 110-2h3V6a1 1 0 112 0v4z" />
+                                </svg>
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       )
@@ -1069,6 +1084,21 @@ export function ComprasPage() {
               </div>
             )}
           </div>}
+
+          {fusionando && (
+            <ModalFusionarProducto
+              duplicado={fusionando}
+              candidatos={(productos ?? []).filter((x) => x.id !== fusionando.id && (x.local ?? '') === (fusionando.local ?? ''))}
+              onClose={() => setFusionando(null)}
+              onDone={() => {
+                qc.invalidateQueries({ queryKey: ['productos_stock'] })
+                qc.invalidateQueries({ queryKey: ['productos_activos'] })
+                qc.invalidateQueries({ queryKey: ['productos-compras-recetas'] })
+                qc.invalidateQueries({ queryKey: ['cocina-receta-ingredientes'] })
+                setFusionando(null)
+              }}
+            />
+          )}
 
           {/* Modal crear/editar producto */}
           {productoModal && (
@@ -2052,6 +2082,187 @@ function ModalAjusteInventario({ productos, local, onClose, onSaved }: {
           >
             {guardando ? 'Guardando...' : 'Ajustar y siguiente'}
           </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Modal: Fusionar producto duplicado en otro ──────────────────────────────
+function ModalFusionarProducto({ duplicado, candidatos, onClose, onDone }: {
+  duplicado: Producto
+  candidatos: Producto[]
+  onClose: () => void
+  onDone: () => void
+}) {
+  const [busqueda, setBusqueda] = useState('')
+  const [masterId, setMasterId] = useState<string>('')
+  const [confirmando, setConfirmando] = useState(false)
+  const [ejecutando, setEjecutando] = useState(false)
+  const [error, setError] = useState('')
+  const [resumen, setResumen] = useState<{ ingredientes_reasignados: number; movimientos_reasignados: number; stock_transferido: number } | null>(null)
+
+  const opciones = useMemo(() => {
+    const q = busqueda.toLowerCase().trim()
+    const base = candidatos.filter((c) => c.activo)
+    if (!q) return base.slice(0, 50)
+    return base.filter((c) =>
+      c.nombre.toLowerCase().includes(q) ||
+      (c.marca ?? '').toLowerCase().includes(q) ||
+      (c.categoria ?? '').toLowerCase().includes(q)
+    ).slice(0, 50)
+  }, [candidatos, busqueda])
+
+  // Auto-pre-select: si hay una coincidencia obvia (nombre similar)
+  useMemo(() => {
+    if (masterId || !duplicado) return
+    const nombreLower = duplicado.nombre.toLowerCase().trim()
+    const match = candidatos.find((c) => {
+      const n = c.nombre.toLowerCase().trim()
+      return n !== nombreLower && (n.startsWith(nombreLower) || nombreLower.startsWith(n))
+    })
+    if (match) setMasterId(match.id)
+  }, [duplicado, candidatos, masterId])
+
+  const master = candidatos.find((c) => c.id === masterId)
+
+  async function fusionar() {
+    if (!masterId) { setError('Elegí con qué producto fusionar'); return }
+    setEjecutando(true)
+    setError('')
+    const { data, error: err } = await supabase.rpc('fusionar_producto', {
+      p_duplicado_id: duplicado.id,
+      p_master_id: masterId,
+    })
+    setEjecutando(false)
+    if (err) { setError(err.message); return }
+    if (!data?.ok) { setError('Error desconocido'); return }
+    setResumen({
+      ingredientes_reasignados: data.ingredientes_reasignados,
+      movimientos_reasignados: data.movimientos_reasignados,
+      stock_transferido: data.stock_transferido,
+    })
+  }
+
+  if (resumen) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div className="absolute inset-0 bg-black/40" onClick={onDone} />
+        <div className="relative bg-white rounded-xl shadow-xl w-full max-w-md p-5">
+          <h3 className="text-base font-semibold text-gray-900 mb-2">Fusión exitosa</h3>
+          <p className="text-sm text-gray-600 mb-3">
+            "{duplicado.nombre}" se fusionó en "{master?.nombre}" y se eliminó.
+          </p>
+          <ul className="text-sm text-gray-700 space-y-1 bg-gray-50 rounded p-3 border border-gray-200">
+            <li>• {resumen.ingredientes_reasignados} ingredientes de recetas reasignados</li>
+            <li>• {resumen.movimientos_reasignados} movimientos de stock reasignados</li>
+            <li>• {resumen.stock_transferido > 0 ? `${resumen.stock_transferido} ${duplicado.unidad} de stock transferidos` : 'Sin stock que transferir'}</li>
+          </ul>
+          <div className="mt-4 flex justify-end">
+            <button onClick={onDone} className="bg-rodziny-700 hover:bg-rodziny-800 text-white text-sm rounded px-4 py-1.5">
+              Listo
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+      <div className="relative bg-white rounded-xl shadow-xl w-full max-w-lg">
+        <div className="px-5 py-4 border-b border-gray-100">
+          <h3 className="text-base font-semibold text-gray-900">Fusionar producto duplicado</h3>
+          <p className="text-xs text-gray-500 mt-0.5">
+            Esto elimina "<strong>{duplicado.nombre}</strong>" y reasigna todas sus referencias al producto que elijas.
+          </p>
+        </div>
+
+        <div className="px-5 py-4 space-y-3">
+          <div className="bg-red-50 border border-red-100 rounded p-3 text-xs text-red-700">
+            <p className="font-semibold mb-1">Se va a eliminar:</p>
+            <p>{duplicado.nombre} · <span className="text-red-500">{duplicado.stock_actual} {duplicado.unidad}</span> · {duplicado.categoria}</p>
+          </div>
+
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">Buscar producto master (ganador)</label>
+            <input
+              value={busqueda}
+              onChange={(e) => setBusqueda(e.target.value)}
+              placeholder="Buscar por nombre, marca o categoría..."
+              className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+            />
+            <p className="text-[10px] text-gray-400 mt-1">Solo aparecen productos del mismo local ({duplicado.local || 'sin local'}).</p>
+          </div>
+
+          <div className="max-h-56 overflow-y-auto border border-gray-200 rounded">
+            {opciones.length === 0 && (
+              <p className="text-xs text-gray-400 p-3 text-center">Sin resultados</p>
+            )}
+            {opciones.map((o) => (
+              <button
+                key={o.id}
+                onClick={() => setMasterId(o.id)}
+                className={cn(
+                  'w-full text-left px-3 py-2 text-sm border-b border-gray-50 last:border-0 hover:bg-gray-50',
+                  masterId === o.id && 'bg-rodziny-50 hover:bg-rodziny-50'
+                )}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="font-medium text-gray-800">{o.nombre}</span>
+                  <span className="text-[10px] text-gray-500">{o.stock_actual} {o.unidad}</span>
+                </div>
+                {(o.marca || o.categoria) && (
+                  <p className="text-[10px] text-gray-400">{[o.marca, o.categoria].filter(Boolean).join(' · ')}</p>
+                )}
+              </button>
+            ))}
+          </div>
+
+          {master && (
+            <div className="bg-green-50 border border-green-100 rounded p-3 text-xs text-green-700">
+              <p className="font-semibold mb-1">Producto ganador:</p>
+              <p>{master.nombre} · {master.stock_actual} {master.unidad} · {master.categoria}</p>
+              {duplicado.stock_actual > 0 && (
+                <p className="mt-1 text-green-600">
+                  Stock final: {master.stock_actual + duplicado.stock_actual} {master.unidad} ({master.stock_actual} + {duplicado.stock_actual})
+                </p>
+              )}
+            </div>
+          )}
+
+          {error && <p className="text-xs text-red-600">{error}</p>}
+
+          {confirmando && masterId && !ejecutando && (
+            <div className="bg-amber-50 border border-amber-200 rounded p-3 text-xs text-amber-800">
+              <p className="font-semibold mb-1">⚠ Confirmación</p>
+              <p>Esta acción no se puede deshacer. Click "Sí, fusionar" para continuar.</p>
+            </div>
+          )}
+        </div>
+
+        <div className="px-5 py-3 border-t border-gray-100 flex justify-end gap-2">
+          <button onClick={onClose} className="text-sm text-gray-600 hover:text-gray-800 px-3 py-1.5" disabled={ejecutando}>
+            Cancelar
+          </button>
+          {!confirmando ? (
+            <button
+              onClick={() => setConfirmando(true)}
+              disabled={!masterId}
+              className="bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white text-sm rounded px-3 py-1.5"
+            >
+              Fusionar...
+            </button>
+          ) : (
+            <button
+              onClick={fusionar}
+              disabled={ejecutando}
+              className="bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-sm rounded px-3 py-1.5"
+            >
+              {ejecutando ? 'Fusionando...' : 'Sí, fusionar'}
+            </button>
+          )}
         </div>
       </div>
     </div>
