@@ -22,7 +22,20 @@ interface LoteMasa {
   receta?: { nombre: string } | null
 }
 
-type Vista = 'inicio' | 'relleno' | 'pasta' | 'masa' | 'cerrar-masa' | 'exito'
+type Vista =
+  | 'inicio'
+  | 'relleno'
+  | 'pasta'
+  | 'masa'
+  | 'cerrar-masa'
+  | 'salsa'
+  | 'postre'
+  | 'pasteleria'
+  | 'panaderia'
+  | 'prueba'
+  | 'exito'
+
+type CategoriaGenerica = 'salsa' | 'postre' | 'pasteleria' | 'panaderia' | 'prueba'
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -113,9 +126,12 @@ export function ProduccionQRPage() {
 
   const masasAbiertas = useMemo(() => (lotesMasaHoy ?? []).filter((m) => m.kg_sobrante === null).length, [lotesMasaHoy])
 
-  const matchLocal = (l: string | null) => !l || l === local || l === 'ambos'
+  // Filtro estricto por local: solo muestra lo asignado explícitamente a este local
+  const matchLocal = (l: string | null) => l === local
   const recetasRelleno = useMemo(() => (recetas ?? []).filter((r) => r.tipo === 'relleno' && matchLocal(r.local)), [recetas, local])
   const recetasMasa = useMemo(() => (recetas ?? []).filter((r) => r.tipo === 'masa' && matchLocal(r.local)), [recetas, local])
+  const recetasSalsa = useMemo(() => (recetas ?? []).filter((r) => r.tipo === 'salsa' && matchLocal(r.local)), [recetas, local])
+  const recetasLocal = useMemo(() => (recetas ?? []).filter((r) => matchLocal(r.local)), [recetas, local])
   const productosPasta = useMemo(() => (productos ?? []).filter((p) => p.tipo === 'pasta' && matchLocal(p.local)), [productos, local])
 
   function onGuardado(msg: string) {
@@ -124,16 +140,15 @@ export function ProduccionQRPage() {
     // Refrescar lotes para que aparezcan al cargar pasta
     qc.invalidateQueries({ queryKey: ['cocina-lotes-relleno-qr'] })
     qc.invalidateQueries({ queryKey: ['cocina-lotes-masa-qr'] })
+    qc.invalidateQueries({ queryKey: ['cocina-lotes-produccion-qr'] })
   }
 
   return (
     <Pantalla local={local}>
       {vista === 'inicio' && (
         <Inicio
-          onRelleno={() => setVista('relleno')}
-          onPasta={() => setVista('pasta')}
-          onMasa={() => setVista('masa')}
-          onCerrarMasa={() => setVista('cerrar-masa')}
+          local={local}
+          onIr={(v) => setVista(v)}
           lotesHoy={lotesRellenoHoy?.length ?? 0}
           masasAbiertas={masasAbiertas}
         />
@@ -177,6 +192,58 @@ export function ProduccionQRPage() {
         />
       )}
 
+      {vista === 'salsa' && (
+        <FormGenerico
+          local={local}
+          categoria="salsa"
+          recetas={recetasSalsa}
+          onGuardado={onGuardado}
+          onVolver={() => setVista('inicio')}
+        />
+      )}
+
+      {vista === 'postre' && (
+        <FormGenerico
+          local={local}
+          categoria="postre"
+          recetas={recetasLocal}
+          onGuardado={onGuardado}
+          onVolver={() => setVista('inicio')}
+        />
+      )}
+
+      {vista === 'pasteleria' && (
+        <FormGenerico
+          local={local}
+          categoria="pasteleria"
+          recetas={recetasLocal}
+          onGuardado={onGuardado}
+          onVolver={() => setVista('inicio')}
+        />
+      )}
+
+      {vista === 'panaderia' && (
+        <FormGenerico
+          local={local}
+          categoria="panaderia"
+          recetas={recetasLocal}
+          onGuardado={onGuardado}
+          onVolver={() => setVista('inicio')}
+        />
+      )}
+
+      {vista === 'prueba' && (
+        <FormGenerico
+          local={local}
+          categoria="prueba"
+          recetas={recetasLocal}
+          permitirLibre
+          permitirLitros
+          onGuardado={onGuardado}
+          onVolver={() => setVista('inicio')}
+        />
+      )}
+
       {vista === 'exito' && (
         <Exito
           mensaje={mensajeExito}
@@ -189,15 +256,31 @@ export function ProduccionQRPage() {
 
 // ── Inicio ─────────────────────────────────────────────────────────────────────
 
-function Inicio({ onRelleno, onPasta, onMasa, onCerrarMasa, lotesHoy, masasAbiertas }: {
-  onRelleno: () => void; onPasta: () => void; onMasa: () => void; onCerrarMasa: () => void
-  lotesHoy: number; masasAbiertas: number
+function Inicio({ local, onIr, lotesHoy, masasAbiertas }: {
+  local: 'vedia' | 'saavedra'
+  onIr: (v: Vista) => void
+  lotesHoy: number
+  masasAbiertas: number
 }) {
   const ahora = new Date()
   const fechaLabel = ahora.toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'long' })
 
+  const botones: { vista: Vista; label: string; color: string }[] = [
+    { vista: 'relleno', label: 'Cargar Relleno', color: 'bg-green-600 hover:bg-green-700' },
+    { vista: 'masa', label: 'Cargar Masa', color: 'bg-amber-500 hover:bg-amber-600' },
+    { vista: 'pasta', label: 'Cargar Pasta Terminada', color: 'bg-rodziny-700 hover:bg-rodziny-800' },
+    { vista: 'salsa', label: 'Cargar Salsa', color: 'bg-orange-500 hover:bg-orange-600' },
+  ]
+  if (local === 'vedia') {
+    botones.push({ vista: 'postre', label: 'Cargar Postre', color: 'bg-pink-500 hover:bg-pink-600' })
+    botones.push({ vista: 'prueba', label: 'Cargar Prueba', color: 'bg-purple-500 hover:bg-purple-600' })
+  } else {
+    botones.push({ vista: 'pasteleria', label: 'Cargar Pastelería Terminada', color: 'bg-pink-500 hover:bg-pink-600' })
+    botones.push({ vista: 'panaderia', label: 'Cargar Panadería Terminada', color: 'bg-yellow-600 hover:bg-yellow-700' })
+  }
+
   return (
-    <div className="space-y-4 mt-2">
+    <div className="space-y-3 mt-2">
       <div className="bg-white rounded-lg border border-gray-200 p-4 text-center">
         <p className="text-xs text-gray-500 capitalize">{fechaLabel}</p>
         <p className="text-sm text-gray-600 mt-1">
@@ -212,31 +295,20 @@ function Inicio({ onRelleno, onPasta, onMasa, onCerrarMasa, lotesHoy, masasAbier
         )}
       </div>
 
-      <button
-        onClick={onRelleno}
-        className="w-full bg-green-600 hover:bg-green-700 text-white py-5 rounded-lg font-semibold text-base shadow active:scale-[0.98] transition-transform"
-      >
-        Cargar Relleno
-      </button>
-
-      <button
-        onClick={onPasta}
-        className="w-full bg-rodziny-700 hover:bg-rodziny-800 text-white py-5 rounded-lg font-semibold text-base shadow active:scale-[0.98] transition-transform"
-      >
-        Cargar Pasta
-      </button>
-
-      <button
-        onClick={onMasa}
-        className="w-full bg-amber-500 hover:bg-amber-600 text-white py-5 rounded-lg font-semibold text-base shadow active:scale-[0.98] transition-transform"
-      >
-        Cargar Masa
-      </button>
+      {botones.map((b) => (
+        <button
+          key={b.vista}
+          onClick={() => onIr(b.vista)}
+          className={cn('w-full text-white py-4 rounded-lg font-semibold text-base shadow active:scale-[0.98] transition-transform', b.color)}
+        >
+          {b.label}
+        </button>
+      ))}
 
       {masasAbiertas > 0 && (
         <button
-          onClick={onCerrarMasa}
-          className="w-full border-2 border-amber-500 text-amber-700 py-5 rounded-lg font-semibold text-base active:scale-[0.98] transition-transform"
+          onClick={() => onIr('cerrar-masa')}
+          className="w-full border-2 border-amber-500 text-amber-700 py-4 rounded-lg font-semibold text-base active:scale-[0.98] transition-transform"
         >
           Cerrar Masa
         </button>
@@ -802,6 +874,222 @@ function Exito({ mensaje, onOtro }: { mensaje: string; onOtro: () => void }) {
         Cargar otro
       </button>
       <p className="text-[10px] text-gray-400 mt-4">{new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}</p>
+    </div>
+  )
+}
+
+// ── FormGenerico (salsa/postre/pasteleria/panaderia/prueba) ────────────────────
+
+const CATEGORIA_LABEL: Record<CategoriaGenerica, string> = {
+  salsa: 'Salsa',
+  postre: 'Postre',
+  pasteleria: 'Pastelería',
+  panaderia: 'Panadería',
+  prueba: 'Prueba',
+}
+
+function unidadesDisponibles(categoria: CategoriaGenerica, permitirLitros?: boolean): { value: 'kg' | 'unid' | 'lt'; label: string }[] {
+  const base: { value: 'kg' | 'unid' | 'lt'; label: string }[] = [
+    { value: 'kg', label: 'kg' },
+    { value: 'unid', label: 'unid' },
+  ]
+  if (permitirLitros || categoria === 'salsa' || categoria === 'prueba') {
+    base.push({ value: 'lt', label: 'lt' })
+  }
+  return base
+}
+
+function FormGenerico({ local, categoria, recetas, permitirLibre, permitirLitros, onGuardado, onVolver }: {
+  local: string
+  categoria: CategoriaGenerica
+  recetas: Receta[]
+  permitirLibre?: boolean
+  permitirLitros?: boolean
+  onGuardado: (msg: string) => void
+  onVolver: () => void
+}) {
+  const [recetaId, setRecetaId] = useState('')
+  const [nombreLibre, setNombreLibre] = useState('')
+  const [cantidad, setCantidad] = useState('')
+  const [unidad, setUnidad] = useState<'kg' | 'unid' | 'lt'>(
+    categoria === 'salsa' ? 'kg' :
+    categoria === 'postre' || categoria === 'pasteleria' || categoria === 'panaderia' ? 'unid' :
+    'kg'
+  )
+  const [merma, setMerma] = useState('')
+  const [mermaMotivo, setMermaMotivo] = useState('')
+  const [responsable, setResponsable] = useState('')
+  const [notas, setNotas] = useState('')
+  const [filtroReceta, setFiltroReceta] = useState('')
+  const [guardando, setGuardando] = useState(false)
+  const [error, setError] = useState('')
+
+  const recetasFiltradas = useMemo(() => {
+    if (!filtroReceta.trim()) return recetas
+    const q = filtroReceta.toLowerCase()
+    return recetas.filter((r) => r.nombre.toLowerCase().includes(q))
+  }, [recetas, filtroReceta])
+
+  const recetaSel = recetas.find((r) => r.id === recetaId)
+  const unidades = unidadesDisponibles(categoria, permitirLitros)
+  const titulo = `Cargar ${CATEGORIA_LABEL[categoria]}`
+
+  async function guardar() {
+    if (!recetaId && !(permitirLibre && nombreLibre.trim())) { setError('Seleccioná una receta o escribí el nombre'); return }
+    if (!cantidad || Number(cantidad) <= 0) { setError('Indicá la cantidad producida'); return }
+    setGuardando(true)
+    setError('')
+
+    const { error: err } = await supabase.from('cocina_lotes_produccion').insert({
+      fecha: hoy(),
+      local,
+      categoria,
+      receta_id: recetaId || null,
+      nombre_libre: permitirLibre && !recetaId ? nombreLibre.trim() : null,
+      cantidad_producida: Number(cantidad),
+      unidad,
+      merma_cantidad: merma ? Number(merma) : null,
+      merma_motivo: mermaMotivo.trim() || null,
+      responsable: responsable.trim() || null,
+      notas: notas.trim() || null,
+    })
+
+    if (err) { setError(err.message); setGuardando(false); return }
+    const nombre = recetaSel?.nombre ?? nombreLibre.trim() ?? CATEGORIA_LABEL[categoria]
+    onGuardado(`${CATEGORIA_LABEL[categoria]} "${nombre}" — ${cantidad} ${unidad}`)
+  }
+
+  return (
+    <div className="space-y-3 mt-2">
+      <div className="flex items-center justify-between">
+        <h2 className="text-base font-semibold text-gray-900">{titulo}</h2>
+        <button onClick={onVolver} className="text-xs text-gray-500 underline">Volver</button>
+      </div>
+
+      <div className="bg-white rounded-lg border border-gray-200 p-4 space-y-3">
+        {recetas.length > 0 && (
+          <>
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">Buscar receta</label>
+              <input
+                value={filtroReceta}
+                onChange={(e) => setFiltroReceta(e.target.value)}
+                placeholder="Filtrar por nombre..."
+                className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">Receta</label>
+              <select
+                value={recetaId}
+                onChange={(e) => setRecetaId(e.target.value)}
+                className="w-full border border-gray-300 rounded px-3 py-2.5 text-sm"
+              >
+                <option value="">— Elegir receta —</option>
+                {recetasFiltradas.map((r) => (
+                  <option key={r.id} value={r.id}>{r.nombre}</option>
+                ))}
+              </select>
+              {recetasFiltradas.length === 0 && <p className="text-[10px] text-gray-400 mt-1">Sin resultados</p>}
+            </div>
+          </>
+        )}
+
+        {permitirLibre && (
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">
+              {recetaId ? 'O escribí un nombre libre (opcional)' : 'Nombre de la prueba'}
+            </label>
+            <input
+              value={nombreLibre}
+              onChange={(e) => setNombreLibre(e.target.value)}
+              placeholder="Ej: ravioles de calabaza"
+              className="w-full border border-gray-300 rounded px-3 py-2.5 text-sm"
+              disabled={!!recetaId}
+            />
+          </div>
+        )}
+
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Cantidad</label>
+            <input
+              type="number"
+              inputMode="decimal"
+              step="0.1"
+              min={0}
+              value={cantidad}
+              onChange={(e) => setCantidad(e.target.value)}
+              className="w-full border border-gray-300 rounded px-3 py-2.5 text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Unidad</label>
+            <select
+              value={unidad}
+              onChange={(e) => setUnidad(e.target.value as 'kg' | 'unid' | 'lt')}
+              className="w-full border border-gray-300 rounded px-3 py-2.5 text-sm"
+            >
+              {unidades.map((u) => <option key={u.value} value={u.value}>{u.label}</option>)}
+            </select>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Merma (opcional)</label>
+            <input
+              type="number"
+              inputMode="decimal"
+              step="0.1"
+              min={0}
+              value={merma}
+              onChange={(e) => setMerma(e.target.value)}
+              placeholder={`0 ${unidad}`}
+              className="w-full border border-gray-300 rounded px-3 py-2.5 text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Motivo de merma</label>
+            <input
+              value={mermaMotivo}
+              onChange={(e) => setMermaMotivo(e.target.value)}
+              placeholder="Ej: se cortó"
+              className="w-full border border-gray-300 rounded px-3 py-2.5 text-sm"
+            />
+          </div>
+        </div>
+
+        <div>
+          <label className="block text-xs font-medium text-gray-700 mb-1">Responsable</label>
+          <input
+            value={responsable}
+            onChange={(e) => setResponsable(e.target.value)}
+            placeholder="Nombre de quien produjo"
+            className="w-full border border-gray-300 rounded px-3 py-2.5 text-sm"
+          />
+        </div>
+
+        <div>
+          <label className="block text-xs font-medium text-gray-700 mb-1">Notas (opcional)</label>
+          <textarea
+            value={notas}
+            onChange={(e) => setNotas(e.target.value)}
+            rows={2}
+            className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+          />
+        </div>
+
+        {error && <p className="text-xs text-red-600">{error}</p>}
+
+        <button
+          onClick={guardar}
+          disabled={guardando}
+          className="w-full bg-rodziny-700 hover:bg-rodziny-800 disabled:opacity-50 text-white py-3 rounded-lg font-semibold text-sm"
+        >
+          {guardando ? 'Guardando...' : 'Guardar'}
+        </button>
+      </div>
     </div>
   )
 }

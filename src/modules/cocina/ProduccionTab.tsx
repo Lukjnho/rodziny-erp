@@ -34,6 +34,27 @@ interface LoteMasa {
   receta?: { nombre: string } | null
 }
 
+interface LoteProduccion {
+  id: string; fecha: string; local: string
+  categoria: 'salsa' | 'postre' | 'pasteleria' | 'panaderia' | 'prueba'
+  receta_id: string | null; nombre_libre: string | null
+  cantidad_producida: number; unidad: 'kg' | 'unid' | 'lt'
+  merma_cantidad: number | null; merma_motivo: string | null
+  responsable: string | null; notas: string | null; created_at: string
+  receta?: { nombre: string } | null
+}
+
+const CATEGORIA_LABEL_PROD: Record<string, string> = {
+  salsa: 'Salsa', postre: 'Postre', pasteleria: 'Pastelería', panaderia: 'Panadería', prueba: 'Prueba',
+}
+const CATEGORIA_COLOR_PROD: Record<string, string> = {
+  salsa: 'bg-orange-100 text-orange-700',
+  postre: 'bg-pink-100 text-pink-700',
+  pasteleria: 'bg-pink-100 text-pink-700',
+  panaderia: 'bg-yellow-100 text-yellow-700',
+  prueba: 'bg-purple-100 text-purple-700',
+}
+
 type FiltroLocal = 'todos' | 'vedia' | 'saavedra'
 
 function matchLocal(itemLocal: string | null, filtro: string): boolean {
@@ -122,6 +143,19 @@ export function ProduccionTab() {
     },
   })
 
+  const { data: lotesProduccion, isLoading: cargandoProd } = useQuery({
+    queryKey: ['cocina-lotes-produccion', fecha],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('cocina_lotes_produccion')
+        .select('*, receta:cocina_recetas(nombre)')
+        .eq('fecha', fecha)
+        .order('created_at', { ascending: false })
+      if (error) throw error
+      return data as unknown as LoteProduccion[]
+    },
+  })
+
   // Filtrar por local
   const rellenosFiltrados = useMemo(() => {
     if (filtroLocal === 'todos') return lotesRelleno ?? []
@@ -137,6 +171,11 @@ export function ProduccionTab() {
     if (filtroLocal === 'todos') return lotesPasta ?? []
     return (lotesPasta ?? []).filter((l) => l.local === filtroLocal)
   }, [lotesPasta, filtroLocal])
+
+  const produccionesFiltradas = useMemo(() => {
+    if (filtroLocal === 'todos') return lotesProduccion ?? []
+    return (lotesProduccion ?? []).filter((l) => l.local === filtroLocal)
+  }, [lotesProduccion, filtroLocal])
 
   // KPIs
   const kpiRelleno = useMemo(() => ({
@@ -188,6 +227,14 @@ export function ProduccionTab() {
       qc.invalidateQueries({ queryKey: ['cocina-lotes-pasta', fecha] })
       qc.invalidateQueries({ queryKey: ['cocina-stock'] })
     },
+  })
+
+  const eliminarProduccion = useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase.from('cocina_lotes_produccion').delete().eq('id', id)
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['cocina-lotes-produccion', fecha] }),
   })
 
   const fechaLabel = new Date(fecha + 'T12:00:00').toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'long' })
@@ -389,6 +436,66 @@ export function ProduccionTab() {
               ))}
               {pastasFiltradas.length === 0 && (
                 <tr><td colSpan={8} className="px-4 py-6 text-center text-gray-400">{cargandoP ? 'Cargando...' : 'No hay pastas registradas hoy'}</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* ── Sección: Producción adicional (salsa/postre/pastelería/panadería/prueba) ─── */}
+      <div>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-base font-semibold text-gray-800">Producción adicional del día</h3>
+          <span className="text-xs text-gray-500">Cargada desde el QR por el equipo</span>
+        </div>
+
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-3">
+          {(['salsa', 'postre', 'pasteleria', 'panaderia', 'prueba'] as const).map((cat) => {
+            const count = produccionesFiltradas.filter((p) => p.categoria === cat).length
+            return <KPICard key={cat} label={CATEGORIA_LABEL_PROD[cat]} value={String(count)} color="neutral" loading={cargandoProd} />
+          })}
+        </div>
+
+        <div className="bg-white rounded-lg border border-surface-border overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-surface-border bg-gray-50 text-left text-xs text-gray-500 uppercase">
+                <th className="px-4 py-2">Categoría</th>
+                <th className="px-4 py-2">Receta / Nombre</th>
+                <th className="px-4 py-2">Cantidad</th>
+                <th className="px-4 py-2">Merma</th>
+                <th className="px-4 py-2">Local</th>
+                <th className="px-4 py-2">Responsable</th>
+                <th className="px-4 py-2">Notas</th>
+                <th className="px-4 py-2">Acciones</th>
+              </tr>
+            </thead>
+            <tbody>
+              {produccionesFiltradas.map((l) => (
+                <tr key={l.id} className="border-b border-surface-border hover:bg-gray-50">
+                  <td className="px-4 py-2">
+                    <span className={'px-2 py-0.5 rounded-full text-xs font-medium ' + (CATEGORIA_COLOR_PROD[l.categoria] ?? 'bg-gray-100 text-gray-700')}>
+                      {CATEGORIA_LABEL_PROD[l.categoria] ?? l.categoria}
+                    </span>
+                  </td>
+                  <td className="px-4 py-2 font-medium">{l.receta?.nombre ?? l.nombre_libre ?? '—'}</td>
+                  <td className="px-4 py-2 tabular-nums">{l.cantidad_producida} {l.unidad}</td>
+                  <td className="px-4 py-2 text-gray-600">
+                    {l.merma_cantidad ? `${l.merma_cantidad} ${l.unidad}${l.merma_motivo ? ` · ${l.merma_motivo}` : ''}` : '—'}
+                  </td>
+                  <td className="px-4 py-2 capitalize">{l.local}</td>
+                  <td className="px-4 py-2">{l.responsable || '—'}</td>
+                  <td className="px-4 py-2 text-gray-500 max-w-xs truncate">{l.notas || '—'}</td>
+                  <td className="px-4 py-2">
+                    <button
+                      onClick={() => { if (window.confirm('¿Eliminar este lote?')) eliminarProduccion.mutate(l.id) }}
+                      className="text-red-500 hover:text-red-700 text-xs"
+                    >Eliminar</button>
+                  </td>
+                </tr>
+              ))}
+              {produccionesFiltradas.length === 0 && (
+                <tr><td colSpan={8} className="px-4 py-6 text-center text-gray-400">{cargandoProd ? 'Cargando...' : 'Sin producción adicional registrada hoy'}</td></tr>
               )}
             </tbody>
           </table>
