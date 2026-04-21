@@ -590,6 +590,7 @@ interface ProductoCompras {
   marca: string | null
   unidad: string
   categoria: string | null
+  local: string | null
 }
 
 interface IngredienteForm {
@@ -627,15 +628,20 @@ function ModalReceta({
   const [error, setError] = useState('')
   const [tab, setTab] = useState<'general' | 'ingredientes' | 'procedimiento'>('general')
 
-  // Productos de compras (para autocomplete)
+  // Productos de compras (para autocomplete), filtrados por local de la receta
   const { data: productosCompras } = useQuery({
-    queryKey: ['productos-compras-recetas'],
+    queryKey: ['productos-compras-recetas', local],
     queryFn: async () => {
-      const { data, error } = await supabase
+      let q = supabase
         .from('productos')
-        .select('id, nombre, marca, unidad, categoria')
+        .select('id, nombre, marca, unidad, categoria, local')
         .eq('activo', true)
         .order('nombre')
+      // Si la receta es 'vedia' → mostrar vedia + ambos. Lo mismo para saavedra.
+      // Si es 'ambos' → todos.
+      if (local === 'vedia') q = q.in('local', ['vedia', 'ambos'])
+      else if (local === 'saavedra') q = q.in('local', ['saavedra', 'ambos'])
+      const { data, error } = await q
       if (error) throw error
       return data as ProductoCompras[]
     },
@@ -1144,7 +1150,7 @@ function AutocompleteIngrediente({
                   className="w-full text-left px-3 py-1.5 text-sm hover:bg-rodziny-50 flex items-center justify-between gap-2"
                   onMouseDown={(e) => {
                     e.preventDefault()
-                    onSelect({ id: o.id, nombre: o.nombre, marca: null, unidad: o.unidad, categoria: o.detalle })
+                    onSelect({ id: o.id, nombre: o.nombre, marca: null, unidad: o.unidad, categoria: o.detalle, local: null })
                     setAbierto(false)
                   }}
                 >
