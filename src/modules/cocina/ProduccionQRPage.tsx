@@ -440,7 +440,7 @@ function FormRelleno({ local, recetas, onGuardado, onVolver }: {
         disabled={guardando}
         className="w-full bg-green-600 hover:bg-green-700 text-white py-3.5 rounded-lg font-semibold text-sm disabled:opacity-50 shadow active:scale-[0.98] transition-transform"
       >
-        {guardando ? 'Guardando...' : 'Registrar relleno'}
+        {guardando ? 'Guardando...' : 'Sumar relleno al depósito'}
       </button>
     </div>
   )
@@ -614,7 +614,7 @@ function FormPasta({ local, productos, lotesRelleno, lotesMasa, onGuardado, onVo
         disabled={guardando}
         className="w-full bg-rodziny-700 hover:bg-rodziny-800 text-white py-3.5 rounded-lg font-semibold text-sm disabled:opacity-50 shadow active:scale-[0.98] transition-transform"
       >
-        {guardando ? 'Guardando...' : 'Registrar pasta'}
+        {guardando ? 'Guardando...' : 'Sumar pasta al depósito'}
       </button>
     </div>
   )
@@ -724,7 +724,7 @@ function FormMasa({ local, recetas, onGuardado, onVolver }: {
         disabled={guardando}
         className="w-full bg-amber-500 hover:bg-amber-600 text-white py-3.5 rounded-lg font-semibold text-sm disabled:opacity-50 shadow active:scale-[0.98] transition-transform"
       >
-        {guardando ? 'Guardando...' : 'Registrar masa'}
+        {guardando ? 'Guardando...' : 'Sumar masa al depósito'}
       </button>
     </div>
   )
