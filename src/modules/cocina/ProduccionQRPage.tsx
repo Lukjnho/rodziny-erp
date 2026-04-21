@@ -981,6 +981,12 @@ function FormGenerico({ local, categoria, recetas, permitirLibre, permitirLitros
       </div>
 
       <div className="bg-white rounded-lg border border-gray-200 p-4 space-y-3">
+        {recetas.length === 0 && !permitirLibre && (
+          <div className="bg-amber-50 border border-amber-200 rounded p-3 text-xs text-amber-800">
+            <p className="font-semibold mb-1">No hay recetas disponibles para {CATEGORIA_LABEL[categoria]} en este local.</p>
+            <p>Pedile al admin que asigne recetas con tipo adecuado y local = <span className="font-mono">{local}</span>.</p>
+          </div>
+        )}
         {recetas.length > 0 && (
           <>
             <div>
