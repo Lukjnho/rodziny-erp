@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { supabaseAnon as supabase } from '@/lib/supabaseAnon'
+import { useCostosRecetas } from '../hooks/useCostosRecetas'
 
 export interface IngredienteReal {
   ing_id: string
@@ -9,6 +10,10 @@ export interface IngredienteReal {
   cantidad_real: number
   unidad: string
   producto_id: string | null
+}
+
+function formatARS(n: number): string {
+  return n.toLocaleString('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 })
 }
 
 interface IngredienteRow {
@@ -29,6 +34,7 @@ interface Props {
 export function IngredientesGrilla({ recetaId, onChange }: Props) {
   const [expandido, setExpandido] = useState(false)
   const [cantidades, setCantidades] = useState<Record<string, string>>({})
+  const { costos } = useCostosRecetas()
 
   const { data: ingredientes, isLoading } = useQuery({
     queryKey: ['cocina-receta-ingredientes-grilla', recetaId],
@@ -71,12 +77,41 @@ export function IngredientesGrilla({ recetaId, onChange }: Props) {
     onChange(reales)
   }, [reales, onChange])
 
+  // Costos por ingrediente — escalar según ratio cantidad_real/cantidad_receta
+  const costoReceta = recetaId ? costos.get(recetaId) : null
+  const costoPorIng = useMemo(() => {
+    const m = new Map<string, number>()
+    if (!costoReceta) return m
+    for (const d of costoReceta.detalles) {
+      if (d.costoTotal != null) m.set(d.id, d.costoTotal)
+    }
+    return m
+  }, [costoReceta])
+
+  const costoBaseTotal = useMemo(() => {
+    if (!costoReceta) return null
+    return costoReceta.costoBase
+  }, [costoReceta])
+
+  const costoAjustadoTotal = useMemo(() => {
+    if (!ingredientes || !costoReceta) return null
+    let total = 0
+    for (const i of ingredientes) {
+      const base = costoPorIng.get(i.id) ?? 0
+      const real = Number(cantidades[i.id] ?? i.cantidad)
+      const ratio = i.cantidad > 0 ? real / i.cantidad : 1
+      total += base * ratio
+    }
+    return total
+  }, [ingredientes, cantidades, costoPorIng, costoReceta])
+
   if (!recetaId) return null
   if (isLoading) return <p className="text-[10px] text-gray-400">Cargando ingredientes…</p>
   if (!ingredientes || ingredientes.length === 0) return null
 
   // Detectar si alguna cantidad fue modificada vs receta
   const ajustados = reales.filter((r) => Math.abs(r.cantidad_real - r.cantidad_receta) > 0.001).length
+  const hayAjuste = ajustados > 0 && costoAjustadoTotal != null && costoBaseTotal != null && Math.abs(costoAjustadoTotal - costoBaseTotal) > 1
 
   return (
     <div className="border border-gray-200 rounded-lg bg-gray-50">
@@ -95,6 +130,16 @@ export function IngredientesGrilla({ recetaId, onChange }: Props) {
               : 'Cantidades por receta · Tocá para ajustar si hubo variación'}
           </p>
         </div>
+        {costoAjustadoTotal != null && costoAjustadoTotal > 0 && (
+          <div className="text-right mr-2">
+            <p className={'text-xs font-semibold ' + (hayAjuste ? 'text-amber-700' : 'text-emerald-700')}>
+              {formatARS(costoAjustadoTotal)}
+            </p>
+            {hayAjuste && costoBaseTotal != null && (
+              <p className="text-[9px] text-gray-400">base: {formatARS(costoBaseTotal)}</p>
+            )}
+          </div>
+        )}
         <span className="text-gray-400 text-xs">{expandido ? '▲' : '▼'}</span>
       </button>
 
@@ -104,6 +149,9 @@ export function IngredientesGrilla({ recetaId, onChange }: Props) {
             const raw = cantidades[i.id] ?? String(i.cantidad)
             const realNum = Number(raw)
             const ajustado = !Number.isNaN(realNum) && Math.abs(realNum - i.cantidad) > 0.001
+            const costoBaseIng = costoPorIng.get(i.id) ?? null
+            const ratio = i.cantidad > 0 && !Number.isNaN(realNum) ? realNum / i.cantidad : 1
+            const costoIng = costoBaseIng != null ? costoBaseIng * ratio : null
             return (
               <div key={i.id} className="flex items-center gap-2">
                 <span className={'flex-1 text-xs truncate ' + (ajustado ? 'text-amber-700 font-medium' : 'text-gray-700')}>
@@ -119,6 +167,9 @@ export function IngredientesGrilla({ recetaId, onChange }: Props) {
                   className={'w-20 border rounded px-2 py-1 text-xs text-right ' + (ajustado ? 'border-amber-400 bg-amber-50' : 'border-gray-300 bg-white')}
                 />
                 <span className="text-[10px] text-gray-500 w-8">{i.unidad}</span>
+                <span className="text-[10px] text-gray-500 w-14 text-right tabular-nums">
+                  {costoIng != null ? formatARS(costoIng) : '—'}
+                </span>
               </div>
             )
           })}
