@@ -486,6 +486,7 @@ function ModalReceta({
   const [tipo, setTipo] = useState(receta?.tipo ?? 'relleno')
   const [rendKg, setRendKg] = useState(receta?.rendimiento_kg ?? '')
   const [rendPorciones, setRendPorciones] = useState(receta?.rendimiento_porciones ?? '')
+  const [local, setLocal] = useState<string>(receta?.local ?? 'vedia')
   const [instrucciones, setInstrucciones] = useState(receta?.instrucciones ?? '')
   const [guardando, setGuardando] = useState(false)
   const [error, setError] = useState('')
@@ -569,6 +570,7 @@ function ModalReceta({
         tipo,
         rendimiento_kg: rendKg !== '' ? Number(rendKg) : null,
         rendimiento_porciones: rendPorciones !== '' ? Number(rendPorciones) : null,
+        local,
         instrucciones: instrucciones.trim() || null,
         updated_at: new Date().toISOString(),
       }
@@ -679,15 +681,29 @@ function ModalReceta({
                   placeholder="Relleno Jamón, Queso y Cebolla"
                 />
               </div>
-              <div>
-                <label className="block text-xs text-gray-500 mb-1">Tipo</label>
-                <select
-                  value={tipo}
-                  onChange={(e) => setTipo(e.target.value as Receta['tipo'])}
-                  className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm"
-                >
-                  {TIPOS.map((t) => <option key={t} value={t}>{TIPO_LABEL[t]}</option>)}
-                </select>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Tipo</label>
+                  <select
+                    value={tipo}
+                    onChange={(e) => setTipo(e.target.value as Receta['tipo'])}
+                    className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm"
+                  >
+                    {TIPOS.map((t) => <option key={t} value={t}>{TIPO_LABEL[t]}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Local</label>
+                  <select
+                    value={local}
+                    onChange={(e) => setLocal(e.target.value)}
+                    className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm"
+                  >
+                    <option value="vedia">Vedia</option>
+                    <option value="saavedra">Saavedra</option>
+                    <option value="ambos">Ambos</option>
+                  </select>
+                </div>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
