@@ -48,6 +48,7 @@ export function RecetasTab() {
   const [busqueda, setBusqueda] = useState('')
   const [filtroTipo, setFiltroTipo] = useState<string>('todos')
   const [filtroLocal, setFiltroLocal] = useState<string>('todos')
+  const [filtroActivo, setFiltroActivo] = useState<'activas' | 'inactivas' | 'todas'>('activas')
   const [modalAbierto, setModalAbierto] = useState(false)
   const [editando, setEditando] = useState<Receta | null>(null)
   const [fichaAbierta, setFichaAbierta] = useState<string | null>(null) // receta_id expandida
@@ -85,12 +86,14 @@ export function RecetasTab() {
     if (filtroLocal === 'vedia') lista = lista.filter((r) => r.local === 'vedia' || r.local === 'ambos')
     else if (filtroLocal === 'saavedra') lista = lista.filter((r) => r.local === 'saavedra' || r.local === 'ambos')
     else if (filtroLocal === 'ambos') lista = lista.filter((r) => r.local === 'ambos')
+    if (filtroActivo === 'activas') lista = lista.filter((r) => r.activo)
+    else if (filtroActivo === 'inactivas') lista = lista.filter((r) => !r.activo)
     if (busqueda.trim()) {
       const q = busqueda.toLowerCase()
       lista = lista.filter((r) => r.nombre.toLowerCase().includes(q))
     }
     return lista
-  }, [recetas, filtroTipo, filtroLocal, busqueda])
+  }, [recetas, filtroTipo, filtroLocal, filtroActivo, busqueda])
 
   const ingredientesPorReceta = useMemo(() => {
     const mapa = new Map<string, Ingrediente[]>()
@@ -134,6 +137,17 @@ export function RecetasTab() {
     },
   })
 
+  const toggleActivo = useMutation({
+    mutationFn: async ({ id, activo }: { id: string; activo: boolean }) => {
+      const { error } = await supabase.from('cocina_recetas').update({ activo }).eq('id', id)
+      if (error) throw error
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['cocina-recetas'] })
+      qc.invalidateQueries({ queryKey: ['cocina-recetas-costeo'] })
+    },
+  })
+
   return (
     <div className="space-y-4">
       {/* KPIs */}
@@ -163,6 +177,11 @@ export function RecetasTab() {
           <option value="vedia">Vedia</option>
           <option value="saavedra">Saavedra</option>
           <option value="ambos">Solo "ambos"</option>
+        </select>
+        <select value={filtroActivo} onChange={(e) => setFiltroActivo(e.target.value as typeof filtroActivo)} className="border border-gray-300 rounded px-2 py-1.5 text-sm">
+          <option value="activas">Solo activas</option>
+          <option value="inactivas">Solo inactivas</option>
+          <option value="todas">Todas</option>
         </select>
         <button
           onClick={() => { setEditando(null); setModalAbierto(true) }}
@@ -196,7 +215,7 @@ export function RecetasTab() {
               const tieneAdv = costo?.advertencias && costo.advertencias.length > 0
               return (
                 <Fragment key={r.id}>
-                  <tr className={cn('border-b border-surface-border hover:bg-gray-50', abierta && 'bg-blue-50/30')}>
+                  <tr className={cn('border-b border-surface-border hover:bg-gray-50', abierta && 'bg-blue-50/30', !r.activo && 'opacity-50')}>
                     <td className="px-4 py-2">
                       <button
                         onClick={() => setFichaAbierta(abierta ? null : r.id)}
@@ -248,11 +267,16 @@ export function RecetasTab() {
                       {costo?.costoPorPorcion != null ? formatARS(costo.costoPorPorcion) : <span className="text-gray-300">—</span>}
                     </td>
                     <td className="px-4 py-2">
-                      <div className="flex gap-1">
+                      <div className="flex gap-1.5">
                         <button
                           onClick={() => { setEditando(r); setModalAbierto(true) }}
                           className="text-blue-600 hover:text-blue-800 text-xs"
                         >Editar</button>
+                        <button
+                          onClick={() => toggleActivo.mutate({ id: r.id, activo: !r.activo })}
+                          className={cn('text-xs', r.activo ? 'text-orange-600 hover:text-orange-800' : 'text-green-600 hover:text-green-800')}
+                          title={r.activo ? 'Desactivar' : 'Activar'}
+                        >{r.activo ? 'Desactivar' : 'Activar'}</button>
                         <button
                           onClick={() => { if (window.confirm(`¿Eliminar "${r.nombre}"?`)) eliminar.mutate(r.id) }}
                           className="text-red-500 hover:text-red-700 text-xs"
