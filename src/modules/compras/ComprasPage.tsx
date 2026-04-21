@@ -123,6 +123,12 @@ function AyudaPanel({ tab, onClose }: { tab: Tab; onClose: () => void }) {
 export function ComprasPage() {
   const [local, setLocal] = useState<'vedia' | 'saavedra'>('vedia')
   const [tab, setTab]     = useState<Tab>('gastos')
+
+  // Filtro de fechas para historial de movimientos (default: últimos 30 días)
+  const [movDesde, setMovDesde] = useState<string>(() => {
+    const d = new Date(); d.setDate(d.getDate() - 30); return d.toISOString().slice(0, 10)
+  })
+  const [movHasta, setMovHasta] = useState<string>(() => new Date().toISOString().slice(0, 10))
   const [ayudaAbierta, setAyudaAbierta] = useState(false)
   const [filtro, setFiltro] = useState('')
   const [filtroEstado, setFiltroEstado] = useState<FiltroEstado>('todos')
@@ -145,14 +151,16 @@ export function ComprasPage() {
   })
 
   const { data: movimientos } = useQuery({
-    queryKey: ['movimientos_stock', local],
+    queryKey: ['movimientos_stock', local, movDesde, movHasta],
     queryFn: async () => {
       const { data } = await supabase
         .from('movimientos_stock')
         .select('*')
         .eq('local', local)
+        .gte('created_at', `${movDesde}T00:00:00`)
+        .lte('created_at', `${movHasta}T23:59:59`)
         .order('created_at', { ascending: false })
-        .limit(200)
+        .limit(2000)
       return (data ?? []) as Movimiento[]
     },
     enabled: tab === 'movimientos',
@@ -1082,6 +1090,48 @@ export function ComprasPage() {
 
       {/* ═══ TAB: MOVIMIENTOS ═══ */}
       {tab === 'movimientos' && (
+        <div className="space-y-3">
+          <div className="bg-white rounded-lg border border-surface-border p-3 flex flex-wrap gap-2 items-center text-sm">
+            <span className="text-xs text-gray-500">Desde</span>
+            <input type="date" value={movDesde} onChange={(e) => setMovDesde(e.target.value)} className="border border-gray-300 rounded px-2 py-1 text-sm" />
+            <span className="text-xs text-gray-500">Hasta</span>
+            <input type="date" value={movHasta} onChange={(e) => setMovHasta(e.target.value)} className="border border-gray-300 rounded px-2 py-1 text-sm" />
+            <button
+              onClick={() => {
+                const d = new Date(); d.setDate(d.getDate() - 7)
+                setMovDesde(d.toISOString().slice(0, 10))
+                setMovHasta(new Date().toISOString().slice(0, 10))
+              }}
+              className="text-xs text-gray-600 hover:text-rodziny-700 px-2 py-1 rounded border border-gray-200 hover:border-rodziny-300"
+            >7 días</button>
+            <button
+              onClick={() => {
+                const d = new Date(); d.setDate(d.getDate() - 30)
+                setMovDesde(d.toISOString().slice(0, 10))
+                setMovHasta(new Date().toISOString().slice(0, 10))
+              }}
+              className="text-xs text-gray-600 hover:text-rodziny-700 px-2 py-1 rounded border border-gray-200 hover:border-rodziny-300"
+            >30 días</button>
+            <button
+              onClick={() => {
+                const d = new Date(); d.setDate(d.getDate() - 90)
+                setMovDesde(d.toISOString().slice(0, 10))
+                setMovHasta(new Date().toISOString().slice(0, 10))
+              }}
+              className="text-xs text-gray-600 hover:text-rodziny-700 px-2 py-1 rounded border border-gray-200 hover:border-rodziny-300"
+            >90 días</button>
+            <button
+              onClick={() => {
+                setMovDesde('2026-01-01')
+                setMovHasta(new Date().toISOString().slice(0, 10))
+              }}
+              className="text-xs text-gray-600 hover:text-rodziny-700 px-2 py-1 rounded border border-gray-200 hover:border-rodziny-300"
+            >Año actual</button>
+            <span className="ml-auto text-xs text-gray-500">
+              {movimientos?.length ?? 0} movimientos{(movimientos?.length ?? 0) >= 2000 && ' (máx alcanzado, achicá el rango)'}
+            </span>
+          </div>
+
         <div className="bg-white rounded-lg border border-surface-border overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -1164,6 +1214,7 @@ export function ComprasPage() {
               </tbody>
             </table>
           </div>
+        </div>
         </div>
       )}
 
