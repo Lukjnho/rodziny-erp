@@ -82,7 +82,9 @@ export function RecetasTab() {
   const filtrados = useMemo(() => {
     let lista = recetas ?? []
     if (filtroTipo !== 'todos') lista = lista.filter((r) => r.tipo === filtroTipo)
-    if (filtroLocal !== 'todos') lista = lista.filter((r) => (r.local ?? '') === filtroLocal)
+    if (filtroLocal === 'vedia') lista = lista.filter((r) => r.local === 'vedia' || r.local === 'ambos')
+    else if (filtroLocal === 'saavedra') lista = lista.filter((r) => r.local === 'saavedra' || r.local === 'ambos')
+    else if (filtroLocal === 'ambos') lista = lista.filter((r) => r.local === 'ambos')
     if (busqueda.trim()) {
       const q = busqueda.toLowerCase()
       lista = lista.filter((r) => r.nombre.toLowerCase().includes(q))
@@ -160,6 +162,7 @@ export function RecetasTab() {
           <option value="todos">Todos los locales</option>
           <option value="vedia">Vedia</option>
           <option value="saavedra">Saavedra</option>
+          <option value="ambos">Solo "ambos"</option>
         </select>
         <button
           onClick={() => { setEditando(null); setModalAbierto(true) }}
