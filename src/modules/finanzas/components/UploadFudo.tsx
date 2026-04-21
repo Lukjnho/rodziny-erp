@@ -79,16 +79,34 @@ export function UploadFudo({ onSuccess }: { onSuccess?: () => void }) {
     const errores: string[] = []
     const fiscalMap = new Map(data.fiscales.map((f) => [f.fudo_id, f]))
 
+    // Precalcular por ticket: total de pagos y porción "Mercadopago lucas"
+    // Se usa para (a) flaggear tickets 100% MP Lucas como dividendo, (b) restar la porción
+    // MP Lucas del total_bruto en tickets mixtos (pagos combinados)
+    const pagosPorTicket = new Map<string, { total: number; mpLucas: number }>()
+    for (const p of data.pagos) {
+      const entry = pagosPorTicket.get(p.fudo_ticket_id) ?? { total: 0, mpLucas: 0 }
+      entry.total += Number(p.monto) || 0
+      if ((p.medio_pago ?? '').toLowerCase().includes('mercadopago lucas')) {
+        entry.mpLucas += Number(p.monto) || 0
+      }
+      pagosPorTicket.set(p.fudo_ticket_id, entry)
+    }
+
     const ticketsRows = data.tickets.map((t) => {
       const f = fiscalMap.get(t.fudo_id)
-      const esDividendo = (t.medio_pago ?? '').toLowerCase().includes('mercadopago lucas')
+      const info = pagosPorTicket.get(t.fudo_id)
+      const mpLucas = info?.mpLucas ?? 0
+      const totalOriginal = Number(t.total_bruto) || 0
+      const esDividendoCompleto = mpLucas > 0 && mpLucas >= totalOriginal - 0.01
+      const esMixto = mpLucas > 0 && !esDividendoCompleto
+      const totalAjustado = esMixto ? totalOriginal - mpLucas : totalOriginal
       return {
         local: loc, fudo_id: t.fudo_id, fecha: t.fecha, hora: t.hora,
         caja: t.caja, estado: t.estado, tipo_venta: t.tipo_venta,
-        medio_pago: t.medio_pago, total_bruto: t.total_bruto,
+        medio_pago: t.medio_pago, total_bruto: totalAjustado,
         total_neto: f ? f.total_neto : null, iva: f ? f.iva : 0,
         es_fiscal: t.es_fiscal,
-        es_dividendo: esDividendo,
+        es_dividendo: esDividendoCompleto,
         periodo: t.fecha ? t.fecha.substring(0, 7) : data.periodo,
       }
     })
@@ -134,6 +152,26 @@ export function UploadFudo({ onSuccess }: { onSuccess?: () => void }) {
     if (pagosRows.length) {
       const { error: e3 } = await supabase.from('ventas_pagos').insert(pagosRows)
       if (e3) { console.error('[upload] error pagos:', e3); errores.push(`Pagos: ${e3.message}`) }
+    }
+
+    // Auto-insertar cobros MP Lucas como dividendos (reemplaza los del mismo local+periodo para evitar duplicados en reimport)
+    const dividendosRows = data.pagos
+      .filter((p) => ticketIdsValidos.has(p.fudo_ticket_id))
+      .filter((p) => (p.medio_pago ?? '').toLowerCase().includes('mercadopago lucas'))
+      .map((p) => ({
+        socio: 'lucas',
+        fecha: p.fecha,
+        monto: p.monto,
+        medio_pago: 'Mercadopago Lucas',
+        concepto: 'Cobro de venta con posnet personal — autoasignado',
+        local: loc,
+        periodo: data.periodo,
+        creado_por: 'import_fudo',
+      }))
+    await supabase.from('dividendos').delete().eq('local', loc).eq('periodo', data.periodo).eq('creado_por', 'import_fudo')
+    if (dividendosRows.length) {
+      const { error: eDiv } = await supabase.from('dividendos').insert(dividendosRows)
+      if (eDiv) { console.error('[upload] error dividendos:', eDiv); errores.push(`Dividendos: ${eDiv.message}`) }
     }
 
     setResult({ insertados: ticketsRows.length, errores })
