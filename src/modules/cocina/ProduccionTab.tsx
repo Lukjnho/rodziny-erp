@@ -3,6 +3,58 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { KPICard } from '@/components/ui/KPICard'
 
+// Badge que muestra si un lote tiene ingredientes reales guardados y un popover con el detalle
+function IngredientesRealesBadge({ ingredientes }: { ingredientes: IngredienteRealRow[] | null }) {
+  const [abierto, setAbierto] = useState(false)
+  if (!ingredientes || ingredientes.length === 0) {
+    return <span className="text-[10px] text-gray-300">—</span>
+  }
+  const ajustados = ingredientes.filter((i) => Math.abs(i.cantidad_real - i.cantidad_receta) > 0.001)
+  return (
+    <div className="relative inline-block">
+      <button
+        onClick={() => setAbierto((v) => !v)}
+        className={'text-[10px] px-2 py-0.5 rounded-full ' + (ajustados.length > 0
+          ? 'bg-amber-100 text-amber-700 hover:bg-amber-200'
+          : 'bg-gray-100 text-gray-600 hover:bg-gray-200')}
+      >
+        {ajustados.length > 0 ? `${ajustados.length} ajustado${ajustados.length > 1 ? 's' : ''}` : `${ingredientes.length} ok`}
+      </button>
+      {abierto && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setAbierto(false)} />
+          <div className="absolute z-50 top-full left-0 mt-1 w-80 bg-white border border-gray-200 rounded-lg shadow-lg p-2 text-xs">
+            <div className="flex items-center justify-between mb-1.5 px-1">
+              <span className="font-semibold text-gray-700">Ingredientes reales</span>
+              <button onClick={() => setAbierto(false)} className="text-gray-400 hover:text-gray-600">✕</button>
+            </div>
+            <div className="max-h-64 overflow-y-auto">
+              {ingredientes.map((i, idx) => {
+                const diff = i.cantidad_real - i.cantidad_receta
+                const pct = i.cantidad_receta > 0 ? (diff / i.cantidad_receta) * 100 : 0
+                const ajustado = Math.abs(diff) > 0.001
+                return (
+                  <div key={idx} className={'flex items-center justify-between px-1 py-0.5 ' + (ajustado ? 'text-amber-700' : 'text-gray-600')}>
+                    <span className="truncate flex-1">{i.nombre}</span>
+                    <span className="tabular-nums ml-2">
+                      {i.cantidad_real} {i.unidad}
+                      {ajustado && (
+                        <span className="text-[10px] text-gray-400 ml-1">
+                          ({i.cantidad_receta} · {pct >= 0 ? '+' : ''}{Math.round(pct)}%)
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
 // ── Tipos ─────────────────────────────────────────────────────────────────────
 
 interface Producto {
@@ -11,10 +63,20 @@ interface Producto {
 interface Receta {
   id: string; nombre: string; tipo: string; rendimiento_kg: number | null; local: string | null
 }
+interface IngredienteRealRow {
+  ing_id: string
+  nombre: string
+  cantidad_receta: number
+  cantidad_real: number
+  unidad: string
+  producto_id: string | null
+}
+
 interface LoteRelleno {
   id: string; receta_id: string; fecha: string; cantidad_recetas: number
   peso_total_kg: number; responsable: string | null; local: string; notas: string | null
   created_at: string
+  ingredientes_reales: IngredienteRealRow[] | null
   receta?: { nombre: string } | null
 }
 interface LotePasta {
@@ -31,6 +93,7 @@ interface LoteMasa {
   id: string; receta_id: string | null; fecha: string; kg_producidos: number
   kg_sobrante: number | null; destino_sobrante: string | null
   responsable: string | null; local: string; notas: string | null; created_at: string
+  ingredientes_reales: IngredienteRealRow[] | null
   receta?: { nombre: string } | null
 }
 
@@ -41,6 +104,7 @@ interface LoteProduccion {
   cantidad_producida: number; unidad: 'kg' | 'unid' | 'lt'
   merma_cantidad: number | null; merma_motivo: string | null
   responsable: string | null; notas: string | null; created_at: string
+  ingredientes_reales: IngredienteRealRow[] | null
   receta?: { nombre: string } | null
 }
 
@@ -278,6 +342,7 @@ export function ProduccionTab() {
                 <th className="px-4 py-2">Receta</th>
                 <th className="px-4 py-2">Recetas</th>
                 <th className="px-4 py-2">Peso total</th>
+                <th className="px-4 py-2">Ingredientes</th>
                 <th className="px-4 py-2">Local</th>
                 <th className="px-4 py-2">Responsable</th>
                 <th className="px-4 py-2">Notas</th>
@@ -290,6 +355,7 @@ export function ProduccionTab() {
                   <td className="px-4 py-2 font-medium">{l.receta?.nombre ?? '—'}</td>
                   <td className="px-4 py-2">{l.cantidad_recetas}</td>
                   <td className="px-4 py-2">{l.peso_total_kg} kg</td>
+                  <td className="px-4 py-2"><IngredientesRealesBadge ingredientes={l.ingredientes_reales} /></td>
                   <td className="px-4 py-2 capitalize">{l.local}</td>
                   <td className="px-4 py-2">{l.responsable || '—'}</td>
                   <td className="px-4 py-2 text-gray-500 max-w-xs truncate">{l.notas || '—'}</td>
@@ -302,7 +368,7 @@ export function ProduccionTab() {
                 </tr>
               ))}
               {rellenosFiltrados.length === 0 && (
-                <tr><td colSpan={7} className="px-4 py-6 text-center text-gray-400">{cargandoR ? 'Cargando...' : 'No hay rellenos registrados hoy'}</td></tr>
+                <tr><td colSpan={8} className="px-4 py-6 text-center text-gray-400">{cargandoR ? 'Cargando...' : 'No hay rellenos registrados hoy'}</td></tr>
               )}
             </tbody>
           </table>
@@ -331,6 +397,7 @@ export function ProduccionTab() {
                 <th className="px-4 py-2">Kg producidos</th>
                 <th className="px-4 py-2">Kg sobrante</th>
                 <th className="px-4 py-2">Destino</th>
+                <th className="px-4 py-2">Ingredientes</th>
                 <th className="px-4 py-2">Local</th>
                 <th className="px-4 py-2">Responsable</th>
                 <th className="px-4 py-2">Acciones</th>
@@ -355,6 +422,7 @@ export function ProduccionTab() {
                           ? <span className="inline-block px-2 py-0.5 text-xs rounded-full bg-red-100 text-red-700">Merma (descartar)</span>
                           : <span className="inline-block px-2 py-0.5 text-xs rounded-full bg-green-100 text-green-700">Próxima masa</span>}
                   </td>
+                  <td className="px-4 py-2"><IngredientesRealesBadge ingredientes={l.ingredientes_reales} /></td>
                   <td className="px-4 py-2 capitalize">{l.local}</td>
                   <td className="px-4 py-2">{l.responsable || '—'}</td>
                   <td className="px-4 py-2 flex gap-2">
@@ -372,7 +440,7 @@ export function ProduccionTab() {
                 </tr>
               ))}
               {masasFiltradas.length === 0 && (
-                <tr><td colSpan={7} className="px-4 py-6 text-center text-gray-400">{cargandoM ? 'Cargando...' : 'No hay masas registradas hoy'}</td></tr>
+                <tr><td colSpan={8} className="px-4 py-6 text-center text-gray-400">{cargandoM ? 'Cargando...' : 'No hay masas registradas hoy'}</td></tr>
               )}
             </tbody>
           </table>
@@ -464,6 +532,7 @@ export function ProduccionTab() {
                 <th className="px-4 py-2">Receta / Nombre</th>
                 <th className="px-4 py-2">Cantidad</th>
                 <th className="px-4 py-2">Merma</th>
+                <th className="px-4 py-2">Ingredientes</th>
                 <th className="px-4 py-2">Local</th>
                 <th className="px-4 py-2">Responsable</th>
                 <th className="px-4 py-2">Notas</th>
@@ -483,6 +552,7 @@ export function ProduccionTab() {
                   <td className="px-4 py-2 text-gray-600">
                     {l.merma_cantidad ? `${l.merma_cantidad} ${l.unidad}${l.merma_motivo ? ` · ${l.merma_motivo}` : ''}` : '—'}
                   </td>
+                  <td className="px-4 py-2"><IngredientesRealesBadge ingredientes={l.ingredientes_reales} /></td>
                   <td className="px-4 py-2 capitalize">{l.local}</td>
                   <td className="px-4 py-2">{l.responsable || '—'}</td>
                   <td className="px-4 py-2 text-gray-500 max-w-xs truncate">{l.notas || '—'}</td>
@@ -495,7 +565,7 @@ export function ProduccionTab() {
                 </tr>
               ))}
               {produccionesFiltradas.length === 0 && (
-                <tr><td colSpan={8} className="px-4 py-6 text-center text-gray-400">{cargandoProd ? 'Cargando...' : 'Sin producción adicional registrada hoy'}</td></tr>
+                <tr><td colSpan={9} className="px-4 py-6 text-center text-gray-400">{cargandoProd ? 'Cargando...' : 'Sin producción adicional registrada hoy'}</td></tr>
               )}
             </tbody>
           </table>

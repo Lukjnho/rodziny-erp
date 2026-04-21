@@ -1,8 +1,9 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useCallback } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabaseAnon as supabase } from '@/lib/supabaseAnon'
 import { cn } from '@/lib/utils'
+import { IngredientesGrilla, type IngredienteReal } from './components/IngredientesGrilla'
 
 // ── Tipos ──────────────────────────────────────────────────────────────────────
 
@@ -332,10 +333,12 @@ function FormRelleno({ local, recetas, onGuardado, onVolver }: {
   const [pesoKg, setPesoKg] = useState('')
   const [responsable, setResponsable] = useState('')
   const [notas, setNotas] = useState('')
+  const [ingredientesReales, setIngredientesReales] = useState<IngredienteReal[]>([])
   const [guardando, setGuardando] = useState(false)
   const [error, setError] = useState('')
 
   const recetaSel = recetas.find((r) => r.id === recetaId)
+  const onGrillaChange = useCallback((ings: IngredienteReal[]) => setIngredientesReales(ings), [])
 
   async function guardar() {
     if (!recetaId) { setError('Seleccioná una receta'); return }
@@ -351,6 +354,7 @@ function FormRelleno({ local, recetas, onGuardado, onVolver }: {
       responsable: responsable.trim() || null,
       local,
       notas: notas.trim() || null,
+      ingredientes_reales: ingredientesReales.length > 0 ? ingredientesReales : null,
     })
 
     if (err) { setError(err.message); setGuardando(false); return }
@@ -380,6 +384,8 @@ function FormRelleno({ local, recetas, onGuardado, onVolver }: {
             ))}
           </select>
         </div>
+
+        <IngredientesGrilla recetaId={recetaId || null} onChange={onGrillaChange} />
 
         <div className="grid grid-cols-2 gap-3">
           <div>
@@ -638,10 +644,12 @@ function FormMasa({ local, recetas, onGuardado, onVolver }: {
   const [kgProducidos, setKgProducidos] = useState('')
   const [responsable, setResponsable] = useState('')
   const [notas, setNotas] = useState('')
+  const [ingredientesReales, setIngredientesReales] = useState<IngredienteReal[]>([])
   const [guardando, setGuardando] = useState(false)
   const [error, setError] = useState('')
 
   const recetaSel = recetas.find((r) => r.id === recetaId)
+  const onGrillaChange = useCallback((ings: IngredienteReal[]) => setIngredientesReales(ings), [])
 
   async function guardar() {
     if (!recetaId) { setError('Seleccioná una receta'); return }
@@ -656,6 +664,7 @@ function FormMasa({ local, recetas, onGuardado, onVolver }: {
       responsable: responsable.trim() || null,
       local,
       notas: notas.trim() || null,
+      ingredientes_reales: ingredientesReales.length > 0 ? ingredientesReales : null,
     })
 
     if (err) { setError(err.message); setGuardando(false); return }
@@ -685,6 +694,8 @@ function FormMasa({ local, recetas, onGuardado, onVolver }: {
             ))}
           </select>
         </div>
+
+        <IngredientesGrilla recetaId={recetaId || null} onChange={onGrillaChange} />
 
         <div>
           <label className="block text-xs font-medium text-gray-700 mb-1">Kg producidos</label>
@@ -921,8 +932,10 @@ function FormGenerico({ local, categoria, recetas, permitirLibre, permitirLitros
   const [responsable, setResponsable] = useState('')
   const [notas, setNotas] = useState('')
   const [filtroReceta, setFiltroReceta] = useState('')
+  const [ingredientesReales, setIngredientesReales] = useState<IngredienteReal[]>([])
   const [guardando, setGuardando] = useState(false)
   const [error, setError] = useState('')
+  const onGrillaChange = useCallback((ings: IngredienteReal[]) => setIngredientesReales(ings), [])
 
   const recetasFiltradas = useMemo(() => {
     if (!filtroReceta.trim()) return recetas
@@ -952,6 +965,7 @@ function FormGenerico({ local, categoria, recetas, permitirLibre, permitirLitros
       merma_motivo: mermaMotivo.trim() || null,
       responsable: responsable.trim() || null,
       notas: notas.trim() || null,
+      ingredientes_reales: ingredientesReales.length > 0 ? ingredientesReales : null,
     })
 
     if (err) { setError(err.message); setGuardando(false); return }
@@ -1009,6 +1023,8 @@ function FormGenerico({ local, categoria, recetas, permitirLibre, permitirLitros
             />
           </div>
         )}
+
+        <IngredientesGrilla recetaId={recetaId || null} onChange={onGrillaChange} />
 
         <div className="grid grid-cols-2 gap-3">
           <div>
