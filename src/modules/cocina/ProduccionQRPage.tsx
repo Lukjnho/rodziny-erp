@@ -132,6 +132,9 @@ export function ProduccionQRPage() {
   const recetasRelleno = useMemo(() => (recetas ?? []).filter((r) => r.tipo === 'relleno' && matchLocal(r.local)), [recetas, local])
   const recetasMasa = useMemo(() => (recetas ?? []).filter((r) => r.tipo === 'masa' && matchLocal(r.local)), [recetas, local])
   const recetasSalsa = useMemo(() => (recetas ?? []).filter((r) => r.tipo === 'salsa' && matchLocal(r.local)), [recetas, local])
+  const recetasPostre = useMemo(() => (recetas ?? []).filter((r) => r.tipo === 'postre' && matchLocal(r.local)), [recetas, local])
+  const recetasPasteleria = useMemo(() => (recetas ?? []).filter((r) => r.tipo === 'pasteleria' && matchLocal(r.local)), [recetas, local])
+  const recetasPanaderia = useMemo(() => (recetas ?? []).filter((r) => r.tipo === 'panaderia' && matchLocal(r.local)), [recetas, local])
   const recetasLocal = useMemo(() => (recetas ?? []).filter((r) => matchLocal(r.local)), [recetas, local])
   const productosPasta = useMemo(() => (productos ?? []).filter((p) => p.tipo === 'pasta' && matchLocal(p.local)), [productos, local])
 
@@ -206,7 +209,7 @@ export function ProduccionQRPage() {
         <FormGenerico
           local={local}
           categoria="postre"
-          recetas={recetasLocal}
+          recetas={recetasPostre}
           onGuardado={onGuardado}
           onVolver={() => setVista('inicio')}
         />
@@ -216,7 +219,7 @@ export function ProduccionQRPage() {
         <FormGenerico
           local={local}
           categoria="pasteleria"
-          recetas={recetasLocal}
+          recetas={recetasPasteleria}
           onGuardado={onGuardado}
           onVolver={() => setVista('inicio')}
         />
@@ -226,7 +229,7 @@ export function ProduccionQRPage() {
         <FormGenerico
           local={local}
           categoria="panaderia"
-          recetas={recetasLocal}
+          recetas={recetasPanaderia}
           onGuardado={onGuardado}
           onVolver={() => setVista('inicio')}
         />

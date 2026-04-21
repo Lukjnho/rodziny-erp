@@ -31,14 +31,19 @@ interface Receta {
   created_at: string
 }
 
-const TIPOS = ['relleno', 'masa', 'salsa', 'subreceta', 'otro'] as const
+const TIPOS = ['relleno', 'masa', 'salsa', 'postre', 'pasteleria', 'panaderia', 'subreceta', 'otro'] as const
 const TIPO_LABEL: Record<string, string> = {
-  relleno: 'Relleno', masa: 'Masa', salsa: 'Salsa', subreceta: 'Subreceta', otro: 'Otro',
+  relleno: 'Relleno', masa: 'Masa', salsa: 'Salsa',
+  postre: 'Postre', pasteleria: 'Pastelería', panaderia: 'Panadería',
+  subreceta: 'Subreceta', otro: 'Otro',
 }
 const TIPO_COLOR: Record<string, string> = {
   relleno: 'bg-green-100 text-green-700',
   masa: 'bg-blue-100 text-blue-700',
   salsa: 'bg-orange-100 text-orange-700',
+  postre: 'bg-pink-100 text-pink-700',
+  pasteleria: 'bg-yellow-100 text-yellow-700',
+  panaderia: 'bg-amber-100 text-amber-700',
   subreceta: 'bg-purple-100 text-purple-700',
   otro: 'bg-gray-100 text-gray-700',
 }
