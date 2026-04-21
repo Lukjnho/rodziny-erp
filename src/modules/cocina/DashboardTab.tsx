@@ -522,6 +522,7 @@ export function DashboardTab() {
           nombre={cat.nombre}
           filas={cat.filas}
           diaManana={diaManana}
+          ventanaDias={ventanaDias}
           editando={editando}
           valorEdit={valorEdit}
           onIniciarEdicion={iniciarEdicion}
@@ -572,6 +573,7 @@ function CategoriaAccordion({
   nombre,
   filas,
   diaManana,
+  ventanaDias,
   editando,
   valorEdit,
   onIniciarEdicion,
@@ -582,6 +584,7 @@ function CategoriaAccordion({
   nombre: string
   filas: any[]
   diaManana: string
+  ventanaDias: 1 | 3 | 7
   editando: string | null
   valorEdit: string
   onIniciarEdicion: (producto: string, valorActual: number | null) => void
