@@ -168,7 +168,6 @@ export function ProduccionQRPage() {
         <FormPasta
           local={local}
           productos={productosPasta}
-          recetasMasa={recetasMasa}
           lotesRelleno={lotesRellenoHoy ?? []}
           lotesMasa={(lotesMasaHoy ?? []).filter((m) => m.kg_sobrante === null)}
           onGuardado={(msg) => onGuardado(msg)}
@@ -449,15 +448,14 @@ function FormRelleno({ local, recetas, onGuardado, onVolver }: {
 
 // ── Formulario Pasta ───────────────────────────────────────────────────────────
 
-function FormPasta({ local, productos, recetasMasa, lotesRelleno, lotesMasa, onGuardado, onVolver }: {
-  local: string; productos: Producto[]; recetasMasa: Receta[]; lotesRelleno: LoteRelleno[]
+function FormPasta({ local, productos, lotesRelleno, lotesMasa, onGuardado, onVolver }: {
+  local: string; productos: Producto[]; lotesRelleno: LoteRelleno[]
   lotesMasa: LoteMasa[]
   onGuardado: (msg: string) => void; onVolver: () => void
 }) {
   const [productoId, setProductoId] = useState(productos[0]?.id ?? '')
   const [loteRellenoId, setLoteRellenoId] = useState('')
   const [loteMasaId, setLoteMasaId] = useState('')
-  const [recetaMasaId, setRecetaMasaId] = useState('')
   const [masaKg, setMasaKg] = useState('')
   const [rellenoKg, setRellenoKg] = useState('')
   const [porciones, setPorciones] = useState('')
@@ -481,7 +479,7 @@ function FormPasta({ local, productos, recetasMasa, lotesRelleno, lotesMasa, onG
       lote_masa_id: loteMasaId || null,
       fecha: hoy(),
       codigo_lote: codigoLote,
-      receta_masa_id: recetaMasaId || null,
+      receta_masa_id: lotesMasa.find((m) => m.id === loteMasaId)?.receta_id ?? null,
       masa_kg: masaKg ? Number(masaKg) : null,
       relleno_kg: rellenoKg ? Number(rellenoKg) : null,
       porciones: Number(porciones),
@@ -534,18 +532,6 @@ function FormPasta({ local, productos, recetasMasa, lotesRelleno, lotesMasa, onG
                 {l.receta?.nombre ?? 'Relleno'} — {l.peso_total_kg} kg
               </option>
             ))}
-          </select>
-        </div>
-
-        <div>
-          <label className="block text-xs font-medium text-gray-700 mb-1">Receta de masa</label>
-          <select
-            value={recetaMasaId}
-            onChange={(e) => setRecetaMasaId(e.target.value)}
-            className="w-full border border-gray-300 rounded px-3 py-2.5 text-sm"
-          >
-            <option value="">Sin especificar</option>
-            {recetasMasa.map((r) => <option key={r.id} value={r.id}>{r.nombre}</option>)}
           </select>
         </div>
 
