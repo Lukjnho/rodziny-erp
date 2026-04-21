@@ -12,7 +12,7 @@ interface Producto {
   tipo: 'pasta' | 'salsa' | 'postre' | 'relleno' | 'masa' | 'panificado'
   unidad: string
   minimo_produccion: number | null
-  local: 'vedia' | 'saavedra' | 'ambos'
+  local: 'vedia' | 'saavedra'
   activo: boolean
   receta_id: string | null
   precio_venta: number | null
@@ -31,7 +31,7 @@ const TIPO_LABEL: Record<string, string> = {
   pasta: 'Pasta', salsa: 'Salsa', postre: 'Postre', relleno: 'Relleno', masa: 'Masa', panificado: 'Panificado',
 }
 
-type FiltroLocal = 'todos' | 'vedia' | 'saavedra' | 'ambos'
+type FiltroLocal = 'todos' | 'vedia' | 'saavedra'
 
 export function ProductosTab() {
   const qc = useQueryClient()
@@ -71,9 +71,8 @@ export function ProductosTab() {
   const filtrados = useMemo(() => {
     let lista = productos ?? []
     if (filtroTipo !== 'todos') lista = lista.filter((p) => p.tipo === filtroTipo)
-    if (filtroLocal === 'vedia') lista = lista.filter((p) => p.local === 'vedia' || p.local === 'ambos')
-    else if (filtroLocal === 'saavedra') lista = lista.filter((p) => p.local === 'saavedra' || p.local === 'ambos')
-    else if (filtroLocal === 'ambos') lista = lista.filter((p) => p.local === 'ambos')
+    if (filtroLocal === 'vedia') lista = lista.filter((p) => p.local === 'vedia')
+    else if (filtroLocal === 'saavedra') lista = lista.filter((p) => p.local === 'saavedra')
     if (busqueda.trim()) {
       const q = busqueda.toLowerCase()
       lista = lista.filter((p) => p.nombre.toLowerCase().includes(q) || p.codigo.toLowerCase().includes(q))
@@ -158,7 +157,6 @@ export function ProductosTab() {
           <option value="todos">Todos los locales</option>
           <option value="vedia">Vedia</option>
           <option value="saavedra">Saavedra</option>
-          <option value="ambos">Ambos</option>
         </select>
         <button
           onClick={() => { setEditando(null); setModalAbierto(true) }}
@@ -352,7 +350,6 @@ function ModalProducto({
               <select value={local} onChange={(e) => setLocal(e.target.value as Producto['local'])} className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm">
                 <option value="vedia">Vedia</option>
                 <option value="saavedra">Saavedra</option>
-                <option value="ambos">Ambos</option>
               </select>
             </div>
           </div>

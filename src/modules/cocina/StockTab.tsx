@@ -79,8 +79,7 @@ export function StockTab() {
 
     for (const prod of productos) {
       for (const loc of locales) {
-        // Solo mostrar si el producto aplica a este local
-        if (prod.local !== 'ambos' && prod.local !== loc) continue
+        if (prod.local !== loc) continue
 
         const producido = lotesPasta
           .filter((l) => l.producto_id === prod.id && l.local === loc)

@@ -124,7 +124,7 @@ type FiltroLocal = 'todos' | 'vedia' | 'saavedra'
 
 function matchLocal(itemLocal: string | null, filtro: string): boolean {
   if (filtro === 'todos' || !itemLocal) return true
-  return itemLocal === filtro || itemLocal === 'ambos'
+  return itemLocal === filtro
 }
 
 function hoy() {

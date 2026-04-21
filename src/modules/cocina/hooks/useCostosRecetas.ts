@@ -8,6 +8,7 @@ interface RecetaRow {
   tipo: string
   rendimiento_kg: number | null
   rendimiento_porciones: number | null
+  local: string | null
 }
 
 interface IngredienteRow {
@@ -89,7 +90,7 @@ export function useCostosRecetas() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cocina_recetas')
-        .select('id, nombre, tipo, rendimiento_kg, rendimiento_porciones')
+        .select('id, nombre, tipo, rendimiento_kg, rendimiento_porciones, local')
       if (error) throw error
       return data as RecetaRow[]
     },
@@ -153,10 +154,13 @@ export function useCostosRecetas() {
       if (!prodByNombre.has(k)) prodByNombre.set(k, p)
     }
 
-    // Index de recetas por nombre normalizado (para resolver subrecetas por texto)
+    // Index de recetas por (nombre, local) y fallback solo por nombre
+    const recetaByNombreLocal = new Map<string, RecetaRow>()
     const recetaByNombre = new Map<string, RecetaRow>()
     for (const r of recetas) {
       const k = normalizarNombre(r.nombre)
+      const kl = `${k}|${r.local ?? ''}`
+      if (!recetaByNombreLocal.has(kl)) recetaByNombreLocal.set(kl, r)
       if (!recetaByNombre.has(k)) recetaByNombre.set(k, r)
     }
 
@@ -232,10 +236,13 @@ export function useCostosRecetas() {
         const esSubrecetaPrefijo = /^subreceta\s+/i.test(ing.nombre ?? '')
         const nombreNorm = normalizarNombre(ing.nombre)
 
-        // 1) intentar resolver como subreceta (por flag o por match de nombre con otra receta)
+        // 1) intentar resolver como subreceta: primero por (nombre, local) para respetar el local de la receta padre
         let subrecetaMatch: RecetaRow | null = null
         if (esSubrecetaPrefijo || ing.producto_id == null) {
-          subrecetaMatch = recetaByNombre.get(nombreNorm) ?? null
+          const localPadre = receta.local ?? ''
+          subrecetaMatch = recetaByNombreLocal.get(`${nombreNorm}|${localPadre}`)
+            ?? recetaByNombre.get(nombreNorm)
+            ?? null
         }
 
         if (subrecetaMatch) {

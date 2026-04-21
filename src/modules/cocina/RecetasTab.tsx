@@ -86,9 +86,8 @@ export function RecetasTab() {
   const filtrados = useMemo(() => {
     let lista = recetas ?? []
     if (filtroTipo !== 'todos') lista = lista.filter((r) => r.tipo === filtroTipo)
-    if (filtroLocal === 'vedia') lista = lista.filter((r) => r.local === 'vedia' || r.local === 'ambos')
-    else if (filtroLocal === 'saavedra') lista = lista.filter((r) => r.local === 'saavedra' || r.local === 'ambos')
-    else if (filtroLocal === 'ambos') lista = lista.filter((r) => r.local === 'ambos')
+    if (filtroLocal === 'vedia') lista = lista.filter((r) => r.local === 'vedia')
+    else if (filtroLocal === 'saavedra') lista = lista.filter((r) => r.local === 'saavedra')
     if (filtroActivo === 'activas') lista = lista.filter((r) => r.activo)
     else if (filtroActivo === 'inactivas') lista = lista.filter((r) => !r.activo)
     if (busqueda.trim()) {
@@ -222,7 +221,6 @@ export function RecetasTab() {
           <option value="todos">Todos los locales</option>
           <option value="vedia">Vedia</option>
           <option value="saavedra">Saavedra</option>
-          <option value="ambos">Solo "ambos"</option>
         </select>
         <select value={filtroActivo} onChange={(e) => setFiltroActivo(e.target.value as typeof filtroActivo)} className="border border-gray-300 rounded px-2 py-1.5 text-sm">
           <option value="activas">Solo activas</option>
@@ -637,10 +635,8 @@ function ModalReceta({
         .select('id, nombre, marca, unidad, categoria, local')
         .eq('activo', true)
         .order('nombre')
-      // Si la receta es 'vedia' → mostrar vedia + ambos. Lo mismo para saavedra.
-      // Si es 'ambos' → todos.
-      if (local === 'vedia') q = q.in('local', ['vedia', 'ambos'])
-      else if (local === 'saavedra') q = q.in('local', ['saavedra', 'ambos'])
+      if (local === 'vedia') q = q.eq('local', 'vedia')
+      else if (local === 'saavedra') q = q.eq('local', 'saavedra')
       const { data, error } = await q
       if (error) throw error
       return data as ProductoCompras[]
@@ -847,7 +843,6 @@ function ModalReceta({
                   >
                     <option value="vedia">Vedia</option>
                     <option value="saavedra">Saavedra</option>
-                    <option value="ambos">Ambos</option>
                   </select>
                 </div>
               </div>

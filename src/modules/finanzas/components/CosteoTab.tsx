@@ -155,7 +155,7 @@ function CardParametros({ config }: { config: ConfigCosteo | undefined }) {
 function VistaProductos() {
   const qc = useQueryClient()
   const [busqueda, setBusqueda] = useState('')
-  const [filtroLocal, setFiltroLocal] = useState<'todos' | 'vedia' | 'saavedra' | 'ambos'>('todos')
+  const [filtroLocal, setFiltroLocal] = useState<'todos' | 'vedia' | 'saavedra'>('todos')
   const [editando, setEditando] = useState<{ id: string; campo: 'precio' | 'empaque'; valor: string } | null>(null)
 
   const { data: productos } = useQuery({
@@ -236,9 +236,8 @@ function VistaProductos() {
 
   const filtrados = useMemo(() => {
     let lista = productos ?? []
-    if (filtroLocal === 'vedia') lista = lista.filter((p) => p.local === 'vedia' || p.local === 'ambos')
-    else if (filtroLocal === 'saavedra') lista = lista.filter((p) => p.local === 'saavedra' || p.local === 'ambos')
-    else if (filtroLocal === 'ambos') lista = lista.filter((p) => p.local === 'ambos')
+    if (filtroLocal === 'vedia') lista = lista.filter((p) => p.local === 'vedia')
+    else if (filtroLocal === 'saavedra') lista = lista.filter((p) => p.local === 'saavedra')
     if (busqueda.trim()) {
       const q = busqueda.toLowerCase()
       lista = lista.filter((p) => p.nombre.toLowerCase().includes(q) || p.codigo.toLowerCase().includes(q))
@@ -313,7 +312,6 @@ function VistaProductos() {
           <option value="todos">Todos los locales</option>
           <option value="vedia">Vedia</option>
           <option value="saavedra">Saavedra</option>
-          <option value="ambos">Ambos</option>
         </select>
         <div className="ml-auto text-xs text-gray-400">
           Click en precio/empaque para editar · Enter guarda
@@ -499,9 +497,8 @@ function VistaRecetas() {
   const filtrados = useMemo(() => {
     let lista = recetas ?? []
     if (filtroTipo !== 'todos') lista = lista.filter((r) => r.tipo === filtroTipo)
-    if (filtroLocal === 'vedia') lista = lista.filter((r) => r.local === 'vedia' || r.local === 'ambos')
-    else if (filtroLocal === 'saavedra') lista = lista.filter((r) => r.local === 'saavedra' || r.local === 'ambos')
-    else if (filtroLocal === 'ambos') lista = lista.filter((r) => r.local === 'ambos')
+    if (filtroLocal === 'vedia') lista = lista.filter((r) => r.local === 'vedia')
+    else if (filtroLocal === 'saavedra') lista = lista.filter((r) => r.local === 'saavedra')
     if (busqueda.trim()) {
       const q = busqueda.toLowerCase()
       lista = lista.filter((r) => r.nombre.toLowerCase().includes(q))
@@ -534,7 +531,6 @@ function VistaRecetas() {
           <option value="todos">Todos los locales</option>
           <option value="vedia">Vedia</option>
           <option value="saavedra">Saavedra</option>
-          <option value="ambos">Solo "ambos"</option>
         </select>
       </div>
 
