@@ -96,11 +96,29 @@ export function StockProduccionSection({ filtroLocal }: { filtroLocal: 'todos' |
 
     const rankingByNombre = new Map<string, number>()
     for (const p of fudoResp?.ranking ?? []) rankingByNombre.set(p.nombre.toLowerCase(), p.cantidad)
+    const productosFudoList = fudoResp?.ranking ?? []
 
     return Array.from(porReceta.entries()).map(([key, batches]) => {
       const receta = batches[0].receta
       const gramosPorcion = receta?.gramos_por_porcion ?? null
-      const fudoNombres = receta?.fudo_productos ?? []
+      const nombreReceta = (receta?.nombre ?? batches[0].nombre_libre ?? '').toLowerCase().trim()
+
+      // Resolver productos Fudo asociados:
+      //   - Si la receta tiene fudo_productos manuales → usarlos (override)
+      //   - Si no → auto-match: productos Fudo cuyo nombre contiene el nombre de la receta
+      const fudoManual = receta?.fudo_productos ?? []
+      let fudoNombres: string[] = []
+      let fuenteMatch: 'manual' | 'auto' | 'ninguno' = 'ninguno'
+      if (fudoManual.length > 0) {
+        fudoNombres = fudoManual
+        fuenteMatch = 'manual'
+      } else if (nombreReceta.length >= 3) {
+        // Palabra "Scarparo" matchea "Spaghetti Scarparo", "Ñoquis Scarparo", etc.
+        fudoNombres = productosFudoList
+          .filter((p) => p.nombre.toLowerCase().includes(nombreReceta))
+          .map((p) => p.nombre)
+        if (fudoNombres.length > 0) fuenteMatch = 'auto'
+      }
 
       // Consumo total en la misma unidad que los batches
       let consumoTotalEnUnidad = 0
@@ -142,6 +160,7 @@ export function StockProduccionSection({ filtroLocal }: { filtroLocal: 'todos' |
         unidadBatch,
         gramosPorcion,
         fudoNombres,
+        fuenteMatch,
         ventasAsociadas,
         consumoTotalEnUnidad,
         totalProducido,
@@ -225,11 +244,14 @@ export function StockProduccionSection({ filtroLocal }: { filtroLocal: 'todos' |
 
             {g.fudoNombres.length === 0 ? (
               <p className="px-4 py-2 text-[11px] text-amber-700 bg-amber-50">
-                Esta receta no tiene productos Fudo asociados — no hay proyección de consumo automática.
-                Configurala en Recetas → Editar → pestaña General.
+                No se encontraron productos Fudo para "{g.nombre}" — no hay proyección automática.
+                Configurá productos manualmente en Recetas → Editar → General.
               </p>
             ) : (
               <p className="px-4 py-1.5 text-[11px] text-gray-500 border-b border-gray-50">
+                <span className={'inline-block px-1.5 py-0 rounded text-[9px] font-semibold mr-1.5 ' + (g.fuenteMatch === 'manual' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700')}>
+                  {g.fuenteMatch === 'manual' ? 'MANUAL' : 'AUTO'}
+                </span>
                 Ventas Fudo asociadas: <strong className="text-gray-700">{g.ventasAsociadas} porciones</strong>
                 {g.gramosPorcion && ` × ${g.gramosPorcion}g = ${g.consumoTotalEnUnidad.toFixed(2)} ${g.unidadBatch}`}
                 · Productos: {g.fudoNombres.join(', ')}

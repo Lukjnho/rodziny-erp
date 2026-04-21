@@ -751,15 +751,18 @@ function ModalReceta({
                     <p className="text-[10px] text-gray-400 mt-1">Para salsas ~200g. Dejar vacío si se vende por unidad (postres).</p>
                   </div>
                   <div>
-                    <label className="block text-xs text-gray-500 mb-1">Productos Fudo asociados</label>
+                    <label className="block text-xs text-gray-500 mb-1">Productos Fudo asociados (opcional)</label>
                     <textarea
                       value={fudoProductos}
                       onChange={(e) => setFudoProductos(e.target.value)}
                       rows={2}
                       className="w-full border border-gray-300 rounded px-3 py-1.5 text-sm"
-                      placeholder="Spaghetti Scarparo, Ñoquis Scarparo, Sorrentino Scarparo"
+                      placeholder="Dejar vacío para auto-detectar por nombre"
                     />
-                    <p className="text-[10px] text-gray-400 mt-1">Separar con comas. Match case-insensitive con el nombre que sale en Fudo.</p>
+                    <p className="text-[10px] text-gray-400 mt-1">
+                      Auto: si el nombre de la receta ("{nombre || '...'}") está en el nombre del producto Fudo, se asocia automáticamente.
+                      Llenar solo si el nombre no matchea literal (ej: receta "Bolognesa" pero en Fudo figura "a la bolonia").
+                    </p>
                   </div>
                 </div>
               </div>
