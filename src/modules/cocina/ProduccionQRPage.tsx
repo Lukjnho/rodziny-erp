@@ -917,18 +917,11 @@ function FormGenerico({ local, categoria, recetas, permitirLibre, permitirLitros
   const [mermaMotivo, setMermaMotivo] = useState('')
   const [responsable, setResponsable] = useState('')
   const [notas, setNotas] = useState('')
-  const [filtroReceta, setFiltroReceta] = useState('')
   const [ingredientesReales, setIngredientesReales] = useState<IngredienteReal[]>([])
   const [enStock, setEnStock] = useState(true)
   const [guardando, setGuardando] = useState(false)
   const [error, setError] = useState('')
   const onGrillaChange = useCallback((ings: IngredienteReal[]) => setIngredientesReales(ings), [])
-
-  const recetasFiltradas = useMemo(() => {
-    if (!filtroReceta.trim()) return recetas
-    const q = filtroReceta.toLowerCase()
-    return recetas.filter((r) => r.nombre.toLowerCase().includes(q))
-  }, [recetas, filtroReceta])
 
   const recetaSel = recetas.find((r) => r.id === recetaId)
   const unidades = unidadesDisponibles(categoria, permitirLitros)
@@ -976,33 +969,19 @@ function FormGenerico({ local, categoria, recetas, permitirLibre, permitirLitros
           </div>
         )}
         {recetas.length > 0 && (
-          <>
-            {recetas.length > 8 && (
-              <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">Buscar receta</label>
-                <input
-                  value={filtroReceta}
-                  onChange={(e) => setFiltroReceta(e.target.value)}
-                  placeholder="Filtrar por nombre..."
-                  className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
-                />
-              </div>
-            )}
-            <div>
-              <label className="block text-xs font-medium text-gray-700 mb-1">Receta</label>
-              <select
-                value={recetaId}
-                onChange={(e) => setRecetaId(e.target.value)}
-                className="w-full border border-gray-300 rounded px-3 py-2.5 text-sm"
-              >
-                <option value="">— Elegir receta —</option>
-                {recetasFiltradas.map((r) => (
-                  <option key={r.id} value={r.id}>{r.nombre}</option>
-                ))}
-              </select>
-              {recetasFiltradas.length === 0 && <p className="text-[10px] text-gray-400 mt-1">Sin resultados</p>}
-            </div>
-          </>
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Receta</label>
+            <select
+              value={recetaId}
+              onChange={(e) => setRecetaId(e.target.value)}
+              className="w-full border border-gray-300 rounded px-3 py-2.5 text-sm"
+            >
+              <option value="">— Elegir receta —</option>
+              {recetas.map((r) => (
+                <option key={r.id} value={r.id}>{r.nombre}</option>
+              ))}
+            </select>
+          </div>
         )}
 
         {permitirLibre && (
