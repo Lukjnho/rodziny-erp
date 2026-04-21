@@ -676,11 +676,13 @@ function ModalReceta({
     setIngs(ings.map((i) => i.tempId === tempId ? { ...i, [campo]: valor } : i))
   }
 
-  function seleccionarProducto(tempId: string, producto: ProductoCompras) {
+  function seleccionarProducto(tempId: string, producto: ProductoCompras, tipo: 'receta' | 'producto') {
+    // Si el usuario eligió una RECETA (subreceta), no asignamos producto_id (es FK a productos, no a cocina_recetas).
+    // Se guarda con prefijo "Subreceta " para que el costeo la detecte por nombre.
     setIngs(ings.map((i) => i.tempId === tempId ? {
       ...i,
-      nombre: producto.nombre,
-      producto_id: producto.id,
+      nombre: tipo === 'receta' ? `Subreceta ${producto.nombre}` : producto.nombre,
+      producto_id: tipo === 'receta' ? null : producto.id,
       unidad: mapearUnidad(producto.unidad),
     } : i))
   }
@@ -930,7 +932,7 @@ function ModalReceta({
                         recetas={todasLasRecetas}
                         recetaActualId={receta?.id ?? null}
                         onChange={(v) => actualizarIng(ing.tempId, 'nombre', v)}
-                        onSelect={(p) => seleccionarProducto(ing.tempId, p)}
+                        onSelect={(p, tipo) => seleccionarProducto(ing.tempId, p, tipo)}
                       />
                     </div>
                     <div className="flex items-center gap-1 flex-shrink-0">
@@ -1058,7 +1060,7 @@ function AutocompleteIngrediente({
   recetas: Receta[]
   recetaActualId: string | null
   onChange: (v: string) => void
-  onSelect: (p: ProductoCompras) => void
+  onSelect: (p: ProductoCompras, tipo: 'receta' | 'producto') => void
 }) {
   const [abierto, setAbierto] = useState(false)
   const [focused, setFocused] = useState(false)
@@ -1150,7 +1152,7 @@ function AutocompleteIngrediente({
                   className="w-full text-left px-3 py-1.5 text-sm hover:bg-rodziny-50 flex items-center justify-between gap-2"
                   onMouseDown={(e) => {
                     e.preventDefault()
-                    onSelect({ id: o.id, nombre: o.nombre, marca: null, unidad: o.unidad, categoria: o.detalle, local: null })
+                    onSelect({ id: o.id, nombre: o.nombre, marca: null, unidad: o.unidad, categoria: o.detalle, local: null }, o.tipo)
                     setAbierto(false)
                   }}
                 >
