@@ -53,6 +53,7 @@ export function AnalisisGastos() {
           .lte('fecha', `${año}-12-31`)
           .neq('estado', 'Cancelada')
           .neq('estado', 'Eliminada')
+          .or('es_dividendo.is.null,es_dividendo.eq.false')
           .range(from, from + PAGE - 1)
         if (localActivo) q = q.eq('local', localActivo)
         const { data } = await q
@@ -139,9 +140,8 @@ export function AnalisisGastos() {
   })()
   const topPct = totalAcum > 0 && topCategoria ? (topCategoria.total / totalAcum) * 100 : 0
 
-  // Ratio gastos/ventas (anual)
+  // Ratio gastos/ventas (anual) — los dividendos ya se filtran en la query
   const ventasTotalesAnio = (ventasAnio ?? [])
-    .filter((t) => (t.medio_pago ?? '').toLowerCase() !== 'mercadopago lucas')
     .reduce((s, t) => s + Number(t.total_bruto), 0)
   const ratioGastosVentas = ventasTotalesAnio > 0 ? (totalAcum / ventasTotalesAnio) * 100 : null
 

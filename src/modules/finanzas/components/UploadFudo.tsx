@@ -81,12 +81,14 @@ export function UploadFudo({ onSuccess }: { onSuccess?: () => void }) {
 
     const ticketsRows = data.tickets.map((t) => {
       const f = fiscalMap.get(t.fudo_id)
+      const esDividendo = (t.medio_pago ?? '').toLowerCase().includes('mercadopago lucas')
       return {
         local: loc, fudo_id: t.fudo_id, fecha: t.fecha, hora: t.hora,
         caja: t.caja, estado: t.estado, tipo_venta: t.tipo_venta,
         medio_pago: t.medio_pago, total_bruto: t.total_bruto,
         total_neto: f ? f.total_neto : null, iva: f ? f.iva : 0,
         es_fiscal: t.es_fiscal,
+        es_dividendo: esDividendo,
         periodo: t.fecha ? t.fecha.substring(0, 7) : data.periodo,
       }
     })
@@ -122,7 +124,12 @@ export function UploadFudo({ onSuccess }: { onSuccess?: () => void }) {
     const ticketIdsValidos = new Set(ticketsRows.map((t) => t.fudo_id))
     const pagosRows = data.pagos
       .filter((p) => ticketIdsValidos.has(p.fudo_ticket_id))
-      .map((p) => ({ local: loc, periodo: data.periodo, ...p }))
+      .map((p) => ({
+        local: loc,
+        periodo: data.periodo,
+        ...p,
+        es_dividendo: (p.medio_pago ?? '').toLowerCase().includes('mercadopago lucas'),
+      }))
     console.log('[upload] pagos a insertar:', pagosRows.length)
     if (pagosRows.length) {
       const { error: e3 } = await supabase.from('ventas_pagos').insert(pagosRows)
