@@ -53,6 +53,7 @@ export function RecetasTab() {
   const [filtroActivo, setFiltroActivo] = useState<'activas' | 'inactivas' | 'todas'>('activas')
   const [modalAbierto, setModalAbierto] = useState(false)
   const [editando, setEditando] = useState<Receta | null>(null)
+  const [duplicando, setDuplicando] = useState<Receta | null>(null)
   const [fichaAbierta, setFichaAbierta] = useState<string | null>(null) // receta_id expandida
 
   const { data: recetas, isLoading } = useQuery({
@@ -147,6 +148,49 @@ export function RecetasTab() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['cocina-recetas'] })
       qc.invalidateQueries({ queryKey: ['cocina-recetas-costeo'] })
+    },
+  })
+
+  const duplicar = useMutation({
+    mutationFn: async ({ origen, nuevoLocal, nuevoNombre }: { origen: Receta; nuevoLocal: string; nuevoNombre: string }) => {
+      // 1) Insertar nueva receta con mismos atributos pero otro local y (opcional) otro nombre
+      const nuevaRow = {
+        nombre: nuevoNombre.trim(),
+        tipo: origen.tipo,
+        rendimiento_kg: origen.rendimiento_kg,
+        rendimiento_porciones: origen.rendimiento_porciones,
+        instrucciones: origen.instrucciones,
+        local: nuevoLocal,
+        gramos_por_porcion: origen.gramos_por_porcion,
+        fudo_productos: origen.fudo_productos,
+        activo: true,
+      }
+      const { data: recetaNueva, error: errReceta } = await supabase
+        .from('cocina_recetas')
+        .insert(nuevaRow)
+        .select('id')
+        .single()
+      if (errReceta) throw errReceta
+
+      // 2) Copiar ingredientes
+      const { data: ingsOrigen, error: errIngs } = await supabase
+        .from('cocina_receta_ingredientes')
+        .select('nombre, cantidad, unidad, observaciones, orden, producto_id')
+        .eq('receta_id', origen.id)
+      if (errIngs) throw errIngs
+      if (ingsOrigen && ingsOrigen.length > 0) {
+        const rows = ingsOrigen.map((i) => ({ ...i, receta_id: recetaNueva.id }))
+        const { error: errInsIngs } = await supabase.from('cocina_receta_ingredientes').insert(rows)
+        if (errInsIngs) throw errInsIngs
+      }
+      return recetaNueva.id as string
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['cocina-recetas'] })
+      qc.invalidateQueries({ queryKey: ['cocina-receta-ingredientes'] })
+      qc.invalidateQueries({ queryKey: ['cocina-recetas-costeo'] })
+      qc.invalidateQueries({ queryKey: ['cocina-receta-ingredientes-costeo'] })
+      setDuplicando(null)
     },
   })
 
@@ -269,11 +313,16 @@ export function RecetasTab() {
                       {costo?.costoPorPorcion != null ? formatARS(costo.costoPorPorcion) : <span className="text-gray-300">—</span>}
                     </td>
                     <td className="px-4 py-2">
-                      <div className="flex gap-1.5">
+                      <div className="flex gap-1.5 flex-wrap">
                         <button
                           onClick={() => { setEditando(r); setModalAbierto(true) }}
                           className="text-blue-600 hover:text-blue-800 text-xs"
                         >Editar</button>
+                        <button
+                          onClick={() => setDuplicando(r)}
+                          className="text-purple-600 hover:text-purple-800 text-xs"
+                          title="Crear copia para otro local"
+                        >Duplicar</button>
                         <button
                           onClick={() => toggleActivo.mutate({ id: r.id, activo: !r.activo })}
                           className={cn('text-xs', r.activo ? 'text-orange-600 hover:text-orange-800' : 'text-green-600 hover:text-green-800')}
@@ -316,6 +365,88 @@ export function RecetasTab() {
           }}
         />
       )}
+
+      {duplicando && (
+        <DialogDuplicar
+          receta={duplicando}
+          onCancelar={() => setDuplicando(null)}
+          onConfirmar={(nuevoLocal, nuevoNombre) => duplicar.mutate({ origen: duplicando, nuevoLocal, nuevoNombre })}
+          guardando={duplicar.isPending}
+          error={duplicar.error ? String(duplicar.error) : null}
+        />
+      )}
+    </div>
+  )
+}
+
+// ─── Dialog: Duplicar receta para otro local ───────────────────────────────
+function DialogDuplicar({ receta, onCancelar, onConfirmar, guardando, error }: {
+  receta: Receta
+  onCancelar: () => void
+  onConfirmar: (nuevoLocal: string, nuevoNombre: string) => void
+  guardando: boolean
+  error: string | null
+}) {
+  // Sugerir local opuesto al actual
+  const localSugerido = receta.local === 'vedia' ? 'saavedra' : 'vedia'
+  const [nuevoLocal, setNuevoLocal] = useState<string>(localSugerido)
+  const [nuevoNombre, setNuevoNombre] = useState<string>(receta.nombre)
+  const mismoNombre = nuevoNombre.trim() === receta.nombre && nuevoLocal === receta.local
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/40" onClick={onCancelar} />
+      <div className="relative bg-white rounded-xl shadow-xl w-full max-w-md">
+        <div className="px-5 py-4 border-b border-gray-100">
+          <h3 className="text-base font-semibold text-gray-900">Duplicar receta</h3>
+          <p className="text-xs text-gray-500 mt-0.5">
+            Copia "{receta.nombre}" con todos sus ingredientes y parámetros.
+          </p>
+        </div>
+        <div className="px-5 py-4 space-y-3">
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">Local de destino</label>
+            <select
+              value={nuevoLocal}
+              onChange={(e) => setNuevoLocal(e.target.value)}
+              className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+            >
+              <option value="vedia">Vedia</option>
+              <option value="saavedra">Saavedra</option>
+            </select>
+            {nuevoLocal === receta.local && (
+              <p className="text-[10px] text-amber-600 mt-1">
+                Atención: mismo local que el original. El nombre tiene que ser distinto.
+              </p>
+            )}
+          </div>
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">Nombre de la copia</label>
+            <input
+              value={nuevoNombre}
+              onChange={(e) => setNuevoNombre(e.target.value)}
+              className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+              placeholder={receta.nombre}
+            />
+            <p className="text-[10px] text-gray-400 mt-1">
+              Podés dejar el mismo nombre si es para otro local (la DB lo permite).
+            </p>
+          </div>
+          {error && <p className="text-xs text-red-600">{error}</p>}
+        </div>
+        <div className="px-5 py-3 border-t border-gray-100 flex justify-end gap-2">
+          <button onClick={onCancelar} className="text-sm text-gray-600 hover:text-gray-800 px-3 py-1.5">
+            Cancelar
+          </button>
+          <button
+            onClick={() => onConfirmar(nuevoLocal, nuevoNombre.trim() || receta.nombre)}
+            disabled={guardando || !nuevoNombre.trim() || mismoNombre}
+            className="bg-rodziny-700 hover:bg-rodziny-800 disabled:opacity-50 text-white text-sm rounded px-3 py-1.5"
+          >
+            {guardando ? 'Duplicando...' : 'Crear copia'}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
