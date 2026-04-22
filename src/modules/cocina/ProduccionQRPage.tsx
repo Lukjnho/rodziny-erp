@@ -22,11 +22,17 @@ interface LoteMasa {
   kg_sobrante: number | null; destino_sobrante: string | null
   receta?: { nombre: string } | null
 }
+interface LotePastaFresco {
+  id: string; producto_id: string; codigo_lote: string
+  porciones: number; cantidad_cajones: number | null; fecha: string
+  producto?: { nombre: string } | null
+}
 
 type Vista =
   | 'inicio'
   | 'relleno'
   | 'pasta'
+  | 'porcionar-pasta'
   | 'masa'
   | 'cerrar-masa'
   | 'salsa'
@@ -127,6 +133,24 @@ export function ProduccionQRPage() {
 
   const masasAbiertas = useMemo(() => (lotesMasaHoy ?? []).filter((m) => m.kg_sobrante === null).length, [lotesMasaHoy])
 
+  // Lotes de pasta "frescos" pendientes de porcionar (cualquier fecha, no solo hoy —
+  // el armado suele ser el día anterior)
+  const { data: lotesFrescos } = useQuery({
+    queryKey: ['cocina-lotes-pasta-frescos-qr', local],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('cocina_lotes_pasta')
+        .select('id, producto_id, codigo_lote, porciones, cantidad_cajones, fecha, producto:cocina_productos(nombre)')
+        .eq('local', local)
+        .eq('ubicacion', 'freezer_produccion')
+        .order('fecha', { ascending: true })
+      if (error) throw error
+      return data as unknown as LotePastaFresco[]
+    },
+  })
+
+  const frescosPendientes = lotesFrescos?.length ?? 0
+
   // Filtro estricto por local: solo muestra lo asignado explícitamente a este local
   const matchLocal = (l: string | null) => l === local
   const recetasRelleno = useMemo(() => (recetas ?? []).filter((r) => r.tipo === 'relleno' && matchLocal(r.local)), [recetas, local])
@@ -145,6 +169,7 @@ export function ProduccionQRPage() {
     qc.invalidateQueries({ queryKey: ['cocina-lotes-relleno-qr'] })
     qc.invalidateQueries({ queryKey: ['cocina-lotes-masa-qr'] })
     qc.invalidateQueries({ queryKey: ['cocina-lotes-produccion-qr'] })
+    qc.invalidateQueries({ queryKey: ['cocina-lotes-pasta-frescos-qr'] })
   }
 
   return (
@@ -155,6 +180,7 @@ export function ProduccionQRPage() {
           onIr={(v) => setVista(v)}
           lotesHoy={lotesRellenoHoy?.length ?? 0}
           masasAbiertas={masasAbiertas}
+          frescosPendientes={frescosPendientes}
         />
       )}
 
@@ -173,6 +199,15 @@ export function ProduccionQRPage() {
           productos={productosPasta}
           lotesRelleno={lotesRellenoHoy ?? []}
           lotesMasa={(lotesMasaHoy ?? []).filter((m) => m.kg_sobrante === null)}
+          onGuardado={(msg) => onGuardado(msg)}
+          onVolver={() => setVista('inicio')}
+        />
+      )}
+
+      {vista === 'porcionar-pasta' && (
+        <FormPorcionar
+          local={local}
+          lotesFrescos={lotesFrescos ?? []}
           onGuardado={(msg) => onGuardado(msg)}
           onVolver={() => setVista('inicio')}
         />
@@ -259,11 +294,12 @@ export function ProduccionQRPage() {
 
 // ── Inicio ─────────────────────────────────────────────────────────────────────
 
-function Inicio({ local, onIr, lotesHoy, masasAbiertas }: {
+function Inicio({ local, onIr, lotesHoy, masasAbiertas, frescosPendientes }: {
   local: 'vedia' | 'saavedra'
   onIr: (v: Vista) => void
   lotesHoy: number
   masasAbiertas: number
+  frescosPendientes: number
 }) {
   const ahora = new Date()
   const fechaLabel = ahora.toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'long' })
@@ -271,7 +307,7 @@ function Inicio({ local, onIr, lotesHoy, masasAbiertas }: {
   const botones: { vista: Vista; label: string; color: string }[] = [
     { vista: 'relleno', label: 'Cargar Relleno', color: 'bg-green-600 hover:bg-green-700' },
     { vista: 'masa', label: 'Cargar Masa', color: 'bg-amber-500 hover:bg-amber-600' },
-    { vista: 'pasta', label: 'Cargar Pasta Terminada', color: 'bg-rodziny-700 hover:bg-rodziny-800' },
+    { vista: 'pasta', label: 'Armar Pasta (cajones)', color: 'bg-rodziny-700 hover:bg-rodziny-800' },
     { vista: 'salsa', label: 'Cargar Salsa', color: 'bg-orange-500 hover:bg-orange-600' },
   ]
   if (local === 'vedia') {
@@ -296,6 +332,11 @@ function Inicio({ local, onIr, lotesHoy, masasAbiertas }: {
             {masasAbiertas} masa{masasAbiertas > 1 ? 's' : ''} abierta{masasAbiertas > 1 ? 's' : ''}
           </p>
         )}
+        {frescosPendientes > 0 && (
+          <p className="text-sm text-blue-600 mt-1">
+            {frescosPendientes} cajón{frescosPendientes > 1 ? 'es' : ''} pendiente{frescosPendientes > 1 ? 's' : ''} de porcionar
+          </p>
+        )}
       </div>
 
       {botones.map((b) => (
@@ -307,6 +348,15 @@ function Inicio({ local, onIr, lotesHoy, masasAbiertas }: {
           {b.label}
         </button>
       ))}
+
+      {frescosPendientes > 0 && (
+        <button
+          onClick={() => onIr('porcionar-pasta')}
+          className="w-full border-2 border-blue-500 text-blue-700 py-4 rounded-lg font-semibold text-base active:scale-[0.98] transition-transform"
+        >
+          Porcionar Pasta ({frescosPendientes})
+        </button>
+      )}
 
       {masasAbiertas > 0 && (
         <button
@@ -462,6 +512,7 @@ function FormPasta({ local, productos, lotesRelleno, lotesMasa, onGuardado, onVo
   const [masaKg, setMasaKg] = useState('')
   const [rellenoKg, setRellenoKg] = useState('')
   const [porciones, setPorciones] = useState('')
+  const [cantidadCajones, setCantidadCajones] = useState('')
   const [responsable, setResponsable] = useState('')
   const [notas, setNotas] = useState('')
   const [guardando, setGuardando] = useState(false)
@@ -472,7 +523,7 @@ function FormPasta({ local, productos, lotesRelleno, lotesMasa, onGuardado, onVo
 
   async function guardar() {
     if (!productoId) { setError('Seleccioná un producto'); return }
-    if (!porciones || Number(porciones) <= 0) { setError('Indicá las porciones'); return }
+    if (!porciones || Number(porciones) <= 0) { setError('Indicá las porciones estimadas'); return }
     setGuardando(true)
     setError('')
 
@@ -486,20 +537,27 @@ function FormPasta({ local, productos, lotesRelleno, lotesMasa, onGuardado, onVo
       masa_kg: masaKg ? Number(masaKg) : null,
       relleno_kg: rellenoKg ? Number(rellenoKg) : null,
       porciones: Number(porciones),
+      cantidad_cajones: cantidadCajones ? Number(cantidadCajones) : null,
+      ubicacion: 'freezer_produccion',
       responsable: responsable.trim() || null,
       local,
       notas: notas.trim() || null,
     })
 
     if (err) { setError(err.message); setGuardando(false); return }
-    onGuardado(`${prodSel?.nombre ?? 'Pasta'} — ${porciones} porciones (${codigoLote})`)
+    onGuardado(`${prodSel?.nombre ?? 'Pasta'} armada — ${porciones} porciones en ${cantidadCajones || '?'} cajones (${codigoLote})`)
   }
 
   return (
     <div className="space-y-3 mt-2">
       <div className="flex items-center justify-between">
-        <h2 className="text-base font-semibold text-gray-900">Cargar Pasta</h2>
+        <h2 className="text-base font-semibold text-gray-900">Armar Pasta</h2>
         <button onClick={onVolver} className="text-xs text-gray-500 underline">Volver</button>
+      </div>
+
+      <div className="bg-blue-50 border border-blue-200 rounded px-3 py-2 text-xs text-blue-800">
+        Las pastas armadas quedan en cajones en el freezer de producción. Al día siguiente las
+        porcionás en bolsitas de 200g y pasan a la cámara de congelado.
       </div>
 
       <div className="bg-white rounded-lg border border-gray-200 p-4 space-y-3">
@@ -554,7 +612,7 @@ function FormPasta({ local, productos, lotesRelleno, lotesMasa, onGuardado, onVo
           </select>
         </div>
 
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-2 gap-2">
           <div>
             <label className="block text-xs font-medium text-gray-700 mb-1">Masa (kg)</label>
             <input
@@ -577,8 +635,22 @@ function FormPasta({ local, productos, lotesRelleno, lotesMasa, onGuardado, onVo
               className="w-full border border-gray-300 rounded px-3 py-2.5 text-sm"
             />
           </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2">
           <div>
-            <label className="block text-xs font-medium text-gray-700 mb-1">Porciones</label>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Cajones armados</label>
+            <input
+              type="number"
+              inputMode="numeric"
+              value={cantidadCajones}
+              onChange={(e) => setCantidadCajones(e.target.value)}
+              className="w-full border border-gray-300 rounded px-3 py-2.5 text-sm"
+              placeholder="3"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Porciones estimadas</label>
             <input
               type="number"
               inputMode="numeric"
@@ -617,7 +689,164 @@ function FormPasta({ local, productos, lotesRelleno, lotesMasa, onGuardado, onVo
         disabled={guardando}
         className="w-full bg-rodziny-700 hover:bg-rodziny-800 text-white py-3.5 rounded-lg font-semibold text-sm disabled:opacity-50 shadow active:scale-[0.98] transition-transform"
       >
-        {guardando ? 'Guardando...' : 'Sumar pasta al depósito'}
+        {guardando ? 'Guardando...' : 'Registrar armado en freezer'}
+      </button>
+    </div>
+  )
+}
+
+// ── Formulario Porcionar ───────────────────────────────────────────────────────
+
+function FormPorcionar({ local, lotesFrescos, onGuardado, onVolver }: {
+  local: string; lotesFrescos: LotePastaFresco[]
+  onGuardado: (msg: string) => void; onVolver: () => void
+}) {
+  const [loteId, setLoteId] = useState(lotesFrescos[0]?.id ?? '')
+  const [porcionesReales, setPorcionesReales] = useState('')
+  const [responsable, setResponsable] = useState('')
+  const [notas, setNotas] = useState('')
+  const [guardando, setGuardando] = useState(false)
+  const [error, setError] = useState('')
+
+  const loteSel = lotesFrescos.find((l) => l.id === loteId)
+  const estimadas = loteSel?.porciones ?? 0
+  const reales = Number(porcionesReales) || 0
+  const diferencia = reales - estimadas
+
+  async function guardar() {
+    if (!loteId || !loteSel) { setError('Elegí un lote'); return }
+    if (!porcionesReales || reales <= 0) { setError('Indicá las porciones reales obtenidas'); return }
+    setGuardando(true)
+    setError('')
+
+    // Actualizar el lote: pasa a cámara congelado, con porciones reales y responsable de porcionado.
+    // Si hubo merma (reales < estimadas), la diferencia queda registrada en merma_porcionado.
+    const merma = diferencia < 0 ? Math.abs(diferencia) : 0
+    const payload: Record<string, unknown> = {
+      ubicacion: 'camara_congelado',
+      porciones: reales,
+      fecha_porcionado: hoy(),
+      responsable_porcionado: responsable.trim() || null,
+      merma_porcionado: merma,
+    }
+    // Si el porcionador agregó una nota, se anexa sin pisar la del armado
+    if (notas.trim()) {
+      payload.notas = `[Porcionado] ${notas.trim()}`
+    }
+    const { error: err } = await supabase
+      .from('cocina_lotes_pasta')
+      .update(payload)
+      .eq('id', loteId)
+
+    if (err) { setError(err.message); setGuardando(false); return }
+
+    const nombre = loteSel.producto?.nombre ?? 'Pasta'
+    const detalle = merma > 0
+      ? `${reales} porciones (merma ${merma})`
+      : diferencia > 0
+        ? `${reales} porciones (+${diferencia} vs estimado)`
+        : `${reales} porciones`
+    onGuardado(`${nombre} porcionada — ${detalle}`)
+  }
+
+  if (lotesFrescos.length === 0) {
+    return (
+      <div className="space-y-3 mt-2">
+        <div className="flex items-center justify-between">
+          <h2 className="text-base font-semibold text-gray-900">Porcionar Pasta</h2>
+          <button onClick={onVolver} className="text-xs text-gray-500 underline">Volver</button>
+        </div>
+        <div className="bg-white rounded-lg border border-gray-200 p-6 text-center text-sm text-gray-500">
+          No hay cajones pendientes de porcionar en {local}.
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-3 mt-2">
+      <div className="flex items-center justify-between">
+        <h2 className="text-base font-semibold text-gray-900">Porcionar Pasta</h2>
+        <button onClick={onVolver} className="text-xs text-gray-500 underline">Volver</button>
+      </div>
+
+      <div className="bg-blue-50 border border-blue-200 rounded px-3 py-2 text-xs text-blue-800">
+        Porcioná las pastas en bolsitas de 200g y pasan a la cámara de congelado.
+        Si hay diferencia con lo estimado queda registrado como merma automática.
+      </div>
+
+      <div className="bg-white rounded-lg border border-gray-200 p-4 space-y-3">
+        <div>
+          <label className="block text-xs font-medium text-gray-700 mb-1">Lote a porcionar</label>
+          <select
+            value={loteId}
+            onChange={(e) => setLoteId(e.target.value)}
+            className="w-full border border-gray-300 rounded px-3 py-2.5 text-sm"
+          >
+            {lotesFrescos.map((l) => (
+              <option key={l.id} value={l.id}>
+                {l.codigo_lote} · {l.producto?.nombre ?? 'Pasta'} · {l.porciones} porc. estimadas
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {loteSel && (
+          <div className="bg-gray-50 border border-gray-200 rounded px-3 py-2 text-xs text-gray-600 space-y-0.5">
+            <div>Armado: {loteSel.fecha}</div>
+            {loteSel.cantidad_cajones && <div>Cajones: {loteSel.cantidad_cajones}</div>}
+            <div>Estimado: <span className="font-semibold">{estimadas}</span> porciones</div>
+          </div>
+        )}
+
+        <div>
+          <label className="block text-xs font-medium text-gray-700 mb-1">Porciones reales (bolsitas 200g)</label>
+          <input
+            type="number"
+            inputMode="numeric"
+            value={porcionesReales}
+            onChange={(e) => setPorcionesReales(e.target.value)}
+            className="w-full border border-gray-300 rounded px-3 py-2.5 text-sm"
+            placeholder={String(estimadas)}
+          />
+          {reales > 0 && diferencia !== 0 && (
+            <p className={cn('text-[11px] mt-1', diferencia < 0 ? 'text-red-600' : 'text-emerald-600')}>
+              {diferencia < 0
+                ? `${Math.abs(diferencia)} porciones de merma`
+                : `+${diferencia} porciones vs estimado`}
+            </p>
+          )}
+        </div>
+
+        <div>
+          <label className="block text-xs font-medium text-gray-700 mb-1">Responsable</label>
+          <input
+            value={responsable}
+            onChange={(e) => setResponsable(e.target.value)}
+            className="w-full border border-gray-300 rounded px-3 py-2.5 text-sm"
+            placeholder="Nombre"
+          />
+        </div>
+
+        <div>
+          <label className="block text-xs font-medium text-gray-700 mb-1">Notas (opcional)</label>
+          <input
+            value={notas}
+            onChange={(e) => setNotas(e.target.value)}
+            className="w-full border border-gray-300 rounded px-3 py-2.5 text-sm"
+            placeholder="Ej: hubo rotura de bolsas"
+          />
+        </div>
+      </div>
+
+      {error && <div className="text-xs text-red-600 bg-red-50 rounded p-2">{error}</div>}
+
+      <button
+        onClick={guardar}
+        disabled={guardando}
+        className="w-full bg-blue-600 hover:bg-blue-700 text-white py-3.5 rounded-lg font-semibold text-sm disabled:opacity-50 shadow active:scale-[0.98] transition-transform"
+      >
+        {guardando ? 'Guardando...' : 'Mover a cámara de congelado'}
       </button>
     </div>
   )

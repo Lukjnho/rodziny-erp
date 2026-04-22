@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { KPICard } from '@/components/ui/KPICard'
 import { StockProduccionSection } from './components/StockProduccionSection'
+import { cn } from '@/lib/utils'
 
 // Badge que muestra si un lote tiene ingredientes reales guardados y un popover con el detalle
 function IngredientesRealesBadge({ ingredientes }: { ingredientes: IngredienteRealRow[] | null }) {
@@ -85,6 +86,11 @@ interface LotePasta {
   codigo_lote: string; receta_masa_id: string | null; masa_kg: number | null
   relleno_kg: number | null; porciones: number; responsable: string | null
   local: string; notas: string | null; created_at: string
+  ubicacion: 'freezer_produccion' | 'camara_congelado'
+  cantidad_cajones: number | null
+  fecha_porcionado: string | null
+  responsable_porcionado: string | null
+  merma_porcionado: number
   producto?: { nombre: string; codigo: string } | null
   lote_relleno?: { receta?: { nombre: string } | null; peso_total_kg: number } | null
   receta_masa?: { nombre: string } | null
@@ -148,6 +154,7 @@ export function ProduccionTab() {
   const [modalMasa, setModalMasa] = useState(false)
   const [modalCerrarMasa, setModalCerrarMasa] = useState<LoteMasa | null>(null)
   const [modalPasta, setModalPasta] = useState(false)
+  const [modalPorcionar, setModalPorcionar] = useState<LotePasta | null>(null)
 
   // Catálogos
   const { data: productos } = useQuery({
@@ -208,6 +215,20 @@ export function ProduccionTab() {
     },
   })
 
+  // Lotes frescos pendientes de porcionar (cualquier fecha) — para acción desde el admin
+  const { data: lotesFrescosPendientes } = useQuery({
+    queryKey: ['cocina-lotes-pasta-frescos'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('cocina_lotes_pasta')
+        .select('*, producto:cocina_productos(nombre, codigo)')
+        .eq('ubicacion', 'freezer_produccion')
+        .order('fecha', { ascending: true })
+      if (error) throw error
+      return data as LotePasta[]
+    },
+  })
+
   const { data: lotesProduccion, isLoading: cargandoProd } = useQuery({
     queryKey: ['cocina-lotes-produccion', fecha],
     queryFn: async () => {
@@ -259,6 +280,12 @@ export function ProduccionTab() {
     tiposDistintos: new Set(pastasFiltradas.map((l) => l.producto_id)).size,
   }), [pastasFiltradas])
 
+  // Frescos pendientes (todos los días, filtrado por local) — se muestra como alerta
+  const frescosFiltrados = useMemo(() => {
+    if (filtroLocal === 'todos') return lotesFrescosPendientes ?? []
+    return (lotesFrescosPendientes ?? []).filter((l) => l.local === filtroLocal)
+  }, [lotesFrescosPendientes, filtroLocal])
+
   // Navegación de fecha
   const cambiarFecha = (delta: number) => {
     const d = new Date(fecha + 'T12:00:00')
@@ -290,6 +317,7 @@ export function ProduccionTab() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['cocina-lotes-pasta', fecha] })
+      qc.invalidateQueries({ queryKey: ['cocina-lotes-pasta-frescos'] })
       qc.invalidateQueries({ queryKey: ['cocina-stock'] })
     },
   })
@@ -457,11 +485,34 @@ export function ProduccionTab() {
           </button>
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-3">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
           <KPICard label="Lotes de pasta" value={String(kpiPasta.lotes)} color="green" loading={cargandoP} />
           <KPICard label="Total porciones" value={String(kpiPasta.porcionesTotal)} color="blue" loading={cargandoP} />
           <KPICard label="Tipos distintos" value={String(kpiPasta.tiposDistintos)} color="neutral" loading={cargandoP} />
+          <KPICard label="Frescos por porcionar" value={String(frescosFiltrados.length)} color={frescosFiltrados.length > 0 ? 'yellow' : 'neutral'} loading={cargandoP} />
         </div>
+
+        {frescosFiltrados.length > 0 && (
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-3">
+            <p className="text-sm font-medium text-blue-900 mb-2">
+              {frescosFiltrados.length} cajón{frescosFiltrados.length > 1 ? 'es' : ''} pendiente{frescosFiltrados.length > 1 ? 's' : ''} de porcionar (otras fechas)
+            </p>
+            <div className="space-y-1">
+              {frescosFiltrados.map((l) => (
+                <div key={l.id} className="flex items-center justify-between text-xs bg-white rounded px-2 py-1.5 border border-blue-100">
+                  <span>
+                    <span className="font-mono">{l.codigo_lote}</span> · {l.producto?.nombre ?? 'Pasta'} · {l.fecha} · {l.porciones} porc. est.
+                    {l.cantidad_cajones && <> · {l.cantidad_cajones} cajones</>}
+                  </span>
+                  <button
+                    onClick={() => setModalPorcionar(l)}
+                    className="bg-blue-600 hover:bg-blue-700 text-white rounded px-2 py-0.5 text-[11px]"
+                  >Porcionar</button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="bg-white rounded-lg border border-surface-border overflow-x-auto">
           <table className="w-full text-sm">
@@ -469,6 +520,7 @@ export function ProduccionTab() {
               <tr className="border-b border-surface-border bg-gray-50 text-left text-xs text-gray-500 uppercase">
                 <th className="px-4 py-2">Código lote</th>
                 <th className="px-4 py-2">Producto</th>
+                <th className="px-4 py-2">Estado</th>
                 <th className="px-4 py-2">Relleno</th>
                 <th className="px-4 py-2">Masa</th>
                 <th className="px-4 py-2">Porciones</th>
@@ -478,33 +530,58 @@ export function ProduccionTab() {
               </tr>
             </thead>
             <tbody>
-              {pastasFiltradas.map((l) => (
-                <tr key={l.id} className="border-b border-surface-border hover:bg-gray-50">
-                  <td className="px-4 py-2 font-mono text-xs font-medium">{l.codigo_lote}</td>
-                  <td className="px-4 py-2 font-medium">{l.producto?.nombre ?? '—'}</td>
-                  <td className="px-4 py-2 text-gray-600">
-                    {l.lote_relleno?.receta?.nombre
-                      ? `${l.lote_relleno.receta.nombre} (${l.relleno_kg ?? '?'} kg)`
-                      : 'Sin relleno'}
-                  </td>
-                  <td className="px-4 py-2 text-gray-600">
-                    {l.receta_masa?.nombre
-                      ? `${l.receta_masa.nombre} (${l.masa_kg ?? '?'} kg)`
-                      : '—'}
-                  </td>
-                  <td className="px-4 py-2 font-semibold">{l.porciones}</td>
-                  <td className="px-4 py-2 capitalize">{l.local}</td>
-                  <td className="px-4 py-2">{l.responsable || '—'}</td>
-                  <td className="px-4 py-2">
-                    <button
-                      onClick={() => { if (window.confirm('¿Eliminar este lote de pasta?')) eliminarPasta.mutate(l.id) }}
-                      className="text-red-500 hover:text-red-700 text-xs"
-                    >Eliminar</button>
-                  </td>
-                </tr>
-              ))}
+              {pastasFiltradas.map((l) => {
+                const esFresco = l.ubicacion === 'freezer_produccion'
+                return (
+                  <tr key={l.id} className={cn('border-b border-surface-border hover:bg-gray-50', esFresco && 'bg-blue-50/40')}>
+                    <td className="px-4 py-2 font-mono text-xs font-medium">{l.codigo_lote}</td>
+                    <td className="px-4 py-2 font-medium">{l.producto?.nombre ?? '—'}</td>
+                    <td className="px-4 py-2">
+                      {esFresco ? (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] bg-blue-100 text-blue-700 font-medium">
+                          Fresco {l.cantidad_cajones ? `· ${l.cantidad_cajones} caj.` : ''}
+                        </span>
+                      ) : (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] bg-emerald-100 text-emerald-700 font-medium">
+                          En cámara
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-2 text-gray-600">
+                      {l.lote_relleno?.receta?.nombre
+                        ? `${l.lote_relleno.receta.nombre} (${l.relleno_kg ?? '?'} kg)`
+                        : 'Sin relleno'}
+                    </td>
+                    <td className="px-4 py-2 text-gray-600">
+                      {l.receta_masa?.nombre
+                        ? `${l.receta_masa.nombre} (${l.masa_kg ?? '?'} kg)`
+                        : '—'}
+                    </td>
+                    <td className="px-4 py-2 font-semibold">
+                      {l.porciones}
+                      {l.merma_porcionado > 0 && (
+                        <span className="text-[10px] text-red-500 ml-1">(-{l.merma_porcionado})</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-2 capitalize">{l.local}</td>
+                    <td className="px-4 py-2">{l.responsable || '—'}</td>
+                    <td className="px-4 py-2 space-x-2">
+                      {esFresco && (
+                        <button
+                          onClick={() => setModalPorcionar(l)}
+                          className="text-blue-600 hover:text-blue-800 text-xs"
+                        >Porcionar</button>
+                      )}
+                      <button
+                        onClick={() => { if (window.confirm('¿Eliminar este lote de pasta?')) eliminarPasta.mutate(l.id) }}
+                        className="text-red-500 hover:text-red-700 text-xs"
+                      >Eliminar</button>
+                    </td>
+                  </tr>
+                )
+              })}
               {pastasFiltradas.length === 0 && (
-                <tr><td colSpan={8} className="px-4 py-6 text-center text-gray-400">{cargandoP ? 'Cargando...' : 'No hay pastas registradas hoy'}</td></tr>
+                <tr><td colSpan={9} className="px-4 py-6 text-center text-gray-400">{cargandoP ? 'Cargando...' : 'No hay pastas registradas hoy'}</td></tr>
               )}
             </tbody>
           </table>
@@ -610,11 +687,127 @@ export function ProduccionTab() {
           onClose={() => setModalPasta(false)}
           onSaved={() => {
             qc.invalidateQueries({ queryKey: ['cocina-lotes-pasta', fecha] })
+            qc.invalidateQueries({ queryKey: ['cocina-lotes-pasta-frescos'] })
             qc.invalidateQueries({ queryKey: ['cocina-stock'] })
             setModalPasta(false)
           }}
         />
       )}
+      {modalPorcionar && (
+        <ModalPorcionar
+          lote={modalPorcionar}
+          onClose={() => setModalPorcionar(null)}
+          onSaved={() => {
+            qc.invalidateQueries({ queryKey: ['cocina-lotes-pasta', fecha] })
+            qc.invalidateQueries({ queryKey: ['cocina-lotes-pasta-frescos'] })
+            qc.invalidateQueries({ queryKey: ['cocina-stock'] })
+            setModalPorcionar(null)
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
+// ── Modal: Porcionar pasta fresca ──────────────────────────────────────────────
+
+function ModalPorcionar({ lote, onClose, onSaved }: {
+  lote: LotePasta; onClose: () => void; onSaved: () => void
+}) {
+  const [porcionesReales, setPorcionesReales] = useState('')
+  const [responsable, setResponsable] = useState('')
+  const [notas, setNotas] = useState('')
+  const [guardando, setGuardando] = useState(false)
+  const [error, setError] = useState('')
+
+  const estimadas = lote.porciones
+  const reales = Number(porcionesReales) || 0
+  const diferencia = reales - estimadas
+
+  async function guardar() {
+    if (!porcionesReales || reales <= 0) { setError('Indicá las porciones reales'); return }
+    setGuardando(true)
+    setError('')
+    const merma = diferencia < 0 ? Math.abs(diferencia) : 0
+    const payload: Record<string, unknown> = {
+      ubicacion: 'camara_congelado',
+      porciones: reales,
+      fecha_porcionado: hoy(),
+      responsable_porcionado: responsable.trim() || null,
+      merma_porcionado: merma,
+    }
+    if (notas.trim()) payload.notas = `[Porcionado] ${notas.trim()}`
+    const { error: err } = await supabase.from('cocina_lotes_pasta').update(payload).eq('id', lote.id)
+    if (err) { setError(err.message); setGuardando(false); return }
+    onSaved()
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-lg shadow-xl w-full max-w-md p-5 space-y-3">
+        <div className="flex items-center justify-between">
+          <h3 className="text-base font-semibold text-gray-900">Porcionar lote</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">✕</button>
+        </div>
+
+        <div className="bg-gray-50 border border-gray-200 rounded px-3 py-2 text-xs space-y-0.5">
+          <div><span className="text-gray-500">Lote:</span> <span className="font-mono font-semibold">{lote.codigo_lote}</span></div>
+          <div><span className="text-gray-500">Producto:</span> {lote.producto?.nombre ?? '—'}</div>
+          <div><span className="text-gray-500">Armado:</span> {lote.fecha}{lote.cantidad_cajones ? ` · ${lote.cantidad_cajones} cajones` : ''}</div>
+          <div><span className="text-gray-500">Estimado:</span> <span className="font-semibold">{estimadas}</span> porciones</div>
+        </div>
+
+        <div>
+          <label className="block text-xs font-medium text-gray-700 mb-1">Porciones reales (bolsitas 200g)</label>
+          <input
+            type="number"
+            inputMode="numeric"
+            value={porcionesReales}
+            onChange={(e) => setPorcionesReales(e.target.value)}
+            className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+            placeholder={String(estimadas)}
+          />
+          {reales > 0 && diferencia !== 0 && (
+            <p className={cn('text-[11px] mt-1', diferencia < 0 ? 'text-red-600' : 'text-emerald-600')}>
+              {diferencia < 0
+                ? `${Math.abs(diferencia)} porciones de merma`
+                : `+${diferencia} porciones vs estimado`}
+            </p>
+          )}
+        </div>
+
+        <div>
+          <label className="block text-xs font-medium text-gray-700 mb-1">Responsable</label>
+          <input
+            value={responsable}
+            onChange={(e) => setResponsable(e.target.value)}
+            className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+            placeholder="Nombre"
+          />
+        </div>
+
+        <div>
+          <label className="block text-xs font-medium text-gray-700 mb-1">Notas (opcional)</label>
+          <input
+            value={notas}
+            onChange={(e) => setNotas(e.target.value)}
+            className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+          />
+        </div>
+
+        {error && <div className="text-xs text-red-600 bg-red-50 rounded p-2">{error}</div>}
+
+        <div className="flex justify-end gap-2 pt-2">
+          <button onClick={onClose} className="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-800">Cancelar</button>
+          <button
+            onClick={guardar}
+            disabled={guardando}
+            className="bg-blue-600 hover:bg-blue-700 text-white text-sm rounded px-4 py-1.5 disabled:opacity-50"
+          >
+            {guardando ? 'Guardando...' : 'Mover a cámara'}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
@@ -716,6 +909,8 @@ function ModalPasta({ fecha, productos, recetasMasa, lotesRellenoDia, lotesMasaD
   const [masaKg, setMasaKg] = useState('')
   const [rellenoKg, setRellenoKg] = useState('')
   const [porciones, setPorciones] = useState('')
+  const [cantidadCajones, setCantidadCajones] = useState('')
+  const [yaEnCamara, setYaEnCamara] = useState(false)
   const [responsable, setResponsable] = useState('')
   const [local, setLocal] = useState<'vedia' | 'saavedra'>('vedia')
   const [notas, setNotas] = useState('')
@@ -739,6 +934,9 @@ function ModalPasta({ fecha, productos, recetasMasa, lotesRellenoDia, lotesMasaD
       masa_kg: masaKg ? Number(masaKg) : null,
       relleno_kg: rellenoKg ? Number(rellenoKg) : null,
       porciones: Number(porciones),
+      cantidad_cajones: cantidadCajones ? Number(cantidadCajones) : null,
+      ubicacion: yaEnCamara ? 'camara_congelado' : 'freezer_produccion',
+      fecha_porcionado: yaEnCamara ? fecha : null,
       responsable: responsable.trim() || null,
       local,
       notas: notas.trim() || null,
@@ -799,7 +997,7 @@ function ModalPasta({ fecha, productos, recetasMasa, lotesRellenoDia, lotesMasaD
             </select>
           </div>
 
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-4 gap-3">
             <div>
               <label className="block text-xs text-gray-500 mb-1">Masa (kg)</label>
               <input type="number" step="0.1" value={masaKg} onChange={(e) => setMasaKg(e.target.value)} className="w-full border border-gray-300 rounded px-3 py-1.5 text-sm" />
@@ -809,10 +1007,19 @@ function ModalPasta({ fecha, productos, recetasMasa, lotesRellenoDia, lotesMasaD
               <input type="number" step="0.1" value={rellenoKg} onChange={(e) => setRellenoKg(e.target.value)} className="w-full border border-gray-300 rounded px-3 py-1.5 text-sm" />
             </div>
             <div>
+              <label className="block text-xs text-gray-500 mb-1">Cajones</label>
+              <input type="number" value={cantidadCajones} onChange={(e) => setCantidadCajones(e.target.value)} className="w-full border border-gray-300 rounded px-3 py-1.5 text-sm" placeholder="3" />
+            </div>
+            <div>
               <label className="block text-xs text-gray-500 mb-1">Porciones</label>
               <input type="number" value={porciones} onChange={(e) => setPorciones(e.target.value)} className="w-full border border-gray-300 rounded px-3 py-1.5 text-sm" placeholder="100" />
             </div>
           </div>
+
+          <label className="flex items-center gap-2 text-xs text-gray-600">
+            <input type="checkbox" checked={yaEnCamara} onChange={(e) => setYaEnCamara(e.target.checked)} />
+            Ya está porcionado en cámara (saltear paso de porcionado)
+          </label>
 
           <div className="grid grid-cols-2 gap-3">
             <div>

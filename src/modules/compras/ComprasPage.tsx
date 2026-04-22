@@ -8,6 +8,7 @@ import { parseFudoGastos, type DetalleRow, type GastoRow } from '@/modules/finan
 import { NuevoGastoModal, type PrefillGasto } from '@/modules/gastos/NuevoGastoModal'
 import { ProveedoresPanel } from '@/modules/gastos/ProveedoresPanel'
 import { ListadoGastos } from '@/modules/gastos/ListadoGastos'
+import { PastasTerminadasPanel } from './components/PastasTerminadasPanel'
 import type { MedioPago } from '@/modules/gastos/types'
 import { MEDIO_PAGO_LABEL } from '@/modules/gastos/types'
 
@@ -949,6 +950,9 @@ export function ComprasPage() {
               </div>
             )
           })()}
+
+          {/* Panel read-only de pastas terminadas (viene de Cocina) */}
+          {!modoConteo && <PastasTerminadasPanel local={local} filtro={filtro} />}
 
           {/* Tabla de stock (oculta en modo conteo) */}
           {!modoConteo && <div className="bg-white rounded-lg border border-surface-border overflow-hidden">

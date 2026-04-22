@@ -9,7 +9,7 @@ interface Producto {
   minimo_produccion: number | null; local: string; activo: boolean
 }
 interface LotePasta {
-  producto_id: string; porciones: number; local: string
+  producto_id: string; porciones: number; local: string; ubicacion: 'freezer_produccion' | 'camara_congelado'
 }
 interface Traspaso {
   producto_id: string; porciones: number; local: string
@@ -24,6 +24,7 @@ interface StockRow {
   producto: Producto
   local: string
   producido: number
+  fresco: number
   traspasado: number
   merma: number
   stock: number
@@ -44,7 +45,7 @@ export function StockTab() {
   const { data: lotesPasta } = useQuery({
     queryKey: ['cocina-stock-lotes'],
     queryFn: async () => {
-      const { data, error } = await supabase.from('cocina_lotes_pasta').select('producto_id, porciones, local')
+      const { data, error } = await supabase.from('cocina_lotes_pasta').select('producto_id, porciones, local, ubicacion')
       if (error) throw error
       return data as LotePasta[]
     },
@@ -81,8 +82,12 @@ export function StockTab() {
       for (const loc of locales) {
         if (prod.local !== loc) continue
 
+        // Producido en cámara = stock disponible. Fresco = pendiente de porcionar (no cuenta como stock).
         const producido = lotesPasta
-          .filter((l) => l.producto_id === prod.id && l.local === loc)
+          .filter((l) => l.producto_id === prod.id && l.local === loc && l.ubicacion === 'camara_congelado')
+          .reduce((s, l) => s + l.porciones, 0)
+        const fresco = lotesPasta
+          .filter((l) => l.producto_id === prod.id && l.local === loc && l.ubicacion === 'freezer_produccion')
           .reduce((s, l) => s + l.porciones, 0)
         const traspasado = traspasos
           .filter((t) => t.producto_id === prod.id && t.local === loc)
@@ -94,8 +99,8 @@ export function StockTab() {
         const stock = producido - traspasado - mermaTotal
 
         // Solo mostrar si hay actividad o stock
-        if (producido > 0 || traspasado > 0 || mermaTotal > 0) {
-          rows.push({ producto: prod, local: loc, producido, traspasado, merma: mermaTotal, stock })
+        if (producido > 0 || fresco > 0 || traspasado > 0 || mermaTotal > 0) {
+          rows.push({ producto: prod, local: loc, producido, fresco, traspasado, merma: mermaTotal, stock })
         }
       }
     }
@@ -110,17 +115,19 @@ export function StockTab() {
     ).length
     const sinStock = stockRows.filter((r) => r.stock <= 0).length
     const totalPorciones = stockRows.reduce((s, r) => s + Math.max(0, r.stock), 0)
-    return { totalProductos, bajoMinimo, sinStock, totalPorciones }
+    const totalFrescos = stockRows.reduce((s, r) => s + r.fresco, 0)
+    return { totalProductos, bajoMinimo, sinStock, totalPorciones, totalFrescos }
   }, [stockRows])
 
   return (
     <div className="space-y-4">
       {/* KPIs */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         <KPICard label="Productos en stock" value={String(kpis.totalProductos)} color="blue" loading={isLoading} />
         <KPICard label="Bajo mínimo" value={String(kpis.bajoMinimo)} color="yellow" loading={isLoading} />
         <KPICard label="Sin stock" value={String(kpis.sinStock)} color="red" loading={isLoading} />
-        <KPICard label="Total porciones" value={String(kpis.totalPorciones)} color="green" loading={isLoading} />
+        <KPICard label="En cámara" value={String(kpis.totalPorciones)} color="green" loading={isLoading} />
+        <KPICard label="Frescos (sala)" value={String(kpis.totalFrescos)} color={kpis.totalFrescos > 0 ? 'blue' : 'neutral'} loading={isLoading} />
       </div>
 
       {/* Toolbar */}
@@ -130,7 +137,7 @@ export function StockTab() {
           <option value="vedia">Vedia</option>
           <option value="saavedra">Saavedra</option>
         </select>
-        <span className="text-xs text-gray-400 ml-auto">El stock se calcula como: producción − traspasos − merma</span>
+        <span className="text-xs text-gray-400 ml-auto">Stock disponible = en cámara − traspasos − merma · Los frescos no cuentan hasta ser porcionados</span>
       </div>
 
       {/* Tabla */}
@@ -141,7 +148,8 @@ export function StockTab() {
               <th className="px-4 py-2">Producto</th>
               <th className="px-4 py-2">Código</th>
               <th className="px-4 py-2">Local</th>
-              <th className="px-4 py-2 text-right">Producido</th>
+              <th className="px-4 py-2 text-right">En cámara</th>
+              <th className="px-4 py-2 text-right">Frescos</th>
               <th className="px-4 py-2 text-right">Traspasado</th>
               <th className="px-4 py-2 text-right">Merma</th>
               <th className="px-4 py-2 text-right">Stock actual</th>
@@ -163,6 +171,9 @@ export function StockTab() {
                   <td className="px-4 py-2 font-mono text-xs">{r.producto.codigo}</td>
                   <td className="px-4 py-2 capitalize">{r.local}</td>
                   <td className="px-4 py-2 text-right">{r.producido}</td>
+                  <td className="px-4 py-2 text-right">
+                    {r.fresco > 0 ? <span className="text-blue-600 font-medium">{r.fresco}</span> : '—'}
+                  </td>
                   <td className="px-4 py-2 text-right">{r.traspasado}</td>
                   <td className="px-4 py-2 text-right">{r.merma}</td>
                   <td className="px-4 py-2 text-right font-semibold">{r.stock}</td>
@@ -176,7 +187,7 @@ export function StockTab() {
               )
             })}
             {stockRows.length === 0 && (
-              <tr><td colSpan={9} className="px-4 py-8 text-center text-gray-400">{isLoading ? 'Cargando...' : 'No hay datos de stock aún'}</td></tr>
+              <tr><td colSpan={10} className="px-4 py-8 text-center text-gray-400">{isLoading ? 'Cargando...' : 'No hay datos de stock aún'}</td></tr>
             )}
           </tbody>
         </table>
