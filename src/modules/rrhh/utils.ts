@@ -80,6 +80,53 @@ export function diffMinutosVsHorario(ahora: Date, horaProgramada: string | null)
   return Math.round((ahora.getTime() - prog.getTime()) / 60000)
 }
 
+// Dado un momento y una lista de turnos del día (posiblemente partida),
+// elige la hora programada más cercana al fichaje y devuelve la diferencia
+// en minutos, normalizada para cruces de medianoche.
+// Ej: turnos=[{11:00-15:00},{20:00-00:30}], ahora=20:03 entrada → +3.
+//     Si no hay turnos, cae al par legacy hora_entrada/hora_salida.
+export function diffMinutosVsTurnos(
+  ahora: Date,
+  turnos: TurnoCrono[] | null | undefined,
+  tipo: 'entrada' | 'salida',
+  legacyEntrada?: string | null,
+  legacySalida?: string | null,
+): number | null {
+  const opciones: string[] = []
+  if (turnos && turnos.length > 0) {
+    for (const t of turnos) opciones.push(tipo === 'entrada' ? t.entrada : t.salida)
+  } else {
+    const h = tipo === 'entrada' ? legacyEntrada : legacySalida
+    if (h) opciones.push(h)
+  }
+  if (opciones.length === 0) return null
+
+  let mejor: number | null = null
+  for (const hp of opciones) {
+    const [h, m] = hp.split(':').map(Number)
+    const prog = new Date(ahora)
+    prog.setHours(h, m, 0, 0)
+    let diff = Math.round((ahora.getTime() - prog.getTime()) / 60000)
+    // Normalizar cruce de medianoche: si |diff|>12h asumir que hay un salto de día
+    if (diff > 720) diff -= 1440
+    if (diff < -720) diff += 1440
+    if (mejor === null || Math.abs(diff) < Math.abs(mejor)) mejor = diff
+  }
+  return mejor
+}
+
+// Formatea los turnos del día para mostrarlos al usuario.
+// Ej: [{11:00-15:00},{20:00-00:30}] → "11:00–15:00 · 20:00–00:30"
+export function formatTurnos(
+  turnos: TurnoCrono[] | null | undefined,
+  legacyEntrada?: string | null,
+  legacySalida?: string | null,
+): string {
+  if (turnos && turnos.length > 0) return turnos.map((t) => `${t.entrada}–${t.salida}`).join(' · ')
+  if (legacyEntrada && legacySalida) return `${legacyEntrada}–${legacySalida}`
+  return ''
+}
+
 // ── Formato HH:MM desde un Date ─────────────────────────────────────────────
 export function hhmm(d: Date): string {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`

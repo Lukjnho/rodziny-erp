@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { supabaseAnon as supabase } from '@/lib/supabaseAnon'
 import { cn } from '@/lib/utils'
-import { TOLERANCIA_MIN, ymd, hhmm, diffMinutosVsHorario } from './utils'
+import { TOLERANCIA_MIN, ymd, hhmm, diffMinutosVsTurnos, formatTurnos, type TurnoCrono } from './utils'
 
 // ─── Configuración editable ─────────────────────────────────────────────────
 // Si en el local detectás que las coordenadas no son exactas, ajustalas acá
@@ -32,6 +32,7 @@ interface Cronograma {
   fecha: string
   hora_entrada: string | null
   hora_salida: string | null
+  turnos: TurnoCrono[] | null
   es_franco: boolean
   publicado: boolean
 }
@@ -399,7 +400,7 @@ function Inicio({ empleado, onIrAFichar, onIrAHorarios, onIrAQuincena }: {
           <p className="text-base font-semibold text-blue-700">FRANCO</p>
         ) : crono?.hora_entrada ? (
           <p className="text-base font-semibold text-gray-900">
-            {crono.hora_entrada} – {crono.hora_salida}
+            {formatTurnos(crono.turnos, crono.hora_entrada, crono.hora_salida)}
           </p>
         ) : (
           <p className="text-sm text-gray-500">No tenés turno asignado hoy</p>
@@ -580,22 +581,29 @@ function Fichando({ empleado, onCancelar, onListo }: {
         fechaFichada = fechaHoy
       }
 
-      // Cronograma del día correspondiente (para diferencia)
+      // Cronograma del día correspondiente (con turnos partidos)
       const { data: crono } = await supabase
         .from('cronograma')
-        .select('hora_entrada, hora_salida, es_franco, publicado')
+        .select('hora_entrada, hora_salida, turnos, es_franco, publicado')
         .eq('empleado_id', empleado.id)
         .eq('fecha', fechaFichada)
         .maybeSingle()
 
-      const horaProgramada = tipo === 'entrada' ? crono?.hora_entrada ?? null : crono?.hora_salida ?? null
-      const minutosDif = diffMinutosVsHorario(ahora, horaProgramada)
+      const turnosDia = (crono?.turnos as TurnoCrono[] | null) ?? null
+      const minutosDif = diffMinutosVsTurnos(
+        ahora,
+        turnosDia,
+        tipo,
+        crono?.hora_entrada ?? null,
+        crono?.hora_salida ?? null,
+      )
+      const tieneHorario = (turnosDia && turnosDia.length > 0) || !!crono?.hora_entrada
 
       // Warnings (no bloquean)
       let w: string | null = null
       if (crono?.es_franco) w = 'Hoy figurás de franco. Quedará registrado igual.'
       else if (crono && !crono.publicado) w = 'Tu horario de hoy está en borrador (sin publicar). Queda registrado igual.'
-      else if (!horaProgramada) w = 'No tenés horario asignado para hoy.'
+      else if (!tieneHorario) w = 'No tenés horario asignado para hoy.'
       else if (minutosDif !== null && Math.abs(minutosDif) > TOLERANCIA_MIN)
         w = `Estás ${minutosDif > 0 ? 'tarde' : 'antes'} ${Math.abs(minutosDif)} min vs tu horario.`
       setWarning(w)
@@ -767,7 +775,7 @@ function MisHorarios({ empleado, onVolver }: { empleado: Empleado; onVolver: () 
               <div key={f.id} className="flex justify-between text-xs border-b border-gray-100 py-1.5">
                 <span className="capitalize text-gray-700">{dia}</span>
                 <span className={cn('font-medium', f.es_franco ? 'text-blue-700' : 'text-gray-900')}>
-                  {f.es_franco ? 'Franco' : `${f.hora_entrada} – ${f.hora_salida}`}
+                  {f.es_franco ? 'Franco' : formatTurnos(f.turnos, f.hora_entrada, f.hora_salida)}
                 </span>
               </div>
             )

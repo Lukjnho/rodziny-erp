@@ -7,13 +7,15 @@ import {
   TOLERANCIA_MIN,
   MESES,
   diasDeQuincena,
-  diffMinutosVsHorario,
+  diffMinutosVsTurnos,
+  formatTurnos,
   etiquetaDia,
   normalizarTexto,
   parseYmd,
   ultimoDiaDelMes,
   ymd,
   type Quincena,
+  type TurnoCrono,
 } from './utils'
 
 type FiltroLocal = 'todos' | 'vedia' | 'saavedra' | 'ambos'
@@ -27,6 +29,7 @@ interface Cronograma {
   fecha: string
   hora_entrada: string | null
   hora_salida: string | null
+  turnos: TurnoCrono[] | null
   es_franco: boolean
   publicado: boolean
 }
@@ -685,7 +688,7 @@ function DetalleDia({
               {c?.es_franco
                 ? 'FRANCO'
                 : c?.hora_entrada
-                  ? `Turno: ${c.hora_entrada} – ${c.hora_salida}`
+                  ? `Turno: ${formatTurnos(c.turnos, c.hora_entrada, c.hora_salida)}`
                   : 'Sin turno'}
               {c && !c.publicado && ' · borrador'}
               {horasTrabajadas && <span className="ml-2 text-green-700">({horasTrabajadas})</span>}
@@ -861,15 +864,20 @@ function ModalEditarFichada({
       const nuevoTs = parseYmd(fichada.fecha)
       nuevoTs.setHours(h, m, 0, 0)
 
-      // Recalcular minutos_diferencia si hay cronograma
+      // Recalcular minutos_diferencia considerando turnos partidos
       const { data: crono } = await supabase
         .from('cronograma')
-        .select('hora_entrada, hora_salida')
+        .select('hora_entrada, hora_salida, turnos')
         .eq('empleado_id', fichada.empleado_id)
         .eq('fecha', fichada.fecha)
         .maybeSingle()
-      const horaProgramada = tipo === 'entrada' ? crono?.hora_entrada ?? null : crono?.hora_salida ?? null
-      const minutosDif = diffMinutosVsHorario(nuevoTs, horaProgramada)
+      const minutosDif = diffMinutosVsTurnos(
+        nuevoTs,
+        (crono?.turnos as TurnoCrono[] | null) ?? null,
+        tipo,
+        crono?.hora_entrada ?? null,
+        crono?.hora_salida ?? null,
+      )
 
       const { error: e } = await supabase
         .from('fichadas')
@@ -963,15 +971,20 @@ function ModalFichajeManual({
       const [h, m] = hora.split(':').map(Number)
       ts.setHours(h, m, 0, 0)
 
-      // Calcular minutos_diferencia
+      // Calcular minutos_diferencia considerando turnos partidos
       const { data: crono } = await supabase
         .from('cronograma')
-        .select('hora_entrada, hora_salida')
+        .select('hora_entrada, hora_salida, turnos')
         .eq('empleado_id', empleadoId)
         .eq('fecha', fecha)
         .maybeSingle()
-      const horaProgramada = tipo === 'entrada' ? crono?.hora_entrada ?? null : crono?.hora_salida ?? null
-      const minutosDif = diffMinutosVsHorario(ts, horaProgramada)
+      const minutosDif = diffMinutosVsTurnos(
+        ts,
+        (crono?.turnos as TurnoCrono[] | null) ?? null,
+        tipo,
+        crono?.hora_entrada ?? null,
+        crono?.hora_salida ?? null,
+      )
 
       const { error: e } = await supabase.from('fichadas').insert({
         empleado_id: empleadoId,
