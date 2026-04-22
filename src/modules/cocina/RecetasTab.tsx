@@ -758,7 +758,7 @@ function ModalReceta({
         const payload = {
           receta_id: recetaId!,
           nombre: ing.nombre.trim(),
-          cantidad: Number(ing.cantidad),
+          cantidad: Number(String(ing.cantidad).replace(',', '.')),
           unidad: ing.unidad,
           observaciones: ing.observaciones.trim() || null,
           orden: i,
@@ -910,22 +910,27 @@ function ModalReceta({
 
           {/* Tab Ingredientes */}
           {tab === 'ingredientes' && (
-            <div className="space-y-3">
-              {ings.length === 0 && (
-                <p className="text-xs text-gray-400 italic text-center py-4">
+            <div className="space-y-2">
+              {ings.length === 0 ? (
+                <p className="text-xs text-gray-400 italic text-center py-6">
                   No hay ingredientes todavía. Agregá el primero.
                 </p>
-              )}
-              {ings.map((ing, idx) => (
-                <div
-                  key={ing.tempId}
-                  className="bg-gray-50 rounded-lg p-2.5 border border-gray-200 space-y-2"
-                >
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] text-gray-400 font-mono w-4 text-right flex-shrink-0">
-                      {idx + 1}
-                    </span>
-                    <div className="flex-1">
+              ) : (
+                <div className="border border-gray-200 rounded-lg overflow-hidden">
+                  <div className="grid grid-cols-[28px_minmax(0,1fr)_84px_64px_minmax(0,1fr)_74px] gap-2 bg-gray-100 border-b border-gray-200 px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+                    <span className="text-center">#</span>
+                    <span>Ingrediente</span>
+                    <span className="text-right pr-2">Cantidad</span>
+                    <span>Unidad</span>
+                    <span>Observaciones</span>
+                    <span className="text-right">Acciones</span>
+                  </div>
+                  {ings.map((ing, idx) => (
+                    <div
+                      key={ing.tempId}
+                      className={'grid grid-cols-[28px_minmax(0,1fr)_84px_64px_minmax(0,1fr)_74px] gap-2 items-center px-2 py-1 border-b border-gray-100 last:border-b-0 hover:bg-rodziny-50/40 ' + (idx % 2 === 1 ? 'bg-gray-50/40' : 'bg-white')}
+                    >
+                      <span className="text-[10px] text-gray-400 font-mono text-center">{idx + 1}</span>
                       <AutocompleteIngrediente
                         valor={ing.nombre}
                         productos={productosCompras ?? []}
@@ -934,52 +939,50 @@ function ModalReceta({
                         onChange={(v) => actualizarIng(ing.tempId, 'nombre', v)}
                         onSelect={(p, tipo) => seleccionarProducto(ing.tempId, p, tipo)}
                       />
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        value={ing.cantidad}
+                        onChange={(e) => actualizarIng(ing.tempId, 'cantidad', e.target.value)}
+                        placeholder="0"
+                        className="w-full border border-transparent bg-transparent focus:bg-white focus:border-rodziny-300 rounded px-1.5 py-1 text-sm text-right tabular-nums outline-none placeholder:text-gray-300"
+                      />
+                      <select
+                        value={ing.unidad}
+                        onChange={(e) => actualizarIng(ing.tempId, 'unidad', e.target.value)}
+                        className="w-full border border-transparent bg-transparent hover:bg-white focus:bg-white focus:border-rodziny-300 rounded px-1 py-1 text-sm outline-none"
+                      >
+                        {UNIDADES.map((u) => <option key={u} value={u}>{u}</option>)}
+                      </select>
+                      <input
+                        value={ing.observaciones}
+                        onChange={(e) => actualizarIng(ing.tempId, 'observaciones', e.target.value)}
+                        placeholder="—"
+                        className="w-full border border-transparent bg-transparent focus:bg-white focus:border-rodziny-300 rounded px-1.5 py-1 text-xs text-gray-600 outline-none placeholder:text-gray-300"
+                      />
+                      <div className="flex items-center justify-end gap-0.5">
+                        <button
+                          onClick={() => moverIng(ing.tempId, -1)}
+                          disabled={idx === 0}
+                          className="text-gray-400 hover:text-gray-600 disabled:opacity-20 text-[10px] px-1"
+                          title="Subir"
+                        >▲</button>
+                        <button
+                          onClick={() => moverIng(ing.tempId, 1)}
+                          disabled={idx === ings.length - 1}
+                          className="text-gray-400 hover:text-gray-600 disabled:opacity-20 text-[10px] px-1"
+                          title="Bajar"
+                        >▼</button>
+                        <button
+                          onClick={() => eliminarIng(ing.tempId)}
+                          className="text-red-400 hover:text-red-600 text-xs px-1"
+                          title="Eliminar ingrediente"
+                        >✕</button>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-1 flex-shrink-0">
-                      <button
-                        onClick={() => moverIng(ing.tempId, -1)}
-                        disabled={idx === 0}
-                        className="text-gray-400 hover:text-gray-600 disabled:opacity-20 text-[10px] px-1"
-                        title="Subir"
-                      >▲</button>
-                      <button
-                        onClick={() => moverIng(ing.tempId, 1)}
-                        disabled={idx === ings.length - 1}
-                        className="text-gray-400 hover:text-gray-600 disabled:opacity-20 text-[10px] px-1"
-                        title="Bajar"
-                      >▼</button>
-                      <button
-                        onClick={() => eliminarIng(ing.tempId)}
-                        className="text-red-400 hover:text-red-600 text-xs ml-1"
-                        title="Eliminar ingrediente"
-                      >✕</button>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2 ml-6">
-                    <input
-                      type="number"
-                      step="0.1"
-                      value={ing.cantidad}
-                      onChange={(e) => actualizarIng(ing.tempId, 'cantidad', e.target.value)}
-                      placeholder="Cantidad"
-                      className="w-24 border border-gray-300 rounded px-2 py-1 text-sm text-right"
-                    />
-                    <select
-                      value={ing.unidad}
-                      onChange={(e) => actualizarIng(ing.tempId, 'unidad', e.target.value)}
-                      className="w-16 border border-gray-300 rounded px-1 py-1 text-sm"
-                    >
-                      {UNIDADES.map((u) => <option key={u} value={u}>{u}</option>)}
-                    </select>
-                    <input
-                      value={ing.observaciones}
-                      onChange={(e) => actualizarIng(ing.tempId, 'observaciones', e.target.value)}
-                      placeholder="Observaciones..."
-                      className="flex-1 border border-gray-300 rounded px-2 py-1 text-sm text-gray-500"
-                    />
-                  </div>
+                  ))}
                 </div>
-              ))}
+              )}
               <button
                 onClick={agregarIngrediente}
                 className="w-full border-2 border-dashed border-gray-300 rounded-lg py-2 text-sm text-gray-500 hover:text-rodziny-700 hover:border-rodziny-300 transition-colors"
