@@ -529,8 +529,6 @@ function FormRelleno({ local, recetas, onGuardado, onVolver }: {
           </select>
         </div>
 
-        <IngredientesGrilla recetaId={recetaId || null} onChange={onGrillaChange} />
-
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="block text-xs font-medium text-gray-700 mb-1">Cant. recetas</label>
@@ -556,6 +554,12 @@ function FormRelleno({ local, recetas, onGuardado, onVolver }: {
             />
           </div>
         </div>
+
+        <IngredientesGrilla
+          recetaId={recetaId || null}
+          onChange={onGrillaChange}
+          multiplicador={Number(cantRecetas) || 1}
+        />
 
         <div>
           <label className="block text-xs font-medium text-gray-700 mb-1">Responsable</label>

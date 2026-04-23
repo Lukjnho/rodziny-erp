@@ -27,14 +27,18 @@ interface IngredienteRow {
 interface Props {
   recetaId: string | null
   onChange: (ingredientes: IngredienteReal[]) => void
+  // Cantidad de recetas que se van a producir. Los ingredientes se pre-llenan
+  // multiplicados por este número. Default: 1.
+  multiplicador?: number
 }
 
 // Muestra los ingredientes de la receta seleccionada con cantidades editables.
 // Si no hay ingredientes cargados en la receta, no renderiza nada.
-export function IngredientesGrilla({ recetaId, onChange }: Props) {
+export function IngredientesGrilla({ recetaId, onChange, multiplicador = 1 }: Props) {
   const [expandido, setExpandido] = useState(false)
   const [cantidades, setCantidades] = useState<Record<string, string>>({})
   const { costos } = useCostosRecetas()
+  const factor = multiplicador > 0 ? multiplicador : 1
 
   const { data: ingredientes, isLoading } = useQuery({
     queryKey: ['cocina-receta-ingredientes-grilla', recetaId],
@@ -51,27 +55,31 @@ export function IngredientesGrilla({ recetaId, onChange }: Props) {
     enabled: !!recetaId,
   })
 
-  // Inicializar cantidades con defaults de la receta cuando cambia
+  // Inicializar cantidades con defaults de la receta cuando cambia la receta
+  // o el multiplicador (cantidad de recetas a producir). Multiplica cada
+  // ingrediente base × factor para que el operario vea directamente cuánto usar.
   useEffect(() => {
     if (ingredientes) {
       const initial: Record<string, string> = {}
-      for (const i of ingredientes) initial[i.id] = String(i.cantidad)
+      for (const i of ingredientes) initial[i.id] = String(+(i.cantidad * factor).toFixed(3))
       setCantidades(initial)
     }
-  }, [ingredientes])
+  }, [ingredientes, factor])
 
-  // Emitir al padre ante cada cambio
+  // Emitir al padre ante cada cambio. cantidad_receta refleja el total base
+  // (multiplicado por factor) — así lo que se guarda en ingredientes_reales
+  // representa lo realmente pedido para ese lote.
   const reales: IngredienteReal[] = useMemo(() => {
     if (!ingredientes) return []
     return ingredientes.map((i) => ({
       ing_id: i.id,
       nombre: i.nombre,
-      cantidad_receta: i.cantidad,
-      cantidad_real: Number(cantidades[i.id] ?? i.cantidad),
+      cantidad_receta: +(i.cantidad * factor).toFixed(3),
+      cantidad_real: Number(cantidades[i.id] ?? i.cantidad * factor),
       unidad: i.unidad,
       producto_id: i.producto_id,
     }))
-  }, [ingredientes, cantidades])
+  }, [ingredientes, cantidades, factor])
 
   useEffect(() => {
     onChange(reales)
@@ -90,26 +98,26 @@ export function IngredientesGrilla({ recetaId, onChange }: Props) {
 
   const costoBaseTotal = useMemo(() => {
     if (!costoReceta) return null
-    return costoReceta.costoBase
-  }, [costoReceta])
+    return costoReceta.costoBase * factor
+  }, [costoReceta, factor])
 
   const costoAjustadoTotal = useMemo(() => {
     if (!ingredientes || !costoReceta) return null
     let total = 0
     for (const i of ingredientes) {
       const base = costoPorIng.get(i.id) ?? 0
-      const real = Number(cantidades[i.id] ?? i.cantidad)
+      const real = Number(cantidades[i.id] ?? i.cantidad * factor)
       const ratio = i.cantidad > 0 ? real / i.cantidad : 1
       total += base * ratio
     }
     return total
-  }, [ingredientes, cantidades, costoPorIng, costoReceta])
+  }, [ingredientes, cantidades, costoPorIng, costoReceta, factor])
 
   if (!recetaId) return null
   if (isLoading) return <p className="text-[10px] text-gray-400">Cargando ingredientes…</p>
   if (!ingredientes || ingredientes.length === 0) return null
 
-  // Detectar si alguna cantidad fue modificada vs receta
+  // Detectar si alguna cantidad fue modificada vs el default (receta × factor)
   const ajustados = reales.filter((r) => Math.abs(r.cantidad_real - r.cantidad_receta) > 0.001).length
   const hayAjuste = ajustados > 0 && costoAjustadoTotal != null && costoBaseTotal != null && Math.abs(costoAjustadoTotal - costoBaseTotal) > 1
 
@@ -127,7 +135,9 @@ export function IngredientesGrilla({ recetaId, onChange }: Props) {
           <p className="text-[10px] text-gray-500">
             {ajustados > 0
               ? `${ajustados} ajustado${ajustados > 1 ? 's' : ''} — se guarda la cantidad real`
-              : 'Cantidades por receta · Tocá para ajustar si hubo variación'}
+              : factor > 1
+                ? `Multiplicado por ${factor} recetas · Tocá para ajustar`
+                : 'Cantidades por receta · Tocá para ajustar si hubo variación'}
           </p>
         </div>
         {costoAjustadoTotal != null && costoAjustadoTotal > 0 && (
@@ -146,9 +156,10 @@ export function IngredientesGrilla({ recetaId, onChange }: Props) {
       {expandido && (
         <div className="border-t border-gray-200 p-2 space-y-1.5 max-h-64 overflow-y-auto">
           {ingredientes.map((i) => {
-            const raw = cantidades[i.id] ?? String(i.cantidad)
+            const esperado = +(i.cantidad * factor).toFixed(3)
+            const raw = cantidades[i.id] ?? String(esperado)
             const realNum = Number(raw)
-            const ajustado = !Number.isNaN(realNum) && Math.abs(realNum - i.cantidad) > 0.001
+            const ajustado = !Number.isNaN(realNum) && Math.abs(realNum - esperado) > 0.001
             const costoBaseIng = costoPorIng.get(i.id) ?? null
             const ratio = i.cantidad > 0 && !Number.isNaN(realNum) ? realNum / i.cantidad : 1
             const costoIng = costoBaseIng != null ? costoBaseIng * ratio : null
@@ -174,17 +185,17 @@ export function IngredientesGrilla({ recetaId, onChange }: Props) {
             )
           })}
           <div className="pt-1 flex justify-between text-[10px] text-gray-400">
-            <span>Base de la receta</span>
+            <span>{factor > 1 ? `Base × ${factor} recetas` : 'Base de la receta'}</span>
             <button
               type="button"
               onClick={() => {
                 const reset: Record<string, string> = {}
-                for (const i of ingredientes) reset[i.id] = String(i.cantidad)
+                for (const i of ingredientes) reset[i.id] = String(+(i.cantidad * factor).toFixed(3))
                 setCantidades(reset)
               }}
               className="hover:text-gray-700 underline"
             >
-              Resetear a receta
+              Resetear
             </button>
           </div>
         </div>
