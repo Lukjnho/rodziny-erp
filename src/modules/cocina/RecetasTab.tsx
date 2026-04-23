@@ -1067,7 +1067,9 @@ function AutocompleteIngrediente({
 }) {
   const [abierto, setAbierto] = useState(false)
   const [focused, setFocused] = useState(false)
+  const [pos, setPos] = useState<{ top: number; left: number; width: number }>({ top: 0, left: 0, width: 0 })
   const ref = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
 
   // Combinar productos + recetas en una sola lista
   const opciones = useMemo(() => {
@@ -1125,9 +1127,27 @@ function AutocompleteIngrediente({
     return () => document.removeEventListener('mousedown', handleClick)
   }, [])
 
+  // Posicionar el dropdown con coordenadas de viewport (para escapar overflow:hidden de contenedores padres)
+  useEffect(() => {
+    if (!abierto) return
+    const update = () => {
+      if (!inputRef.current) return
+      const rect = inputRef.current.getBoundingClientRect()
+      setPos({ top: rect.bottom + 4, left: rect.left, width: rect.width })
+    }
+    update()
+    window.addEventListener('scroll', update, true)
+    window.addEventListener('resize', update)
+    return () => {
+      window.removeEventListener('scroll', update, true)
+      window.removeEventListener('resize', update)
+    }
+  }, [abierto])
+
   return (
     <div className="relative" ref={ref}>
       <input
+        ref={inputRef}
         value={valor}
         onChange={(e) => {
           onChange(e.target.value)
@@ -1142,7 +1162,10 @@ function AutocompleteIngrediente({
         )}
       />
       {abierto && filtrados.length > 0 && (
-        <div className="absolute z-50 top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-56 overflow-y-auto">
+        <div
+          className="fixed z-[100] bg-white border border-gray-200 rounded-lg shadow-lg max-h-56 overflow-y-auto"
+          style={{ top: pos.top, left: pos.left, width: pos.width }}
+        >
           {filtrados.map((o, i) => {
             // Separador visual entre recetas y productos
             const prevTipo = i > 0 ? filtrados[i - 1].tipo : null
