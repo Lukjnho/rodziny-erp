@@ -985,6 +985,7 @@ function FormMasa({ local, recetas, onGuardado, onVolver }: {
   onGuardado: (msg: string) => void; onVolver: () => void
 }) {
   const [recetaId, setRecetaId] = useState(recetas[0]?.id ?? '')
+  const [cantRecetas, setCantRecetas] = useState('1')
   const [kgProducidos, setKgProducidos] = useState('')
   const [responsable, setResponsable] = useState('')
   const [notas, setNotas] = useState('')
@@ -1039,20 +1040,37 @@ function FormMasa({ local, recetas, onGuardado, onVolver }: {
           </select>
         </div>
 
-        <IngredientesGrilla recetaId={recetaId || null} onChange={onGrillaChange} />
-
-        <div>
-          <label className="block text-xs font-medium text-gray-700 mb-1">Kg producidos</label>
-          <input
-            type="number"
-            inputMode="decimal"
-            step="0.1"
-            value={kgProducidos}
-            onChange={(e) => setKgProducidos(e.target.value)}
-            className="w-full border border-gray-300 rounded px-3 py-2.5 text-sm"
-            placeholder="10.0"
-          />
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Cant. recetas</label>
+            <input
+              type="number"
+              inputMode="numeric"
+              min={1}
+              value={cantRecetas}
+              onChange={(e) => setCantRecetas(e.target.value)}
+              className="w-full border border-gray-300 rounded px-3 py-2.5 text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Kg producidos</label>
+            <input
+              type="number"
+              inputMode="decimal"
+              step="0.1"
+              value={kgProducidos}
+              onChange={(e) => setKgProducidos(e.target.value)}
+              className="w-full border border-gray-300 rounded px-3 py-2.5 text-sm"
+              placeholder="10.0"
+            />
+          </div>
         </div>
+
+        <IngredientesGrilla
+          recetaId={recetaId || null}
+          onChange={onGrillaChange}
+          multiplicador={Number(cantRecetas) || 1}
+        />
 
         <div>
           <label className="block text-xs font-medium text-gray-700 mb-1">Responsable</label>
