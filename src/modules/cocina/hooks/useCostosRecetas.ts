@@ -355,6 +355,28 @@ export function useCostosRecetas() {
           continue
         }
 
+        // Si el nombre trae prefijo "Subreceta" pero no matcheó con ninguna receta, NO caer a producto:
+        // el usuario explícitamente marcó que es una subreceta. Caer a producto daría matches falsos
+        // (ej. "Subreceta Pomodoro" matcheando con un producto lata "Pomodoro" y disparando "No se puede convertir").
+        if (esSubrecetaPrefijo) {
+          const msg = `Subreceta "${ing.nombre.replace(/^subreceta\s+/i, '')}" no encontrada en el catálogo de recetas`
+          advertencias.push(msg)
+          detalles.push({
+            id: ing.id,
+            nombre: ing.nombre,
+            cantidad: ing.cantidad,
+            unidad: ing.unidad,
+            productoId: null,
+            productoNombre: null,
+            esSubreceta: true,
+            subrecetaId: null,
+            costoUnitario: null,
+            costoTotal: null,
+            error: msg,
+          })
+          continue
+        }
+
         // 2) resolver como producto
         let prod: ProductoRow | null = null
         if (ing.producto_id) {
