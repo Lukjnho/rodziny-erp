@@ -734,13 +734,13 @@ export function DashboardTab() {
       const ventasRecientePromedio =
         diasReciente > 0 ? Math.round((ventasReciente / diasReciente) * 10) / 10 : 0;
 
-      // Calcular porciones aprox del stock
+      // Calcular porciones aprox del stock (redondeo al alza: el chef prefiere un estimado conservador)
       let porcionesStock = 0;
       if (stockCantidad !== null) {
         if (prod.tipo === 'salsa') {
-          porcionesStock = Math.round((stockCantidad * 1000) / prod.gramosporcion);
+          porcionesStock = Math.ceil((stockCantidad * 1000) / prod.gramosporcion);
         } else {
-          porcionesStock = stockCantidad * prod.porcionesporunidad;
+          porcionesStock = Math.ceil(stockCantidad * prod.porcionesporunidad);
         }
       }
 
@@ -814,9 +814,10 @@ export function DashboardTab() {
         stockCantidad,
         stockFecha,
         porcionesStock,
-        ventasDiariasPromedio: Math.round(ventasDiariasPromedio * 10) / 10,
-        ventasDiariasAjustadas: Math.round(ventasDiariasAjustadas * 10) / 10,
-        ventasReciente: ventasRecientePromedio,
+        // Redondeo al alza para ventas y porciones: el chef prefiere un poco de más al decidir producción
+        ventasDiariasPromedio: Math.ceil(ventasDiariasPromedio),
+        ventasDiariasAjustadas: Math.ceil(ventasDiariasAjustadas),
+        ventasReciente: Math.ceil(ventasRecientePromedio),
         diasRestantes: diasRestantes !== null ? Math.round(diasRestantes * 10) / 10 : null,
         producirLabel,
         producirCantidad,
@@ -1186,10 +1187,10 @@ function CategoriaAccordion({
                 <th className="px-4 py-2.5 text-right">Stock actual</th>
                 <th className="px-4 py-2.5 text-right">Porc. aprox</th>
                 <th className="px-4 py-2.5 text-right">
-                  {ventanaDias === 1 ? 'Ayer' : `Últ. ${ventanaDias}d`}
+                  {ventanaDias === 1 ? 'Ventas ayer' : `Ventas/día (${ventanaDias}d)`}
                 </th>
-                <th className="px-4 py-2.5 text-right">Prom/día</th>
-                <th className="px-4 py-2.5 text-right">Días rest.</th>
+                <th className="px-4 py-2.5 text-right">Ventas/día (14d)</th>
+                <th className="px-4 py-2.5 text-right">Días restantes</th>
                 <th className="px-4 py-2.5 text-right">{'Producir (' + diaManana + ')'}</th>
                 <th className="w-24 px-4 py-2.5 text-center">Actualizar</th>
               </tr>
