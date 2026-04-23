@@ -1031,7 +1031,15 @@ function ModalReceta({
                     <span className="text-right">Acciones</span>
                   </div>
                   {ings.map((ing, idx) => {
-                    const errorIng = ing.dbId ? erroresPorIngId.get(ing.dbId) ?? null : null
+                    // Solo mostrar ⚠ si la fila NO fue editada respecto a DB — si el usuario cambió algo, el costeo está desactualizado
+                    const ingOriginal = ing.dbId ? ingredientesExistentes.find((o) => o.id === ing.dbId) : null
+                    const filaEditada = ingOriginal != null && (
+                      ingOriginal.nombre !== ing.nombre ||
+                      String(ingOriginal.cantidad) !== ing.cantidad ||
+                      ingOriginal.unidad !== ing.unidad ||
+                      (ingOriginal.producto_id ?? null) !== (ing.producto_id ?? null)
+                    )
+                    const errorIng = !filaEditada && ing.dbId ? erroresPorIngId.get(ing.dbId) ?? null : null
                     return (
                     <div
                       key={ing.tempId}
