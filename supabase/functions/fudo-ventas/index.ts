@@ -185,26 +185,20 @@ Deno.serve(async (req) => {
     let fechaFin: string
 
     if (horaDesde && horaHasta) {
-      // Filtrar por turno: convertir hora local Argentina a UTC (+3h)
+      // Filtrar por turno: convertir hora local Argentina a UTC (+3h).
+      // Usamos Date.UTC para que el overflow por cambio de día se normalice solo
+      // y no haya que manejar casos borde manualmente.
       const [hd, md] = horaDesde.split(':').map(Number)
       const [hh, mh] = horaHasta.split(':').map(Number)
+      const [yF, mF, dF] = fecha.split('-').map(Number)
+      const cruzaMedianoche = hh < hd || (hh === hd && mh < md)
 
-      // Hora inicio → UTC
-      const utcHd = hd + 3
-      const inicioSigDia = utcHd >= 24
-      const inicioFecha = inicioSigDia
-        ? (() => { const d2 = new Date(fecha + 'T12:00:00Z'); d2.setUTCDate(d2.getUTCDate() + 1); return d2.toISOString().substring(0, 10) })()
-        : fecha
-      fechaInicio = `${inicioFecha}T${String(utcHd % 24).padStart(2, '0')}:${String(md).padStart(2, '0')}:00Z`
+      const inicioUTC = new Date(Date.UTC(yF, mF - 1, dF, hd + 3, md, 0))
+      const finUTC = new Date(Date.UTC(yF, mF - 1, dF, hh + 3, mh, 59))
+      if (cruzaMedianoche) finUTC.setUTCDate(finUTC.getUTCDate() + 1)
 
-      // Hora fin → UTC. Si horaHasta < horaDesde, cruza medianoche (ej: 20:00-01:00)
-      const cruzaMedianoche = hh < hd
-      const utcHh = hh + 3 + (cruzaMedianoche ? 24 : 0)
-      const finSigDia = utcHh >= 24
-      const finFecha = finSigDia
-        ? (() => { const d2 = new Date(fecha + 'T12:00:00Z'); d2.setUTCDate(d2.getUTCDate() + 1); return d2.toISOString().substring(0, 10) })()
-        : fecha
-      fechaFin = `${finFecha}T${String(utcHh % 24).padStart(2, '0')}:${String(mh).padStart(2, '0')}:59Z`
+      fechaInicio = inicioUTC.toISOString().replace(/\.\d+Z$/, 'Z')
+      fechaFin = finUTC.toISOString().replace(/\.\d+Z$/, 'Z')
     } else {
       // Sin turno: día completo
       fechaInicio = `${fecha}T03:00:00Z`
@@ -318,9 +312,11 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Usar mapeo de medios de pago del local correspondiente
-    const pm = PM_POR_LOCAL[local] ?? PM_POR_LOCAL['vedia']
-    const pmVals = Object.values(pm)
+    // Mapeo de medios de pago del local. Si no existe, fallar explícito en vez
+    // de devolver silenciosamente los IDs de otro local (serían ceros engañosos).
+    const pm = PM_POR_LOCAL[local]
+    if (!pm) throw new Error(`Sin mapeo de medios de pago para local "${local}"`)
+    const pmVals = Object.values(pm).filter((v): v is string => !!v)
     const resultado = {
       fecha,
       local,
@@ -332,7 +328,7 @@ Deno.serve(async (req) => {
       debito: porMedioPago[pm.debito] ?? 0,
       credito: porMedioPago[pm.credito] ?? 0,
       transferencia: porMedioPago[pm.transferencia] ?? 0,
-      mpLucas: porMedioPago[pm.mpLucas ?? ''] ?? 0,
+      mpLucas: pm.mpLucas ? (porMedioPago[pm.mpLucas] ?? 0) : 0,
       ctaCte: porMedioPago[pm.ctaCte] ?? 0,
       otros: Object.entries(porMedioPago)
         .filter(([id]) => !pmVals.includes(id))
