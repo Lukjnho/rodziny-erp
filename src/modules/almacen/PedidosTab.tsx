@@ -501,6 +501,12 @@ function ModalPedido({
 
   async function guardar() {
     if (!form.producto_nombre || !form.cliente_nombre || !form.fecha_entrega) return;
+    // No permitir agendar un pedido con fecha de entrega anterior a hoy.
+    // Al editar un pedido viejo, sí permitimos mantener su fecha original.
+    if (!editando && form.fecha_entrega < hoy()) {
+      alert('La fecha de entrega no puede ser anterior a hoy.');
+      return;
+    }
     setGuardando(true);
 
     const payload = {
@@ -650,6 +656,7 @@ function ModalPedido({
               </label>
               <input
                 type="date"
+                min={editando ? undefined : hoy()}
                 value={form.fecha_entrega}
                 onChange={(e) => setForm({ ...form, fecha_entrega: e.target.value })}
                 className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm"
