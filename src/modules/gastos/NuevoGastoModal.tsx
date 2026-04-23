@@ -275,8 +275,10 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
 
   function calcularDesdeTotal(total: string, rate: number = form.iva_rate) {
     const t = parseFloat(total.replace(',', '.')) || 0
-    // Si tipo factura A → desglosar IVA. Si C/ticket/remito → sin IVA discriminado
-    if (form.tipo_comprobante === 'factura_a' && rate > 0) {
+    // Desglosamos IVA siempre que la alícuota sea > 0, sin importar el tipo de
+    // comprobante: el tipo es solo documental, el cálculo depende de la alícuota.
+    // Si el comprobante no discrimina IVA, el usuario pone alícuota 0.
+    if (rate > 0) {
       const factor = 1 + rate / 100
       const neto = +(t / factor).toFixed(2)
       const iva = +(t - neto).toFixed(2)
@@ -629,7 +631,14 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
       onSaved?.(gastoId)
       onClose()
     } catch (e: any) {
-      setError(e.message ?? 'Error al guardar')
+      const partes = [e?.message ?? 'Error al guardar']
+      if (e?.code) partes.push(`(${e.code})`)
+      if (e?.details) partes.push(`· ${e.details}`)
+      if (e?.hint) partes.push(`· ${e.hint}`)
+      const mensaje = partes.join(' ')
+      // Log detallado en consola para diagnosticar errores de RLS / check constraints
+      console.error('[NuevoGasto] Error al guardar:', e)
+      setError(mensaje)
     } finally {
       setGuardando(false)
     }
@@ -874,7 +883,7 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
               </div>
             </div>
             <p className="text-[10px] text-gray-400 mt-1">
-              Para Factura A: completá Neto o Total y se autocalcula. Para Factura C / Ticket / Remito: cargá solo el Total.
+              Cargá Neto o Total y se autocalcula según la alícuota. Si el comprobante no discrimina IVA, poné alícuota 0%.
             </p>
           </div>
 
