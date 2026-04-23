@@ -98,7 +98,7 @@ export function diffMinutosVsHorario(ahora: Date, horaProgramada: string | null)
   const [h, m] = horaProgramada.split(':').map(Number);
   const prog = new Date(ahora);
   prog.setHours(h, m, 0, 0);
-  return Math.round((ahora.getTime() - prog.getTime()) / 60000);
+  return Math.trunc((ahora.getTime() - prog.getTime()) / 60000);
 }
 
 // Dado un momento y una lista de turnos del día (posiblemente partida),
@@ -127,7 +127,10 @@ export function diffMinutosVsTurnos(
     const [h, m] = hp.split(':').map(Number);
     const prog = new Date(ahora);
     prog.setHours(h, m, 0, 0);
-    let diff = Math.round((ahora.getTime() - prog.getTime()) / 60000);
+    // Truncamos (no redondeamos). Fichar 10:30 tarde debe registrar 10 min, no 11:
+    // el umbral del CCT para perder presentismo es "> 10 min" y un empleado que
+    // llega 10:30 no debería caer por el redondeo al minuto siguiente.
+    let diff = Math.trunc((ahora.getTime() - prog.getTime()) / 60000);
     // Normalizar cruce de medianoche: si |diff|>12h asumir que hay un salto de día
     if (diff > 720) diff -= 1440;
     if (diff < -720) diff += 1440;
