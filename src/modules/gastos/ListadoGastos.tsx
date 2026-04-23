@@ -18,6 +18,11 @@ function ultimoDiaDelMes(d: Date) {
 
 type Preset = 'mes_actual' | 'mes_pasado' | 'ultimos_30' | 'anio' | 'personalizado'
 
+// Tipos de comprobante que exigen tener el archivo fiscal (factura_path) adjunto
+const TIPOS_REQUIEREN_FACTURA = new Set(['factura_a', 'factura_c', 'remito'])
+const requiereFactura = (g: Gasto) =>
+  TIPOS_REQUIEREN_FACTURA.has((g.tipo_comprobante ?? '').toLowerCase()) && !g.factura_path
+
 export function ListadoGastos({ localExterno }: { localExterno?: 'vedia' | 'saavedra' } = {}) {
   const qc = useQueryClient()
   const [localInterno, setLocalInterno] = useState<'ambos' | 'vedia' | 'saavedra'>('vedia')
@@ -28,6 +33,7 @@ export function ListadoGastos({ localExterno }: { localExterno?: 'vedia' | 'saav
   const [filtroEstado, setFiltroEstado] = useState<'todos' | 'pendiente' | 'pagado'>('todos')
   const [filtroProveedor, setFiltroProveedor] = useState('')
   const [filtroCategoria, setFiltroCategoria] = useState('')
+  const [filtroSinFactura, setFiltroSinFactura] = useState(false)
   const [busqueda, setBusqueda] = useState('')
   const [modalOpen, setModalOpen] = useState(false)
   const [editandoGasto, setEditandoGasto] = useState<Gasto | null>(null)
@@ -89,8 +95,14 @@ export function ListadoGastos({ localExterno }: { localExterno?: 'vedia' | 'saav
         (g.proveedor ?? '').toLowerCase().includes(b)
       )
     }
+    if (filtroSinFactura) {
+      lista = lista.filter(requiereFactura)
+    }
     return lista
-  }, [gastos, filtroEstado, filtroProveedor, filtroCategoria, busqueda])
+  }, [gastos, filtroEstado, filtroProveedor, filtroCategoria, busqueda, filtroSinFactura])
+
+  // Conteo total de gastos que exigen factura y no la tienen — para el KPI
+  const sinFacturaCount = useMemo(() => (gastos ?? []).filter(requiereFactura).length, [gastos])
 
   const totales = useMemo(() => {
     return filtrados.reduce((acc, g) => {
@@ -225,7 +237,7 @@ export function ListadoGastos({ localExterno }: { localExterno?: 'vedia' | 'saav
       </div>
 
       {/* KPIs */}
-      <div className="grid grid-cols-4 gap-3 mb-4">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
         <div className="bg-white rounded-lg border border-gray-200 px-4 py-3">
           <div className="text-[10px] uppercase text-gray-500 tracking-wide">Cantidad</div>
           <div className="text-lg font-bold text-gray-900 mt-0.5">{totales.cantidad}</div>
@@ -242,6 +254,24 @@ export function ListadoGastos({ localExterno }: { localExterno?: 'vedia' | 'saav
           <div className="text-[10px] uppercase text-green-700 tracking-wide">Pagado</div>
           <div className="text-lg font-bold text-green-900 mt-0.5">{formatARS(totales.pagado)}</div>
         </div>
+        <button
+          type="button"
+          onClick={() => setFiltroSinFactura((v) => !v)}
+          className={cn(
+            'rounded-lg border px-4 py-3 text-left transition-colors',
+            sinFacturaCount === 0
+              ? 'bg-gray-50 border-gray-200 cursor-default'
+              : filtroSinFactura
+                ? 'bg-red-100 border-red-300 ring-1 ring-red-200'
+                : 'bg-red-50 border-red-200 hover:bg-red-100 cursor-pointer'
+          )}
+          disabled={sinFacturaCount === 0}
+          title="Gastos con tipo Factura A/C o Remito que no tienen el archivo fiscal adjunto"
+        >
+          <div className="text-[10px] uppercase text-red-700 tracking-wide">⚠ Sin factura adjunta</div>
+          <div className="text-lg font-bold text-red-900 mt-0.5">{sinFacturaCount}</div>
+          {filtroSinFactura && <div className="text-[9px] text-red-700 mt-0.5">Filtro activo · click para quitar</div>}
+        </button>
       </div>
 
       {/* Tabla */}
@@ -311,8 +341,13 @@ export function ListadoGastos({ localExterno }: { localExterno?: 'vedia' | 'saav
                             className="text-emerald-600 hover:text-emerald-800 text-xs"
                             title="Ver factura"
                           >🧾</button>
+                        ) : requiereFactura(g) ? (
+                          <span
+                            className="text-amber-500 text-xs cursor-help"
+                            title={`Falta adjuntar la ${TIPO_COMPROBANTE_LABEL[(g.tipo_comprobante ?? 'factura_a') as keyof typeof TIPO_COMPROBANTE_LABEL] ?? g.tipo_comprobante}`}
+                          >⚠</span>
                         ) : null}
-                        {!g.comprobante_path && !g.factura_path && <span className="text-gray-300">—</span>}
+                        {!g.comprobante_path && !g.factura_path && !requiereFactura(g) && <span className="text-gray-300">—</span>}
                       </div>
                     </td>
                     <td className="px-3 py-2 text-right whitespace-nowrap">
