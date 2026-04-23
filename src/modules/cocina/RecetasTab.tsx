@@ -1250,12 +1250,17 @@ function AutocompleteIngrediente({
   }, [])
 
   // Posicionar el dropdown con coordenadas de viewport (para escapar overflow:hidden de contenedores padres)
+  // Ancho mínimo 360px así los nombres largos se ven completos; si el input está cerca del borde derecho,
+  // se desplaza a la izquierda para no salirse del viewport.
   useEffect(() => {
     if (!abierto) return
     const update = () => {
       if (!inputRef.current) return
       const rect = inputRef.current.getBoundingClientRect()
-      setPos({ top: rect.bottom + 4, left: rect.left, width: rect.width })
+      const width = Math.max(rect.width, 360)
+      const maxLeft = window.innerWidth - width - 8
+      const left = Math.max(8, Math.min(rect.left, maxLeft))
+      setPos({ top: rect.bottom + 4, left, width })
     }
     update()
     window.addEventListener('scroll', update, true)
@@ -1313,7 +1318,7 @@ function AutocompleteIngrediente({
                     <span className="truncate text-gray-800">{o.nombre}</span>
                   </div>
                   <span className="text-[10px] text-gray-400 flex-shrink-0">
-                    {o.tipo === 'receta' ? o.detalle : o.unidad}
+                    {o.unidad}
                   </span>
                 </button>
               </Fragment>
