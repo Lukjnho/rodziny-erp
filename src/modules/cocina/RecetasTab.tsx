@@ -90,6 +90,15 @@ export function RecetasTab() {
     },
   })
 
+  const ingredientesPorReceta = useMemo(() => {
+    const mapa = new Map<string, Ingrediente[]>()
+    for (const ing of todosIngredientes ?? []) {
+      if (!mapa.has(ing.receta_id)) mapa.set(ing.receta_id, [])
+      mapa.get(ing.receta_id)!.push(ing)
+    }
+    return mapa
+  }, [todosIngredientes])
+
   const filtrados = useMemo(() => {
     let lista = recetas ?? []
     if (filtroTipo !== 'todos') lista = lista.filter((r) => r.tipo === filtroTipo)
@@ -127,15 +136,6 @@ export function RecetasTab() {
     }
     return lista
   }, [recetas, filtroTipo, filtroLocal, filtroActivo, filtroAdvertencia, filtroCosteo, busqueda, costos, ingredientesPorReceta])
-
-  const ingredientesPorReceta = useMemo(() => {
-    const mapa = new Map<string, Ingrediente[]>()
-    for (const ing of todosIngredientes ?? []) {
-      if (!mapa.has(ing.receta_id)) mapa.set(ing.receta_id, [])
-      mapa.get(ing.receta_id)!.push(ing)
-    }
-    return mapa
-  }, [todosIngredientes])
 
   const kpis = useMemo(() => {
     const all = recetas ?? []
