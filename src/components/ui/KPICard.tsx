@@ -10,6 +10,8 @@ interface Props {
   icon?: ReactNode
   color?: Color
   loading?: boolean
+  onClick?: () => void   // si está seteado, la card es clickeable (filtro/drill-down)
+  active?: boolean       // resalta la card (indica filtro activo)
 }
 
 const borderColor: Record<Color, string> = {
@@ -20,7 +22,7 @@ const borderColor: Record<Color, string> = {
   neutral: '#9ca3af',
 }
 
-export function KPICard({ label, value, change, icon, color = 'neutral', loading }: Props) {
+export function KPICard({ label, value, change, icon, color = 'neutral', loading, onClick, active }: Props) {
   if (loading) {
     return (
       <div className="bg-white rounded-lg p-5 border border-surface-border animate-pulse kpi-card">
@@ -30,10 +32,21 @@ export function KPICard({ label, value, change, icon, color = 'neutral', loading
     )
   }
 
+  const Tag: 'button' | 'div' = onClick ? 'button' : 'div'
+
   return (
-    <div
-      className="bg-white rounded-lg p-5 border border-surface-border kpi-card"
-      style={{ borderLeft: `3px solid ${borderColor[color]}` }}
+    <Tag
+      onClick={onClick}
+      type={onClick ? 'button' : undefined}
+      className={cn(
+        'bg-white rounded-lg p-5 border border-surface-border kpi-card text-left w-full',
+        onClick && 'cursor-pointer hover:bg-gray-50 hover:shadow-sm transition-all',
+        active && 'ring-2 ring-offset-1 bg-gray-50',
+      )}
+      style={{
+        borderLeft: `3px solid ${borderColor[color]}`,
+        ...(active ? { boxShadow: `inset 0 0 0 1px ${borderColor[color]}` } : {}),
+      }}
     >
       <div className="flex items-center justify-between mb-2">
         <span className="text-xs font-medium uppercase tracking-wider text-gray-500">{label}</span>
@@ -45,6 +58,6 @@ export function KPICard({ label, value, change, icon, color = 'neutral', loading
           {change >= 0 ? '▲' : '▼'} {Math.abs(change).toFixed(1)}% vs período anterior
         </div>
       )}
-    </div>
+    </Tag>
   )
 }

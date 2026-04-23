@@ -57,6 +57,7 @@ export function RecetasTab() {
   const [filtroLocal, setFiltroLocal] = useState<string>('todos')
   const [filtroActivo, setFiltroActivo] = useState<'activas' | 'inactivas' | 'todas'>('activas')
   const [filtroAdvertencia, setFiltroAdvertencia] = useState<'todas' | 'con_adv' | 'sin_adv'>('todas')
+  const [filtroCosteo, setFiltroCosteo] = useState<'todos' | 'con_costeo' | 'sin_match'>('todos')
   const [modalAbierto, setModalAbierto] = useState(false)
   const [editando, setEditando] = useState<Receta | null>(null)
   const [duplicando, setDuplicando] = useState<Receta | null>(null)
@@ -107,12 +108,25 @@ export function RecetasTab() {
         return !c || c.advertencias.length === 0
       })
     }
+    if (filtroCosteo === 'con_costeo') {
+      lista = lista.filter((r) => {
+        const c = costos.get(r.id)
+        return !!c && c.costoBase > 0
+      })
+    } else if (filtroCosteo === 'sin_match') {
+      // mismo criterio que el KPI "Sin match": tiene ingredientes pero costoBase no es > 0
+      lista = lista.filter((r) => {
+        const c = costos.get(r.id)
+        const tieneIngs = (ingredientesPorReceta.get(r.id)?.length ?? 0) > 0
+        return tieneIngs && (!c || c.costoBase <= 0)
+      })
+    }
     if (busqueda.trim()) {
       const q = busqueda.toLowerCase()
       lista = lista.filter((r) => r.nombre.toLowerCase().includes(q))
     }
     return lista
-  }, [recetas, filtroTipo, filtroLocal, filtroActivo, filtroAdvertencia, busqueda, costos])
+  }, [recetas, filtroTipo, filtroLocal, filtroActivo, filtroAdvertencia, filtroCosteo, busqueda, costos, ingredientesPorReceta])
 
   const ingredientesPorReceta = useMemo(() => {
     const mapa = new Map<string, Ingrediente[]>()
@@ -215,15 +229,70 @@ export function RecetasTab() {
 
   return (
     <div className="space-y-4">
-      {/* KPIs */}
+      {/* KPIs — clickeables para filtrar la tabla */}
       <div className="grid grid-cols-2 md:grid-cols-7 gap-3">
-        <KPICard label="Total recetas" value={String(kpis.total)} color="blue" loading={isLoading} />
-        <KPICard label="Subrecetas" value={String(kpis.subrecetas)} color="neutral" loading={isLoading} />
-        <KPICard label="Rellenos" value={String(kpis.rellenos)} color="green" loading={isLoading} />
-        <KPICard label="Masas" value={String(kpis.masas)} color="neutral" loading={isLoading} />
-        <KPICard label="Con costeo" value={String(kpis.conCosto)} color="green" loading={isLoading} />
-        <KPICard label="Sin match" value={String(kpis.sinCosto)} color={kpis.sinCosto > 0 ? 'yellow' : 'neutral'} loading={isLoading} />
-        <KPICard label="Con advertencias" value={String(kpis.conAdv)} color={kpis.conAdv > 0 ? 'yellow' : 'neutral'} loading={isLoading} />
+        <KPICard
+          label="Total recetas"
+          value={String(kpis.total)}
+          color="blue"
+          loading={isLoading}
+          onClick={() => {
+            setFiltroTipo('todos')
+            setFiltroLocal('todos')
+            setFiltroActivo('todas')
+            setFiltroAdvertencia('todas')
+            setFiltroCosteo('todos')
+            setBusqueda('')
+          }}
+        />
+        <KPICard
+          label="Subrecetas"
+          value={String(kpis.subrecetas)}
+          color="neutral"
+          loading={isLoading}
+          active={filtroTipo === 'subreceta'}
+          onClick={() => setFiltroTipo(filtroTipo === 'subreceta' ? 'todos' : 'subreceta')}
+        />
+        <KPICard
+          label="Rellenos"
+          value={String(kpis.rellenos)}
+          color="green"
+          loading={isLoading}
+          active={filtroTipo === 'relleno'}
+          onClick={() => setFiltroTipo(filtroTipo === 'relleno' ? 'todos' : 'relleno')}
+        />
+        <KPICard
+          label="Masas"
+          value={String(kpis.masas)}
+          color="neutral"
+          loading={isLoading}
+          active={filtroTipo === 'masa'}
+          onClick={() => setFiltroTipo(filtroTipo === 'masa' ? 'todos' : 'masa')}
+        />
+        <KPICard
+          label="Con costeo"
+          value={String(kpis.conCosto)}
+          color="green"
+          loading={isLoading}
+          active={filtroCosteo === 'con_costeo'}
+          onClick={() => setFiltroCosteo(filtroCosteo === 'con_costeo' ? 'todos' : 'con_costeo')}
+        />
+        <KPICard
+          label="Sin match"
+          value={String(kpis.sinCosto)}
+          color={kpis.sinCosto > 0 ? 'yellow' : 'neutral'}
+          loading={isLoading}
+          active={filtroCosteo === 'sin_match'}
+          onClick={() => setFiltroCosteo(filtroCosteo === 'sin_match' ? 'todos' : 'sin_match')}
+        />
+        <KPICard
+          label="Con advertencias"
+          value={String(kpis.conAdv)}
+          color={kpis.conAdv > 0 ? 'yellow' : 'neutral'}
+          loading={isLoading}
+          active={filtroAdvertencia === 'con_adv'}
+          onClick={() => setFiltroAdvertencia(filtroAdvertencia === 'con_adv' ? 'todas' : 'con_adv')}
+        />
       </div>
 
       {/* Toolbar */}
