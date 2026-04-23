@@ -368,7 +368,6 @@ export function StockTab() {
               <th className="px-4 py-2 text-right">En mostrador</th>
               <th className="px-4 py-2 text-right">Vendido hoy</th>
               <th className="px-4 py-2 text-right">Merma</th>
-              <th className="px-4 py-2 text-right">Stock cámara</th>
               <th className="px-4 py-2">Mín.</th>
               <th className="px-4 py-2">Estado</th>
             </tr>
@@ -396,7 +395,7 @@ export function StockTab() {
                       '—'
                     )}
                   </td>
-                  <td className="px-4 py-2 text-right">{r.producido}</td>
+                  <td className="px-4 py-2 text-right font-semibold">{r.stock}</td>
                   <td className="px-4 py-2 text-right">
                     {r.mostrador > 0 ? (
                       <span className="font-medium text-green-700">{r.mostrador}</span>
@@ -408,7 +407,6 @@ export function StockTab() {
                     {r.vendidoHoy > 0 ? r.vendidoHoy : '—'}
                   </td>
                   <td className="px-4 py-2 text-right">{r.merma}</td>
-                  <td className="px-4 py-2 text-right font-semibold">{r.stock}</td>
                   <td className="px-4 py-2">{min || '—'}</td>
                   <td className="px-4 py-2">
                     {estado === 'ok' && (
@@ -432,7 +430,7 @@ export function StockTab() {
             })}
             {stockRowsFiltrados.length === 0 && (
               <tr>
-                <td colSpan={11} className="px-4 py-8 text-center text-gray-400">
+                <td colSpan={10} className="px-4 py-8 text-center text-gray-400">
                   {isLoading
                     ? 'Cargando...'
                     : filtroEstado !== 'todos'
