@@ -4,6 +4,7 @@ import { supabase } from '@/lib/supabase';
 import { KPICard } from '@/components/ui/KPICard';
 import { cn } from '@/lib/utils';
 import { PRODUCTOS_COCINA, normNombre } from './DashboardTab';
+import { StockProduccionSection } from './components/StockProduccionSection';
 
 interface Producto {
   id: string;
@@ -355,7 +356,8 @@ export function StockTab() {
         </span>
       </div>
 
-      {/* Tabla */}
+      {/* Tabla de pastas */}
+      <h3 className="text-base font-semibold text-gray-800">Pastas</h3>
       <div className="overflow-x-auto rounded-lg border border-surface-border bg-white">
         <table className="w-full text-sm">
           <thead>
@@ -441,6 +443,14 @@ export function StockTab() {
             )}
           </tbody>
         </table>
+      </div>
+
+      {/* ── Otras producciones: salsas, postres, pastelería, panadería ────── */}
+      <div className="pt-6">
+        <h3 className="mb-3 text-base font-semibold text-gray-800">
+          Salsas, postres y otras producciones
+        </h3>
+        <StockProduccionSection filtroLocal={filtroLocal} />
       </div>
     </div>
   );
