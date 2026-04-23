@@ -49,6 +49,14 @@ interface Fichada {
 }
 
 // ─── Helpers locales (los compartidos vienen de ./utils) ────────────────────
+// Fichadas legacy de madrugada (00:00-05:00) grabadas como "entrada" que en realidad
+// son la salida del turno nocturno del día anterior. No deben contar para paridad.
+function esSalidaNocturnaLegacy(f: { tipo: 'entrada' | 'salida'; timestamp: string }): boolean {
+  if (f.tipo !== 'entrada') return false
+  const h = new Date(f.timestamp).getHours()
+  return h >= 0 && h < 5
+}
+
 function haversineMetros(lat1: number, lng1: number, lat2: number, lng2: number): number {
   const R = 6371000
   const toRad = (x: number) => (x * Math.PI) / 180
@@ -290,8 +298,10 @@ function Inicio({ empleado, onIrAFichar, onIrAHorarios, onIrAQuincena }: {
       setCrono((c as Cronograma) || null)
       setFichadasHoy((f as Fichada[]) || [])
 
-      // Si ayer tiene cantidad impar de fichadas, hay una entrada abierta (sin salida)
-      const fichadasAyer = (fAyer as Fichada[]) || []
+      // Si ayer tiene cantidad impar de fichadas, hay una entrada abierta (sin salida).
+      // Excluimos fichadas legacy (entradas 00:xx que son salidas del día anterior)
+      // para no falsear la paridad.
+      const fichadasAyer = ((fAyer as Fichada[]) || []).filter((f) => !esSalidaNocturnaLegacy(f))
       setEntradaAbiertaAyer(fichadasAyer.length > 0 && fichadasAyer.length % 2 !== 0)
 
       if (debugOn) {
@@ -386,11 +396,14 @@ function Inicio({ empleado, onIrAFichar, onIrAHorarios, onIrAQuincena }: {
   }, [empleado.id, hoy, debugOn])
 
   // Si hoy no tiene fichadas pero ayer quedó una entrada abierta (turno nocturno),
-  // el próximo fichaje es SALIDA, no entrada
+  // el próximo fichaje es SALIDA, no entrada.
+  // Excluimos fichadas legacy (entradas 00:xx que son salidas del turno nocturno) para
+  // que no corran la paridad y tipen mal el próximo fichaje.
+  const fichadasHoyReales = fichadasHoy.filter((f) => !esSalidaNocturnaLegacy(f))
   const proximoTipo: 'entrada' | 'salida' =
-    fichadasHoy.length === 0 && entradaAbiertaAyer
+    fichadasHoyReales.length === 0 && entradaAbiertaAyer
       ? 'salida'
-      : fichadasHoy.length % 2 === 0 ? 'entrada' : 'salida'
+      : fichadasHoyReales.length % 2 === 0 ? 'entrada' : 'salida'
 
   return (
     <>
@@ -555,29 +568,33 @@ function Fichando({ empleado, onCancelar, onListo }: {
       const ayerDt2 = new Date(ahora); ayerDt2.setDate(ayerDt2.getDate() - 1)
       const fechaAyer = ymd(ayerDt2)
 
-      // Verificar si hay entrada abierta de ayer (turno nocturno)
-      const { data: fichadasAyer } = await supabase
+      // Verificar si hay entrada abierta de ayer (turno nocturno).
+      // Filtramos fichadas legacy de madrugada (entradas 00:xx que son salidas del día anterior)
+      // para que no corran la paridad.
+      const { data: fichadasAyerRaw } = await supabase
         .from('fichadas')
-        .select('id')
+        .select('id, tipo, timestamp')
         .eq('empleado_id', empleado.id)
         .eq('fecha', fechaAyer)
-      const entradaAbiertaDeAyer = (fichadasAyer?.length ?? 0) > 0 && (fichadasAyer?.length ?? 0) % 2 !== 0
+      const fichadasAyer = (fichadasAyerRaw ?? []).filter((f: any) => !esSalidaNocturnaLegacy(f))
+      const entradaAbiertaDeAyer = fichadasAyer.length > 0 && fichadasAyer.length % 2 !== 0
 
       // Determinar tipo (entrada o salida)
-      const { data: yaHoy } = await supabase
+      const { data: yaHoyRaw } = await supabase
         .from('fichadas')
-        .select('id')
+        .select('id, tipo, timestamp')
         .eq('empleado_id', empleado.id)
         .eq('fecha', fechaHoy)
+      const yaHoy = (yaHoyRaw ?? []).filter((f: any) => !esSalidaNocturnaLegacy(f))
 
       let tipo: 'entrada' | 'salida'
       let fechaFichada: string
 
-      if ((yaHoy?.length ?? 0) === 0 && entradaAbiertaDeAyer) {
+      if (yaHoy.length === 0 && entradaAbiertaDeAyer) {
         tipo = 'salida'
         fechaFichada = fechaAyer
       } else {
-        tipo = (yaHoy?.length ?? 0) % 2 === 0 ? 'entrada' : 'salida'
+        tipo = yaHoy.length % 2 === 0 ? 'entrada' : 'salida'
         fechaFichada = fechaHoy
       }
 
