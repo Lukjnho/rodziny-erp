@@ -9,7 +9,7 @@ interface Producto {
   minimo_produccion: number | null; local: string; activo: boolean
 }
 interface LotePasta {
-  producto_id: string; porciones: number; local: string; ubicacion: 'freezer_produccion' | 'camara_congelado'
+  producto_id: string; porciones: number | null; local: string; ubicacion: 'freezer_produccion' | 'camara_congelado'
 }
 interface Traspaso {
   producto_id: string; porciones: number; local: string
@@ -86,10 +86,10 @@ export function StockTab() {
         // Producido en cámara = stock disponible. Fresco = pendiente de porcionar (no cuenta como stock).
         const producido = lotesPasta
           .filter((l) => l.producto_id === prod.id && l.local === loc && l.ubicacion === 'camara_congelado')
-          .reduce((s, l) => s + l.porciones, 0)
+          .reduce((s, l) => s + (l.porciones ?? 0), 0)
         const fresco = lotesPasta
           .filter((l) => l.producto_id === prod.id && l.local === loc && l.ubicacion === 'freezer_produccion')
-          .reduce((s, l) => s + l.porciones, 0)
+          .reduce((s, l) => s + (l.porciones ?? 0), 0)
         const traspasado = traspasos
           .filter((t) => t.producto_id === prod.id && t.local === loc)
           .reduce((s, t) => s + t.porciones, 0)

@@ -24,7 +24,7 @@ interface LoteMasa {
 }
 interface LotePastaFresco {
   id: string; producto_id: string; codigo_lote: string
-  porciones: number; cantidad_cajones: number | null; fecha: string
+  porciones: number | null; cantidad_cajones: number | null; fecha: string
   producto?: { nombre: string } | null
 }
 
@@ -308,6 +308,11 @@ function Inicio({ local, onIr, lotesHoy, masasAbiertas, frescosPendientes }: {
     { vista: 'relleno', label: 'Cargar Relleno', color: 'bg-green-600 hover:bg-green-700' },
     { vista: 'masa', label: 'Cargar Masa', color: 'bg-amber-500 hover:bg-amber-600' },
     { vista: 'pasta', label: 'Armar Pasta (cajones)', color: 'bg-rodziny-700 hover:bg-rodziny-800' },
+    {
+      vista: 'porcionar-pasta',
+      label: frescosPendientes > 0 ? `Porcionar Pasta (${frescosPendientes})` : 'Porcionar Pasta',
+      color: 'bg-blue-600 hover:bg-blue-700',
+    },
     { vista: 'salsa', label: 'Cargar Salsa', color: 'bg-orange-500 hover:bg-orange-600' },
   ]
   if (local === 'vedia') {
@@ -348,15 +353,6 @@ function Inicio({ local, onIr, lotesHoy, masasAbiertas, frescosPendientes }: {
           {b.label}
         </button>
       ))}
-
-      {frescosPendientes > 0 && (
-        <button
-          onClick={() => onIr('porcionar-pasta')}
-          className="w-full border-2 border-blue-500 text-blue-700 py-4 rounded-lg font-semibold text-base active:scale-[0.98] transition-transform"
-        >
-          Porcionar Pasta ({frescosPendientes})
-        </button>
-      )}
 
       {masasAbiertas > 0 && (
         <button
@@ -511,7 +507,6 @@ function FormPasta({ local, productos, lotesRelleno, lotesMasa, onGuardado, onVo
   const [loteMasaId, setLoteMasaId] = useState('')
   const [masaKg, setMasaKg] = useState('')
   const [rellenoKg, setRellenoKg] = useState('')
-  const [porciones, setPorciones] = useState('')
   const [cantidadCajones, setCantidadCajones] = useState('')
   const [responsable, setResponsable] = useState('')
   const [notas, setNotas] = useState('')
@@ -523,7 +518,6 @@ function FormPasta({ local, productos, lotesRelleno, lotesMasa, onGuardado, onVo
 
   async function guardar() {
     if (!productoId) { setError('Seleccioná un producto'); return }
-    if (!porciones || Number(porciones) <= 0) { setError('Indicá las porciones estimadas'); return }
     setGuardando(true)
     setError('')
 
@@ -536,7 +530,7 @@ function FormPasta({ local, productos, lotesRelleno, lotesMasa, onGuardado, onVo
       receta_masa_id: lotesMasa.find((m) => m.id === loteMasaId)?.receta_id ?? null,
       masa_kg: masaKg ? Number(masaKg) : null,
       relleno_kg: rellenoKg ? Number(rellenoKg) : null,
-      porciones: Number(porciones),
+      porciones: null,
       cantidad_cajones: cantidadCajones ? Number(cantidadCajones) : null,
       ubicacion: 'freezer_produccion',
       responsable: responsable.trim() || null,
@@ -545,7 +539,7 @@ function FormPasta({ local, productos, lotesRelleno, lotesMasa, onGuardado, onVo
     })
 
     if (err) { setError(err.message); setGuardando(false); return }
-    onGuardado(`${prodSel?.nombre ?? 'Pasta'} armada — ${porciones} porciones en ${cantidadCajones || '?'} cajones (${codigoLote})`)
+    onGuardado(`${prodSel?.nombre ?? 'Pasta'} armada — ${cantidadCajones || '?'} cajones en freezer (${codigoLote})`)
   }
 
   return (
@@ -637,29 +631,19 @@ function FormPasta({ local, productos, lotesRelleno, lotesMasa, onGuardado, onVo
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-2">
-          <div>
-            <label className="block text-xs font-medium text-gray-700 mb-1">Cajones armados</label>
-            <input
-              type="number"
-              inputMode="numeric"
-              value={cantidadCajones}
-              onChange={(e) => setCantidadCajones(e.target.value)}
-              className="w-full border border-gray-300 rounded px-3 py-2.5 text-sm"
-              placeholder="3"
-            />
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-gray-700 mb-1">Porciones estimadas</label>
-            <input
-              type="number"
-              inputMode="numeric"
-              value={porciones}
-              onChange={(e) => setPorciones(e.target.value)}
-              className="w-full border border-gray-300 rounded px-3 py-2.5 text-sm"
-              placeholder="100"
-            />
-          </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-700 mb-1">Cajones armados</label>
+          <input
+            type="number"
+            inputMode="numeric"
+            value={cantidadCajones}
+            onChange={(e) => setCantidadCajones(e.target.value)}
+            className="w-full border border-gray-300 rounded px-3 py-2.5 text-sm"
+            placeholder="3"
+          />
+          <p className="text-[11px] text-gray-500 mt-1">
+            Las porciones finales se registran al porcionar las pastas al día siguiente.
+          </p>
         </div>
 
         <div>
@@ -709,9 +693,9 @@ function FormPorcionar({ local, lotesFrescos, onGuardado, onVolver }: {
   const [error, setError] = useState('')
 
   const loteSel = lotesFrescos.find((l) => l.id === loteId)
-  const estimadas = loteSel?.porciones ?? 0
+  const estimadas = loteSel?.porciones ?? null
   const reales = Number(porcionesReales) || 0
-  const diferencia = reales - estimadas
+  const diferencia = estimadas != null ? reales - estimadas : null
 
   async function guardar() {
     if (!loteId || !loteSel) { setError('Elegí un lote'); return }
@@ -719,9 +703,10 @@ function FormPorcionar({ local, lotesFrescos, onGuardado, onVolver }: {
     setGuardando(true)
     setError('')
 
-    // Actualizar el lote: pasa a cámara congelado, con porciones reales y responsable de porcionado.
-    // Si hubo merma (reales < estimadas), la diferencia queda registrada en merma_porcionado.
-    const merma = diferencia < 0 ? Math.abs(diferencia) : 0
+    // Actualizar el lote: pasa a cámara congelado, con porciones reales y responsable.
+    // Si el lote tenía estimado (flujo viejo) y reales < estimadas, se registra merma.
+    // Los lotes armados sin estimado no generan merma automática.
+    const merma = diferencia != null && diferencia < 0 ? Math.abs(diferencia) : 0
     const payload: Record<string, unknown> = {
       ubicacion: 'camara_congelado',
       porciones: reales,
@@ -729,7 +714,6 @@ function FormPorcionar({ local, lotesFrescos, onGuardado, onVolver }: {
       responsable_porcionado: responsable.trim() || null,
       merma_porcionado: merma,
     }
-    // Si el porcionador agregó una nota, se anexa sin pisar la del armado
     if (notas.trim()) {
       payload.notas = `[Porcionado] ${notas.trim()}`
     }
@@ -743,7 +727,7 @@ function FormPorcionar({ local, lotesFrescos, onGuardado, onVolver }: {
     const nombre = loteSel.producto?.nombre ?? 'Pasta'
     const detalle = merma > 0
       ? `${reales} porciones (merma ${merma})`
-      : diferencia > 0
+      : diferencia != null && diferencia > 0
         ? `${reales} porciones (+${diferencia} vs estimado)`
         : `${reales} porciones`
     onGuardado(`${nombre} porcionada — ${detalle}`)
@@ -785,7 +769,8 @@ function FormPorcionar({ local, lotesFrescos, onGuardado, onVolver }: {
           >
             {lotesFrescos.map((l) => (
               <option key={l.id} value={l.id}>
-                {l.codigo_lote} · {l.producto?.nombre ?? 'Pasta'} · {l.porciones} porc. estimadas
+                {l.codigo_lote} · {l.producto?.nombre ?? 'Pasta'}
+                {l.cantidad_cajones ? ` · ${l.cantidad_cajones} caj.` : ''}
               </option>
             ))}
           </select>
@@ -795,21 +780,23 @@ function FormPorcionar({ local, lotesFrescos, onGuardado, onVolver }: {
           <div className="bg-gray-50 border border-gray-200 rounded px-3 py-2 text-xs text-gray-600 space-y-0.5">
             <div>Armado: {loteSel.fecha}</div>
             {loteSel.cantidad_cajones && <div>Cajones: {loteSel.cantidad_cajones}</div>}
-            <div>Estimado: <span className="font-semibold">{estimadas}</span> porciones</div>
+            {estimadas != null && (
+              <div>Estimado: <span className="font-semibold">{estimadas}</span> porciones</div>
+            )}
           </div>
         )}
 
         <div>
-          <label className="block text-xs font-medium text-gray-700 mb-1">Porciones reales (bolsitas 200g)</label>
+          <label className="block text-xs font-medium text-gray-700 mb-1">Porciones totales (bolsitas 200g)</label>
           <input
             type="number"
             inputMode="numeric"
             value={porcionesReales}
             onChange={(e) => setPorcionesReales(e.target.value)}
             className="w-full border border-gray-300 rounded px-3 py-2.5 text-sm"
-            placeholder={String(estimadas)}
+            placeholder={estimadas != null ? String(estimadas) : 'Ej: 120'}
           />
-          {reales > 0 && diferencia !== 0 && (
+          {reales > 0 && diferencia != null && diferencia !== 0 && (
             <p className={cn('text-[11px] mt-1', diferencia < 0 ? 'text-red-600' : 'text-emerald-600')}>
               {diferencia < 0
                 ? `${Math.abs(diferencia)} porciones de merma`

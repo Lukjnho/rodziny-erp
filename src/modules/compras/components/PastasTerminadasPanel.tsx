@@ -8,7 +8,7 @@ interface Producto {
   minimo_produccion: number | null
 }
 interface LotePasta {
-  producto_id: string; porciones: number; local: string
+  producto_id: string; porciones: number | null; local: string
   ubicacion: 'freezer_produccion' | 'camara_congelado'
 }
 interface Traspaso { producto_id: string; porciones: number; local: string }
@@ -84,10 +84,10 @@ export function PastasTerminadasPanel({ local, filtro }: { local: 'vedia' | 'saa
     return productos.map((p) => {
       const enCamara = (lotes ?? [])
         .filter((l) => l.producto_id === p.id && l.ubicacion === 'camara_congelado')
-        .reduce((s, l) => s + l.porciones, 0)
+        .reduce((s, l) => s + (l.porciones ?? 0), 0)
       const frescos = (lotes ?? [])
         .filter((l) => l.producto_id === p.id && l.ubicacion === 'freezer_produccion')
-        .reduce((s, l) => s + l.porciones, 0)
+        .reduce((s, l) => s + (l.porciones ?? 0), 0)
       const traspasados = (traspasos ?? []).filter((t) => t.producto_id === p.id).reduce((s, t) => s + t.porciones, 0)
       const merma = (mermas ?? []).filter((m) => m.producto_id === p.id).reduce((s, m) => s + m.porciones, 0)
       return {

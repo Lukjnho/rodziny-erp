@@ -84,7 +84,7 @@ interface LoteRelleno {
 interface LotePasta {
   id: string; producto_id: string; lote_relleno_id: string | null; lote_masa_id: string | null; fecha: string
   codigo_lote: string; receta_masa_id: string | null; masa_kg: number | null
-  relleno_kg: number | null; porciones: number; responsable: string | null
+  relleno_kg: number | null; porciones: number | null; responsable: string | null
   local: string; notas: string | null; created_at: string
   ubicacion: 'freezer_produccion' | 'camara_congelado'
   cantidad_cajones: number | null
@@ -283,7 +283,7 @@ export function ProduccionTab() {
 
   const kpiPasta = useMemo(() => ({
     lotes: pastasFiltradas.length,
-    porcionesTotal: pastasFiltradas.reduce((s, l) => s + l.porciones, 0),
+    porcionesTotal: pastasFiltradas.reduce((s, l) => s + (l.porciones ?? 0), 0),
     tiposDistintos: new Set(pastasFiltradas.map((l) => l.producto_id)).size,
   }), [pastasFiltradas])
 
@@ -515,8 +515,9 @@ export function ProduccionTab() {
               {frescosFiltrados.map((l) => (
                 <div key={l.id} className="flex items-center justify-between text-xs bg-white rounded px-2 py-1.5 border border-blue-100">
                   <span>
-                    <span className="font-mono">{l.codigo_lote}</span> · {l.producto?.nombre ?? 'Pasta'} · {l.fecha} · {l.porciones} porc. est.
+                    <span className="font-mono">{l.codigo_lote}</span> · {l.producto?.nombre ?? 'Pasta'} · {l.fecha}
                     {l.cantidad_cajones && <> · {l.cantidad_cajones} cajones</>}
+                    {l.porciones != null && <> · {l.porciones} porc. est.</>}
                   </span>
                   <button
                     onClick={() => setModalPorcionar(l)}
@@ -572,7 +573,7 @@ export function ProduccionTab() {
                         : '—'}
                     </td>
                     <td className="px-4 py-2 font-semibold">
-                      {l.porciones}
+                      {l.porciones ?? '—'}
                       {l.merma_porcionado > 0 && (
                         <span className="text-[10px] text-red-500 ml-1">(-{l.merma_porcionado})</span>
                       )}
@@ -746,15 +747,15 @@ function ModalPorcionar({ lote, onClose, onSaved }: {
   const [guardando, setGuardando] = useState(false)
   const [error, setError] = useState('')
 
-  const estimadas = lote.porciones
+  const estimadas: number | null = lote.porciones
   const reales = Number(porcionesReales) || 0
-  const diferencia = reales - estimadas
+  const diferencia = estimadas != null ? reales - estimadas : null
 
   async function guardar() {
     if (!porcionesReales || reales <= 0) { setError('Indicá las porciones reales'); return }
     setGuardando(true)
     setError('')
-    const merma = diferencia < 0 ? Math.abs(diferencia) : 0
+    const merma = diferencia != null && diferencia < 0 ? Math.abs(diferencia) : 0
     const payload: Record<string, unknown> = {
       ubicacion: 'camara_congelado',
       porciones: reales,
@@ -780,20 +781,22 @@ function ModalPorcionar({ lote, onClose, onSaved }: {
           <div><span className="text-gray-500">Lote:</span> <span className="font-mono font-semibold">{lote.codigo_lote}</span></div>
           <div><span className="text-gray-500">Producto:</span> {lote.producto?.nombre ?? '—'}</div>
           <div><span className="text-gray-500">Armado:</span> {lote.fecha}{lote.cantidad_cajones ? ` · ${lote.cantidad_cajones} cajones` : ''}</div>
-          <div><span className="text-gray-500">Estimado:</span> <span className="font-semibold">{estimadas}</span> porciones</div>
+          {estimadas != null && (
+            <div><span className="text-gray-500">Estimado:</span> <span className="font-semibold">{estimadas}</span> porciones</div>
+          )}
         </div>
 
         <div>
-          <label className="block text-xs font-medium text-gray-700 mb-1">Porciones reales (bolsitas 200g)</label>
+          <label className="block text-xs font-medium text-gray-700 mb-1">Porciones totales (bolsitas 200g)</label>
           <input
             type="number"
             inputMode="numeric"
             value={porcionesReales}
             onChange={(e) => setPorcionesReales(e.target.value)}
             className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
-            placeholder={String(estimadas)}
+            placeholder={estimadas != null ? String(estimadas) : 'Ej: 120'}
           />
-          {reales > 0 && diferencia !== 0 && (
+          {reales > 0 && diferencia != null && diferencia !== 0 && (
             <p className={cn('text-[11px] mt-1', diferencia < 0 ? 'text-red-600' : 'text-emerald-600')}>
               {diferencia < 0
                 ? `${Math.abs(diferencia)} porciones de merma`
@@ -947,7 +950,10 @@ function ModalPasta({ fecha, productos, recetasMasa, lotesRellenoDia, lotesMasaD
   const codigoLote = productoSeleccionado ? `${productoSeleccionado.codigo}-${formatDDMM(fecha)}` : ''
 
   const guardar = async () => {
-    if (!productoId || !porciones) { setError('Producto y porciones son obligatorios'); return }
+    if (!productoId) { setError('Producto obligatorio'); return }
+    // Porciones son obligatorias solo si se carga directo a cámara (stock real).
+    // Si va al freezer de producción, se cargan al porcionar.
+    if (yaEnCamara && !porciones) { setError('Indicá las porciones al cargar directo en cámara'); return }
     setGuardando(true)
     setError('')
     const { error: err } = await supabase.from('cocina_lotes_pasta').insert({
@@ -959,7 +965,7 @@ function ModalPasta({ fecha, productos, recetasMasa, lotesRellenoDia, lotesMasaD
       receta_masa_id: recetaMasaId || null,
       masa_kg: masaKg ? Number(masaKg) : null,
       relleno_kg: rellenoKg ? Number(rellenoKg) : null,
-      porciones: Number(porciones),
+      porciones: porciones ? Number(porciones) : null,
       cantidad_cajones: cantidadCajones ? Number(cantidadCajones) : null,
       ubicacion: yaEnCamara ? 'camara_congelado' : 'freezer_produccion',
       fecha_porcionado: yaEnCamara ? fecha : null,
@@ -1037,8 +1043,16 @@ function ModalPasta({ fecha, productos, recetasMasa, lotesRellenoDia, lotesMasaD
               <input type="number" value={cantidadCajones} onChange={(e) => setCantidadCajones(e.target.value)} className="w-full border border-gray-300 rounded px-3 py-1.5 text-sm" placeholder="3" />
             </div>
             <div>
-              <label className="block text-xs text-gray-500 mb-1">Porciones</label>
-              <input type="number" value={porciones} onChange={(e) => setPorciones(e.target.value)} className="w-full border border-gray-300 rounded px-3 py-1.5 text-sm" placeholder="100" />
+              <label className="block text-xs text-gray-500 mb-1">
+                Porciones {yaEnCamara ? '' : '(al porcionar)'}
+              </label>
+              <input
+                type="number"
+                value={porciones}
+                onChange={(e) => setPorciones(e.target.value)}
+                className="w-full border border-gray-300 rounded px-3 py-1.5 text-sm"
+                placeholder={yaEnCamara ? '100' : 'Opcional'}
+              />
             </div>
           </div>
 

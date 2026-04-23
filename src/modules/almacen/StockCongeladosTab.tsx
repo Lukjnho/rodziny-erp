@@ -4,7 +4,7 @@ import { cn } from '@/lib/utils'
 
 interface LotePasta {
   producto_id: string
-  porciones: number
+  porciones: number | null
   producto: { nombre: string; codigo: string; minimo_produccion: number }[] | null
 }
 
@@ -114,7 +114,7 @@ export function StockCongeladosTab() {
           minimo: prod.minimo_produccion,
         })
       }
-      mapa.get(l.producto_id)!.producido += l.porciones
+      mapa.get(l.producto_id)!.producido += l.porciones ?? 0
     }
 
     // Traspasado
