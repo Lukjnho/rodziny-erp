@@ -1313,7 +1313,7 @@ function AutocompleteIngrediente({
                     <span className="truncate text-gray-800">{o.nombre}</span>
                   </div>
                   <span className="text-[10px] text-gray-400 flex-shrink-0">
-                    {o.unidad}{o.detalle ? ` · ${o.detalle}` : ''}
+                    {o.tipo === 'receta' ? o.detalle : o.unidad}
                   </span>
                 </button>
               </Fragment>
