@@ -585,7 +585,23 @@ export function DashboardTab() {
   const qc = useQueryClient();
   const [local, setLocal] = useState<'vedia' | 'saavedra'>('vedia');
   const [ventanaDias, setVentanaDias] = useState<1 | 3 | 7>(3);
-  const hoy = new Date().toISOString().split('T')[0];
+  // Fechas calculadas una sola vez al montar el componente (evita el warning de
+  // react-hooks/purity de React 19 por llamar Date.now() en render) y estabiliza
+  // las queryKey de react-query.
+  const hoy = useMemo(() => new Date().toISOString().split('T')[0], []);
+  const hace14 = useMemo(
+    () => new Date(Date.now() - 14 * 86400000).toISOString().split('T')[0],
+    [],
+  );
+  const ventanaHasta = useMemo(
+    () => new Date(Date.now() - 86400000).toISOString().split('T')[0],
+    [],
+  );
+  const ventanaDesde = useMemo(
+    () => new Date(Date.now() - ventanaDias * 86400000).toISOString().split('T')[0],
+    [ventanaDias],
+  );
+  const dowManana = useMemo(() => new Date(Date.now() + 86400000).getDay(), []);
 
   // ── Query: productos BD con receta vinculada (para saber rendimiento y mínimos) ──
   const { data: productosDB } = useQuery({
@@ -635,7 +651,6 @@ export function DashboardTab() {
   });
 
   // ── Query: ventas promedio de Fudo (últimos 14 días) ──
-  const hace14 = new Date(Date.now() - 14 * 86400000).toISOString().split('T')[0];
   const { data: fudoData, isLoading: fudoLoading } = useQuery({
     queryKey: ['fudo-consumo', local, hace14, hoy],
     queryFn: async () => {
@@ -651,8 +666,6 @@ export function DashboardTab() {
 
   // ── Query: ventas de la VENTANA reciente (configurable: 1/3/7 días) ──
   // Termina ayer (no incluye hoy porque el día está incompleto).
-  const ventanaHasta = new Date(Date.now() - 86400000).toISOString().split('T')[0];
-  const ventanaDesde = new Date(Date.now() - ventanaDias * 86400000).toISOString().split('T')[0];
   const { data: fudoReciente } = useQuery({
     queryKey: ['fudo-consumo-reciente', local, ventanaDesde, ventanaHasta],
     queryFn: async () => {
@@ -685,8 +698,6 @@ export function DashboardTab() {
   // Calcula cuánto se vende un día X vs el promedio general
   const factorManana = useMemo(() => {
     if (!fudoData?.porDiaSemana) return 1;
-    const manana = new Date(Date.now() + 86400000);
-    const dowManana = manana.getDay(); // 0=dom..6=sab
     const dataPorDia = fudoData.porDiaSemana;
     const dias = Object.keys(dataPorDia);
     if (dias.length === 0) return 1;
@@ -695,9 +706,9 @@ export function DashboardTab() {
     const ticketsManana = dataPorDia[dowManana]?.tickets ?? promedioTicketsPorDia;
     if (promedioTicketsPorDia === 0) return 1;
     return ticketsManana / promedioTicketsPorDia;
-  }, [fudoData]);
+  }, [fudoData, dowManana]);
 
-  const diaManana = DIAS_SEMANA[new Date(Date.now() + 86400000).getDay()];
+  const diaManana = DIAS_SEMANA[dowManana];
 
   // ── Calcular datos por producto ──
   const filas = useMemo(() => {

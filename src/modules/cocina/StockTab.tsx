@@ -57,12 +57,27 @@ interface StockRow {
   stock: number;
 }
 
-const HOY = () => new Date().toISOString().slice(0, 10);
+// Fecha de hoy en zona horaria de Argentina (UTC-3, sin horario de verano).
+// No usar toISOString() porque devuelve UTC: a las 22hs en Argentina ya es el día
+// siguiente en UTC, y las queries con .eq('fecha', hoy) dejarían de encontrar datos.
+const HOY = () => {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+};
 
 // Mapa nombre normalizado → config con fudoNombres (para resolver ventas de Fudo por producto)
 const PRODUCTO_POR_NOMBRE = new Map(
   PRODUCTOS_COCINA.map((p) => [normNombre(p.nombre), p] as const),
 );
+
+// Fudo puede devolver el nombre con distinta capitalización o espacios extra; normalizar
+// antes de comparar para no perder ventas por mismatch cosmético.
+function normFudoNombre(s: string) {
+  return s.toLowerCase().trim().replace(/\s+/g, ' ');
+}
 
 function ventasFudoDelProducto(producto: Producto, ranking: FudoRankingItem[] | undefined) {
   if (!ranking || ranking.length === 0) return 0;
@@ -70,7 +85,8 @@ function ventasFudoDelProducto(producto: Producto, ranking: FudoRankingItem[] | 
   const nombres = cfg?.fudoNombres ?? [producto.nombre];
   let total = 0;
   for (const n of nombres) {
-    const hit = ranking.find((r) => r.nombre.toLowerCase() === n.toLowerCase());
+    const objetivo = normFudoNombre(n);
+    const hit = ranking.find((r) => normFudoNombre(r.nombre) === objetivo);
     if (hit) total += hit.cantidad;
   }
   return total;

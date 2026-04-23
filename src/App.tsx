@@ -19,16 +19,6 @@ import { type ReactNode } from 'react';
 
 const qc = new QueryClient({ defaultOptions: { queries: { staleTime: 1000 * 60 * 2 } } });
 
-function Placeholder({ title }: { title: string }) {
-  return (
-    <PageContainer title={title}>
-      <div className="flex h-64 items-center justify-center text-sm text-gray-400">
-        Módulo en construcción
-      </div>
-    </PageContainer>
-  );
-}
-
 function PantallaCargando() {
   return (
     <div

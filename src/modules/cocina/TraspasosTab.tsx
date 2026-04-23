@@ -189,6 +189,7 @@ export function TraspasosTab() {
       qc.invalidateQueries({ queryKey: ['cocina-traspasos', fecha] });
       qc.invalidateQueries({ queryKey: ['cocina-stock'] });
       qc.invalidateQueries({ queryKey: ['cocina-stock-traspasos'] });
+      qc.invalidateQueries({ queryKey: ['cocina-stock-traspasos-hoy'] });
     },
   });
 
@@ -201,6 +202,7 @@ export function TraspasosTab() {
       qc.invalidateQueries({ queryKey: ['cocina-merma', fecha] });
       qc.invalidateQueries({ queryKey: ['cocina-stock'] });
       qc.invalidateQueries({ queryKey: ['cocina-stock-merma'] });
+      qc.invalidateQueries({ queryKey: ['cocina-stock-merma-hoy'] });
     },
   });
 
@@ -430,6 +432,7 @@ export function TraspasosTab() {
             qc.invalidateQueries({ queryKey: ['cocina-stock'] });
             qc.invalidateQueries({ queryKey: ['cocina-stock-lotes', 'camara'] });
             qc.invalidateQueries({ queryKey: ['cocina-stock-traspasos'] });
+            qc.invalidateQueries({ queryKey: ['cocina-stock-traspasos-hoy'] });
             setModalTraspaso(false);
           }}
         />
@@ -443,6 +446,7 @@ export function TraspasosTab() {
             qc.invalidateQueries({ queryKey: ['cocina-merma', fecha] });
             qc.invalidateQueries({ queryKey: ['cocina-stock'] });
             qc.invalidateQueries({ queryKey: ['cocina-stock-merma'] });
+            qc.invalidateQueries({ queryKey: ['cocina-stock-merma-hoy'] });
             setModalMerma(false);
           }}
         />
@@ -673,12 +677,17 @@ function ModalMerma({
       setError('Producto y porciones son obligatorios');
       return;
     }
+    const porcionesNum = Number(porciones);
+    if (!Number.isFinite(porcionesNum) || porcionesNum <= 0) {
+      setError('Las porciones deben ser un número mayor a 0');
+      return;
+    }
     setGuardando(true);
     setError('');
     const { error: err } = await supabase.from('cocina_merma').insert({
       producto_id: productoId,
       fecha,
-      porciones: Number(porciones),
+      porciones: porcionesNum,
       motivo,
       responsable: responsable.trim() || null,
       local,
