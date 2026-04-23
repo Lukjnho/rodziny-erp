@@ -19,6 +19,7 @@ interface Merma {
 }
 
 interface PedidoEntregado {
+  producto_id: string | null;
   producto_nombre: string;
   cantidad: number;
 }
@@ -83,7 +84,7 @@ export function StockCongeladosTab() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('almacen_pedidos')
-        .select('producto_nombre, cantidad')
+        .select('producto_id, producto_nombre, cantidad')
         .eq('estado', 'entregado')
         .eq('local', 'saavedra');
       if (error) throw error;
@@ -131,11 +132,20 @@ export function StockCongeladosTab() {
       if (item) item.merma += m.porciones;
     }
 
-    // Pedidos entregados (matchear por nombre ya que producto_id puede no estar seteado)
+    // Pedidos entregados: preferir match por producto_id (preciso). Si el pedido
+    // es legacy y no tiene producto_id, fallback a nombre pero solo descuenta del
+    // PRIMER match para evitar doble descuento cuando hay productos homónimos.
     for (const p of pedidosEntregados) {
+      if (p.producto_id) {
+        const item = mapa.get(p.producto_id);
+        if (item) item.entregadoPedidos += p.cantidad;
+        continue;
+      }
+      const objetivo = p.producto_nombre.toLowerCase().trim();
       for (const item of mapa.values()) {
-        if (item.nombre.toLowerCase() === p.producto_nombre.toLowerCase()) {
+        if (item.nombre.toLowerCase().trim() === objetivo) {
           item.entregadoPedidos += p.cantidad;
+          break;
         }
       }
     }
