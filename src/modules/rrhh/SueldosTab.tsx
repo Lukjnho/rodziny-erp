@@ -476,7 +476,11 @@ export function SueldosTab() {
         );
       });
 
-      const total = base - deduccionPresentismo - adelantosMonto - sancionesMonto - descuentosMonto;
+      // Mensual en Q1: no cobra ni descuenta nada en esta quincena. Los adelantos/sanciones
+      // del Q1 se muestran informativamente y se descontarán del total en Q2.
+      const total = esMensualEnQ1
+        ? 0
+        : base - deduccionPresentismo - adelantosMonto - sancionesMonto - descuentosMonto;
 
       // ── Calcular stats de asistencia ──
       const rangoPresentismo =
