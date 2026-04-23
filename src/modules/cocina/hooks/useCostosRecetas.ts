@@ -84,6 +84,31 @@ function normalizarNombre(n: string): string {
     .replace(/\s+/g, ' ')
 }
 
+// Simplifica un nombre quitando sufijos de tamaño/envase comunes al final.
+// Usado como FALLBACK cuando el match exacto por nombre normalizado falla.
+// Ejemplos:
+//   "Aji molido 1 kg"      → "aji molido"
+//   "Queso parmesano 500g" → "queso parmesano"
+//   "Vino Blanco x ud.(COCINA)" → "vino blanco"
+//   "Aceite 1L"            → "aceite"
+function simplificarNombre(n: string): string {
+  let s = normalizarNombre(n)
+  let prev = ''
+  // Iterar para cubrir varios sufijos apilados en un mismo nombre
+  while (prev !== s && s.length > 0) {
+    prev = s
+    s = s
+      // paréntesis con contenido al final: "(COCINA)", "(500g)"
+      .replace(/\s*\([^)]*\)\s*$/, '')
+      // "x ud", "x 500g", "x unidad" al final
+      .replace(/\s+x\s+\S+\.?$/i, '')
+      // cantidad + unidad al final: "1 kg", "500g", "2.5 lt"
+      .replace(/\s+\d+([.,]\d+)?\s*(kg|kgs|gr?|gramos?|ml|lts?|l|litros?|cc|unid|u|uds?)\.?$/i, '')
+      .trim()
+  }
+  return s
+}
+
 export function useCostosRecetas() {
   const recetasQ = useQuery({
     queryKey: ['cocina-recetas-costeo'],
@@ -149,19 +174,30 @@ export function useCostosRecetas() {
 
     // Index de productos por nombre normalizado (fallback cuando no hay producto_id)
     const prodByNombre = new Map<string, ProductoRow>()
+    const prodByNombreSimpl = new Map<string, ProductoRow>()
     for (const p of prods) {
       const k = normalizarNombre(p.nombre)
       if (!prodByNombre.has(k)) prodByNombre.set(k, p)
+      const ks = simplificarNombre(p.nombre)
+      if (ks && !prodByNombreSimpl.has(ks)) prodByNombreSimpl.set(ks, p)
     }
 
-    // Index de recetas por (nombre, local) y fallback solo por nombre
+    // Index de recetas por (nombre, local) y fallback solo por nombre (+ simplificado)
     const recetaByNombreLocal = new Map<string, RecetaRow>()
     const recetaByNombre = new Map<string, RecetaRow>()
+    const recetaByNombreSimplLocal = new Map<string, RecetaRow>()
+    const recetaByNombreSimpl = new Map<string, RecetaRow>()
     for (const r of recetas) {
       const k = normalizarNombre(r.nombre)
       const kl = `${k}|${r.local ?? ''}`
       if (!recetaByNombreLocal.has(kl)) recetaByNombreLocal.set(kl, r)
       if (!recetaByNombre.has(k)) recetaByNombre.set(k, r)
+      const ks = simplificarNombre(r.nombre)
+      if (ks) {
+        const ksl = `${ks}|${r.local ?? ''}`
+        if (!recetaByNombreSimplLocal.has(ksl)) recetaByNombreSimplLocal.set(ksl, r)
+        if (!recetaByNombreSimpl.has(ks)) recetaByNombreSimpl.set(ks, r)
+      }
     }
 
     // Agrupar ingredientes por receta
@@ -235,13 +271,17 @@ export function useCostosRecetas() {
       for (const ing of misIngs) {
         const esSubrecetaPrefijo = /^subreceta\s+/i.test(ing.nombre ?? '')
         const nombreNorm = normalizarNombre(ing.nombre)
+        const nombreSimpl = simplificarNombre(ing.nombre)
 
         // 1) intentar resolver como subreceta: primero por (nombre, local) para respetar el local de la receta padre
+        //    Fallbacks: nombre normalizado → nombre simplificado con local → nombre simplificado sin local
         let subrecetaMatch: RecetaRow | null = null
         if (esSubrecetaPrefijo || ing.producto_id == null) {
           const localPadre = receta.local ?? ''
           subrecetaMatch = recetaByNombreLocal.get(`${nombreNorm}|${localPadre}`)
             ?? recetaByNombre.get(nombreNorm)
+            ?? (nombreSimpl ? recetaByNombreSimplLocal.get(`${nombreSimpl}|${localPadre}`) : null)
+            ?? (nombreSimpl ? recetaByNombreSimpl.get(nombreSimpl) : null)
             ?? null
         }
 
@@ -321,8 +361,10 @@ export function useCostosRecetas() {
           prod = prodById.get(ing.producto_id) ?? null
         }
         if (!prod) {
-          // fallback por nombre
-          prod = prodByNombre.get(nombreNorm) ?? null
+          // fallback por nombre normalizado → por nombre simplificado (sin sufijos de tamaño)
+          prod = prodByNombre.get(nombreNorm)
+            ?? (nombreSimpl ? prodByNombreSimpl.get(nombreSimpl) : null)
+            ?? null
         }
 
         if (!prod) {
