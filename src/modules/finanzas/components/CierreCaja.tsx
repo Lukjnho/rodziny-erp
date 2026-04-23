@@ -62,6 +62,7 @@ export function CierreCaja() {
   const [local, setLocal]     = useState<'vedia' | 'saavedra'>('vedia')
   const [periodo, setPeriodo] = useState(() => new Date().toISOString().substring(0, 7))
   const [formOpen, setFormOpen] = useState(false)
+  const [editandoId, setEditandoId] = useState<string | null>(null)
   const qc = useQueryClient()
 
   // Form state
@@ -187,6 +188,7 @@ export function CierreCaja() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['cierres_mes'] })
       setFormOpen(false)
+      setEditandoId(null)
       resetForm()
     },
   })
@@ -234,8 +236,39 @@ export function CierreCaja() {
   }
 
   function abrirForm() {
+    setEditandoId(null)
     resetForm()
     setFormOpen(true)
+  }
+
+  function editarCierre(c: CierreRow) {
+    // Cargar valores del cierre existente al form — el upsert actualiza por (local,fecha,turno,caja)
+    setEditandoId(c.id)
+    setFFecha(c.fecha)
+    setFTurno(c.turno)
+    setFCaja(c.caja ?? '')
+    setFHoraInicio(c.hora_inicio ?? '')
+    setFHoraCierre(c.hora_cierre ?? '')
+    setFFudoEfvo(c.fudo_efectivo ? String(c.fudo_efectivo) : '')
+    setFFudoQR(c.fudo_qr ? String(c.fudo_qr) : '')
+    setFFudoDebito(c.fudo_debito ? String(c.fudo_debito) : '')
+    setFFudoCredito(c.fudo_credito ? String(c.fudo_credito) : '')
+    setFFudoTransf(c.fudo_transferencia ? String(c.fudo_transferencia) : '')
+    setFContado(c.monto_contado ? String(c.monto_contado) : '')
+    setFFondoAp(c.fondo_apertura ? String(c.fondo_apertura) : '')
+    setFOtrosRetiros(c.otros_retiros ? String(c.otros_retiros) : '')
+    setFOtrosRetNota(c.otros_retiros_nota ?? '')
+    setFNota(c.nota ?? '')
+    setFudoResumen(null)
+    setFudoError('')
+    setFudoProgreso('')
+    setFormOpen(true)
+  }
+
+  function cerrarForm() {
+    setFormOpen(false)
+    setEditandoId(null)
+    resetForm()
   }
 
   // ── helper: diferencia real = (contado + retiros) - (efectivo fudo + cambio apertura) ──
@@ -329,12 +362,14 @@ export function CierreCaja() {
         </div>
       </div>
 
-      {/* Form nuevo cierre (expandible) */}
+      {/* Form nuevo/editar cierre (expandible) */}
       {formOpen && (
         <div className="bg-white rounded-lg border-2 border-rodziny-200 p-5">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="font-semibold text-gray-900 text-sm">Nuevo cierre de caja</h3>
-            <button onClick={() => setFormOpen(false)} className="text-gray-400 hover:text-gray-600 text-lg">✕</button>
+            <h3 className="font-semibold text-gray-900 text-sm">
+              {editandoId ? 'Editar cierre de caja' : 'Nuevo cierre de caja'}
+            </h3>
+            <button onClick={cerrarForm} className="text-gray-400 hover:text-gray-600 text-lg">✕</button>
           </div>
 
           <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
@@ -657,13 +692,22 @@ export function CierreCaja() {
                         </button>
                       </td>
                       <td className="px-2 py-2 text-center">
-                        <button
-                          onClick={() => { if (confirm('¿Eliminar este cierre?')) eliminarMut.mutate(c.id) }}
-                          className="text-gray-300 hover:text-red-500 transition-colors text-xs"
-                          title="Eliminar"
-                        >
-                          ✕
-                        </button>
+                        <div className="flex items-center justify-center gap-2">
+                          <button
+                            onClick={() => editarCierre(c)}
+                            className="text-blue-500 hover:text-blue-700 transition-colors text-xs"
+                            title="Editar este cierre"
+                          >
+                            Editar
+                          </button>
+                          <button
+                            onClick={() => { if (confirm('¿Eliminar este cierre?')) eliminarMut.mutate(c.id) }}
+                            className="text-gray-300 hover:text-red-500 transition-colors text-xs"
+                            title="Eliminar"
+                          >
+                            ✕
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))
