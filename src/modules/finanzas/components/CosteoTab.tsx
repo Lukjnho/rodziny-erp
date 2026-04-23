@@ -11,6 +11,7 @@ interface Receta {
   nombre: string
   tipo: string
   rendimiento_kg: number | null
+  rendimiento_unidad: 'kg' | 'l' | 'unidad' | null
   rendimiento_porciones: number | null
   activo: boolean
   local: string | null
@@ -483,7 +484,7 @@ function VistaRecetas() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cocina_recetas')
-        .select('id, nombre, tipo, rendimiento_kg, rendimiento_porciones, activo, local')
+        .select('id, nombre, tipo, rendimiento_kg, rendimiento_unidad, rendimiento_porciones, activo, local')
         .eq('activo', true)
         .order('nombre')
       if (error) throw error
@@ -565,7 +566,10 @@ function VistaRecetas() {
                     <span className="px-2 py-0.5 rounded-full text-xs bg-gray-100 text-gray-700">{TIPO_RECETA_LABEL[r.tipo] ?? r.tipo}</span>
                   </td>
                   <td className="px-4 py-2 text-right text-xs text-gray-500 tabular-nums">
-                    {r.rendimiento_kg != null && `${r.rendimiento_kg} kg`}
+                    {r.rendimiento_kg != null && (() => {
+                      const u = (r.rendimiento_unidad ?? 'kg') === 'l' ? 'L' : (r.rendimiento_unidad ?? 'kg') === 'unidad' ? 'unid.' : 'kg'
+                      return `${r.rendimiento_kg} ${u}`
+                    })()}
                     {r.rendimiento_kg != null && r.rendimiento_porciones != null && <br />}
                     {r.rendimiento_porciones != null && `${r.rendimiento_porciones} porc.`}
                   </td>

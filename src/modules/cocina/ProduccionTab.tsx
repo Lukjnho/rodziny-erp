@@ -63,7 +63,10 @@ interface Producto {
   id: string; nombre: string; codigo: string; tipo: string; local: string
 }
 interface Receta {
-  id: string; nombre: string; tipo: string; rendimiento_kg: number | null; local: string | null
+  id: string; nombre: string; tipo: string
+  rendimiento_kg: number | null
+  rendimiento_unidad: 'kg' | 'l' | 'unidad' | null
+  local: string | null
 }
 interface IngredienteRealRow {
   ing_id: string
@@ -171,7 +174,7 @@ export function ProduccionTab() {
   const { data: recetas } = useQuery({
     queryKey: ['cocina-recetas'],
     queryFn: async () => {
-      const { data, error } = await supabase.from('cocina_recetas').select('id, nombre, tipo, rendimiento_kg, local').eq('activo', true).order('nombre')
+      const { data, error } = await supabase.from('cocina_recetas').select('id, nombre, tipo, rendimiento_kg, rendimiento_unidad, local').eq('activo', true).order('nombre')
       if (error) throw error
       return data as Receta[]
     },
@@ -882,7 +885,10 @@ function ModalRelleno({ fecha, recetas, onClose, onSaved }: {
             <label className="block text-xs text-gray-500 mb-1">Receta de relleno</label>
             <select value={recetaId} onChange={(e) => setRecetaId(e.target.value)} className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm">
               {recetas.length === 0 && <option value="">No hay recetas de relleno cargadas</option>}
-              {recetas.map((r) => <option key={r.id} value={r.id}>{r.nombre}{r.rendimiento_kg ? ` (${r.rendimiento_kg} kg/receta)` : ''}</option>)}
+              {recetas.map((r) => {
+                const u = (r.rendimiento_unidad ?? 'kg') === 'l' ? 'L' : (r.rendimiento_unidad ?? 'kg') === 'unidad' ? 'unid.' : 'kg'
+                return <option key={r.id} value={r.id}>{r.nombre}{r.rendimiento_kg ? ` (${r.rendimiento_kg} ${u}/receta)` : ''}</option>
+              })}
             </select>
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -1132,7 +1138,10 @@ function ModalMasa({ fecha, recetas, onClose, onSaved }: {
             <label className="block text-xs text-gray-500 mb-1">Receta de masa</label>
             <select value={recetaId} onChange={(e) => setRecetaId(e.target.value)} className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm">
               {recetas.length === 0 && <option value="">No hay recetas de masa cargadas</option>}
-              {recetas.map((r) => <option key={r.id} value={r.id}>{r.nombre}{r.rendimiento_kg ? ` (${r.rendimiento_kg} kg/receta)` : ''}</option>)}
+              {recetas.map((r) => {
+                const u = (r.rendimiento_unidad ?? 'kg') === 'l' ? 'L' : (r.rendimiento_unidad ?? 'kg') === 'unidad' ? 'unid.' : 'kg'
+                return <option key={r.id} value={r.id}>{r.nombre}{r.rendimiento_kg ? ` (${r.rendimiento_kg} ${u}/receta)` : ''}</option>
+              })}
             </select>
           </div>
           <div>

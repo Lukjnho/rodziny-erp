@@ -11,7 +11,17 @@ interface Producto {
   id: string; nombre: string; codigo: string; tipo: string; local: string
 }
 interface Receta {
-  id: string; nombre: string; tipo: string; rendimiento_kg: number | null; local: string | null
+  id: string; nombre: string; tipo: string
+  rendimiento_kg: number | null
+  rendimiento_unidad: 'kg' | 'l' | 'unidad' | null
+  local: string | null
+}
+
+const RECETA_UNIDAD_LABEL: Record<'kg' | 'l' | 'unidad', string> = {
+  kg: 'kg', l: 'L', unidad: 'unid.',
+}
+function unidadReceta(r: { rendimiento_unidad: 'kg' | 'l' | 'unidad' | null }): string {
+  return RECETA_UNIDAD_LABEL[r.rendimiento_unidad ?? 'kg']
 }
 interface LoteRelleno {
   id: string; receta_id: string; peso_total_kg: number; local: string
@@ -95,7 +105,7 @@ export function ProduccionQRPage() {
   const { data: recetas } = useQuery({
     queryKey: ['cocina-recetas-qr'],
     queryFn: async () => {
-      const { data, error } = await supabase.from('cocina_recetas').select('id, nombre, tipo, rendimiento_kg, local').eq('activo', true).order('nombre')
+      const { data, error } = await supabase.from('cocina_recetas').select('id, nombre, tipo, rendimiento_kg, rendimiento_unidad, local').eq('activo', true).order('nombre')
       if (error) throw error
       return data as Receta[]
     },
@@ -427,7 +437,7 @@ function FormRelleno({ local, recetas, onGuardado, onVolver }: {
             {recetas.length === 0 && <option value="">No hay recetas cargadas</option>}
             {recetas.map((r) => (
               <option key={r.id} value={r.id}>
-                {r.nombre}{r.rendimiento_kg ? ` (${r.rendimiento_kg} kg/receta)` : ''}
+                {r.nombre}{r.rendimiento_kg ? ` (${r.rendimiento_kg} ${unidadReceta(r)}/receta)` : ''}
               </option>
             ))}
           </select>
@@ -894,7 +904,7 @@ function FormMasa({ local, recetas, onGuardado, onVolver }: {
             {recetas.length === 0 && <option value="">No hay recetas de masa cargadas</option>}
             {recetas.map((r) => (
               <option key={r.id} value={r.id}>
-                {r.nombre}{r.rendimiento_kg ? ` (${r.rendimiento_kg} kg/receta)` : ''}
+                {r.nombre}{r.rendimiento_kg ? ` (${r.rendimiento_kg} ${unidadReceta(r)}/receta)` : ''}
               </option>
             ))}
           </select>

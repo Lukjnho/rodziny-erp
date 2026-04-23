@@ -16,11 +16,14 @@ interface Ingrediente {
   producto_id: string | null
 }
 
+type RendUnidad = 'kg' | 'l' | 'unidad'
+
 interface Receta {
   id: string
   nombre: string
   tipo: 'relleno' | 'masa' | 'salsa' | 'subreceta' | 'otro'
   rendimiento_kg: number | null
+  rendimiento_unidad: RendUnidad
   rendimiento_porciones: number | null
   instrucciones: string | null
   activo: boolean
@@ -29,6 +32,12 @@ interface Receta {
   gramos_por_porcion: number | null
   fudo_productos: string[] | null
   created_at: string
+}
+
+const UNIDAD_LABEL: Record<RendUnidad, string> = {
+  kg: 'kg',
+  l: 'L',
+  unidad: 'unid.',
 }
 
 const TIPOS = ['relleno', 'masa', 'salsa', 'postre', 'pasteleria', 'panaderia', 'subreceta', 'otro'] as const
@@ -191,6 +200,7 @@ export function RecetasTab() {
         nombre: nuevoNombre.trim(),
         tipo: origen.tipo,
         rendimiento_kg: origen.rendimiento_kg,
+        rendimiento_unidad: origen.rendimiento_unidad ?? 'kg',
         rendimiento_porciones: origen.rendimiento_porciones,
         instrucciones: origen.instrucciones,
         local: nuevoLocal,
@@ -394,7 +404,7 @@ export function RecetasTab() {
                         <span className="text-xs text-gray-300">—</span>
                       )}
                     </td>
-                    <td className="px-4 py-2">{r.rendimiento_kg != null ? `${r.rendimiento_kg} kg` : '—'}</td>
+                    <td className="px-4 py-2">{r.rendimiento_kg != null ? `${r.rendimiento_kg} ${UNIDAD_LABEL[r.rendimiento_unidad ?? 'kg']}` : '—'}</td>
                     <td className="px-4 py-2">{r.rendimiento_porciones ?? '—'}</td>
                     <td className="px-4 py-2 text-right tabular-nums font-medium text-gray-800">
                       {costo && costo.costoConMargen > 0 ? formatARS(costo.costoConMargen) : <span className="text-gray-300">—</span>}
@@ -633,15 +643,19 @@ function FichaTecnica({ receta, ingredientes, costo }: { receta: Receta; ingredi
           <div>
             <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Rendimiento</h4>
             <div className="flex flex-wrap gap-3">
-              {receta.rendimiento_kg != null && (
-                <div className="bg-white rounded border border-gray-200 px-3 py-2 text-center">
-                  <div className="text-lg font-bold text-gray-800">{receta.rendimiento_kg} kg</div>
-                  <div className="text-[10px] text-gray-400 uppercase">Peso total</div>
-                  {costo?.costoPorKg != null && (
-                    <div className="text-[11px] text-rodziny-700 font-semibold mt-1">{formatARS(costo.costoPorKg)}/kg</div>
-                  )}
-                </div>
-              )}
+              {receta.rendimiento_kg != null && (() => {
+                const unidad = UNIDAD_LABEL[receta.rendimiento_unidad ?? 'kg']
+                const label = receta.rendimiento_unidad === 'unidad' ? 'Rendimiento' : 'Rendimiento total'
+                return (
+                  <div className="bg-white rounded border border-gray-200 px-3 py-2 text-center">
+                    <div className="text-lg font-bold text-gray-800">{receta.rendimiento_kg} {unidad}</div>
+                    <div className="text-[10px] text-gray-400 uppercase">{label}</div>
+                    {costo?.costoPorKg != null && (
+                      <div className="text-[11px] text-rodziny-700 font-semibold mt-1">{formatARS(costo.costoPorKg)}/{unidad}</div>
+                    )}
+                  </div>
+                )
+              })()}
               {receta.rendimiento_porciones != null && (
                 <div className="bg-white rounded border border-gray-200 px-3 py-2 text-center">
                   <div className="text-lg font-bold text-gray-800">{receta.rendimiento_porciones}</div>
@@ -712,6 +726,7 @@ function ModalReceta({
   const [nombre, setNombre] = useState(receta?.nombre ?? '')
   const [tipo, setTipo] = useState(receta?.tipo ?? 'relleno')
   const [rendKg, setRendKg] = useState(receta?.rendimiento_kg ?? '')
+  const [rendUnidad, setRendUnidad] = useState<RendUnidad>(receta?.rendimiento_unidad ?? 'kg')
   const [rendPorciones, setRendPorciones] = useState(receta?.rendimiento_porciones ?? '')
   const [local, setLocal] = useState<string>(receta?.local ?? 'vedia')
   const [gramosPorcion, setGramosPorcion] = useState<string>(receta?.gramos_por_porcion != null ? String(receta.gramos_por_porcion) : '')
@@ -818,6 +833,7 @@ function ModalReceta({
         nombre: nombre.trim(),
         tipo,
         rendimiento_kg: rendKg !== '' ? Number(rendKg) : null,
+        rendimiento_unidad: rendUnidad,
         rendimiento_porciones: rendPorciones !== '' ? Number(rendPorciones) : null,
         local,
         gramos_por_porcion: gramosPorcion !== '' ? Number(gramosPorcion) : null,
@@ -957,15 +973,26 @@ function ModalReceta({
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs text-gray-500 mb-1">Rendimiento (kg)</label>
-                  <input
-                    type="number"
-                    step="0.1"
-                    value={rendKg}
-                    onChange={(e) => setRendKg(e.target.value)}
-                    className="w-full border border-gray-300 rounded px-3 py-1.5 text-sm"
-                    placeholder="5.5"
-                  />
+                  <label className="block text-xs text-gray-500 mb-1">Rendimiento</label>
+                  <div className="flex gap-1">
+                    <input
+                      type="number"
+                      step="0.1"
+                      value={rendKg}
+                      onChange={(e) => setRendKg(e.target.value)}
+                      className="w-full border border-gray-300 rounded px-3 py-1.5 text-sm"
+                      placeholder={rendUnidad === 'unidad' ? '1' : '5.5'}
+                    />
+                    <select
+                      value={rendUnidad}
+                      onChange={(e) => setRendUnidad(e.target.value as RendUnidad)}
+                      className="border border-gray-300 rounded px-2 py-1.5 text-sm bg-white"
+                    >
+                      <option value="kg">kg</option>
+                      <option value="l">L</option>
+                      <option value="unidad">unid.</option>
+                    </select>
+                  </div>
                 </div>
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">Rendimiento (porciones)</label>
@@ -1203,7 +1230,9 @@ function AutocompleteIngrediente({
       lista.push({
         id: r.id,
         nombre: r.nombre,
-        unidad: r.rendimiento_kg != null ? 'kg' : 'unid',
+        unidad: r.rendimiento_kg != null
+          ? (r.rendimiento_unidad === 'l' ? 'l' : r.rendimiento_unidad === 'unidad' ? 'unid' : 'kg')
+          : 'unid',
         tipo: 'receta',
         detalle: TIPO_LABEL[r.tipo] ?? r.tipo,
       })
