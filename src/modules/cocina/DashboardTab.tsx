@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { cn } from '@/lib/utils'
 import { LocalSelector } from '@/components/ui/LocalSelector'
+import { ProximasEfemeridesCard } from './components/ProximasEfemeridesCard'
 
 // ── Productos que el chef controla ──────────────────────────────────────────
 // tipo determina unidad de medida y cálculo de porciones
@@ -571,6 +572,9 @@ export function DashboardTab() {
           <div className="text-[10px] uppercase text-gray-400 font-medium">Sin contar</div>
         </div>
       </div>
+
+      {/* ── PRÓXIMAS EFEMÉRIDES ── */}
+      <ProximasEfemeridesCard diasAdelante={15} />
 
       {/* ── PLAN DE PRODUCCIÓN DEL DÍA ── */}
       {planProduccion.length > 0 && (

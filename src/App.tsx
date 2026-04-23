@@ -12,6 +12,7 @@ import { UsuariosPage } from '@/modules/usuarios/UsuariosPage'
 import { CocinaPage } from '@/modules/cocina/CocinaPage'
 import { ProduccionQRPage } from '@/modules/cocina/ProduccionQRPage'
 import { AlmacenPage } from '@/modules/almacen/AlmacenPage'
+import { DashboardPage } from '@/modules/dashboard/DashboardPage'
 import { PageContainer } from '@/components/layout/PageContainer'
 import { AuthProvider, useAuth, type Modulo } from '@/lib/auth'
 import { type ReactNode } from 'react'
@@ -106,7 +107,7 @@ function AppInterna() {
       <Sidebar />
       <div className="flex-1">
         <Routes>
-          <Route path="/"               element={tienePermiso('dashboard') ? <Placeholder title="Dashboard" /> : (primeraRutaPermitida && primeraRutaPermitida !== '/' ? <Navigate to={primeraRutaPermitida} replace /> : <SinAcceso />)} />
+          <Route path="/"               element={tienePermiso('dashboard') ? <DashboardPage /> : (primeraRutaPermitida && primeraRutaPermitida !== '/' ? <Navigate to={primeraRutaPermitida} replace /> : <SinAcceso />)} />
           <Route path="/finanzas"       element={<RutaFinanzas><FinanzasPage /></RutaFinanzas>} />
           {/* Rutas legacy: ahora viven como tabs adentro de /finanzas */}
           <Route path="/ventas"         element={<Navigate to="/finanzas" replace />} />

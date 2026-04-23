@@ -8,8 +8,9 @@ import { TraspasosTab } from './TraspasosTab'
 import { RecetasTab } from './RecetasTab'
 import { ProductosTab } from './ProductosTab'
 import { AnalisisTab } from './AnalisisTab'
+import { CalendarioTab } from './CalendarioTab'
 
-type Tab = 'dashboard' | 'produccion' | 'stock' | 'traspasos' | 'recetas' | 'productos' | 'analisis'
+type Tab = 'dashboard' | 'produccion' | 'stock' | 'traspasos' | 'recetas' | 'productos' | 'analisis' | 'calendario'
 
 const ayudaPorTab: Record<Tab, { titulo: string; pasos: string[] }> = {
   dashboard: {
@@ -71,6 +72,16 @@ const ayudaPorTab: Record<Tab, { titulo: string; pasos: string[] }> = {
       'Cambiá el período (7/30/90 días) para ver tendencias más o menos recientes.',
     ],
   },
+  calendario: {
+    titulo: 'Calendario de efemérides',
+    pasos: [
+      'Listado de fechas gastronómicas relevantes (Día de la Pasta, San Valentín, Día del Ñoqui, etc.) para planificar menú, promos y contenido de redes.',
+      'El dashboard muestra automáticamente las próximas 15 días — usalo como guía de planificación.',
+      'Podés filtrar por mes, categoría y estado (activa/inactiva).',
+      'Cargá tu propia idea de plato o acción en cada fecha — queda guardada para el año siguiente.',
+      'Las "recurrentes mensuales" (ej. Día del Ñoqui 29) aparecen en cada mes sin tener que duplicar.',
+    ],
+  },
 }
 
 export function CocinaPage() {
@@ -87,6 +98,7 @@ export function CocinaPage() {
         <TabButton activo={tab === 'recetas'} onClick={() => setTab('recetas')}>Recetas</TabButton>
         <TabButton activo={tab === 'productos'} onClick={() => setTab('productos')}>Productos</TabButton>
         <TabButton activo={tab === 'analisis'} onClick={() => setTab('analisis')}>Análisis</TabButton>
+        <TabButton activo={tab === 'calendario'} onClick={() => setTab('calendario')}>Calendario</TabButton>
         <button
           onClick={() => setAyudaAbierta(true)}
           className="ml-auto mb-2 w-8 h-8 rounded-full bg-rodziny-100 text-rodziny-700 hover:bg-rodziny-200 flex items-center justify-center text-sm font-bold transition-colors"
@@ -101,6 +113,7 @@ export function CocinaPage() {
       {tab === 'recetas' && <RecetasTab />}
       {tab === 'productos' && <ProductosTab />}
       {tab === 'analisis' && <AnalisisTab />}
+      {tab === 'calendario' && <CalendarioTab />}
 
       {ayudaAbierta && <AyudaPanel tab={tab} onClose={() => setAyudaAbierta(false)} />}
     </PageContainer>
