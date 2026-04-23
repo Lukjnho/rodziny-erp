@@ -153,8 +153,17 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
         estado_pago: ((gastoEditando.estado_pago?.toLowerCase() === 'pagado') ? 'pagado' : 'pendiente') as EstadoPago,
         fecha_pago: gastoEditando.fecha_vencimiento ?? HOY(),
         medio_pago: 'transferencia_mp',
-        vincular_stock: false,
-        items: [],
+        // Cargar ítems guardados del gasto (si los tiene). Se mantienen editables para corregir errores.
+        vincular_stock: !!gastoEditando.items_json?.length,
+        items: (gastoEditando.items_json ?? []).map((it) => ({
+          producto_id: it.producto_id,
+          producto_nombre: it.producto_nombre,
+          cantidad: it.cantidad,
+          unidad: it.unidad,
+          precio_unitario: it.precio_unitario ?? 0,
+          subtotal: it.subtotal ?? (it.precio_unitario ?? 0) * it.cantidad,
+          categoria_gasto_id: it.categoria_gasto_id ?? null,
+        })),
       })
       setComprobantePath(gastoEditando.comprobante_path)
     } else {
@@ -443,11 +452,14 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
       const proveedorNombre = proveedorObj?.razon_social ?? form.proveedor_libre.trim()
 
       // Helper: construye el payload base de un gasto (montos se pisan después)
-      const buildPayload = (categoria_id: string, neto: number, iva: number, iibb: number, total: number, comentarioExtra?: string) => {
+      const buildPayload = (categoria_id: string, neto: number, iva: number, iibb: number, total: number, comentarioExtra?: string, itemsDelGrupo?: ItemGastoStock[]) => {
         const sub = categorias?.find((c) => c.id === categoria_id)
         const padre = sub?.parent_id ? categorias?.find((c) => c.id === sub.parent_id) : null
         const comentarioBase = form.comentario.trim()
         const comentario = [comentarioBase, comentarioExtra].filter(Boolean).join(' · ') || null
+        const itemsParaGuardar = form.vincular_stock
+          ? (itemsDelGrupo ?? form.items).filter((it) => it.producto_id)
+          : null
         return {
           local: form.local,
           fecha: form.fecha,
@@ -473,6 +485,7 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
           creado_manual: true,
           cancelado: false,
           periodo,
+          items_json: itemsParaGuardar && itemsParaGuardar.length > 0 ? itemsParaGuardar : null,
         }
       }
 
@@ -492,7 +505,7 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
         if (errUp) throw errUp
         gastosCreados.push(gastoEditando.id)
       } else if (usarSplit && splitPorSubcat.length > 1) {
-        // Split: una fila por subcategoría
+        // Split: una fila por subcategoría, cada una con sus propios items
         const nroLabel = nroCompleto || 'comprobante'
         const rows = splitPorSubcat.map((s, i) =>
           buildPayload(
@@ -502,6 +515,7 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
             s.iibb,
             s.total,
             `Parte ${i + 1}/${splitPorSubcat.length} de ${nroLabel}`,
+            s.items,
           ),
         )
         const { data: ins, error: errIns } = await supabase.from('gastos').insert(rows).select('id')
@@ -845,6 +859,12 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
 
             {form.vincular_stock && (
               <div className="mt-3 space-y-2">
+                {gastoEditando && (
+                  <div className="bg-amber-50 border border-amber-200 rounded px-3 py-2 text-[11px] text-amber-800">
+                    Si modificás cantidades o productos acá, el <strong>stock actual no se ajusta automáticamente</strong>.
+                    Los cambios quedan guardados en el gasto; si necesitás corregir el stock, hacelo manualmente desde Movimientos.
+                  </div>
+                )}
                 {/* Items cargados */}
                 {form.items.length > 0 && (
                   <div className="bg-white rounded border border-gray-200 divide-y divide-gray-100">

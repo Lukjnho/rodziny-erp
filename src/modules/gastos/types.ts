@@ -87,6 +87,7 @@ export interface Gasto {
   cancelado: boolean
   periodo: string                // YYYY-MM
   fudo_id: string | null
+  items_json: ItemGastoStock[] | null // ítems vinculados al stock — persistidos para poder editarlos
 }
 
 export interface PagoGasto {
