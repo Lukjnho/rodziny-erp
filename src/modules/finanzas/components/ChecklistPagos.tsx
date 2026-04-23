@@ -206,13 +206,25 @@ export function ChecklistPagos() {
       if (!anterior?.length) throw new Error(`No hay datos en ${labelMes(pAnterior)}`);
 
       const [y, m] = periodo.split('-').map(Number);
-      const ultimoDia = new Date(y, m, 0).getDate();
+      const ultimoDiaNuevo = new Date(y, m, 0).getDate();
 
       const rows = anterior.map((a: PagoFijo) => {
-        // Recalcular fecha vencimiento para el nuevo mes
+        // Recalcular fecha vencimiento para el nuevo mes.
+        // Si el vencimiento anterior era el último día del mes (ej. 28-feb o
+        // 30-abr), preservar "último día" en el nuevo mes en vez de tomar el
+        // número literal — un cheque que vence el 28-feb en marzo debería
+        // vencer el 31, no el 28.
         let fechaVto: string | null = null;
         if (a.fecha_vencimiento) {
-          const dia = Math.min(new Date(a.fecha_vencimiento + 'T12:00:00').getDate(), ultimoDia);
+          const fOrig = new Date(a.fecha_vencimiento + 'T12:00:00');
+          const diaOrig = fOrig.getDate();
+          const ultimoDiaOrig = new Date(
+            fOrig.getFullYear(),
+            fOrig.getMonth() + 1,
+            0,
+          ).getDate();
+          const dia =
+            diaOrig === ultimoDiaOrig ? ultimoDiaNuevo : Math.min(diaOrig, ultimoDiaNuevo);
           fechaVto = `${periodo}-${String(dia).padStart(2, '0')}`;
         }
         return {

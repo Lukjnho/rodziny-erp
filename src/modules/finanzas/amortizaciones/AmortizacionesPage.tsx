@@ -142,12 +142,17 @@ export function AmortizacionesPage({ embedded = false }: { embedded?: boolean } 
     [año],
   );
 
-  // Verificar si un mes está activo para una amortización
+  // Verificar si un mes está activo para una amortización.
+  // Sumamos meses aritméticamente para no depender de setMonth(), que al caer
+  // en días 29/30/31 hace overflow al mes siguiente (ej: 2024-01-31 + 1 mes =
+  // 2024-03-02 en JS), devolviendo el mes incorrecto.
   function mesActivo(a: Amortizacion, mes: string): boolean {
     const inicio = a.fecha_inicio.substring(0, 7);
-    const finDate = new Date(a.fecha_inicio);
-    finDate.setMonth(finDate.getMonth() + a.vida_util_meses);
-    const fin = `${finDate.getFullYear()}-${String(finDate.getMonth() + 1).padStart(2, '0')}`;
+    const [y, m] = a.fecha_inicio.substring(0, 7).split('-').map(Number);
+    const totalMeses = (m - 1) + a.vida_util_meses;
+    const finY = y + Math.floor(totalMeses / 12);
+    const finM = (totalMeses % 12) + 1;
+    const fin = `${finY}-${String(finM).padStart(2, '0')}`;
     return mes >= inicio && mes < fin;
   }
 
