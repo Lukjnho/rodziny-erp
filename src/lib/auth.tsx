@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import type { User } from '@supabase/supabase-js';
 import { supabase } from './supabase';
 
@@ -58,6 +59,7 @@ async function fetchPerfil(userId: string): Promise<Perfil | null> {
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
+  const qc = useQueryClient();
   const [user, setUser] = useState<User | null>(null);
   const [perfil, setPerfil] = useState<Perfil | null>(null);
   const [cargando, setCargando] = useState(true);
@@ -112,6 +114,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await supabase.auth.signOut();
     setUser(null);
     setPerfil(null);
+    // Limpiar cache para evitar que el próximo usuario vea datos de este.
+    qc.clear();
   };
 
   const tienePermiso = (m: Modulo): boolean => {
