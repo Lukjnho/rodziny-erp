@@ -25,6 +25,7 @@ function unidadReceta(r: { rendimiento_unidad: 'kg' | 'l' | 'unidad' | null }): 
 }
 interface LoteRelleno {
   id: string; receta_id: string; peso_total_kg: number; local: string
+  fecha: string
   receta?: { nombre: string } | null
   // Campos calculados en memoria a partir de las pastas que consumieron este lote.
   consumido_kg?: number
@@ -33,6 +34,7 @@ interface LoteRelleno {
 interface LoteMasa {
   id: string; receta_id: string | null; kg_producidos: number
   kg_sobrante: number | null; destino_sobrante: string | null
+  fecha: string
   receta?: { nombre: string } | null
   consumido_kg?: number
   disponible_kg?: number
@@ -63,6 +65,17 @@ type CategoriaGenerica = 'salsa' | 'postre' | 'pasteleria' | 'panaderia' | 'prue
 
 function hoy() {
   return new Date().toISOString().slice(0, 10)
+}
+
+// Ventana de días hacia atrás para buscar lotes de relleno/masa todavía abiertos.
+// Los rellenos/masas pueden quedar parcialmente usados y guardados en heladera
+// para terminarlos en días siguientes. 7 días es generoso y cubre el caso.
+const DIAS_VENTANA_LOTES_ABIERTOS = 7
+
+function fechaHaceDias(dias: number) {
+  const d = new Date()
+  d.setDate(d.getDate() - dias)
+  return d.toISOString().slice(0, 10)
 }
 
 function formatDDMM(fecha: string) {
@@ -116,14 +129,17 @@ export function ProduccionQRPage() {
     },
   })
 
-  // Lotes de relleno del día (para asociar en pasta)
+  // Lotes de relleno / masa: últimos N días (para poder seguir usando rellenos
+  // y masas que quedaron parcialmente en heladera de días anteriores).
+  const desdeLotes = fechaHaceDias(DIAS_VENTANA_LOTES_ABIERTOS)
+
   const { data: lotesRellenoHoy } = useQuery({
-    queryKey: ['cocina-lotes-relleno-qr', hoy(), local],
+    queryKey: ['cocina-lotes-relleno-qr', desdeLotes, local],
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cocina_lotes_relleno')
-        .select('id, receta_id, peso_total_kg, local, receta:cocina_recetas(nombre)')
-        .eq('fecha', hoy())
+        .select('id, receta_id, peso_total_kg, fecha, local, receta:cocina_recetas(nombre)')
+        .gte('fecha', desdeLotes)
         .eq('local', local)
         .order('created_at', { ascending: false })
       if (error) throw error
@@ -131,14 +147,13 @@ export function ProduccionQRPage() {
     },
   })
 
-  // Lotes de masa del día
   const { data: lotesMasaHoy } = useQuery({
-    queryKey: ['cocina-lotes-masa-qr', hoy(), local],
+    queryKey: ['cocina-lotes-masa-qr', desdeLotes, local],
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cocina_lotes_masa')
-        .select('id, receta_id, kg_producidos, kg_sobrante, destino_sobrante, receta:cocina_recetas(nombre)')
-        .eq('fecha', hoy())
+        .select('id, receta_id, kg_producidos, kg_sobrante, destino_sobrante, fecha, receta:cocina_recetas(nombre)')
+        .gte('fecha', desdeLotes)
         .eq('local', local)
         .order('created_at', { ascending: false })
       if (error) throw error
@@ -146,18 +161,23 @@ export function ProduccionQRPage() {
     },
   })
 
-  const masasAbiertas = useMemo(() => (lotesMasaHoy ?? []).filter((m) => m.kg_sobrante === null).length, [lotesMasaHoy])
+  // "Masas abiertas" en la home solo cuenta las de HOY sin cerrar — las de días
+  // anteriores no deberían empujar al operario a cerrarlas desde este QR.
+  const masasAbiertas = useMemo(
+    () => (lotesMasaHoy ?? []).filter((m) => m.fecha === hoy() && m.kg_sobrante === null).length,
+    [lotesMasaHoy],
+  )
 
-  // Pastas armadas que referencian los lotes de relleno/masa de hoy.
-  // Las cargamos para poder calcular cuánto se consumió y cuánto queda disponible.
+  // Pastas armadas que pueden haber consumido lotes abiertos.
+  // Traemos el mismo rango para poder restar bien los kg ya usados.
   const { data: pastasConsumoHoy } = useQuery({
-    queryKey: ['cocina-pastas-consumo-qr', hoy(), local],
+    queryKey: ['cocina-pastas-consumo-qr', desdeLotes, local],
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cocina_lotes_pasta')
         .select('id, lote_relleno_id, lote_masa_id, relleno_kg, masa_kg, fecha, local')
         .eq('local', local)
-        .gte('fecha', hoy())
+        .gte('fecha', desdeLotes)
       if (error) throw error
       return (data ?? []) as {
         id: string; lote_relleno_id: string | null; lote_masa_id: string | null
@@ -254,7 +274,7 @@ export function ProduccionQRPage() {
         <Inicio
           local={local}
           onIr={(v) => setVista(v)}
-          lotesHoy={lotesRellenoHoy?.length ?? 0}
+          lotesHoy={(lotesRellenoHoy ?? []).filter((l) => l.fecha === hoy()).length}
           masasAbiertas={masasAbiertas}
           frescosPendientes={frescosPendientes}
         />
@@ -300,7 +320,7 @@ export function ProduccionQRPage() {
 
       {vista === 'cerrar-masa' && (
         <FormCerrarMasa
-          lotesAbiertos={(lotesMasaHoy ?? []).filter((m) => m.kg_sobrante === null)}
+          lotesAbiertos={(lotesMasaHoy ?? []).filter((m) => m.fecha === hoy() && m.kg_sobrante === null)}
           onGuardado={(msg) => onGuardado(msg)}
           onVolver={() => setVista('inicio')}
         />
@@ -665,11 +685,15 @@ function FormPasta({ local, productos, lotesRelleno, lotesMasa, onGuardado, onVo
             className="w-full border border-gray-300 rounded px-3 py-2.5 text-sm"
           >
             <option value="">Sin relleno</option>
-            {lotesRelleno.map((l) => (
-              <option key={l.id} value={l.id}>
-                {l.receta?.nombre ?? 'Relleno'} — {l.disponible_kg ?? l.peso_total_kg} kg disponibles
-              </option>
-            ))}
+            {lotesRelleno.map((l) => {
+              const esDeHoy = l.fecha === hoy()
+              const fechaSufijo = esDeHoy ? '' : ` (${formatDDMM(l.fecha)})`
+              return (
+                <option key={l.id} value={l.id}>
+                  {l.receta?.nombre ?? 'Relleno'}{fechaSufijo} — {l.disponible_kg ?? l.peso_total_kg} kg disponibles
+                </option>
+              )
+            })}
           </select>
         </div>
 
@@ -687,11 +711,15 @@ function FormPasta({ local, productos, lotesRelleno, lotesMasa, onGuardado, onVo
             className="w-full border border-gray-300 rounded px-3 py-2.5 text-sm"
           >
             <option value="">Sin lote de masa</option>
-            {lotesMasa.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.receta?.nombre ?? 'Masa'} — {m.disponible_kg ?? m.kg_producidos} kg disponibles
-              </option>
-            ))}
+            {lotesMasa.map((m) => {
+              const esDeHoy = m.fecha === hoy()
+              const fechaSufijo = esDeHoy ? '' : ` (${formatDDMM(m.fecha)})`
+              return (
+                <option key={m.id} value={m.id}>
+                  {m.receta?.nombre ?? 'Masa'}{fechaSufijo} — {m.disponible_kg ?? m.kg_producidos} kg disponibles
+                </option>
+              )
+            })}
           </select>
         </div>
 
