@@ -1,16 +1,24 @@
-import { useState } from 'react'
-import { PageContainer } from '@/components/layout/PageContainer'
-import { cn } from '@/lib/utils'
-import { DashboardTab } from './DashboardTab'
-import { ProduccionTab } from './ProduccionTab'
-import { StockTab } from './StockTab'
-import { TraspasosTab } from './TraspasosTab'
-import { RecetasTab } from './RecetasTab'
-import { ProductosTab } from './ProductosTab'
-import { AnalisisTab } from './AnalisisTab'
-import { CalendarioTab } from './CalendarioTab'
+import { useState } from 'react';
+import { PageContainer } from '@/components/layout/PageContainer';
+import { cn } from '@/lib/utils';
+import { DashboardTab } from './DashboardTab';
+import { ProduccionTab } from './ProduccionTab';
+import { StockTab } from './StockTab';
+import { TraspasosTab } from './TraspasosTab';
+import { RecetasTab } from './RecetasTab';
+import { ProductosTab } from './ProductosTab';
+import { AnalisisTab } from './AnalisisTab';
+import { CalendarioTab } from './CalendarioTab';
 
-type Tab = 'dashboard' | 'produccion' | 'stock' | 'traspasos' | 'recetas' | 'productos' | 'analisis' | 'calendario'
+type Tab =
+  | 'dashboard'
+  | 'produccion'
+  | 'stock'
+  | 'traspasos'
+  | 'recetas'
+  | 'productos'
+  | 'analisis'
+  | 'calendario';
 
 const ayudaPorTab: Record<Tab, { titulo: string; pasos: string[] }> = {
   dashboard: {
@@ -32,10 +40,11 @@ const ayudaPorTab: Record<Tab, { titulo: string; pasos: string[] }> = {
     ],
   },
   stock: {
-    titulo: 'Stock en depósito',
+    titulo: 'Stock',
     pasos: [
-      'Muestra el stock actual de cada producto en el depósito de pastas.',
-      'El stock se calcula automáticamente: producción - traspasos - merma.',
+      'Muestra el stock actual por producto en sus tres ubicaciones: Pastas en produ (frescas sin porcionar), En cámara (depósito), En mostrador (listas para venta).',
+      'El stock en cámara se calcula como: producción en cámara − traspasos históricos − merma.',
+      'El stock en mostrador se calcula como: traspasos de hoy − ventas Fudo de hoy − merma de hoy. Solo Vedia tiene ventas automáticas desde Fudo.',
       'Los productos bajo mínimo aparecen en amarillo, sin stock en rojo.',
     ],
   },
@@ -82,28 +91,46 @@ const ayudaPorTab: Record<Tab, { titulo: string; pasos: string[] }> = {
       'Las "recurrentes mensuales" (ej. Día del Ñoqui 29) aparecen en cada mes sin tener que duplicar.',
     ],
   },
-}
+};
 
 export function CocinaPage() {
-  const [tab, setTab] = useState<Tab>('dashboard')
-  const [ayudaAbierta, setAyudaAbierta] = useState(false)
+  const [tab, setTab] = useState<Tab>('dashboard');
+  const [ayudaAbierta, setAyudaAbierta] = useState(false);
 
   return (
     <PageContainer title="Cocina" subtitle="Producción y stock — Rodziny S.A.S.">
-      <div className="flex items-center gap-1 mb-6 border-b border-surface-border">
-        <TabButton activo={tab === 'dashboard'} onClick={() => setTab('dashboard')}>Dashboard</TabButton>
-        <TabButton activo={tab === 'produccion'} onClick={() => setTab('produccion')}>Producción</TabButton>
-        <TabButton activo={tab === 'stock'} onClick={() => setTab('stock')}>Stock depósito</TabButton>
-        <TabButton activo={tab === 'traspasos'} onClick={() => setTab('traspasos')}>Traspasos</TabButton>
-        <TabButton activo={tab === 'recetas'} onClick={() => setTab('recetas')}>Recetas</TabButton>
-        <TabButton activo={tab === 'productos'} onClick={() => setTab('productos')}>Productos</TabButton>
-        <TabButton activo={tab === 'analisis'} onClick={() => setTab('analisis')}>Análisis</TabButton>
-        <TabButton activo={tab === 'calendario'} onClick={() => setTab('calendario')}>Calendario</TabButton>
+      <div className="mb-6 flex items-center gap-1 border-b border-surface-border">
+        <TabButton activo={tab === 'dashboard'} onClick={() => setTab('dashboard')}>
+          Dashboard
+        </TabButton>
+        <TabButton activo={tab === 'produccion'} onClick={() => setTab('produccion')}>
+          Producción
+        </TabButton>
+        <TabButton activo={tab === 'stock'} onClick={() => setTab('stock')}>
+          Stock
+        </TabButton>
+        <TabButton activo={tab === 'traspasos'} onClick={() => setTab('traspasos')}>
+          Traspasos
+        </TabButton>
+        <TabButton activo={tab === 'recetas'} onClick={() => setTab('recetas')}>
+          Recetas
+        </TabButton>
+        <TabButton activo={tab === 'productos'} onClick={() => setTab('productos')}>
+          Productos
+        </TabButton>
+        <TabButton activo={tab === 'analisis'} onClick={() => setTab('analisis')}>
+          Análisis
+        </TabButton>
+        <TabButton activo={tab === 'calendario'} onClick={() => setTab('calendario')}>
+          Calendario
+        </TabButton>
         <button
           onClick={() => setAyudaAbierta(true)}
-          className="ml-auto mb-2 w-8 h-8 rounded-full bg-rodziny-100 text-rodziny-700 hover:bg-rodziny-200 flex items-center justify-center text-sm font-bold transition-colors"
+          className="hover:bg-rodziny-200 mb-2 ml-auto flex h-8 w-8 items-center justify-center rounded-full bg-rodziny-100 text-sm font-bold text-rodziny-700 transition-colors"
           title="Ayuda"
-        >?</button>
+        >
+          ?
+        </button>
       </div>
 
       {tab === 'dashboard' && <DashboardTab />}
@@ -117,40 +144,53 @@ export function CocinaPage() {
 
       {ayudaAbierta && <AyudaPanel tab={tab} onClose={() => setAyudaAbierta(false)} />}
     </PageContainer>
-  )
+  );
 }
 
-function TabButton({ activo, onClick, children }: { activo: boolean; onClick: () => void; children: React.ReactNode }) {
+function TabButton({
+  activo,
+  onClick,
+  children,
+}: {
+  activo: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
   return (
     <button
       onClick={onClick}
       className={cn(
-        'px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors',
+        '-mb-px border-b-2 px-4 py-2 text-sm font-medium transition-colors',
         activo
           ? 'border-rodziny-500 text-rodziny-700'
-          : 'border-transparent text-gray-500 hover:text-gray-700'
+          : 'border-transparent text-gray-500 hover:text-gray-700',
       )}
     >
       {children}
     </button>
-  )
+  );
 }
 
 function AyudaPanel({ tab, onClose }: { tab: Tab; onClose: () => void }) {
-  const info = ayudaPorTab[tab]
+  const info = ayudaPorTab[tab];
   return (
     <div className="fixed inset-0 z-50 flex justify-end" onClick={onClose}>
       <div className="absolute inset-0 bg-black/20" />
       <div
-        className="relative w-96 h-full bg-white shadow-xl p-6 overflow-y-auto"
+        className="relative h-full w-96 overflow-y-auto bg-white p-6 shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <button onClick={onClose} className="absolute top-4 right-4 text-gray-400 hover:text-gray-600 text-lg">✕</button>
-        <h3 className="text-lg font-bold text-gray-800 mb-4">{info.titulo}</h3>
+        <button
+          onClick={onClose}
+          className="absolute right-4 top-4 text-lg text-gray-400 hover:text-gray-600"
+        >
+          ✕
+        </button>
+        <h3 className="mb-4 text-lg font-bold text-gray-800">{info.titulo}</h3>
         <ol className="space-y-3">
           {info.pasos.map((p, i) => (
             <li key={i} className="flex gap-3 text-sm text-gray-600">
-              <span className="flex-shrink-0 w-6 h-6 rounded-full bg-rodziny-100 text-rodziny-700 flex items-center justify-center text-xs font-bold">
+              <span className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-rodziny-100 text-xs font-bold text-rodziny-700">
                 {i + 1}
               </span>
               <span>{p}</span>
@@ -159,5 +199,5 @@ function AyudaPanel({ tab, onClose }: { tab: Tab; onClose: () => void }) {
         </ol>
       </div>
     </div>
-  )
+  );
 }
