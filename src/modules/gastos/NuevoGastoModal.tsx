@@ -451,11 +451,14 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
         pathComprobante = path
       }
 
-      // 1b) Subir factura fiscal si hay una nueva
+      // 1b) Subir factura fiscal si hay una nueva.
+      // Usamos la misma estructura de carpetas que el comprobante de pago
+      // (`local/YYYY-MM/...`) para no chocar con las políticas RLS del bucket,
+      // y diferenciamos con el prefijo "factura_" en el nombre del archivo.
       let pathFactura = facturaPath
       if (factura) {
         const ext = factura.name.split('.').pop()?.toLowerCase() || 'pdf'
-        const path = `${form.local}/facturas/${form.fecha.substring(0, 7)}/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`
+        const path = `${form.local}/${form.fecha.substring(0, 7)}/factura_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`
         const { error: errUp } = await supabase.storage
           .from('gastos-comprobantes')
           .upload(path, factura, { contentType: factura.type || 'application/octet-stream' })
