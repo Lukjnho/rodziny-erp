@@ -290,38 +290,39 @@ export function ProduccionQRPage() {
 
   const frescosPendientes = lotesFrescos?.length ?? 0;
 
-  // Filtro estricto por local: solo muestra lo asignado explícitamente a este local
-  const matchLocal = (l: string | null) => l === local;
+  // Filtro estricto por local: solo muestra lo asignado explícitamente a este local.
+  // Inlineamos el chequeo en cada useMemo para que no haya un closure intermedio
+  // que oculte la dependencia real (local) del linter de hooks.
   const recetasRelleno = useMemo(
-    () => (recetas ?? []).filter((r) => r.tipo === 'relleno' && matchLocal(r.local)),
+    () => (recetas ?? []).filter((r) => r.tipo === 'relleno' && r.local === local),
     [recetas, local],
   );
   const recetasMasa = useMemo(
-    () => (recetas ?? []).filter((r) => r.tipo === 'masa' && matchLocal(r.local)),
+    () => (recetas ?? []).filter((r) => r.tipo === 'masa' && r.local === local),
     [recetas, local],
   );
   const recetasSalsa = useMemo(
-    () => (recetas ?? []).filter((r) => r.tipo === 'salsa' && matchLocal(r.local)),
+    () => (recetas ?? []).filter((r) => r.tipo === 'salsa' && r.local === local),
     [recetas, local],
   );
   const recetasPostre = useMemo(
-    () => (recetas ?? []).filter((r) => r.tipo === 'postre' && matchLocal(r.local)),
+    () => (recetas ?? []).filter((r) => r.tipo === 'postre' && r.local === local),
     [recetas, local],
   );
   const recetasPasteleria = useMemo(
-    () => (recetas ?? []).filter((r) => r.tipo === 'pasteleria' && matchLocal(r.local)),
+    () => (recetas ?? []).filter((r) => r.tipo === 'pasteleria' && r.local === local),
     [recetas, local],
   );
   const recetasPanaderia = useMemo(
-    () => (recetas ?? []).filter((r) => r.tipo === 'panaderia' && matchLocal(r.local)),
+    () => (recetas ?? []).filter((r) => r.tipo === 'panaderia' && r.local === local),
     [recetas, local],
   );
   const recetasLocal = useMemo(
-    () => (recetas ?? []).filter((r) => matchLocal(r.local)),
+    () => (recetas ?? []).filter((r) => r.local === local),
     [recetas, local],
   );
   const productosPasta = useMemo(
-    () => (productos ?? []).filter((p) => p.tipo === 'pasta' && matchLocal(p.local)),
+    () => (productos ?? []).filter((p) => p.tipo === 'pasta' && p.local === local),
     [productos, local],
   );
 

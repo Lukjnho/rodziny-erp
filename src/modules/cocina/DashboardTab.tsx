@@ -566,6 +566,38 @@ interface ProductoDB {
   rendimiento_kg: number | null;
 }
 
+// Fila derivada para renderizar la grilla del dashboard. La usan tanto el
+// componente principal como CategoriaAccordion/generarPizarron.
+export type FilaDashboard = ProductoCocina & {
+  stockCantidad: number | null;
+  stockFecha: string | null;
+  porcionesStock: number;
+  ventasDiariasPromedio: number;
+  ventasDiariasAjustadas: number;
+  ventasReciente: number;
+  diasRestantes: number | null;
+  producirLabel: string;
+  producirCantidad: number;
+  estado: 'ok' | 'bajo' | 'critico' | 'sin_datos';
+  recetaNombre: string | null;
+  rendPorciones: number | null;
+};
+
+// Shape crudo devuelto por Supabase para la query de cocina_productos con receta
+// embebida. Supabase no infiere bien estos joins, por eso lo declaramos.
+type ProductoDBRow = {
+  nombre: string;
+  local: string;
+  tipo: string;
+  receta_id: string | null;
+  minimo_produccion: number | null;
+  receta: {
+    nombre: string;
+    rendimiento_porciones: number | null;
+    rendimiento_kg: number | null;
+  } | null;
+};
+
 // Normaliza nombres para matchear entre PRODUCTOS_COCINA y la tabla cocina_productos.
 export function normNombre(s: string): string {
   return s
@@ -615,7 +647,7 @@ export function DashboardTab() {
         .eq('local', local)
         .eq('activo', true);
       if (error) throw error;
-      const filas: ProductoDB[] = (data as any[]).map((r) => ({
+      const filas: ProductoDB[] = (data as unknown as ProductoDBRow[]).map((r) => ({
         nombre: r.nombre,
         local: r.local,
         tipo: r.tipo,
@@ -926,8 +958,8 @@ export function DashboardTab() {
 
     // Stock por categoría
     for (const cat of categorias) {
-      const okEnCat = cat.filas.filter((f: any) => f.estado === 'ok');
-      const bajoEnCat = cat.filas.filter((f: any) => f.estado === 'bajo');
+      const okEnCat = cat.filas.filter((f) => f.estado === 'ok');
+      const bajoEnCat = cat.filas.filter((f) => f.estado === 'bajo');
       if (okEnCat.length === 0 && bajoEnCat.length === 0) continue;
 
       txt += `${cat.nombre.toUpperCase()}:\n`;
@@ -1130,7 +1162,7 @@ function CategoriaAccordion({
   onCancelar,
 }: {
   nombre: string;
-  filas: any[];
+  filas: FilaDashboard[];
   diaManana: string;
   ventanaDias: 1 | 3 | 7;
   editando: string | null;
@@ -1207,7 +1239,7 @@ function CategoriaAccordion({
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
-              {filas.map((f: any) => {
+              {filas.map((f) => {
                 const isEditing = editando === f.nombre;
                 return (
                   <tr
