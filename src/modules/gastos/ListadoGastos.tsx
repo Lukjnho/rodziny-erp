@@ -115,17 +115,26 @@ export function ListadoGastos({ localExterno }: { localExterno?: 'vedia' | 'saav
   async function abrirComprobante(g: Gasto) {
     if (!g.comprobante_path) return
     const path = g.comprobante_path
-    // Intentar primero en bucket 'gastos-comprobantes', luego en 'comprobantes'
-    let { data, error } = await supabase.storage.from('gastos-comprobantes').createSignedUrl(path, 300)
-    if (error) {
-      const r2 = await supabase.storage.from('comprobantes').createSignedUrl(path, 300)
-      data = r2.data; error = r2.error
+    // Intentar los 3 buckets posibles (distintos flujos de carga):
+    //  - 'gastos-comprobantes': subida manual desde el modal Nuevo gasto
+    //  - 'comprobantes': bucket histórico
+    //  - 'recepciones-fotos': cuando el gasto se creó desde una recepción pendiente (PWA /recepcion, típico en Saavedra)
+    const BUCKETS = ['gastos-comprobantes', 'comprobantes', 'recepciones-fotos']
+    let signedUrl: string | null = null
+    let ultimoError: string | null = null
+    for (const bucket of BUCKETS) {
+      const { data, error } = await supabase.storage.from(bucket).createSignedUrl(path, 300)
+      if (!error && data?.signedUrl) {
+        signedUrl = data.signedUrl
+        break
+      }
+      ultimoError = error?.message ?? 'sin datos'
     }
-    if (error || !data) {
-      window.alert(`No se pudo abrir el comprobante.\n\nPath: ${path}\nError: ${error?.message ?? 'sin datos'}`)
+    if (!signedUrl) {
+      window.alert(`No se pudo abrir el comprobante.\n\nPath: ${path}\nError: ${ultimoError}`)
       return
     }
-    window.open(data.signedUrl, '_blank')
+    window.open(signedUrl, '_blank')
   }
 
   async function eliminarGasto(g: Gasto) {

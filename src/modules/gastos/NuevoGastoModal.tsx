@@ -602,10 +602,16 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
 
   async function verComprobanteExistente() {
     if (!comprobantePath) return
-    const { data, error } = await supabase.storage
-      .from('gastos-comprobantes').createSignedUrl(comprobantePath, 60)
-    if (error || !data) { window.alert('No se pudo abrir el comprobante'); return }
-    window.open(data.signedUrl, '_blank')
+    // Intentar 3 buckets — el path puede vivir en cualquiera según el flujo de carga
+    const BUCKETS = ['gastos-comprobantes', 'comprobantes', 'recepciones-fotos']
+    for (const bucket of BUCKETS) {
+      const { data, error } = await supabase.storage.from(bucket).createSignedUrl(comprobantePath, 60)
+      if (!error && data?.signedUrl) {
+        window.open(data.signedUrl, '_blank')
+        return
+      }
+    }
+    window.alert('No se pudo abrir el comprobante')
   }
 
   if (!open) return null
