@@ -83,6 +83,8 @@ interface LoteRelleno {
   created_at: string
   ingredientes_reales: IngredienteRealRow[] | null
   receta?: { nombre: string } | null
+  consumido_kg?: number
+  disponible_kg?: number
 }
 interface LotePasta {
   id: string; producto_id: string; lote_relleno_id: string | null; lote_masa_id: string | null; fecha: string
@@ -105,6 +107,8 @@ interface LoteMasa {
   responsable: string | null; local: string; notas: string | null; created_at: string
   ingredientes_reales: IngredienteRealRow[] | null
   receta?: { nombre: string } | null
+  consumido_kg?: number
+  disponible_kg?: number
 }
 
 interface LoteProduccion {
@@ -246,6 +250,46 @@ export function ProduccionTab() {
       return data as unknown as LoteProduccion[]
     },
   })
+
+  // Cálculo de consumo: sumar cuánto se usó de cada lote de relleno/masa
+  // tomando las pastas armadas del día (único día que tenemos cargado acá).
+  const consumoPorRellenoAdm = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const p of lotesPasta ?? []) {
+      if (p.lote_relleno_id && p.relleno_kg) {
+        m.set(p.lote_relleno_id, (m.get(p.lote_relleno_id) ?? 0) + p.relleno_kg)
+      }
+    }
+    return m
+  }, [lotesPasta])
+
+  const consumoPorMasaAdm = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const p of lotesPasta ?? []) {
+      if (p.lote_masa_id && p.masa_kg) {
+        m.set(p.lote_masa_id, (m.get(p.lote_masa_id) ?? 0) + p.masa_kg)
+      }
+    }
+    return m
+  }, [lotesPasta])
+
+  const lotesRellenoDisponibles = useMemo<LoteRelleno[]>(() => {
+    return (lotesRelleno ?? [])
+      .map((l) => {
+        const consumido = consumoPorRellenoAdm.get(l.id) ?? 0
+        return { ...l, consumido_kg: consumido, disponible_kg: +(l.peso_total_kg - consumido).toFixed(3) }
+      })
+      .filter((l) => (l.disponible_kg ?? 0) > 0.01)
+  }, [lotesRelleno, consumoPorRellenoAdm])
+
+  const lotesMasaDisponibles = useMemo<LoteMasa[]>(() => {
+    return (lotesMasa ?? [])
+      .map((l) => {
+        const consumido = consumoPorMasaAdm.get(l.id) ?? 0
+        return { ...l, consumido_kg: consumido, disponible_kg: +(l.kg_producidos - consumido).toFixed(3) }
+      })
+      .filter((l) => (l.disponible_kg ?? 0) > 0.01)
+  }, [lotesMasa, consumoPorMasaAdm])
 
   // Filtrar por local
   const rellenosFiltrados = useMemo(() => {
@@ -712,8 +756,8 @@ export function ProduccionTab() {
           fecha={fecha}
           productos={(productos ?? []).filter((p) => p.tipo === 'pasta' && matchLocal(p.local, filtroLocal))}
           recetasMasa={(recetas ?? []).filter((r) => r.tipo === 'masa' && matchLocal(r.local, filtroLocal))}
-          lotesRellenoDia={lotesRelleno ?? []}
-          lotesMasaDia={lotesMasa ?? []}
+          lotesRellenoDia={lotesRellenoDisponibles}
+          lotesMasaDia={lotesMasaDisponibles}
           onClose={() => setModalPasta(false)}
           onSaved={() => {
             qc.invalidateQueries({ queryKey: ['cocina-lotes-pasta', fecha] })
@@ -1005,11 +1049,21 @@ function ModalPasta({ fecha, productos, recetasMasa, lotesRellenoDia, lotesMasaD
 
           <div>
             <label className="block text-xs text-gray-500 mb-1">Relleno usado (del día)</label>
-            <select value={loteRellenoId} onChange={(e) => setLoteRellenoId(e.target.value)} className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm">
+            <select
+              value={loteRellenoId}
+              onChange={(e) => {
+                const id = e.target.value
+                setLoteRellenoId(id)
+                const l = lotesRellenoDia.find((x) => x.id === id)
+                if (l && l.disponible_kg != null) setRellenoKg(String(l.disponible_kg))
+                else if (!id) setRellenoKg('')
+              }}
+              className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm"
+            >
               <option value="">Sin relleno</option>
               {lotesRellenoDia.map((l) => (
                 <option key={l.id} value={l.id}>
-                  {l.receta?.nombre ?? 'Relleno'} — {l.peso_total_kg} kg ({l.local})
+                  {l.receta?.nombre ?? 'Relleno'} — {l.disponible_kg ?? l.peso_total_kg} kg disponibles ({l.local})
                 </option>
               ))}
             </select>
@@ -1017,11 +1071,21 @@ function ModalPasta({ fecha, productos, recetasMasa, lotesRellenoDia, lotesMasaD
 
           <div>
             <label className="block text-xs text-gray-500 mb-1">Masa usada (del día)</label>
-            <select value={loteMasaId} onChange={(e) => setLoteMasaId(e.target.value)} className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm">
+            <select
+              value={loteMasaId}
+              onChange={(e) => {
+                const id = e.target.value
+                setLoteMasaId(id)
+                const m = lotesMasaDia.find((x) => x.id === id)
+                if (m && m.disponible_kg != null) setMasaKg(String(m.disponible_kg))
+                else if (!id) setMasaKg('')
+              }}
+              className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm"
+            >
               <option value="">Sin masa del día</option>
               {lotesMasaDia.map((l) => (
                 <option key={l.id} value={l.id}>
-                  {l.receta?.nombre ?? 'Masa'} — {l.kg_producidos} kg ({l.local})
+                  {l.receta?.nombre ?? 'Masa'} — {l.disponible_kg ?? l.kg_producidos} kg disponibles ({l.local})
                 </option>
               ))}
             </select>

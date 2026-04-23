@@ -26,11 +26,16 @@ function unidadReceta(r: { rendimiento_unidad: 'kg' | 'l' | 'unidad' | null }): 
 interface LoteRelleno {
   id: string; receta_id: string; peso_total_kg: number; local: string
   receta?: { nombre: string } | null
+  // Campos calculados en memoria a partir de las pastas que consumieron este lote.
+  consumido_kg?: number
+  disponible_kg?: number
 }
 interface LoteMasa {
   id: string; receta_id: string | null; kg_producidos: number
   kg_sobrante: number | null; destino_sobrante: string | null
   receta?: { nombre: string } | null
+  consumido_kg?: number
+  disponible_kg?: number
 }
 interface LotePastaFresco {
   id: string; producto_id: string; codigo_lote: string
@@ -143,6 +148,66 @@ export function ProduccionQRPage() {
 
   const masasAbiertas = useMemo(() => (lotesMasaHoy ?? []).filter((m) => m.kg_sobrante === null).length, [lotesMasaHoy])
 
+  // Pastas armadas que referencian los lotes de relleno/masa de hoy.
+  // Las cargamos para poder calcular cuánto se consumió y cuánto queda disponible.
+  const { data: pastasConsumoHoy } = useQuery({
+    queryKey: ['cocina-pastas-consumo-qr', hoy(), local],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('cocina_lotes_pasta')
+        .select('id, lote_relleno_id, lote_masa_id, relleno_kg, masa_kg, fecha, local')
+        .eq('local', local)
+        .gte('fecha', hoy())
+      if (error) throw error
+      return (data ?? []) as {
+        id: string; lote_relleno_id: string | null; lote_masa_id: string | null
+        relleno_kg: number | null; masa_kg: number | null
+        fecha: string; local: string
+      }[]
+    },
+  })
+
+  // Sumas de consumo por lote
+  const consumoPorRelleno = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const p of pastasConsumoHoy ?? []) {
+      if (p.lote_relleno_id && p.relleno_kg) {
+        m.set(p.lote_relleno_id, (m.get(p.lote_relleno_id) ?? 0) + p.relleno_kg)
+      }
+    }
+    return m
+  }, [pastasConsumoHoy])
+
+  const consumoPorMasa = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const p of pastasConsumoHoy ?? []) {
+      if (p.lote_masa_id && p.masa_kg) {
+        m.set(p.lote_masa_id, (m.get(p.lote_masa_id) ?? 0) + p.masa_kg)
+      }
+    }
+    return m
+  }, [pastasConsumoHoy])
+
+  // Enriquecer los lotes con consumido + disponible, y filtrar los que ya
+  // quedaron en cero (no tiene sentido ofrecerlos para armar otra pasta).
+  const rellenosDisponibles = useMemo<LoteRelleno[]>(() => {
+    return (lotesRellenoHoy ?? [])
+      .map((l) => {
+        const consumido = consumoPorRelleno.get(l.id) ?? 0
+        return { ...l, consumido_kg: consumido, disponible_kg: +(l.peso_total_kg - consumido).toFixed(3) }
+      })
+      .filter((l) => (l.disponible_kg ?? 0) > 0.01)
+  }, [lotesRellenoHoy, consumoPorRelleno])
+
+  const masasDisponibles = useMemo<LoteMasa[]>(() => {
+    return (lotesMasaHoy ?? [])
+      .map((l) => {
+        const consumido = consumoPorMasa.get(l.id) ?? 0
+        return { ...l, consumido_kg: consumido, disponible_kg: +(l.kg_producidos - consumido).toFixed(3) }
+      })
+      .filter((l) => (l.disponible_kg ?? 0) > 0.01)
+  }, [lotesMasaHoy, consumoPorMasa])
+
   // Lotes de pasta "frescos" pendientes de porcionar (cualquier fecha, no solo hoy —
   // el armado suele ser el día anterior)
   const { data: lotesFrescos } = useQuery({
@@ -180,6 +245,7 @@ export function ProduccionQRPage() {
     qc.invalidateQueries({ queryKey: ['cocina-lotes-masa-qr'] })
     qc.invalidateQueries({ queryKey: ['cocina-lotes-produccion-qr'] })
     qc.invalidateQueries({ queryKey: ['cocina-lotes-pasta-frescos-qr'] })
+    qc.invalidateQueries({ queryKey: ['cocina-pastas-consumo-qr'] })
   }
 
   return (
@@ -207,8 +273,8 @@ export function ProduccionQRPage() {
         <FormPasta
           local={local}
           productos={productosPasta}
-          lotesRelleno={lotesRellenoHoy ?? []}
-          lotesMasa={(lotesMasaHoy ?? []).filter((m) => m.kg_sobrante === null)}
+          lotesRelleno={rellenosDisponibles}
+          lotesMasa={masasDisponibles.filter((m) => m.kg_sobrante === null)}
           onGuardado={(msg) => onGuardado(msg)}
           onVolver={() => setVista('inicio')}
         />
@@ -588,13 +654,20 @@ function FormPasta({ local, productos, lotesRelleno, lotesMasa, onGuardado, onVo
           <label className="block text-xs font-medium text-gray-700 mb-1">Relleno usado</label>
           <select
             value={loteRellenoId}
-            onChange={(e) => setLoteRellenoId(e.target.value)}
+            onChange={(e) => {
+              const id = e.target.value
+              setLoteRellenoId(id)
+              // Auto-rellenar con el disponible del lote elegido (el operario puede ajustar después)
+              const l = lotesRelleno.find((x) => x.id === id)
+              if (l && l.disponible_kg != null) setRellenoKg(String(l.disponible_kg))
+              else if (!id) setRellenoKg('')
+            }}
             className="w-full border border-gray-300 rounded px-3 py-2.5 text-sm"
           >
             <option value="">Sin relleno</option>
             {lotesRelleno.map((l) => (
               <option key={l.id} value={l.id}>
-                {l.receta?.nombre ?? 'Relleno'} — {l.peso_total_kg} kg
+                {l.receta?.nombre ?? 'Relleno'} — {l.disponible_kg ?? l.peso_total_kg} kg disponibles
               </option>
             ))}
           </select>
@@ -604,13 +677,19 @@ function FormPasta({ local, productos, lotesRelleno, lotesMasa, onGuardado, onVo
           <label className="block text-xs font-medium text-gray-700 mb-1">Masa usada</label>
           <select
             value={loteMasaId}
-            onChange={(e) => setLoteMasaId(e.target.value)}
+            onChange={(e) => {
+              const id = e.target.value
+              setLoteMasaId(id)
+              const m = lotesMasa.find((x) => x.id === id)
+              if (m && m.disponible_kg != null) setMasaKg(String(m.disponible_kg))
+              else if (!id) setMasaKg('')
+            }}
             className="w-full border border-gray-300 rounded px-3 py-2.5 text-sm"
           >
             <option value="">Sin lote de masa</option>
             {lotesMasa.map((m) => (
               <option key={m.id} value={m.id}>
-                {m.receta?.nombre ?? 'Masa'} — {m.kg_producidos} kg
+                {m.receta?.nombre ?? 'Masa'} — {m.disponible_kg ?? m.kg_producidos} kg disponibles
               </option>
             ))}
           </select>
@@ -627,6 +706,15 @@ function FormPasta({ local, productos, lotesRelleno, lotesMasa, onGuardado, onVo
               onChange={(e) => setMasaKg(e.target.value)}
               className="w-full border border-gray-300 rounded px-3 py-2.5 text-sm"
             />
+            {(() => {
+              const m = lotesMasa.find((x) => x.id === loteMasaId)
+              const disp = m?.disponible_kg ?? null
+              const v = parseFloat(masaKg.replace(',', '.')) || 0
+              if (disp != null && v > disp + 0.01) {
+                return <p className="text-[10px] text-amber-600 mt-1">⚠ Excede el disponible del lote ({disp} kg)</p>
+              }
+              return null
+            })()}
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-700 mb-1">Relleno (kg)</label>
@@ -638,6 +726,15 @@ function FormPasta({ local, productos, lotesRelleno, lotesMasa, onGuardado, onVo
               onChange={(e) => setRellenoKg(e.target.value)}
               className="w-full border border-gray-300 rounded px-3 py-2.5 text-sm"
             />
+            {(() => {
+              const r = lotesRelleno.find((x) => x.id === loteRellenoId)
+              const disp = r?.disponible_kg ?? null
+              const v = parseFloat(rellenoKg.replace(',', '.')) || 0
+              if (disp != null && v > disp + 0.01) {
+                return <p className="text-[10px] text-amber-600 mt-1">⚠ Excede el disponible del lote ({disp} kg)</p>
+              }
+              return null
+            })()}
           </div>
         </div>
 
