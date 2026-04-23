@@ -80,6 +80,8 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
   const [form, setForm] = useState<FormState>(FORM_INICIAL)
   const [comprobante, setComprobante] = useState<File | null>(null)
   const [comprobantePath, setComprobantePath] = useState<string | null>(null)
+  const [factura, setFactura] = useState<File | null>(null)
+  const [facturaPath, setFacturaPath] = useState<string | null>(null)
   const [guardando, setGuardando] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [busquedaProducto, setBusquedaProducto] = useState('')
@@ -166,6 +168,7 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
         })),
       })
       setComprobantePath(gastoEditando.comprobante_path)
+      setFacturaPath(gastoEditando.factura_path ?? null)
     } else {
       setForm({
         ...FORM_INICIAL,
@@ -184,8 +187,10 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
         })),
       })
       setComprobantePath(prefill?.comprobante_path ?? null)
+      setFacturaPath(null)
     }
     setComprobante(null)
+    setFactura(null)
     setError(null)
     setBusquedaProducto('')
     setItemDrafts({})
@@ -434,7 +439,7 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
 
     setGuardando(true)
     try {
-      // 1) Subir comprobante si hay uno nuevo
+      // 1) Subir comprobante de pago si hay uno nuevo
       let pathComprobante = comprobantePath
       if (comprobante) {
         const ext = comprobante.name.split('.').pop()?.toLowerCase() || 'pdf'
@@ -444,6 +449,18 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
           .upload(path, comprobante, { contentType: comprobante.type || 'application/octet-stream' })
         if (errUp) throw errUp
         pathComprobante = path
+      }
+
+      // 1b) Subir factura fiscal si hay una nueva
+      let pathFactura = facturaPath
+      if (factura) {
+        const ext = factura.name.split('.').pop()?.toLowerCase() || 'pdf'
+        const path = `${form.local}/facturas/${form.fecha.substring(0, 7)}/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`
+        const { error: errUp } = await supabase.storage
+          .from('gastos-comprobantes')
+          .upload(path, factura, { contentType: factura.type || 'application/octet-stream' })
+        if (errUp) throw errUp
+        pathFactura = path
       }
 
       const proveedorObj = proveedores?.find((p) => p.id === form.proveedor_id)
@@ -480,6 +497,7 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
           nro_comprobante: form.nro_comprobante.trim() || null,
           estado_pago: form.estado_pago === 'pagado' ? 'Pagado' : 'Pendiente',
           comprobante_path: pathComprobante,
+          factura_path: pathFactura,
           recepcion_id: prefill?.recepcion_id ?? null,
           creado_por: perfil?.nombre ?? null,
           creado_manual: true,
@@ -626,6 +644,19 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
       }
     }
     window.alert('No se pudo abrir el comprobante')
+  }
+
+  async function verFacturaExistente() {
+    if (!facturaPath) return
+    const BUCKETS = ['gastos-comprobantes', 'comprobantes']
+    for (const bucket of BUCKETS) {
+      const { data, error } = await supabase.storage.from(bucket).createSignedUrl(facturaPath, 60)
+      if (!error && data?.signedUrl) {
+        window.open(data.signedUrl, '_blank')
+        return
+      }
+    }
+    window.alert('No se pudo abrir la factura')
   }
 
   if (!open) return null
@@ -1024,12 +1055,12 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
             )}
           </div>
 
-          {/* Sección 6: Adjunto + comentario */}
+          {/* Sección 6: Adjuntos + comentario */}
           <div>
-            <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Adjunto y notas</h4>
+            <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Adjuntos y notas</h4>
             <div className="space-y-3">
               <div>
-                <label className="block text-xs text-gray-600 mb-1">Comprobante (PDF / imagen)</label>
+                <label className="block text-xs text-gray-600 mb-1">Comprobante de pago (transferencia / voucher)</label>
                 {comprobantePath && !comprobante ? (
                   <div className="flex items-center gap-2">
                     <button
@@ -1061,6 +1092,41 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
                   <div className="text-[11px] text-green-700 mt-1">📎 {comprobante.name}</div>
                 )}
               </div>
+
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Factura A / C / Remito (comprobante fiscal del proveedor)</label>
+                {facturaPath && !factura ? (
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={verFacturaExistente}
+                      className="text-xs px-2 py-1 bg-emerald-600 text-white rounded hover:bg-emerald-700"
+                    >
+                      🧾 Ver factura
+                    </button>
+                    <label className="text-xs px-2 py-1 bg-gray-200 text-gray-700 rounded hover:bg-gray-300 cursor-pointer">
+                      Reemplazar
+                      <input
+                        type="file"
+                        accept="image/*,application/pdf"
+                        className="hidden"
+                        onChange={(e) => setFactura(e.target.files?.[0] ?? null)}
+                      />
+                    </label>
+                  </div>
+                ) : (
+                  <input
+                    type="file"
+                    accept="image/*,application/pdf"
+                    onChange={(e) => setFactura(e.target.files?.[0] ?? null)}
+                    className="text-xs"
+                  />
+                )}
+                {factura && (
+                  <div className="text-[11px] text-emerald-700 mt-1">🧾 {factura.name}</div>
+                )}
+              </div>
+
               <div>
                 <label className="block text-xs text-gray-600 mb-1">Comentario</label>
                 <textarea

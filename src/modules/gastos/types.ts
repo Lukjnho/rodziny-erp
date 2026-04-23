@@ -80,7 +80,8 @@ export interface Gasto {
   punto_venta: string | null
   nro_comprobante: string | null
   estado_pago: string | null
-  comprobante_path: string | null
+  comprobante_path: string | null // comprobante de pago (transferencia/voucher)
+  factura_path: string | null     // factura fiscal del proveedor (A/C/remito/ticket)
   recepcion_id: string | null
   creado_por: string | null
   creado_manual: boolean

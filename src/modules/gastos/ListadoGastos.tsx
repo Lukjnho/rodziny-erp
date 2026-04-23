@@ -112,14 +112,16 @@ export function ListadoGastos({ localExterno }: { localExterno?: 'vedia' | 'saav
     return [...new Set((gastos ?? []).map((g) => g.categoria).filter(Boolean) as string[])].sort()
   }, [gastos])
 
-  async function abrirComprobante(g: Gasto) {
-    if (!g.comprobante_path) return
-    const path = g.comprobante_path
-    // Intentar los 3 buckets posibles (distintos flujos de carga):
-    //  - 'gastos-comprobantes': subida manual desde el modal Nuevo gasto
+  async function abrirComprobante(g: Gasto, tipo: 'pago' | 'factura' = 'pago') {
+    const path = tipo === 'factura' ? g.factura_path : g.comprobante_path
+    if (!path) return
+    // Buckets posibles según el flujo de carga:
+    //  - 'gastos-comprobantes': subida desde el modal Nuevo gasto (pago o factura)
     //  - 'comprobantes': bucket histórico
-    //  - 'recepciones-fotos': cuando el gasto se creó desde una recepción pendiente (PWA /recepcion, típico en Saavedra)
-    const BUCKETS = ['gastos-comprobantes', 'comprobantes', 'recepciones-fotos']
+    //  - 'recepciones-fotos': solo para comprobante_path cuando vino de /recepcion (típico en Saavedra)
+    const BUCKETS = tipo === 'factura'
+      ? ['gastos-comprobantes', 'comprobantes']
+      : ['gastos-comprobantes', 'comprobantes', 'recepciones-fotos']
     let signedUrl: string | null = null
     let ultimoError: string | null = null
     for (const bucket of BUCKETS) {
@@ -131,7 +133,7 @@ export function ListadoGastos({ localExterno }: { localExterno?: 'vedia' | 'saav
       ultimoError = error?.message ?? 'sin datos'
     }
     if (!signedUrl) {
-      window.alert(`No se pudo abrir el comprobante.\n\nPath: ${path}\nError: ${ultimoError}`)
+      window.alert(`No se pudo abrir el archivo.\n\nPath: ${path}\nError: ${ultimoError}`)
       return
     }
     window.open(signedUrl, '_blank')
@@ -295,9 +297,23 @@ export function ListadoGastos({ localExterno }: { localExterno?: 'vedia' | 'saav
                       </span>
                     </td>
                     <td className="px-3 py-2 text-center">
-                      {g.comprobante_path ? (
-                        <button onClick={() => abrirComprobante(g)} className="text-blue-600 hover:underline text-xs">📎</button>
-                      ) : <span className="text-gray-300">—</span>}
+                      <div className="flex items-center justify-center gap-1.5">
+                        {g.comprobante_path ? (
+                          <button
+                            onClick={() => abrirComprobante(g, 'pago')}
+                            className="text-blue-600 hover:text-blue-800 text-xs"
+                            title="Ver comprobante de pago"
+                          >📎</button>
+                        ) : null}
+                        {g.factura_path ? (
+                          <button
+                            onClick={() => abrirComprobante(g, 'factura')}
+                            className="text-emerald-600 hover:text-emerald-800 text-xs"
+                            title="Ver factura"
+                          >🧾</button>
+                        ) : null}
+                        {!g.comprobante_path && !g.factura_path && <span className="text-gray-300">—</span>}
+                      </div>
                     </td>
                     <td className="px-3 py-2 text-right whitespace-nowrap">
                       <button
