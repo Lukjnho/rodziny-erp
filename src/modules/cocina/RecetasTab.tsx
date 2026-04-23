@@ -56,6 +56,7 @@ export function RecetasTab() {
   const [filtroTipo, setFiltroTipo] = useState<string>('todos')
   const [filtroLocal, setFiltroLocal] = useState<string>('todos')
   const [filtroActivo, setFiltroActivo] = useState<'activas' | 'inactivas' | 'todas'>('activas')
+  const [filtroAdvertencia, setFiltroAdvertencia] = useState<'todas' | 'con_adv' | 'sin_adv'>('todas')
   const [modalAbierto, setModalAbierto] = useState(false)
   const [editando, setEditando] = useState<Receta | null>(null)
   const [duplicando, setDuplicando] = useState<Receta | null>(null)
@@ -95,12 +96,23 @@ export function RecetasTab() {
     else if (filtroLocal === 'saavedra') lista = lista.filter((r) => r.local === 'saavedra')
     if (filtroActivo === 'activas') lista = lista.filter((r) => r.activo)
     else if (filtroActivo === 'inactivas') lista = lista.filter((r) => !r.activo)
+    if (filtroAdvertencia === 'con_adv') {
+      lista = lista.filter((r) => {
+        const c = costos.get(r.id)
+        return !!c && c.advertencias.length > 0
+      })
+    } else if (filtroAdvertencia === 'sin_adv') {
+      lista = lista.filter((r) => {
+        const c = costos.get(r.id)
+        return !c || c.advertencias.length === 0
+      })
+    }
     if (busqueda.trim()) {
       const q = busqueda.toLowerCase()
       lista = lista.filter((r) => r.nombre.toLowerCase().includes(q))
     }
     return lista
-  }, [recetas, filtroTipo, filtroLocal, filtroActivo, busqueda])
+  }, [recetas, filtroTipo, filtroLocal, filtroActivo, filtroAdvertencia, busqueda, costos])
 
   const ingredientesPorReceta = useMemo(() => {
     const mapa = new Map<string, Ingrediente[]>()
@@ -115,10 +127,12 @@ export function RecetasTab() {
     const all = recetas ?? []
     let conCosto = 0
     let sinCosto = 0
+    let conAdv = 0
     for (const r of all) {
       const c = costos.get(r.id)
       if (c && c.costoBase > 0) conCosto++
       else if ((ingredientesPorReceta.get(r.id)?.length ?? 0) > 0) sinCosto++
+      if (c && c.advertencias.length > 0) conAdv++
     }
     return {
       total: all.length,
@@ -128,6 +142,7 @@ export function RecetasTab() {
       subrecetas: all.filter((r) => r.tipo === 'subreceta').length,
       conCosto,
       sinCosto,
+      conAdv,
     }
   }, [recetas, costos, ingredientesPorReceta])
 
@@ -201,13 +216,14 @@ export function RecetasTab() {
   return (
     <div className="space-y-4">
       {/* KPIs */}
-      <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-7 gap-3">
         <KPICard label="Total recetas" value={String(kpis.total)} color="blue" loading={isLoading} />
         <KPICard label="Subrecetas" value={String(kpis.subrecetas)} color="neutral" loading={isLoading} />
         <KPICard label="Rellenos" value={String(kpis.rellenos)} color="green" loading={isLoading} />
         <KPICard label="Masas" value={String(kpis.masas)} color="neutral" loading={isLoading} />
         <KPICard label="Con costeo" value={String(kpis.conCosto)} color="green" loading={isLoading} />
         <KPICard label="Sin match" value={String(kpis.sinCosto)} color={kpis.sinCosto > 0 ? 'yellow' : 'neutral'} loading={isLoading} />
+        <KPICard label="Con advertencias" value={String(kpis.conAdv)} color={kpis.conAdv > 0 ? 'yellow' : 'neutral'} loading={isLoading} />
       </div>
 
       {/* Toolbar */}
@@ -231,6 +247,11 @@ export function RecetasTab() {
           <option value="activas">Solo activas</option>
           <option value="inactivas">Solo inactivas</option>
           <option value="todas">Todas</option>
+        </select>
+        <select value={filtroAdvertencia} onChange={(e) => setFiltroAdvertencia(e.target.value as typeof filtroAdvertencia)} className="border border-gray-300 rounded px-2 py-1.5 text-sm" title="Filtrar por estado de advertencias de costeo">
+          <option value="todas">Todas las recetas</option>
+          <option value="con_adv">⚠ Solo con advertencias</option>
+          <option value="sin_adv">Solo sin advertencias</option>
         </select>
         <button
           onClick={() => { setEditando(null); setModalAbierto(true) }}
