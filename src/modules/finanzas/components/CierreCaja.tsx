@@ -612,9 +612,6 @@ export function CierreCaja() {
               </thead>
               <tbody>
                 {porFecha.map(([fecha, rows]) => {
-                  const difDia = rows.reduce((s, r) => s + calcDif(r), 0)
-                  const efectivoDia = rows.reduce((s, r) => s + (r.retiro > 0 ? r.retiro : r.monto_contado) + (r.otros_retiros ?? 0), 0)
-                  const fudoDia = rows.reduce((s, r) => s + (r.monto_esperado ?? 0), 0)
                   return rows.map((c, i) => (
                     <tr key={c.id} className={cn(
                       'border-b border-gray-50 hover:bg-gray-50',
@@ -624,16 +621,6 @@ export function CierreCaja() {
                       {i === 0 ? (
                         <td className="px-4 py-2 font-medium text-gray-800 align-top" rowSpan={rows.length}>
                           <div>{new Date(fecha + 'T12:00:00').toLocaleDateString('es-AR', { weekday: 'short', day: 'numeric', month: 'short' })}</div>
-                          <div className="mt-1 space-y-0.5">
-                            <div className="text-[10px] text-green-700 font-medium">Efvo: {formatARS(efectivoDia)}</div>
-                            {fudoDia > 0 && <div className="text-[10px] text-blue-700 font-medium">Fudo: {formatARS(fudoDia)}</div>}
-                          </div>
-                          <div className={cn(
-                            'text-xs font-medium mt-1',
-                            difDia === 0 ? 'text-green-600' : difDia > 0 ? 'text-blue-600' : 'text-red-600'
-                          )}>
-                            {difDia === 0 ? 'Cuadra' : formatARS(difDia)}
-                          </div>
                         </td>
                       ) : null}
                       <td className="px-4 py-2 text-gray-700">{c.caja || '—'}</td>
