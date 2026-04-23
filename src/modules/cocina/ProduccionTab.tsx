@@ -148,6 +148,8 @@ export function ProduccionTab() {
   const qc = useQueryClient()
   const [fecha, setFecha] = useState(hoy())
   const [filtroLocal, setFiltroLocal] = useState<FiltroLocal>('todos')
+  const [filtroPastaEstado, setFiltroPastaEstado] = useState<'todos' | 'fresco' | 'camara'>('todos')
+  const [filtroCategoriaProd, setFiltroCategoriaProd] = useState<'todos' | 'salsa' | 'postre' | 'pasteleria' | 'panaderia' | 'prueba'>('todos')
 
   // Modales
   const [modalRelleno, setModalRelleno] = useState(false)
@@ -254,14 +256,19 @@ export function ProduccionTab() {
   }, [lotesMasa, filtroLocal])
 
   const pastasFiltradas = useMemo(() => {
-    if (filtroLocal === 'todos') return lotesPasta ?? []
-    return (lotesPasta ?? []).filter((l) => l.local === filtroLocal)
-  }, [lotesPasta, filtroLocal])
+    let lista = lotesPasta ?? []
+    if (filtroLocal !== 'todos') lista = lista.filter((l) => l.local === filtroLocal)
+    if (filtroPastaEstado === 'fresco') lista = lista.filter((l) => l.ubicacion === 'freezer_produccion')
+    else if (filtroPastaEstado === 'camara') lista = lista.filter((l) => l.ubicacion === 'camara_congelado')
+    return lista
+  }, [lotesPasta, filtroLocal, filtroPastaEstado])
 
   const produccionesFiltradas = useMemo(() => {
-    if (filtroLocal === 'todos') return lotesProduccion ?? []
-    return (lotesProduccion ?? []).filter((l) => l.local === filtroLocal)
-  }, [lotesProduccion, filtroLocal])
+    let lista = lotesProduccion ?? []
+    if (filtroLocal !== 'todos') lista = lista.filter((l) => l.local === filtroLocal)
+    if (filtroCategoriaProd !== 'todos') lista = lista.filter((l) => l.categoria === filtroCategoriaProd)
+    return lista
+  }, [lotesProduccion, filtroLocal, filtroCategoriaProd])
 
   // KPIs
   const kpiRelleno = useMemo(() => ({
@@ -489,7 +496,14 @@ export function ProduccionTab() {
           <KPICard label="Lotes de pasta" value={String(kpiPasta.lotes)} color="green" loading={cargandoP} />
           <KPICard label="Total porciones" value={String(kpiPasta.porcionesTotal)} color="blue" loading={cargandoP} />
           <KPICard label="Tipos distintos" value={String(kpiPasta.tiposDistintos)} color="neutral" loading={cargandoP} />
-          <KPICard label="Frescos por porcionar" value={String(frescosFiltrados.length)} color={frescosFiltrados.length > 0 ? 'yellow' : 'neutral'} loading={cargandoP} />
+          <KPICard
+            label="Frescos por porcionar"
+            value={String(frescosFiltrados.length)}
+            color={frescosFiltrados.length > 0 ? 'yellow' : 'neutral'}
+            loading={cargandoP}
+            active={filtroPastaEstado === 'fresco'}
+            onClick={() => setFiltroPastaEstado(filtroPastaEstado === 'fresco' ? 'todos' : 'fresco')}
+          />
         </div>
 
         {frescosFiltrados.length > 0 && (
@@ -600,8 +614,20 @@ export function ProduccionTab() {
 
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-3">
           {(['salsa', 'postre', 'pasteleria', 'panaderia', 'prueba'] as const).map((cat) => {
-            const count = produccionesFiltradas.filter((p) => p.categoria === cat).length
-            return <KPICard key={cat} label={CATEGORIA_LABEL_PROD[cat]} value={String(count)} color="neutral" loading={cargandoProd} />
+            // Contar sobre el total del día (ignorando el filtro de categoría) para que el KPI no se "vacíe" al filtrar
+            const baseTotal = (lotesProduccion ?? []).filter((p) => filtroLocal === 'todos' || p.local === filtroLocal)
+            const count = baseTotal.filter((p) => p.categoria === cat).length
+            return (
+              <KPICard
+                key={cat}
+                label={CATEGORIA_LABEL_PROD[cat]}
+                value={String(count)}
+                color="neutral"
+                loading={cargandoProd}
+                active={filtroCategoriaProd === cat}
+                onClick={() => setFiltroCategoriaProd(filtroCategoriaProd === cat ? 'todos' : cat)}
+              />
+            )
           })}
         </div>
 

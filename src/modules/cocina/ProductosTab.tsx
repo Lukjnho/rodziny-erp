@@ -38,6 +38,8 @@ export function ProductosTab() {
   const [busqueda, setBusqueda] = useState('')
   const [filtroTipo, setFiltroTipo] = useState<string>('todos')
   const [filtroLocal, setFiltroLocal] = useState<FiltroLocal>('todos')
+  const [filtroActivo, setFiltroActivo] = useState<'todos' | 'activos' | 'inactivos'>('todos')
+  const [filtroReceta, setFiltroReceta] = useState<'todos' | 'con_receta' | 'sin_receta'>('todos')
   const [modalAbierto, setModalAbierto] = useState(false)
   const [editando, setEditando] = useState<Producto | null>(null)
 
@@ -73,12 +75,16 @@ export function ProductosTab() {
     if (filtroTipo !== 'todos') lista = lista.filter((p) => p.tipo === filtroTipo)
     if (filtroLocal === 'vedia') lista = lista.filter((p) => p.local === 'vedia')
     else if (filtroLocal === 'saavedra') lista = lista.filter((p) => p.local === 'saavedra')
+    if (filtroActivo === 'activos') lista = lista.filter((p) => p.activo)
+    else if (filtroActivo === 'inactivos') lista = lista.filter((p) => !p.activo)
+    if (filtroReceta === 'con_receta') lista = lista.filter((p) => !!p.receta_id)
+    else if (filtroReceta === 'sin_receta') lista = lista.filter((p) => !p.receta_id)
     if (busqueda.trim()) {
       const q = busqueda.toLowerCase()
       lista = lista.filter((p) => p.nombre.toLowerCase().includes(q) || p.codigo.toLowerCase().includes(q))
     }
     return lista
-  }, [productos, filtroTipo, filtroLocal, busqueda])
+  }, [productos, filtroTipo, filtroLocal, filtroActivo, filtroReceta, busqueda])
 
   const costoProducto = useMemo(() => {
     const map = new Map<string, { costo: number | null; costoBase: string | null }>()
@@ -133,12 +139,45 @@ export function ProductosTab() {
 
   return (
     <div className="space-y-4">
-      {/* KPIs */}
+      {/* KPIs — clickeables para filtrar */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <KPICard label="Total productos" value={String(kpis.total)} color="blue" loading={isLoading} />
-        <KPICard label="Activos" value={String(kpis.activos)} color="green" loading={isLoading} />
-        <KPICard label="Con receta" value={String(kpis.conReceta)} color="neutral" loading={isLoading} />
-        <KPICard label="Pastas" value={String(kpis.pastas)} color="neutral" loading={isLoading} />
+        <KPICard
+          label="Total productos"
+          value={String(kpis.total)}
+          color="blue"
+          loading={isLoading}
+          onClick={() => {
+            setFiltroTipo('todos')
+            setFiltroLocal('todos')
+            setFiltroActivo('todos')
+            setFiltroReceta('todos')
+            setBusqueda('')
+          }}
+        />
+        <KPICard
+          label="Activos"
+          value={String(kpis.activos)}
+          color="green"
+          loading={isLoading}
+          active={filtroActivo === 'activos'}
+          onClick={() => setFiltroActivo(filtroActivo === 'activos' ? 'todos' : 'activos')}
+        />
+        <KPICard
+          label="Con receta"
+          value={String(kpis.conReceta)}
+          color="neutral"
+          loading={isLoading}
+          active={filtroReceta === 'con_receta'}
+          onClick={() => setFiltroReceta(filtroReceta === 'con_receta' ? 'todos' : 'con_receta')}
+        />
+        <KPICard
+          label="Pastas"
+          value={String(kpis.pastas)}
+          color="neutral"
+          loading={isLoading}
+          active={filtroTipo === 'pasta'}
+          onClick={() => setFiltroTipo(filtroTipo === 'pasta' ? 'todos' : 'pasta')}
+        />
       </div>
 
       {/* Toolbar */}

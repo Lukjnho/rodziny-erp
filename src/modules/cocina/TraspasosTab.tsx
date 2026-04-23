@@ -135,12 +135,26 @@ export function TraspasosTab() {
         </select>
       </div>
 
-      {/* KPIs */}
+      {/* KPIs — los de merma abren la sección colapsada */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <KPICard label="Traspasos hoy" value={String(kpis.traspasos)} color="blue" loading={cargandoT} />
         <KPICard label="Porciones traspasadas" value={String(kpis.porcionesTraspasadas)} color="green" loading={cargandoT} />
-        <KPICard label="Mermas hoy" value={String(kpis.mermas)} color="red" loading={cargandoM} />
-        <KPICard label="Porciones merma" value={String(kpis.porcionesMerma)} color="red" loading={cargandoM} />
+        <KPICard
+          label="Mermas hoy"
+          value={String(kpis.mermas)}
+          color="red"
+          loading={cargandoM}
+          active={seccionMerma}
+          onClick={() => setSeccionMerma(!seccionMerma)}
+        />
+        <KPICard
+          label="Porciones merma"
+          value={String(kpis.porcionesMerma)}
+          color="red"
+          loading={cargandoM}
+          active={seccionMerma}
+          onClick={() => setSeccionMerma(!seccionMerma)}
+        />
       </div>
 
       {/* ── Traspasos ──────────────────────────────────────────────────────────── */}

@@ -32,6 +32,7 @@ interface StockRow {
 
 export function StockTab() {
   const [filtroLocal, setFiltroLocal] = useState<FiltroLocal>('todos')
+  const [filtroEstado, setFiltroEstado] = useState<'todos' | 'bajo' | 'sin_stock' | 'con_fresco'>('todos')
 
   const { data: productos } = useQuery({
     queryKey: ['cocina-productos'],
@@ -116,18 +117,57 @@ export function StockTab() {
     const sinStock = stockRows.filter((r) => r.stock <= 0).length
     const totalPorciones = stockRows.reduce((s, r) => s + Math.max(0, r.stock), 0)
     const totalFrescos = stockRows.reduce((s, r) => s + r.fresco, 0)
-    return { totalProductos, bajoMinimo, sinStock, totalPorciones, totalFrescos }
+    const conFresco = stockRows.filter((r) => r.fresco > 0).length
+    return { totalProductos, bajoMinimo, sinStock, totalPorciones, totalFrescos, conFresco }
   }, [stockRows])
+
+  // Filtro de estado aplicado solo a la tabla (los KPIs muestran totales)
+  const stockRowsFiltrados = useMemo(() => {
+    if (filtroEstado === 'todos') return stockRows
+    if (filtroEstado === 'bajo') {
+      return stockRows.filter((r) => r.producto.minimo_produccion && r.stock < r.producto.minimo_produccion && r.stock > 0)
+    }
+    if (filtroEstado === 'sin_stock') return stockRows.filter((r) => r.stock <= 0)
+    if (filtroEstado === 'con_fresco') return stockRows.filter((r) => r.fresco > 0)
+    return stockRows
+  }, [stockRows, filtroEstado])
 
   return (
     <div className="space-y-4">
-      {/* KPIs */}
+      {/* KPIs — clickeables para filtrar la tabla */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-        <KPICard label="Productos en stock" value={String(kpis.totalProductos)} color="blue" loading={isLoading} />
-        <KPICard label="Bajo mínimo" value={String(kpis.bajoMinimo)} color="yellow" loading={isLoading} />
-        <KPICard label="Sin stock" value={String(kpis.sinStock)} color="red" loading={isLoading} />
+        <KPICard
+          label="Productos en stock"
+          value={String(kpis.totalProductos)}
+          color="blue"
+          loading={isLoading}
+          onClick={() => { setFiltroEstado('todos'); setFiltroLocal('todos') }}
+        />
+        <KPICard
+          label="Bajo mínimo"
+          value={String(kpis.bajoMinimo)}
+          color="yellow"
+          loading={isLoading}
+          active={filtroEstado === 'bajo'}
+          onClick={() => setFiltroEstado(filtroEstado === 'bajo' ? 'todos' : 'bajo')}
+        />
+        <KPICard
+          label="Sin stock"
+          value={String(kpis.sinStock)}
+          color="red"
+          loading={isLoading}
+          active={filtroEstado === 'sin_stock'}
+          onClick={() => setFiltroEstado(filtroEstado === 'sin_stock' ? 'todos' : 'sin_stock')}
+        />
         <KPICard label="En cámara" value={String(kpis.totalPorciones)} color="green" loading={isLoading} />
-        <KPICard label="Frescos (sala)" value={String(kpis.totalFrescos)} color={kpis.totalFrescos > 0 ? 'blue' : 'neutral'} loading={isLoading} />
+        <KPICard
+          label="Frescos (sala)"
+          value={String(kpis.totalFrescos)}
+          color={kpis.totalFrescos > 0 ? 'blue' : 'neutral'}
+          loading={isLoading}
+          active={filtroEstado === 'con_fresco'}
+          onClick={kpis.conFresco > 0 ? () => setFiltroEstado(filtroEstado === 'con_fresco' ? 'todos' : 'con_fresco') : undefined}
+        />
       </div>
 
       {/* Toolbar */}
@@ -158,7 +198,7 @@ export function StockTab() {
             </tr>
           </thead>
           <tbody>
-            {stockRows.map((r, i) => {
+            {stockRowsFiltrados.map((r, i) => {
               const min = r.producto.minimo_produccion ?? 0
               const estado = r.stock <= 0 ? 'sin-stock' : r.stock < min ? 'bajo' : 'ok'
               return (
@@ -186,8 +226,14 @@ export function StockTab() {
                 </tr>
               )
             })}
-            {stockRows.length === 0 && (
-              <tr><td colSpan={10} className="px-4 py-8 text-center text-gray-400">{isLoading ? 'Cargando...' : 'No hay datos de stock aún'}</td></tr>
+            {stockRowsFiltrados.length === 0 && (
+              <tr><td colSpan={10} className="px-4 py-8 text-center text-gray-400">
+                {isLoading
+                  ? 'Cargando...'
+                  : filtroEstado !== 'todos'
+                    ? 'No hay productos con ese estado en el filtro actual'
+                    : 'No hay datos de stock aún'}
+              </td></tr>
             )}
           </tbody>
         </table>
