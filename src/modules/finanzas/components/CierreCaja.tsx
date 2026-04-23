@@ -1,27 +1,30 @@
-import { useState, useMemo } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { supabase } from '@/lib/supabase'
-import { formatARS } from '@/lib/utils'
-import { cn } from '@/lib/utils'
-import { LocalSelector } from '@/components/ui/LocalSelector'
-import { obtenerVentasFudo, CAJA_FUDO_ID, type VentasFudoResumen } from '@/lib/fudoApi'
+import { useState, useMemo } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { supabase } from '@/lib/supabase';
+import { formatARS } from '@/lib/utils';
+import { cn } from '@/lib/utils';
+import { LocalSelector } from '@/components/ui/LocalSelector';
+import { obtenerVentasFudo, CAJA_FUDO_ID, type VentasFudoResumen } from '@/lib/fudoApi';
 
 // ── config por local ─────────────────────────────────────────────────────────
 const CAJAS: Record<string, string[]> = {
-  vedia:    ['Principal Pastas 1', 'Barra Bebidas'],
+  vedia: ['Principal Pastas 1', 'Barra Bebidas'],
   saavedra: ['Caja Principal'],
-}
+};
 
-const TURNOS: Record<string, { key: string; label: string; horaDesde: string; horaHasta: string }[]> = {
+const TURNOS: Record<
+  string,
+  { key: string; label: string; horaDesde: string; horaHasta: string }[]
+> = {
   vedia: [
-    { key: 'mediodia', label: 'Mediodía (11 a 16h)',  horaDesde: '11:00', horaHasta: '16:00' },
-    { key: 'noche',    label: 'Noche (20 a 01h)',      horaDesde: '20:00', horaHasta: '01:00' },
+    { key: 'mediodia', label: 'Mediodía (11 a 16h)', horaDesde: '11:00', horaHasta: '16:00' },
+    { key: 'noche', label: 'Noche (20 a 01h)', horaDesde: '20:00', horaHasta: '01:00' },
   ],
   saavedra: [
-    { key: 'manana', label: 'Mañana (7:30 a 15:30h)',   horaDesde: '07:00', horaHasta: '15:30' },
-    { key: 'tarde',  label: 'Tarde-Noche (17 a 00:30h)', horaDesde: '16:30', horaHasta: '00:30' },
+    { key: 'manana', label: 'Mañana (7:30 a 15:30h)', horaDesde: '07:00', horaHasta: '15:30' },
+    { key: 'tarde', label: 'Tarde-Noche (17 a 00:30h)', horaDesde: '16:30', horaHasta: '00:30' },
   ],
-}
+};
 
 // Cajeros de Fudo por local (nombre → ID de usuario en Fudo)
 const CAJEROS_FUDO: Record<string, { id: string; nombre: string }[]> = {
@@ -44,86 +47,115 @@ const CAJEROS_FUDO: Record<string, { id: string; nombre: string }[]> = {
     { id: '18', nombre: 'Emanuel' },
     { id: '19', nombre: 'Gerardo' },
   ],
-}
+};
 
 interface CierreRow {
-  id: string; local: string; fecha: string; turno: string; caja: string | null
-  hora_inicio: string | null; hora_cierre: string | null
-  monto_esperado: number | null; monto_contado: number; diferencia: number | null
-  fudo_efectivo: number; fudo_qr: number; fudo_debito: number; fudo_credito: number; fudo_transferencia: number
-  fondo_apertura: number; fondo_siguiente: number; retiro: number
-  otros_retiros: number; otros_retiros_nota: string | null
-  nota: string | null; creado_por: string | null
-  verificado: boolean; verificado_por: string | null; verificado_at: string | null
+  id: string;
+  local: string;
+  fecha: string;
+  turno: string;
+  caja: string | null;
+  hora_inicio: string | null;
+  hora_cierre: string | null;
+  monto_esperado: number | null;
+  monto_contado: number;
+  diferencia: number | null;
+  fudo_efectivo: number;
+  fudo_qr: number;
+  fudo_debito: number;
+  fudo_credito: number;
+  fudo_transferencia: number;
+  fondo_apertura: number;
+  fondo_siguiente: number;
+  retiro: number;
+  otros_retiros: number;
+  otros_retiros_nota: string | null;
+  nota: string | null;
+  creado_por: string | null;
+  verificado: boolean;
+  verificado_por: string | null;
+  verificado_at: string | null;
 }
 
 // ── componente ───────────────────────────────────────────────────────────────
 export function CierreCaja() {
-  const [local, setLocal]     = useState<'vedia' | 'saavedra'>('vedia')
-  const [periodo, setPeriodo] = useState(() => new Date().toISOString().substring(0, 7))
-  const [formOpen, setFormOpen] = useState(false)
-  const [editandoId, setEditandoId] = useState<string | null>(null)
-  const qc = useQueryClient()
+  const [local, setLocal] = useState<'vedia' | 'saavedra'>('vedia');
+  const [periodo, setPeriodo] = useState(() => new Date().toISOString().substring(0, 7));
+  const [formOpen, setFormOpen] = useState(false);
+  const [editandoId, setEditandoId] = useState<string | null>(null);
+  const qc = useQueryClient();
 
   // Form state
-  const hoy = new Date().toISOString().split('T')[0]
-  const [fFecha, setFFecha]     = useState(hoy)
-  const [fTurno, setFTurno]     = useState(() => TURNOS['vedia'][0].key)
-  const [fCaja, setFCaja]       = useState('')
-  const [fHoraInicio, setFHoraInicio] = useState('')
-  const [fHoraCierre, setFHoraCierre] = useState('')
-  const [fFudoEfvo, setFFudoEfvo]   = useState('')
-  const [fFudoQR, setFFudoQR]       = useState('')
-  const [fFudoDebito, setFFudoDebito] = useState('')
-  const [fFudoCredito, setFFudoCredito] = useState('')
-  const [fFudoTransf, setFFudoTransf] = useState('')
-  const [fContado, setFContado] = useState('')
-  const [fFondoAp, setFFondoAp] = useState('')
+  const hoy = new Date().toISOString().split('T')[0];
+  const [fFecha, setFFecha] = useState(hoy);
+  const [fTurno, setFTurno] = useState(() => TURNOS['vedia'][0].key);
+  const [fCaja, setFCaja] = useState('');
+  const [fHoraInicio, setFHoraInicio] = useState('');
+  const [fHoraCierre, setFHoraCierre] = useState('');
+  const [fFudoEfvo, setFFudoEfvo] = useState('');
+  const [fFudoQR, setFFudoQR] = useState('');
+  const [fFudoDebito, setFFudoDebito] = useState('');
+  const [fFudoCredito, setFFudoCredito] = useState('');
+  const [fFudoTransf, setFFudoTransf] = useState('');
+  const [fContado, setFContado] = useState('');
+  const [fFondoAp, setFFondoAp] = useState('');
   // fFondoSig removido — retiros se manejan en un solo campo
-  const [fOtrosRetiros, setFOtrosRetiros] = useState('')
-  const [fOtrosRetNota, setFOtrosRetNota] = useState('')
-  const [fNota, setFNota]       = useState('')
-  const [fCajeroId, setFCajeroId] = useState('') // ID usuario Fudo (vacío = todos)
+  const [fOtrosRetiros, setFOtrosRetiros] = useState('');
+  const [fOtrosRetNota, setFOtrosRetNota] = useState('');
+  const [fNota, setFNota] = useState('');
+  const [fCajeroId, setFCajeroId] = useState(''); // ID usuario Fudo (vacío = todos)
 
   // Fudo API state
-  const [fudoCargando, setFudoCargando] = useState(false)
-  const [fudoProgreso, setFudoProgreso] = useState('')
-  const [fudoError, setFudoError]       = useState('')
-  const [fudoResumen, setFudoResumen]   = useState<VentasFudoResumen | null>(null)
+  const [fudoCargando, setFudoCargando] = useState(false);
+  const [fudoProgreso, setFudoProgreso] = useState('');
+  const [fudoError, setFudoError] = useState('');
+  const [fudoResumen, setFudoResumen] = useState<VentasFudoResumen | null>(null);
 
   async function cargarDesdeFudo() {
-    setFudoCargando(true)
-    setFudoError('')
-    setFudoProgreso('Conectando con Fudo...')
-    setFudoResumen(null)
+    setFudoCargando(true);
+    setFudoError('');
+    setFudoProgreso('Conectando con Fudo...');
+    setFudoResumen(null);
     try {
       // Buscar el CashRegister ID de Fudo para la caja seleccionada
-      const cajaFudoId = fCaja ? CAJA_FUDO_ID[local]?.[fCaja] : undefined
+      const cajaFudoId = fCaja ? CAJA_FUDO_ID[local]?.[fCaja] : undefined;
       // Buscar horarios del turno seleccionado para filtrar ventas
-      const turnoConfig = TURNOS[local]?.find((t) => t.key === fTurno)
-      const horaDesde = turnoConfig?.horaDesde
-      const horaHasta = turnoConfig?.horaHasta
-      const fudoUserId = fCajeroId || undefined
-      const resumen = await obtenerVentasFudo(local, fFecha, setFudoProgreso, cajaFudoId, horaDesde, horaHasta, fudoUserId)
-      setFudoResumen(resumen)
+      const turnoConfig = TURNOS[local]?.find((t) => t.key === fTurno);
+      const horaDesde = turnoConfig?.horaDesde;
+      const horaHasta = turnoConfig?.horaHasta;
+      const fudoUserId = fCajeroId || undefined;
+      const resumen = await obtenerVentasFudo(
+        local,
+        fFecha,
+        setFudoProgreso,
+        cajaFudoId,
+        horaDesde,
+        horaHasta,
+        fudoUserId,
+      );
+      setFudoResumen(resumen);
       // Auto-completar campos del formulario
       // Efectivo NO se auto-completa: el cajero lo carga manualmente del arqueo/ticket
       // porque incluye monto inicial, retiros, y tickets de otros cajeros en la misma caja
-      setFFudoQR(resumen.qr > 0 ? String(Math.round(resumen.qr)) : '')
-      setFFudoDebito(resumen.debito > 0 ? String(Math.round(resumen.debito)) : '')
-      setFFudoCredito(resumen.credito > 0 ? String(Math.round(resumen.credito)) : '')
-      setFFudoTransf(resumen.transferencia > 0 ? String(Math.round(resumen.transferencia)) : '')
-      const turnoLabel = turnoConfig ? ` (${turnoConfig.label})` : ''
-      setFudoProgreso(`${resumen.cantidadTickets} tickets del ${fFecha}${turnoLabel} — Total: ${new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(resumen.totalVentas)}`)
+      setFFudoQR(resumen.qr > 0 ? String(Math.round(resumen.qr)) : '');
+      setFFudoDebito(resumen.debito > 0 ? String(Math.round(resumen.debito)) : '');
+      setFFudoCredito(resumen.credito > 0 ? String(Math.round(resumen.credito)) : '');
+      setFFudoTransf(resumen.transferencia > 0 ? String(Math.round(resumen.transferencia)) : '');
+      const turnoLabel = turnoConfig ? ` (${turnoConfig.label})` : '';
+      setFudoProgreso(
+        `${resumen.cantidadTickets} tickets del ${fFecha}${turnoLabel} — Total: ${new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(resumen.totalVentas)}`,
+      );
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Error desconocido'
+      const msg = err instanceof Error ? err.message : 'Error desconocido';
       if (msg.includes('Failed to fetch') || msg.includes('NetworkError') || msg.includes('CORS')) {
-        setFudoError('Error de red/CORS — la API de Fudo no permite llamadas directas desde el navegador. Se necesita un proxy (Edge Function).')
+        setFudoError(
+          'Error de red/CORS — la API de Fudo no permite llamadas directas desde el navegador. Se necesita un proxy (Edge Function).',
+        );
       } else {
-        setFudoError(msg)
+        setFudoError(msg);
       }
     } finally {
-      setFudoCargando(false)
+      setFudoCargando(false);
     }
   }
 
@@ -131,8 +163,8 @@ export function CierreCaja() {
   const { data: cierres, isLoading } = useQuery({
     queryKey: ['cierres_mes', local, periodo],
     queryFn: async () => {
-      const [y, m] = periodo.split('-').map(Number)
-      const lastDay = new Date(y, m, 0).getDate()
+      const [y, m] = periodo.split('-').map(Number);
+      const lastDay = new Date(y, m, 0).getDate();
       const { data } = await supabase
         .from('cierres_caja')
         .select('*')
@@ -141,189 +173,234 @@ export function CierreCaja() {
         .lte('fecha', `${periodo}-${lastDay}`)
         .order('fecha', { ascending: false })
         .order('caja')
-        .order('turno')
-      return (data ?? []) as CierreRow[]
+        .order('turno');
+      return (data ?? []) as CierreRow[];
     },
-  })
+  });
 
   // ── mutation: guardar cierre ───────────────────────────────────────────────
   const guardarMut = useMutation({
     mutationFn: async () => {
-      const parse = (v: string) => parseFloat((v || '0').replace(/\./g, '').replace(',', '.')) || 0
-      const contado = parse(fContado)
-      const fondoAp = parse(fFondoAp)
-      const otrosRet = parse(fOtrosRetiros)
-      const fudoEfvo = parse(fFudoEfvo)
-      const fudoQR = parse(fFudoQR)
-      const fudoDebito = parse(fFudoDebito)
-      const fudoCredito = parse(fFudoCredito)
-      const fudoTransf = parse(fFudoTransf)
-      const totalFudo = fudoEfvo + fudoQR + fudoDebito + fudoCredito + fudoTransf
+      const parse = (v: string) => parseFloat((v || '0').replace(/\./g, '').replace(',', '.')) || 0;
+      const contado = parse(fContado);
+      const fondoAp = parse(fFondoAp);
+      const otrosRet = parse(fOtrosRetiros);
+      const fudoEfvo = parse(fFudoEfvo);
+      const fudoQR = parse(fFudoQR);
+      const fudoDebito = parse(fFudoDebito);
+      const fudoCredito = parse(fFudoCredito);
+      const fudoTransf = parse(fFudoTransf);
+      const totalFudo = fudoEfvo + fudoQR + fudoDebito + fudoCredito + fudoTransf;
 
-      const { error } = await supabase.from('cierres_caja').upsert({
-        local,
-        fecha: fFecha,
-        turno: fTurno,
-        caja: fCaja || null,
-        hora_inicio: fHoraInicio || null,
-        hora_cierre: fHoraCierre || null,
-        fudo_efectivo: fudoEfvo,
-        fudo_qr: fudoQR,
-        fudo_debito: fudoDebito,
-        fudo_credito: fudoCredito,
-        fudo_transferencia: fudoTransf,
-        monto_esperado: totalFudo > 0 ? totalFudo : null,
-        monto_contado: contado,
-        fondo_apertura: fondoAp,
-        fondo_siguiente: 0,
-        retiro: otrosRet,
-        otros_retiros: otrosRet,
-        otros_retiros_nota: fOtrosRetNota || null,
-        nota: fNota || null,
-        creado_por: 'Lucas',
-        cajero_nombre: fudoResumen?.cajero || null,
-      }, { onConflict: 'local,fecha,turno,caja' })
-      if (error) throw error
+      const { error } = await supabase.from('cierres_caja').upsert(
+        {
+          local,
+          fecha: fFecha,
+          turno: fTurno,
+          caja: fCaja || null,
+          hora_inicio: fHoraInicio || null,
+          hora_cierre: fHoraCierre || null,
+          fudo_efectivo: fudoEfvo,
+          fudo_qr: fudoQR,
+          fudo_debito: fudoDebito,
+          fudo_credito: fudoCredito,
+          fudo_transferencia: fudoTransf,
+          monto_esperado: totalFudo > 0 ? totalFudo : null,
+          monto_contado: contado,
+          fondo_apertura: fondoAp,
+          fondo_siguiente: 0,
+          retiro: otrosRet,
+          otros_retiros: otrosRet,
+          otros_retiros_nota: fOtrosRetNota || null,
+          nota: fNota || null,
+          creado_por: 'Lucas',
+          cajero_nombre: fudoResumen?.cajero || null,
+        },
+        { onConflict: 'local,fecha,turno,caja' },
+      );
+      if (error) throw error;
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['cierres_mes'] })
-      setFormOpen(false)
-      setEditandoId(null)
-      resetForm()
+      qc.invalidateQueries({ queryKey: ['cierres_mes'] });
+      setFormOpen(false);
+      setEditandoId(null);
+      resetForm();
     },
-  })
+  });
 
   // ── mutation: eliminar cierre ──────────────────────────────────────────────
   const eliminarMut = useMutation({
     mutationFn: async (id: string) => {
-      await supabase.from('cierres_caja').delete().eq('id', id)
+      await supabase.from('cierres_caja').delete().eq('id', id);
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['cierres_mes'] }),
-  })
+  });
 
   // ── mutation: verificar cierre ─────────────────────────────────────────────
   const verificarMut = useMutation({
     mutationFn: async ({ id, verificado }: { id: string; verificado: boolean }) => {
-      const { error } = await supabase.from('cierres_caja').update({
-        verificado,
-        verificado_por: verificado ? 'Admin' : null,
-        verificado_at: verificado ? new Date().toISOString() : null,
-      }).eq('id', id)
-      if (error) throw error
+      const { error } = await supabase
+        .from('cierres_caja')
+        .update({
+          verificado,
+          verificado_por: verificado ? 'Admin' : null,
+          verificado_at: verificado ? new Date().toISOString() : null,
+        })
+        .eq('id', id);
+      if (error) throw error;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['cierres_mes'] }),
-  })
+  });
 
   function resetForm() {
-    setFFecha(hoy)
-    setFTurno(TURNOS[local]?.[0]?.key ?? '')
-    setFCaja(CAJAS[local]?.[0] ?? '')
-    setFHoraInicio('')
-    setFHoraCierre('')
-    setFFudoEfvo('')
-    setFFudoQR('')
-    setFFudoDebito('')
-    setFFudoCredito('')
-    setFFudoTransf('')
-    setFContado('')
-    setFFondoAp('')
-    setFOtrosRetiros('')
-    setFOtrosRetNota('')
-    setFNota('')
-    setFudoResumen(null)
-    setFudoError('')
-    setFudoProgreso('')
+    setFFecha(hoy);
+    setFTurno(TURNOS[local]?.[0]?.key ?? '');
+    setFCaja(CAJAS[local]?.[0] ?? '');
+    setFHoraInicio('');
+    setFHoraCierre('');
+    setFFudoEfvo('');
+    setFFudoQR('');
+    setFFudoDebito('');
+    setFFudoCredito('');
+    setFFudoTransf('');
+    setFContado('');
+    setFFondoAp('');
+    setFOtrosRetiros('');
+    setFOtrosRetNota('');
+    setFNota('');
+    setFudoResumen(null);
+    setFudoError('');
+    setFudoProgreso('');
   }
 
   function abrirForm() {
-    setEditandoId(null)
-    resetForm()
-    setFormOpen(true)
+    setEditandoId(null);
+    resetForm();
+    setFormOpen(true);
   }
 
   function editarCierre(c: CierreRow) {
     // Cargar valores del cierre existente al form — el upsert actualiza por (local,fecha,turno,caja)
-    setEditandoId(c.id)
-    setFFecha(c.fecha)
-    setFTurno(c.turno)
-    setFCaja(c.caja ?? '')
-    setFHoraInicio(c.hora_inicio ?? '')
-    setFHoraCierre(c.hora_cierre ?? '')
-    setFFudoEfvo(c.fudo_efectivo ? String(c.fudo_efectivo) : '')
-    setFFudoQR(c.fudo_qr ? String(c.fudo_qr) : '')
-    setFFudoDebito(c.fudo_debito ? String(c.fudo_debito) : '')
-    setFFudoCredito(c.fudo_credito ? String(c.fudo_credito) : '')
-    setFFudoTransf(c.fudo_transferencia ? String(c.fudo_transferencia) : '')
-    setFContado(c.monto_contado ? String(c.monto_contado) : '')
-    setFFondoAp(c.fondo_apertura ? String(c.fondo_apertura) : '')
-    setFOtrosRetiros(c.otros_retiros ? String(c.otros_retiros) : '')
-    setFOtrosRetNota(c.otros_retiros_nota ?? '')
-    setFNota(c.nota ?? '')
-    setFudoResumen(null)
-    setFudoError('')
-    setFudoProgreso('')
-    setFormOpen(true)
+    setEditandoId(c.id);
+    setFFecha(c.fecha);
+    setFTurno(c.turno);
+    setFCaja(c.caja ?? '');
+    setFHoraInicio(c.hora_inicio ?? '');
+    setFHoraCierre(c.hora_cierre ?? '');
+    setFFudoEfvo(c.fudo_efectivo ? String(c.fudo_efectivo) : '');
+    setFFudoQR(c.fudo_qr ? String(c.fudo_qr) : '');
+    setFFudoDebito(c.fudo_debito ? String(c.fudo_debito) : '');
+    setFFudoCredito(c.fudo_credito ? String(c.fudo_credito) : '');
+    setFFudoTransf(c.fudo_transferencia ? String(c.fudo_transferencia) : '');
+    setFContado(c.monto_contado ? String(c.monto_contado) : '');
+    setFFondoAp(c.fondo_apertura ? String(c.fondo_apertura) : '');
+    setFOtrosRetiros(c.otros_retiros ? String(c.otros_retiros) : '');
+    setFOtrosRetNota(c.otros_retiros_nota ?? '');
+    setFNota(c.nota ?? '');
+    setFudoResumen(null);
+    setFudoError('');
+    setFudoProgreso('');
+    setFormOpen(true);
   }
 
   function cerrarForm() {
-    setFormOpen(false)
-    setEditandoId(null)
-    resetForm()
+    setFormOpen(false);
+    setEditandoId(null);
+    resetForm();
   }
 
   // ── helper: diferencia real = (contado + retiros) - (efectivo fudo + cambio apertura) ──
   const calcDif = (c: CierreRow) =>
-    (c.monto_contado + (c.otros_retiros ?? 0)) - (c.fudo_efectivo + c.fondo_apertura)
+    c.monto_contado + (c.otros_retiros ?? 0) - (c.fudo_efectivo + c.fondo_apertura);
 
   // ── resumen del mes ────────────────────────────────────────────────────────
   const resumen = useMemo(() => {
-    if (!cierres) return { total: 0, positivos: 0, negativos: 0, cantidad: 0, verificados: 0, pendientes: 0, totalContado: 0, totalRetiros: 0, totalOtrosRetiros: 0, totalFudo: 0 }
-    let total = 0, positivos = 0, negativos = 0, verificados = 0, totalContado = 0, totalRetiros = 0, totalOtrosRetiros = 0, totalFudo = 0
+    if (!cierres)
+      return {
+        total: 0,
+        positivos: 0,
+        negativos: 0,
+        cantidad: 0,
+        verificados: 0,
+        pendientes: 0,
+        totalContado: 0,
+        totalRetiros: 0,
+        totalOtrosRetiros: 0,
+        totalFudo: 0,
+      };
+    let total = 0,
+      positivos = 0,
+      negativos = 0,
+      verificados = 0,
+      totalContado = 0,
+      totalRetiros = 0,
+      totalOtrosRetiros = 0,
+      totalFudo = 0;
     for (const c of cierres) {
-      const dif = calcDif(c)
-      total += dif
-      if (dif > 0) positivos += dif
-      if (dif < 0) negativos += dif
-      if (c.verificado) verificados++
-      totalContado += c.monto_contado ?? 0
-      totalRetiros += c.retiro ?? 0
-      totalOtrosRetiros += c.otros_retiros ?? 0
-      totalFudo += c.monto_esperado ?? 0
+      const dif = calcDif(c);
+      total += dif;
+      if (dif > 0) positivos += dif;
+      if (dif < 0) negativos += dif;
+      if (c.verificado) verificados++;
+      totalContado += c.monto_contado ?? 0;
+      totalRetiros += c.retiro ?? 0;
+      totalOtrosRetiros += c.otros_retiros ?? 0;
+      totalFudo += c.monto_esperado ?? 0;
     }
-    return { total, positivos, negativos, cantidad: cierres.length, verificados, pendientes: cierres.length - verificados, totalContado, totalRetiros, totalOtrosRetiros, totalFudo }
-  }, [cierres])
+    return {
+      total,
+      positivos,
+      negativos,
+      cantidad: cierres.length,
+      verificados,
+      pendientes: cierres.length - verificados,
+      totalContado,
+      totalRetiros,
+      totalOtrosRetiros,
+      totalFudo,
+    };
+  }, [cierres]);
 
   // Agrupar por fecha
   const porFecha = useMemo(() => {
-    const map = new Map<string, CierreRow[]>()
+    const map = new Map<string, CierreRow[]>();
     for (const c of cierres ?? []) {
-      if (!map.has(c.fecha)) map.set(c.fecha, [])
-      map.get(c.fecha)!.push(c)
+      if (!map.has(c.fecha)) map.set(c.fecha, []);
+      map.get(c.fecha)!.push(c);
     }
-    return [...map.entries()].sort((a, b) => b[0].localeCompare(a[0]))
-  }, [cierres])
+    return [...map.entries()].sort((a, b) => b[0].localeCompare(a[0]));
+  }, [cierres]);
 
   const turnoLabel = (t: string) => {
-    const found = TURNOS[local]?.find((x) => x.key === t)
-    return found ? found.label : t
-  }
+    const found = TURNOS[local]?.find((x) => x.key === t);
+    return found ? found.label : t;
+  };
 
   return (
     <div className="space-y-4">
       {/* Filtros */}
-      <div className="flex items-center gap-4 flex-wrap">
-        <LocalSelector value={local} onChange={(v) => { setLocal(v as 'vedia' | 'saavedra'); setFTurno(TURNOS[v]?.[0]?.key ?? ''); setFCajeroId('') }} />
+      <div className="flex flex-wrap items-center gap-4">
+        <LocalSelector
+          value={local}
+          onChange={(v) => {
+            setLocal(v as 'vedia' | 'saavedra');
+            setFTurno(TURNOS[v]?.[0]?.key ?? '');
+            setFCajeroId('');
+          }}
+        />
         <div className="flex items-center gap-2">
           <label className="text-xs font-medium text-gray-500">Período</label>
           <input
-            type="month" value={periodo} onChange={(e) => setPeriodo(e.target.value)}
-            className="border border-gray-300 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500"
+            type="month"
+            value={periodo}
+            onChange={(e) => setPeriodo(e.target.value)}
+            className="rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500"
           />
         </div>
         <div className="ml-auto">
           <button
             onClick={abrirForm}
-            className="px-4 py-1.5 bg-rodziny-800 text-white text-sm font-medium rounded-md hover:bg-rodziny-700 transition-colors"
+            className="rounded-md bg-rodziny-800 px-4 py-1.5 text-sm font-medium text-white transition-colors hover:bg-rodziny-700"
           >
             + Nuevo cierre
           </button>
@@ -331,128 +408,195 @@ export function CierreCaja() {
       </div>
 
       {/* KPIs resumen */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <div className="bg-white rounded-lg border border-surface-border p-4">
-          <p className="text-xs text-gray-500 mb-1">Efectivo del mes</p>
-          <p className="text-lg font-semibold text-green-700">{formatARS(resumen.totalContado - resumen.totalRetiros)}</p>
-          <p className="text-[10px] text-gray-400 mt-0.5">Contado - retiros de cambio</p>
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <div className="rounded-lg border border-surface-border bg-white p-4">
+          <p className="mb-1 text-xs text-gray-500">Efectivo del mes</p>
+          <p className="text-lg font-semibold text-green-700">
+            {formatARS(resumen.totalContado - resumen.totalRetiros)}
+          </p>
+          <p className="mt-0.5 text-[10px] text-gray-400">Contado - retiros de cambio</p>
         </div>
-        <div className="bg-white rounded-lg border border-surface-border p-4">
-          <p className="text-xs text-gray-500 mb-1">Total Fudo del mes</p>
+        <div className="rounded-lg border border-surface-border bg-white p-4">
+          <p className="mb-1 text-xs text-gray-500">Total Fudo del mes</p>
           <p className="text-lg font-semibold text-blue-700">{formatARS(resumen.totalFudo)}</p>
-          <p className="text-[10px] text-gray-400 mt-0.5">Suma de todos los cierres</p>
+          <p className="mt-0.5 text-[10px] text-gray-400">Suma de todos los cierres</p>
         </div>
-        <div className="bg-white rounded-lg border border-surface-border p-4">
-          <p className="text-xs text-gray-500 mb-1">Diferencia neta</p>
-          <p className={cn('text-lg font-semibold', resumen.total === 0 ? 'text-green-600' : resumen.total > 0 ? 'text-blue-600' : 'text-red-600')}>
+        <div className="rounded-lg border border-surface-border bg-white p-4">
+          <p className="mb-1 text-xs text-gray-500">Diferencia neta</p>
+          <p
+            className={cn(
+              'text-lg font-semibold',
+              resumen.total === 0
+                ? 'text-green-600'
+                : resumen.total > 0
+                  ? 'text-blue-600'
+                  : 'text-red-600',
+            )}
+          >
             {formatARS(resumen.total)}
           </p>
-          <p className="text-[10px] text-gray-400 mt-0.5">
+          <p className="mt-0.5 text-[10px] text-gray-400">
             {resumen.positivos > 0 && `Sobrantes: ${formatARS(resumen.positivos)}`}
             {resumen.positivos > 0 && resumen.negativos < 0 && ' · '}
             {resumen.negativos < 0 && `Faltantes: ${formatARS(resumen.negativos)}`}
           </p>
         </div>
-        <div className="bg-white rounded-lg border border-surface-border p-4">
-          <p className="text-xs text-gray-500 mb-1">Verificación</p>
-          <p className={cn('text-lg font-semibold', resumen.pendientes === 0 ? 'text-green-600' : 'text-amber-600')}>
+        <div className="rounded-lg border border-surface-border bg-white p-4">
+          <p className="mb-1 text-xs text-gray-500">Verificación</p>
+          <p
+            className={cn(
+              'text-lg font-semibold',
+              resumen.pendientes === 0 ? 'text-green-600' : 'text-amber-600',
+            )}
+          >
             {resumen.verificados}/{resumen.cantidad}
           </p>
-          {resumen.pendientes > 0 && <p className="text-[10px] text-amber-500 mt-0.5">{resumen.pendientes} pendiente{resumen.pendientes > 1 ? 's' : ''}</p>}
+          {resumen.pendientes > 0 && (
+            <p className="mt-0.5 text-[10px] text-amber-500">
+              {resumen.pendientes} pendiente{resumen.pendientes > 1 ? 's' : ''}
+            </p>
+          )}
         </div>
       </div>
 
       {/* Form nuevo/editar cierre (expandible) */}
       {formOpen && (
-        <div className="bg-white rounded-lg border-2 border-rodziny-200 p-5">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="font-semibold text-gray-900 text-sm">
+        <div className="border-rodziny-200 rounded-lg border-2 bg-white p-5">
+          <div className="mb-4 flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-gray-900">
               {editandoId ? 'Editar cierre de caja' : 'Nuevo cierre de caja'}
             </h3>
-            <button onClick={cerrarForm} className="text-gray-400 hover:text-gray-600 text-lg">✕</button>
+            <button onClick={cerrarForm} className="text-lg text-gray-400 hover:text-gray-600">
+              ✕
+            </button>
           </div>
 
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-2 gap-4 md:grid-cols-3">
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Fecha</label>
-              <input type="date" value={fFecha} onChange={(e) => setFFecha(e.target.value)}
-                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500" />
+              <label className="mb-1 block text-xs font-medium text-gray-600">Fecha</label>
+              <input
+                type="date"
+                value={fFecha}
+                onChange={(e) => setFFecha(e.target.value)}
+                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500"
+              />
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Caja</label>
-              <select value={fCaja} onChange={(e) => setFCaja(e.target.value)}
-                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500">
-                {CAJAS[local]?.map((c) => <option key={c} value={c}>{c}</option>)}
+              <label className="mb-1 block text-xs font-medium text-gray-600">Caja</label>
+              <select
+                value={fCaja}
+                onChange={(e) => setFCaja(e.target.value)}
+                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500"
+              >
+                {CAJAS[local]?.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
               </select>
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Turno</label>
-              <select value={fTurno} onChange={(e) => setFTurno(e.target.value)}
-                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500">
-                {TURNOS[local]?.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
+              <label className="mb-1 block text-xs font-medium text-gray-600">Turno</label>
+              <select
+                value={fTurno}
+                onChange={(e) => setFTurno(e.target.value)}
+                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500"
+              >
+                {TURNOS[local]?.map((t) => (
+                  <option key={t.key} value={t.key}>
+                    {t.label}
+                  </option>
+                ))}
               </select>
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Cajero (Fudo)</label>
-              <select value={fCajeroId} onChange={(e) => setFCajeroId(e.target.value)}
-                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500">
-                {CAJEROS_FUDO[local]?.map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+              <label className="mb-1 block text-xs font-medium text-gray-600">Cajero (Fudo)</label>
+              <select
+                value={fCajeroId}
+                onChange={(e) => setFCajeroId(e.target.value)}
+                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500"
+              >
+                {CAJEROS_FUDO[local]?.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.nombre}
+                  </option>
+                ))}
               </select>
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Hora inicio (Fudo)</label>
-              <input type="time" value={fHoraInicio} onChange={(e) => setFHoraInicio(e.target.value)}
-                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500" />
+              <label className="mb-1 block text-xs font-medium text-gray-600">
+                Hora inicio (Fudo)
+              </label>
+              <input
+                type="time"
+                value={fHoraInicio}
+                onChange={(e) => setFHoraInicio(e.target.value)}
+                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500"
+              />
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Hora cierre (Fudo)</label>
-              <input type="time" value={fHoraCierre} onChange={(e) => setFHoraCierre(e.target.value)}
-                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500" />
+              <label className="mb-1 block text-xs font-medium text-gray-600">
+                Hora cierre (Fudo)
+              </label>
+              <input
+                type="time"
+                value={fHoraCierre}
+                onChange={(e) => setFHoraCierre(e.target.value)}
+                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500"
+              />
             </div>
 
             {/* ── Datos de Fudo ── */}
-            <div className="col-span-2 md:col-span-3 mt-2">
-              <div className="flex items-center justify-between border-b border-gray-200 pb-1 mb-3">
+            <div className="col-span-2 mt-2 md:col-span-3">
+              <div className="mb-3 flex items-center justify-between border-b border-gray-200 pb-1">
                 <p className="text-xs font-semibold text-gray-700">Datos de Fudo</p>
                 <button
                   type="button"
                   onClick={cargarDesdeFudo}
                   disabled={fudoCargando}
                   className={cn(
-                    'px-3 py-1 text-xs font-medium rounded-md transition-colors',
+                    'rounded-md px-3 py-1 text-xs font-medium transition-colors',
                     fudoCargando
-                      ? 'bg-gray-100 text-gray-400 cursor-wait'
-                      : 'bg-blue-600 text-white hover:bg-blue-700'
+                      ? 'cursor-wait bg-gray-100 text-gray-400'
+                      : 'bg-blue-600 text-white hover:bg-blue-700',
                   )}
                 >
                   {fudoCargando ? fudoProgreso || 'Cargando...' : 'Cargar desde Fudo API'}
                 </button>
               </div>
               {fudoError && (
-                <div className="bg-red-50 border border-red-200 rounded-md px-3 py-2 mb-3">
+                <div className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2">
                   <p className="text-xs text-red-700">{fudoError}</p>
                 </div>
               )}
               {fudoResumen && !fudoError && (
-                <div className="bg-green-50 border border-green-200 rounded-md px-3 py-2 mb-3">
+                <div className="mb-3 rounded-md border border-green-200 bg-green-50 px-3 py-2">
                   <p className="text-xs text-green-700">
-                    {fudoResumen.cantidadTickets} tickets del {new Date(fudoResumen.fecha + 'T12:00:00').toLocaleDateString('es-AR')}
-                    {' — '}Total: {formatARS(fudoResumen.totalVentas + (parseFloat((fFondoAp || '0').replace(/\./g, '').replace(',', '.')) || 0))}
+                    {fudoResumen.cantidadTickets} tickets del{' '}
+                    {new Date(fudoResumen.fecha + 'T12:00:00').toLocaleDateString('es-AR')}
+                    {' — '}Total:{' '}
+                    {formatARS(
+                      fudoResumen.totalVentas +
+                        (parseFloat((fFondoAp || '0').replace(/\./g, '').replace(',', '.')) || 0),
+                    )}
                     {fudoResumen.cajero && ` — Cajero: ${fudoResumen.cajero}`}
                     {fudoResumen.mpLucas > 0 && ` — MP Lucas: ${formatARS(fudoResumen.mpLucas)}`}
                     {fudoResumen.ctaCte > 0 && ` — Cta.Cte: ${formatARS(fudoResumen.ctaCte)}`}
                   </p>
                   {/* Desglose por caja (solo si no se filtró por caja específica) */}
                   {Object.keys(fudoResumen.porCaja || {}).length > 1 && (
-                    <p className="text-[10px] text-green-600 mt-1">
-                      {Object.entries(fudoResumen.porCaja).map(([id, c]) => (
-                        `Caja ${id}: ${c.tickets} tickets, ${c.cajero ?? 'sin cajero'}`
-                      )).join(' · ')}
+                    <p className="mt-1 text-[10px] text-green-600">
+                      {Object.entries(fudoResumen.porCaja)
+                        .map(
+                          ([id, c]) =>
+                            `Caja ${id}: ${c.tickets} tickets, ${c.cajero ?? 'sin cajero'}`,
+                        )
+                        .join(' · ')}
                     </p>
                   )}
                 </div>
@@ -460,181 +604,320 @@ export function CierreCaja() {
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Efectivo (Fudo)</label>
-              <input type="text" value={fFudoEfvo} onChange={(e) => setFFudoEfvo(e.target.value)}
-                placeholder="0" className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500" />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Código QR (Fudo)</label>
-              <input type="text" value={fFudoQR} onChange={(e) => setFFudoQR(e.target.value)}
-                placeholder="0" className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500" />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Débito (Fudo)</label>
-              <input type="text" value={fFudoDebito} onChange={(e) => setFFudoDebito(e.target.value)}
-                placeholder="0" className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500" />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Crédito (Fudo)</label>
-              <input type="text" value={fFudoCredito} onChange={(e) => setFFudoCredito(e.target.value)}
-                placeholder="0" className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500" />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Transferencia (Fudo)</label>
-              <input type="text" value={fFudoTransf} onChange={(e) => setFFudoTransf(e.target.value)}
-                placeholder="0" className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500" />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Cambio apertura</label>
-              <input type="text" value={fFondoAp} onChange={(e) => setFFondoAp(e.target.value)}
+              <label className="mb-1 block text-xs font-medium text-gray-600">
+                Efectivo (Fudo)
+              </label>
+              <input
+                type="text"
+                value={fFudoEfvo}
+                onChange={(e) => setFFudoEfvo(e.target.value)}
                 placeholder="0"
-                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500" />
-              <p className="text-[10px] text-gray-400 mt-0.5">Monto inicial de caja (aparece en el ticket Fudo)</p>
+                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500"
+              />
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Total Fudo</label>
+              <label className="mb-1 block text-xs font-medium text-gray-600">
+                Código QR (Fudo)
+              </label>
+              <input
+                type="text"
+                value={fFudoQR}
+                onChange={(e) => setFFudoQR(e.target.value)}
+                placeholder="0"
+                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-gray-600">Débito (Fudo)</label>
+              <input
+                type="text"
+                value={fFudoDebito}
+                onChange={(e) => setFFudoDebito(e.target.value)}
+                placeholder="0"
+                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-gray-600">Crédito (Fudo)</label>
+              <input
+                type="text"
+                value={fFudoCredito}
+                onChange={(e) => setFFudoCredito(e.target.value)}
+                placeholder="0"
+                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-gray-600">
+                Transferencia (Fudo)
+              </label>
+              <input
+                type="text"
+                value={fFudoTransf}
+                onChange={(e) => setFFudoTransf(e.target.value)}
+                placeholder="0"
+                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-gray-600">
+                Cambio apertura
+              </label>
+              <input
+                type="text"
+                value={fFondoAp}
+                onChange={(e) => setFFondoAp(e.target.value)}
+                placeholder="0"
+                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500"
+              />
+              <p className="mt-0.5 text-[10px] text-gray-400">
+                Monto inicial de caja (aparece en el ticket Fudo)
+              </p>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-gray-600">Total Fudo</label>
               {(() => {
-                const parse = (v: string) => parseFloat((v || '0').replace(/\./g, '').replace(',', '.')) || 0
-                const total = parse(fFudoEfvo) + parse(fFudoQR) + parse(fFudoDebito) + parse(fFudoCredito) + parse(fFudoTransf) + parse(fFondoAp)
+                const parse = (v: string) =>
+                  parseFloat((v || '0').replace(/\./g, '').replace(',', '.')) || 0;
+                const total =
+                  parse(fFudoEfvo) +
+                  parse(fFudoQR) +
+                  parse(fFudoDebito) +
+                  parse(fFudoCredito) +
+                  parse(fFudoTransf) +
+                  parse(fFondoAp);
                 return (
-                  <div className="w-full rounded-md px-3 py-2 text-sm font-semibold bg-gray-100 text-gray-800">
+                  <div className="w-full rounded-md bg-gray-100 px-3 py-2 text-sm font-semibold text-gray-800">
                     {total > 0 ? formatARS(total) : '—'}
                   </div>
-                )
+                );
               })()}
             </div>
 
             {/* ── Arqueo de efectivo ── */}
-            <div className="col-span-2 md:col-span-3 mt-2">
-              <p className="text-xs font-semibold text-gray-700 border-b border-gray-200 pb-1 mb-1">Arqueo de efectivo</p>
-              <p className="text-[10px] text-gray-400 mb-3">Solo se compara el efectivo físico en caja contra lo que Fudo registró como pago en efectivo</p>
+            <div className="col-span-2 mt-2 md:col-span-3">
+              <p className="mb-1 border-b border-gray-200 pb-1 text-xs font-semibold text-gray-700">
+                Arqueo de efectivo
+              </p>
+              <p className="mb-3 text-[10px] text-gray-400">
+                Solo se compara el efectivo físico en caja contra lo que Fudo registró como pago en
+                efectivo
+              </p>
             </div>
 
             {/* Fila 1: Contado real, Diferencia, Otros retiros */}
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Contado real <span className="text-red-500">*</span></label>
-              <input type="text" value={fContado} onChange={(e) => setFContado(e.target.value)}
-                placeholder="0" className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500" />
-              <p className="text-[10px] text-gray-400 mt-0.5">Billetes y monedas al cerrar (solo efectivo)</p>
+              <label className="mb-1 block text-xs font-medium text-gray-600">
+                Contado real <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="text"
+                value={fContado}
+                onChange={(e) => setFContado(e.target.value)}
+                placeholder="0"
+                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500"
+              />
+              <p className="mt-0.5 text-[10px] text-gray-400">
+                Billetes y monedas al cerrar (solo efectivo)
+              </p>
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Diferencia efectivo</label>
+              <label className="mb-1 block text-xs font-medium text-gray-600">
+                Diferencia efectivo
+              </label>
               {(() => {
-                const parse = (v: string) => parseFloat((v || '0').replace(/\./g, '').replace(',', '.')) || 0
-                const fudoEfvo = parse(fFudoEfvo)
-                const fondoAp = parse(fFondoAp)
-                const cont = parse(fContado)
-                const otrosRet = parse(fOtrosRetiros)
-                const esperado = fudoEfvo + fondoAp
-                const mostrar = fudoEfvo > 0 && cont > 0
-                const dif = mostrar ? (cont + otrosRet) - esperado : 0
+                const parse = (v: string) =>
+                  parseFloat((v || '0').replace(/\./g, '').replace(',', '.')) || 0;
+                const fudoEfvo = parse(fFudoEfvo);
+                const fondoAp = parse(fFondoAp);
+                const cont = parse(fContado);
+                const otrosRet = parse(fOtrosRetiros);
+                const esperado = fudoEfvo + fondoAp;
+                const mostrar = fudoEfvo > 0 && cont > 0;
+                const dif = mostrar ? cont + otrosRet - esperado : 0;
                 return (
-                  <div className={cn(
-                    'w-full rounded-md px-3 py-2 text-sm font-medium',
-                    !mostrar ? 'bg-gray-50 text-gray-500' : dif === 0 ? 'bg-green-50 text-green-700' : dif > 0 ? 'bg-blue-50 text-blue-700' : 'bg-red-50 text-red-700'
-                  )}>
-                    {mostrar ? `${formatARS(dif)} ${dif === 0 ? '— Cuadra' : dif > 0 ? '↑ Sobrante' : '↓ Faltante'}` : '—'}
+                  <div
+                    className={cn(
+                      'w-full rounded-md px-3 py-2 text-sm font-medium',
+                      !mostrar
+                        ? 'bg-gray-50 text-gray-500'
+                        : dif === 0
+                          ? 'bg-green-50 text-green-700'
+                          : dif > 0
+                            ? 'bg-blue-50 text-blue-700'
+                            : 'bg-red-50 text-red-700',
+                    )}
+                  >
+                    {mostrar
+                      ? `${formatARS(dif)} ${dif === 0 ? '— Cuadra' : dif > 0 ? '↑ Sobrante' : '↓ Faltante'}`
+                      : '—'}
                   </div>
-                )
+                );
               })()}
-              <p className="text-[10px] text-gray-400 mt-0.5">Contado real + retiros vs. (efectivo Fudo + cambio apertura)</p>
+              <p className="mt-0.5 text-[10px] text-gray-400">
+                Contado real + retiros vs. (efectivo Fudo + cambio apertura)
+              </p>
             </div>
 
             {/* Fila 2: Retiros y nota */}
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Retiros</label>
-              <input type="text" value={fOtrosRetiros} onChange={(e) => setFOtrosRetiros(e.target.value)}
+              <label className="mb-1 block text-xs font-medium text-gray-600">Retiros</label>
+              <input
+                type="text"
+                value={fOtrosRetiros}
+                onChange={(e) => setFOtrosRetiros(e.target.value)}
                 placeholder="0"
-                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500" />
-              <p className="text-[10px] text-gray-400 mt-0.5">Plata sacada de caja durante el turno (cambio, pagos, etc.)</p>
+                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500"
+              />
+              <p className="mt-0.5 text-[10px] text-gray-400">
+                Plata sacada de caja durante el turno (cambio, pagos, etc.)
+              </p>
             </div>
 
             <div className="col-span-1 md:col-span-2">
-              <label className="block text-xs font-medium text-gray-600 mb-1">Motivo del retiro</label>
-              <input type="text" value={fOtrosRetNota} onChange={(e) => setFOtrosRetNota(e.target.value)}
+              <label className="mb-1 block text-xs font-medium text-gray-600">
+                Motivo del retiro
+              </label>
+              <input
+                type="text"
+                value={fOtrosRetNota}
+                onChange={(e) => setFOtrosRetNota(e.target.value)}
                 placeholder="Ej: Pago proveedor hielo, cambio para próximo turno"
-                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500" />
+                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500"
+              />
             </div>
 
             <div className="col-span-2 md:col-span-3">
-              <label className="block text-xs font-medium text-gray-600 mb-1">Nota (opcional)</label>
-              <input type="text" value={fNota} onChange={(e) => setFNota(e.target.value)}
+              <label className="mb-1 block text-xs font-medium text-gray-600">
+                Nota (opcional)
+              </label>
+              <input
+                type="text"
+                value={fNota}
+                onChange={(e) => setFNota(e.target.value)}
                 placeholder="Ej: Error en vuelto ticket #163045"
-                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500" />
+                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500"
+              />
             </div>
           </div>
 
-          <div className="flex justify-end mt-4 gap-2">
-            <button onClick={() => setFormOpen(false)}
-              className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 transition-colors">
+          <div className="mt-4 flex justify-end gap-2">
+            <button
+              onClick={() => setFormOpen(false)}
+              className="px-4 py-2 text-sm text-gray-600 transition-colors hover:text-gray-800"
+            >
               Cancelar
             </button>
             <button
               onClick={() => guardarMut.mutate()}
               disabled={guardarMut.isPending || !fContado}
-              className="px-4 py-2 bg-rodziny-800 text-white text-sm font-medium rounded-md hover:bg-rodziny-700 transition-colors disabled:opacity-50"
+              className="rounded-md bg-rodziny-800 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-rodziny-700 disabled:opacity-50"
             >
               {guardarMut.isPending ? 'Guardando...' : 'Guardar cierre'}
             </button>
           </div>
 
           {guardarMut.isError && (
-            <p className="mt-2 text-xs text-red-600">Error al guardar: {(guardarMut.error as Error).message}</p>
+            <p className="mt-2 text-xs text-red-600">
+              Error al guardar: {(guardarMut.error as Error).message}
+            </p>
           )}
         </div>
       )}
 
       {/* Tabla de cierres */}
-      <div className="bg-white rounded-lg border border-surface-border overflow-hidden">
+      <div className="overflow-hidden rounded-lg border border-surface-border bg-white">
         {isLoading ? (
-          <div className="p-8 text-center text-sm text-gray-400 animate-pulse">Cargando cierres...</div>
+          <div className="animate-pulse p-8 text-center text-sm text-gray-400">
+            Cargando cierres...
+          </div>
         ) : porFecha.length === 0 ? (
-          <div className="p-8 text-center text-sm text-gray-400">No hay cierres cargados en este período</div>
+          <div className="p-8 text-center text-sm text-gray-400">
+            No hay cierres cargados en este período
+          </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="bg-gray-50 border-b border-gray-200">
-                  <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600">Fecha</th>
-                  <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600">Caja</th>
-                  <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600">Turno</th>
-                  <th className="px-4 py-2.5 text-right text-xs font-semibold text-gray-600">Fudo total</th>
-                  <th className="px-4 py-2.5 text-right text-xs font-semibold text-gray-600">Contado</th>
-                  <th className="px-4 py-2.5 text-right text-xs font-semibold text-gray-600">Cambio</th>
-                  <th className="px-4 py-2.5 text-right text-xs font-semibold text-gray-600">Retiro</th>
-                  <th className="px-4 py-2.5 text-right text-xs font-semibold text-gray-600">Otros ret.</th>
-                  <th className="px-4 py-2.5 text-right text-xs font-semibold text-gray-600">Diferencia</th>
-                  <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600">Nota</th>
-                  <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-600">Verificado</th>
-                  <th className="px-2 py-2.5 w-8"></th>
+                <tr className="border-b border-gray-200 bg-gray-50">
+                  <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600">
+                    Fecha
+                  </th>
+                  <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600">
+                    Caja
+                  </th>
+                  <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600">
+                    Turno
+                  </th>
+                  <th className="px-4 py-2.5 text-right text-xs font-semibold text-gray-600">
+                    Fudo total
+                  </th>
+                  <th className="px-4 py-2.5 text-right text-xs font-semibold text-gray-600">
+                    Contado
+                  </th>
+                  <th className="px-4 py-2.5 text-right text-xs font-semibold text-gray-600">
+                    Cambio
+                  </th>
+                  <th className="px-4 py-2.5 text-right text-xs font-semibold text-gray-600">
+                    Retiro
+                  </th>
+                  <th className="px-4 py-2.5 text-right text-xs font-semibold text-gray-600">
+                    Otros ret.
+                  </th>
+                  <th className="px-4 py-2.5 text-right text-xs font-semibold text-gray-600">
+                    Diferencia
+                  </th>
+                  <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600">
+                    Nota
+                  </th>
+                  <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-600">
+                    Verificado
+                  </th>
+                  <th className="w-8 px-2 py-2.5"></th>
                 </tr>
               </thead>
               <tbody>
                 {porFecha.map(([fecha, rows]) => {
                   return rows.map((c, i) => (
-                    <tr key={c.id} className={cn(
-                      'border-b border-gray-50 hover:bg-gray-50',
-                      i === 0 && 'border-t border-gray-100'
-                    )}>
+                    <tr
+                      key={c.id}
+                      className={cn(
+                        'border-b border-gray-50 hover:bg-gray-50',
+                        i === 0 && 'border-t border-gray-100',
+                      )}
+                    >
                       {/* Fecha: solo en la primera fila del grupo */}
                       {i === 0 ? (
-                        <td className="px-4 py-2 font-medium text-gray-800 align-top" rowSpan={rows.length}>
-                          <div>{new Date(fecha + 'T12:00:00').toLocaleDateString('es-AR', { weekday: 'short', day: 'numeric', month: 'short' })}</div>
+                        <td
+                          className="px-4 py-2 align-top font-medium text-gray-800"
+                          rowSpan={rows.length}
+                        >
+                          <div>
+                            {new Date(fecha + 'T12:00:00').toLocaleDateString('es-AR', {
+                              weekday: 'short',
+                              day: 'numeric',
+                              month: 'short',
+                            })}
+                          </div>
                         </td>
                       ) : null}
                       <td className="px-4 py-2 text-gray-700">{c.caja || '—'}</td>
                       <td className="px-4 py-2 text-gray-600">
                         <div>{turnoLabel(c.turno)}</div>
                         {c.hora_inicio && c.hora_cierre && (
-                          <div className="text-[10px] text-gray-400">{c.hora_inicio.substring(0, 5)}–{c.hora_cierre.substring(0, 5)}</div>
+                          <div className="text-[10px] text-gray-400">
+                            {c.hora_inicio.substring(0, 5)}–{c.hora_cierre.substring(0, 5)}
+                          </div>
                         )}
                       </td>
                       <td className="px-4 py-2 text-right text-gray-600">
                         {c.monto_esperado != null ? formatARS(c.monto_esperado) : '—'}
                       </td>
-                      <td className="px-4 py-2 text-right font-medium text-gray-900">{formatARS(c.monto_contado)}</td>
-                      <td className="px-4 py-2 text-right text-gray-500 text-xs">
+                      <td className="px-4 py-2 text-right font-medium text-gray-900">
+                        {formatARS(c.monto_contado)}
+                      </td>
+                      <td className="px-4 py-2 text-right text-xs text-gray-500">
                         {c.fondo_apertura > 0 && <div>Inicio: {formatARS(c.fondo_apertura)}</div>}
                       </td>
                       <td className="px-4 py-2 text-right font-medium text-green-700">
@@ -643,37 +926,61 @@ export function CierreCaja() {
                       <td className="px-4 py-2 text-right text-xs">
                         {(c.otros_retiros ?? 0) > 0 ? (
                           <div>
-                            <span className="font-medium text-amber-700">{formatARS(c.otros_retiros)}</span>
-                            {c.otros_retiros_nota && <div className="text-gray-400 truncate max-w-[120px]" title={c.otros_retiros_nota}>{c.otros_retiros_nota}</div>}
+                            <span className="font-medium text-amber-700">
+                              {formatARS(c.otros_retiros)}
+                            </span>
+                            {c.otros_retiros_nota && (
+                              <div
+                                className="max-w-[120px] truncate text-gray-400"
+                                title={c.otros_retiros_nota}
+                              >
+                                {c.otros_retiros_nota}
+                              </div>
+                            )}
                           </div>
-                        ) : '—'}
+                        ) : (
+                          '—'
+                        )}
                       </td>
                       <td className="px-4 py-2 text-right">
                         {(() => {
-                          const dif = calcDif(c)
+                          const dif = calcDif(c);
                           return (
-                            <span className={cn(
-                              'inline-block px-2 py-0.5 rounded text-xs font-medium',
-                              dif === 0 ? 'bg-green-50 text-green-700' :
-                              dif > 0 ? 'bg-blue-50 text-blue-700' : 'bg-red-50 text-red-700'
-                            )}>
+                            <span
+                              className={cn(
+                                'inline-block rounded px-2 py-0.5 text-xs font-medium',
+                                dif === 0
+                                  ? 'bg-green-50 text-green-700'
+                                  : dif > 0
+                                    ? 'bg-blue-50 text-blue-700'
+                                    : 'bg-red-50 text-red-700',
+                              )}
+                            >
                               {dif === 0 ? '$0' : formatARS(dif)}
                             </span>
-                          )
+                          );
                         })()}
                       </td>
-                      <td className="px-4 py-2 text-gray-400 text-xs max-w-[200px] truncate">{c.nota || ''}</td>
+                      <td className="max-w-[200px] truncate px-4 py-2 text-xs text-gray-400">
+                        {c.nota || ''}
+                      </td>
                       <td className="px-4 py-2 text-center">
                         <button
-                          onClick={() => verificarMut.mutate({ id: c.id, verificado: !c.verificado })}
+                          onClick={() =>
+                            verificarMut.mutate({ id: c.id, verificado: !c.verificado })
+                          }
                           disabled={verificarMut.isPending}
                           className={cn(
-                            'inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium transition-colors',
+                            'inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs font-medium transition-colors',
                             c.verificado
                               ? 'bg-green-100 text-green-800 hover:bg-green-200'
-                              : 'bg-gray-100 text-gray-500 hover:bg-amber-100 hover:text-amber-700'
+                              : 'bg-gray-100 text-gray-500 hover:bg-amber-100 hover:text-amber-700',
                           )}
-                          title={c.verificado ? `Verificado por ${c.verificado_por}` : 'Marcar como verificado'}
+                          title={
+                            c.verificado
+                              ? `Verificado por ${c.verificado_por}`
+                              : 'Marcar como verificado'
+                          }
                         >
                           {c.verificado ? '✓ Verificado' : '○ Pendiente'}
                         </button>
@@ -682,14 +989,16 @@ export function CierreCaja() {
                         <div className="flex items-center justify-center gap-2">
                           <button
                             onClick={() => editarCierre(c)}
-                            className="text-blue-500 hover:text-blue-700 transition-colors text-xs"
+                            className="text-xs text-blue-500 transition-colors hover:text-blue-700"
                             title="Editar este cierre"
                           >
                             Editar
                           </button>
                           <button
-                            onClick={() => { if (confirm('¿Eliminar este cierre?')) eliminarMut.mutate(c.id) }}
-                            className="text-gray-300 hover:text-red-500 transition-colors text-xs"
+                            onClick={() => {
+                              if (confirm('¿Eliminar este cierre?')) eliminarMut.mutate(c.id);
+                            }}
+                            className="text-xs text-gray-300 transition-colors hover:text-red-500"
                             title="Eliminar"
                           >
                             ✕
@@ -697,7 +1006,7 @@ export function CierreCaja() {
                         </div>
                       </td>
                     </tr>
-                  ))
+                  ));
                 })}
               </tbody>
             </table>
@@ -705,5 +1014,5 @@ export function CierreCaja() {
         )}
       </div>
     </div>
-  )
+  );
 }

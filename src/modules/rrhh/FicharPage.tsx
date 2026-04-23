@@ -1,246 +1,308 @@
-import { useEffect, useRef, useState } from 'react'
-import { supabaseAnon as supabase } from '@/lib/supabaseAnon'
-import { cn } from '@/lib/utils'
-import { TOLERANCIA_MIN, ymd, hhmm, diffMinutosVsTurnos, formatTurnos, type TurnoCrono } from './utils'
+import { useEffect, useRef, useState } from 'react';
+import { supabaseAnon as supabase } from '@/lib/supabaseAnon';
+import { cn } from '@/lib/utils';
+import {
+  TOLERANCIA_MIN,
+  ymd,
+  hhmm,
+  diffMinutosVsTurnos,
+  formatTurnos,
+  type TurnoCrono,
+} from './utils';
 
 // ─── Configuración editable ─────────────────────────────────────────────────
 // Si en el local detectás que las coordenadas no son exactas, ajustalas acá
 const LOCALES = {
-  vedia:    { nombre: 'Rodziny Vedia',    lat: -27.45042, lng: -58.98962 },
+  vedia: { nombre: 'Rodziny Vedia', lat: -27.45042, lng: -58.98962 },
   saavedra: { nombre: 'Rodziny Saavedra', lat: -27.44856, lng: -58.97886 },
-} as const
-const RADIO_METROS = 120
-const FOTO_MAX_LADO = 640        // px
-const FOTO_QUALITY  = 0.7
+} as const;
+const RADIO_METROS = 120;
+const FOTO_MAX_LADO = 640; // px
+const FOTO_QUALITY = 0.7;
 
-type LocalKey = keyof typeof LOCALES
+type LocalKey = keyof typeof LOCALES;
 
 interface Empleado {
-  id: string
-  nombre: string
-  apellido: string
-  dni: string
-  local: 'vedia' | 'saavedra' | 'ambos'
-  pin_fichaje: string | null
-  horario_tipo: 'fijo' | 'flexible'
-  horas_semanales_requeridas: number | null
+  id: string;
+  nombre: string;
+  apellido: string;
+  dni: string;
+  local: 'vedia' | 'saavedra' | 'ambos';
+  pin_fichaje: string | null;
+  horario_tipo: 'fijo' | 'flexible';
+  horas_semanales_requeridas: number | null;
 }
 
 interface Cronograma {
-  id: string
-  empleado_id: string
-  fecha: string
-  hora_entrada: string | null
-  hora_salida: string | null
-  turnos: TurnoCrono[] | null
-  es_franco: boolean
-  publicado: boolean
+  id: string;
+  empleado_id: string;
+  fecha: string;
+  hora_entrada: string | null;
+  hora_salida: string | null;
+  turnos: TurnoCrono[] | null;
+  es_franco: boolean;
+  publicado: boolean;
 }
 
 interface Fichada {
-  id: string
-  empleado_id: string
-  fecha: string
-  tipo: 'entrada' | 'salida'
-  timestamp: string
-  local: string
-  minutos_diferencia: number | null
-  foto_path: string | null
+  id: string;
+  empleado_id: string;
+  fecha: string;
+  tipo: 'entrada' | 'salida';
+  timestamp: string;
+  local: string;
+  minutos_diferencia: number | null;
+  foto_path: string | null;
 }
 
 // ─── Helpers locales (los compartidos vienen de ./utils) ────────────────────
 // Fichadas legacy de madrugada (00:00-05:00) grabadas como "entrada" que en realidad
 // son la salida del turno nocturno del día anterior. No deben contar para paridad.
 function esSalidaNocturnaLegacy(f: { tipo: 'entrada' | 'salida'; timestamp: string }): boolean {
-  if (f.tipo !== 'entrada') return false
-  const h = new Date(f.timestamp).getHours()
-  return h >= 0 && h < 5
+  if (f.tipo !== 'entrada') return false;
+  const h = new Date(f.timestamp).getHours();
+  return h >= 0 && h < 5;
 }
 
 function haversineMetros(lat1: number, lng1: number, lat2: number, lng2: number): number {
-  const R = 6371000
-  const toRad = (x: number) => (x * Math.PI) / 180
-  const dLat = toRad(lat2 - lat1)
-  const dLng = toRad(lng2 - lng1)
+  const R = 6371000;
+  const toRad = (x: number) => (x * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
   const a =
     Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2
-  return 2 * R * Math.asin(Math.sqrt(a))
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
 }
 
 function detectarLocal(lat: number, lng: number): { key: LocalKey; distancia: number } | null {
   const candidatos = (Object.keys(LOCALES) as LocalKey[]).map((key) => ({
     key,
     distancia: haversineMetros(lat, lng, LOCALES[key].lat, LOCALES[key].lng),
-  }))
-  candidatos.sort((a, b) => a.distancia - b.distancia)
-  const mejor = candidatos[0]
-  if (mejor.distancia <= RADIO_METROS) return mejor
-  return null
+  }));
+  candidatos.sort((a, b) => a.distancia - b.distancia);
+  const mejor = candidatos[0];
+  if (mejor.distancia <= RADIO_METROS) return mejor;
+  return null;
 }
 
 async function comprimirImagen(blob: Blob): Promise<Blob> {
   const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-    const url = URL.createObjectURL(blob)
-    const i = new Image()
-    i.onload = () => { URL.revokeObjectURL(url); resolve(i) }
-    i.onerror = (e) => { URL.revokeObjectURL(url); reject(e) }
-    i.src = url
-  })
-  const escala = Math.min(1, FOTO_MAX_LADO / Math.max(img.width, img.height))
-  const w = Math.round(img.width * escala)
-  const h = Math.round(img.height * escala)
-  const canvas = document.createElement('canvas')
-  canvas.width = w
-  canvas.height = h
-  const ctx = canvas.getContext('2d')!
-  ctx.drawImage(img, 0, 0, w, h)
+    const url = URL.createObjectURL(blob);
+    const i = new Image();
+    i.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve(i);
+    };
+    i.onerror = (e) => {
+      URL.revokeObjectURL(url);
+      reject(e);
+    };
+    i.src = url;
+  });
+  const escala = Math.min(1, FOTO_MAX_LADO / Math.max(img.width, img.height));
+  const w = Math.round(img.width * escala);
+  const h = Math.round(img.height * escala);
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d')!;
+  ctx.drawImage(img, 0, 0, w, h);
   return await new Promise<Blob>((resolve, reject) => {
-    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('toBlob falló'))), 'image/jpeg', FOTO_QUALITY)
-  })
+    canvas.toBlob(
+      (b) => (b ? resolve(b) : reject(new Error('toBlob falló'))),
+      'image/jpeg',
+      FOTO_QUALITY,
+    );
+  });
 }
 
 // LocalStorage helpers
-const LS_KEY = 'rodziny_fichaje_empleado'
+const LS_KEY = 'rodziny_fichaje_empleado';
 function guardarSesion(empleadoId: string) {
-  localStorage.setItem(LS_KEY, JSON.stringify({ id: empleadoId, ts: Date.now() }))
+  localStorage.setItem(LS_KEY, JSON.stringify({ id: empleadoId, ts: Date.now() }));
 }
 function leerSesion(): string | null {
   try {
-    const raw = localStorage.getItem(LS_KEY)
-    if (!raw) return null
-    const parsed = JSON.parse(raw)
+    const raw = localStorage.getItem(LS_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
     // Expira a los 30 días
     if (Date.now() - parsed.ts > 30 * 24 * 60 * 60 * 1000) {
-      localStorage.removeItem(LS_KEY)
-      return null
+      localStorage.removeItem(LS_KEY);
+      return null;
     }
-    return parsed.id
+    return parsed.id;
   } catch {
-    return null
+    return null;
   }
 }
 
 // ─── Componente principal ───────────────────────────────────────────────────
 export function FicharPage() {
-  const [empleado, setEmpleado] = useState<Empleado | null>(null)
-  const [cargando, setCargando] = useState(true)
+  const [empleado, setEmpleado] = useState<Empleado | null>(null);
+  const [cargando, setCargando] = useState(true);
 
   // Auto-login si hay sesión guardada
   useEffect(() => {
-    const id = leerSesion()
-    if (!id) { setCargando(false); return }
-    supabase.from('empleados').select('*').eq('id', id).single().then(({ data }) => {
-      if (data) setEmpleado(data as Empleado)
-      setCargando(false)
-    })
-  }, [])
+    const id = leerSesion();
+    if (!id) {
+      setCargando(false);
+      return;
+    }
+    supabase
+      .from('empleados')
+      .select('*')
+      .eq('id', id)
+      .single()
+      .then(({ data }) => {
+        if (data) setEmpleado(data as Empleado);
+        setCargando(false);
+      });
+  }, []);
 
   if (cargando) {
-    return <Pantalla><p className="text-gray-500 text-sm">Cargando...</p></Pantalla>
+    return (
+      <Pantalla>
+        <p className="text-sm text-gray-500">Cargando...</p>
+      </Pantalla>
+    );
   }
 
   if (!empleado) {
-    return <Login onLogin={(emp) => { guardarSesion(emp.id); setEmpleado(emp) }} />
+    return (
+      <Login
+        onLogin={(emp) => {
+          guardarSesion(emp.id);
+          setEmpleado(emp);
+        }}
+      />
+    );
   }
 
-  return <Home empleado={empleado} onLogout={() => { localStorage.removeItem(LS_KEY); setEmpleado(null) }} />
+  return (
+    <Home
+      empleado={empleado}
+      onLogout={() => {
+        localStorage.removeItem(LS_KEY);
+        setEmpleado(null);
+      }}
+    />
+  );
 }
 
 // ─── Layout base ────────────────────────────────────────────────────────────
 function Pantalla({ children }: { children: React.ReactNode }) {
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col">
-      <header className="bg-rodziny-800 text-white px-4 py-3 flex items-center gap-2">
-        <div className="w-7 h-7 rounded flex items-center justify-center text-xs font-bold bg-rodziny-600">R</div>
-        <span className="font-semibold text-sm">Rodziny · Fichaje</span>
+    <div className="flex min-h-screen flex-col bg-gray-50">
+      <header className="flex items-center gap-2 bg-rodziny-800 px-4 py-3 text-white">
+        <div className="flex h-7 w-7 items-center justify-center rounded bg-rodziny-600 text-xs font-bold">
+          R
+        </div>
+        <span className="text-sm font-semibold">Rodziny · Fichaje</span>
       </header>
-      <main className="flex-1 p-4 max-w-md w-full mx-auto">{children}</main>
+      <main className="mx-auto w-full max-w-md flex-1 p-4">{children}</main>
     </div>
-  )
+  );
 }
 
 // ─── Login ──────────────────────────────────────────────────────────────────
 function Login({ onLogin }: { onLogin: (e: Empleado) => void }) {
-  const [dni, setDni] = useState('')
-  const [pin, setPin] = useState('')
-  const [error, setError] = useState<string | null>(null)
-  const [loading, setLoading] = useState(false)
+  const [dni, setDni] = useState('');
+  const [pin, setPin] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
 
   async function handleLogin() {
-    setError(null)
-    if (!dni || !pin) { setError('Completá DNI y PIN'); return }
-    setLoading(true)
+    setError(null);
+    if (!dni || !pin) {
+      setError('Completá DNI y PIN');
+      return;
+    }
+    setLoading(true);
     const { data, error: dbError } = await supabase
       .from('empleados')
       .select('*')
       .eq('dni', dni.trim())
       .eq('activo', true)
-      .maybeSingle()
-    setLoading(false)
-    if (dbError || !data) { setError('DNI no encontrado'); return }
-    if (!data.pin_fichaje) { setError('Tu PIN no está configurado. Avisá a RRHH'); return }
-    if (data.pin_fichaje !== pin.trim()) { setError('PIN incorrecto'); return }
-    onLogin(data as Empleado)
+      .maybeSingle();
+    setLoading(false);
+    if (dbError || !data) {
+      setError('DNI no encontrado');
+      return;
+    }
+    if (!data.pin_fichaje) {
+      setError('Tu PIN no está configurado. Avisá a RRHH');
+      return;
+    }
+    if (data.pin_fichaje !== pin.trim()) {
+      setError('PIN incorrecto');
+      return;
+    }
+    onLogin(data as Empleado);
   }
 
   return (
     <Pantalla>
-      <div className="bg-white rounded-lg border border-gray-200 p-5 mt-6">
-        <h2 className="text-lg font-semibold text-gray-900 mb-1">Ingresar</h2>
-        <p className="text-xs text-gray-500 mb-4">Tu DNI y un PIN de 4 dígitos que te dio RRHH</p>
+      <div className="mt-6 rounded-lg border border-gray-200 bg-white p-5">
+        <h2 className="mb-1 text-lg font-semibold text-gray-900">Ingresar</h2>
+        <p className="mb-4 text-xs text-gray-500">Tu DNI y un PIN de 4 dígitos que te dio RRHH</p>
 
-        <label className="block text-xs font-medium text-gray-700 mb-1">DNI</label>
+        <label className="mb-1 block text-xs font-medium text-gray-700">DNI</label>
         <input
           type="tel"
           inputMode="numeric"
           value={dni}
           onChange={(e) => setDni(e.target.value.replace(/\D/g, ''))}
-          className="w-full border border-gray-300 rounded px-3 py-2 text-sm mb-3"
+          className="mb-3 w-full rounded border border-gray-300 px-3 py-2 text-sm"
           placeholder="Sin puntos"
         />
 
-        <label className="block text-xs font-medium text-gray-700 mb-1">PIN</label>
+        <label className="mb-1 block text-xs font-medium text-gray-700">PIN</label>
         <input
           type="tel"
           inputMode="numeric"
           maxLength={4}
           value={pin}
           onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))}
-          className="w-full border border-gray-300 rounded px-3 py-2 text-sm mb-3 tracking-widest"
+          className="mb-3 w-full rounded border border-gray-300 px-3 py-2 text-sm tracking-widest"
           placeholder="••••"
         />
 
-        {error && <div className="text-xs text-red-600 mb-3">{error}</div>}
+        {error && <div className="mb-3 text-xs text-red-600">{error}</div>}
 
         <button
           onClick={handleLogin}
           disabled={loading}
-          className="w-full bg-rodziny-700 hover:bg-rodziny-800 text-white py-2.5 rounded font-medium text-sm disabled:opacity-50"
+          className="w-full rounded bg-rodziny-700 py-2.5 text-sm font-medium text-white hover:bg-rodziny-800 disabled:opacity-50"
         >
           {loading ? 'Verificando...' : 'Ingresar'}
         </button>
       </div>
     </Pantalla>
-  )
+  );
 }
 
 // ─── Home (logueado) ────────────────────────────────────────────────────────
-type Vista = 'inicio' | 'fichando' | 'mis_horarios' | 'mi_quincena'
+type Vista = 'inicio' | 'fichando' | 'mis_horarios' | 'mi_quincena';
 
 function Home({ empleado, onLogout }: { empleado: Empleado; onLogout: () => void }) {
-  const [vista, setVista] = useState<Vista>('inicio')
-  const [refrescador, setRefrescador] = useState(0)
+  const [vista, setVista] = useState<Vista>('inicio');
+  const [refrescador, setRefrescador] = useState(0);
 
   return (
     <Pantalla>
-      <div className="bg-white rounded-lg border border-gray-200 p-4 mt-2 mb-3">
+      <div className="mb-3 mt-2 rounded-lg border border-gray-200 bg-white p-4">
         <div className="flex items-start justify-between">
           <div>
             <p className="text-xs text-gray-500">Hola</p>
-            <p className="text-base font-semibold text-gray-900">{empleado.nombre} {empleado.apellido}</p>
+            <p className="text-base font-semibold text-gray-900">
+              {empleado.nombre} {empleado.apellido}
+            </p>
           </div>
-          <button onClick={onLogout} className="text-xs text-gray-500 hover:text-red-600 underline">Salir</button>
+          <button onClick={onLogout} className="text-xs text-gray-500 underline hover:text-red-600">
+            Salir
+          </button>
         </div>
       </div>
 
@@ -257,7 +319,10 @@ function Home({ empleado, onLogout }: { empleado: Empleado; onLogout: () => void
         <Fichando
           empleado={empleado}
           onCancelar={() => setVista('inicio')}
-          onListo={() => { setRefrescador((x) => x + 1); setVista('inicio') }}
+          onListo={() => {
+            setRefrescador((x) => x + 1);
+            setVista('inicio');
+          }}
         />
       )}
       {vista === 'mis_horarios' && (
@@ -267,50 +332,76 @@ function Home({ empleado, onLogout }: { empleado: Empleado; onLogout: () => void
         <MiQuincena empleado={empleado} onVolver={() => setVista('inicio')} />
       )}
     </Pantalla>
-  )
+  );
 }
 
 // ─── Inicio ─────────────────────────────────────────────────────────────────
-function Inicio({ empleado, onIrAFichar, onIrAHorarios, onIrAQuincena }: {
-  empleado: Empleado
-  onIrAFichar: () => void
-  onIrAHorarios: () => void
-  onIrAQuincena: () => void
+function Inicio({
+  empleado,
+  onIrAFichar,
+  onIrAHorarios,
+  onIrAQuincena,
+}: {
+  empleado: Empleado;
+  onIrAFichar: () => void;
+  onIrAHorarios: () => void;
+  onIrAQuincena: () => void;
 }) {
-  const [crono, setCrono] = useState<Cronograma | null>(null)
-  const [fichadasHoy, setFichadasHoy] = useState<Fichada[]>([])
-  const [entradaAbiertaAyer, setEntradaAbiertaAyer] = useState(false)
-  const [debugInfo, setDebugInfo] = useState<string>('')
-  const ahoraDev = new Date()
-  const hoy = ymd(ahoraDev)
-  const ayerDt = new Date(ahoraDev); ayerDt.setDate(ayerDt.getDate() - 1)
-  const ayer = ymd(ayerDt)
-  const debugOn = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('debug') === '1'
+  const [crono, setCrono] = useState<Cronograma | null>(null);
+  const [fichadasHoy, setFichadasHoy] = useState<Fichada[]>([]);
+  const [entradaAbiertaAyer, setEntradaAbiertaAyer] = useState(false);
+  const [debugInfo, setDebugInfo] = useState<string>('');
+  const ahoraDev = new Date();
+  const hoy = ymd(ahoraDev);
+  const ayerDt = new Date(ahoraDev);
+  ayerDt.setDate(ayerDt.getDate() - 1);
+  const ayer = ymd(ayerDt);
+  const debugOn =
+    typeof window !== 'undefined' &&
+    new URLSearchParams(window.location.search).get('debug') === '1';
 
   useEffect(() => {
     (async () => {
       const [{ data: c }, { data: f }, { data: fAyer }] = await Promise.all([
-        supabase.from('cronograma').select('*').eq('empleado_id', empleado.id).eq('fecha', hoy).maybeSingle(),
-        supabase.from('fichadas').select('*').eq('empleado_id', empleado.id).eq('fecha', hoy).order('timestamp'),
+        supabase
+          .from('cronograma')
+          .select('*')
+          .eq('empleado_id', empleado.id)
+          .eq('fecha', hoy)
+          .maybeSingle(),
+        supabase
+          .from('fichadas')
+          .select('*')
+          .eq('empleado_id', empleado.id)
+          .eq('fecha', hoy)
+          .order('timestamp'),
         // Fichadas de ayer para detectar entrada sin salida (turno nocturno)
-        supabase.from('fichadas').select('*').eq('empleado_id', empleado.id).eq('fecha', ayer).order('timestamp'),
-      ])
-      setCrono((c as Cronograma) || null)
-      setFichadasHoy((f as Fichada[]) || [])
+        supabase
+          .from('fichadas')
+          .select('*')
+          .eq('empleado_id', empleado.id)
+          .eq('fecha', ayer)
+          .order('timestamp'),
+      ]);
+      setCrono((c as Cronograma) || null);
+      setFichadasHoy((f as Fichada[]) || []);
 
       // Si ayer tiene cantidad impar de fichadas, hay una entrada abierta (sin salida).
       // Excluimos fichadas legacy (entradas 00:xx que son salidas del día anterior)
       // para no falsear la paridad.
-      const fichadasAyer = ((fAyer as Fichada[]) || []).filter((f) => !esSalidaNocturnaLegacy(f))
-      setEntradaAbiertaAyer(fichadasAyer.length > 0 && fichadasAyer.length % 2 !== 0)
+      const fichadasAyer = ((fAyer as Fichada[]) || []).filter((f) => !esSalidaNocturnaLegacy(f));
+      setEntradaAbiertaAyer(fichadasAyer.length > 0 && fichadasAyer.length % 2 !== 0);
 
       if (debugOn) {
         // Verificar si hay sesión auth activa en el cliente principal (hipótesis del bug RLS)
-        const { supabase: supaMain } = await import('@/lib/supabase')
-        const { data: sess } = await supaMain.auth.getSession()
-        const authSession = sess?.session ? { user_id: sess.session.user?.id ?? null, email: sess.session.user?.email ?? null } : null
+        const { supabase: supaMain } = await import('@/lib/supabase');
+        const { data: sess } = await supaMain.auth.getSession();
+        const authSession = sess?.session
+          ? { user_id: sess.session.user?.id ?? null, email: sess.session.user?.email ?? null }
+          : null;
         // Traer los próximos 14 días publicados para diagnóstico
-        const hastaDt = new Date(ahoraDev); hastaDt.setDate(hastaDt.getDate() + 14)
+        const hastaDt = new Date(ahoraDev);
+        hastaDt.setDate(hastaDt.getDate() + 14);
         const { data: prox, error: proxErr } = await supabase
           .from('cronograma')
           .select('fecha, hora_entrada, hora_salida, publicado')
@@ -318,29 +409,29 @@ function Inicio({ empleado, onIrAFichar, onIrAHorarios, onIrAQuincena }: {
           .eq('publicado', true)
           .gte('fecha', hoy)
           .lte('fecha', ymd(hastaDt))
-          .order('fecha')
+          .order('fecha');
         // Traer TODOS los días (sin filtro publicado) para comparar
         const { data: todos } = await supabase
           .from('cronograma')
           .select('fecha, publicado')
           .eq('empleado_id', empleado.id)
           .gte('fecha', hoy)
-          .lte('fecha', ymd(hastaDt))
+          .lte('fecha', ymd(hastaDt));
         // Test: contar todas las filas de cronograma SIN filtro de empleado (sanity check)
         const { count: cronoTotal } = await supabase
           .from('cronograma')
-          .select('*', { count: 'exact', head: true })
+          .select('*', { count: 'exact', head: true });
         // Test: count empleados
         const { count: empTotal } = await supabase
           .from('empleados')
-          .select('*', { count: 'exact', head: true })
+          .select('*', { count: 'exact', head: true });
         // Fetch directo a Supabase REST bypasseando el cliente, con cache-buster
-        let directCount = -1
-        let directErr: string | null = null
+        let directCount = -1;
+        let directErr: string | null = null;
         try {
-          const supaUrl = import.meta.env.VITE_SUPABASE_URL as string
-          const supaKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string
-          const url = `${supaUrl}/rest/v1/cronograma?select=fecha&empleado_id=eq.${empleado.id}&fecha=gte.${hoy}&fecha=lte.${ymd(hastaDt)}&_cb=${Date.now()}`
+          const supaUrl = import.meta.env.VITE_SUPABASE_URL as string;
+          const supaKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
+          const url = `${supaUrl}/rest/v1/cronograma?select=fecha&empleado_id=eq.${empleado.id}&fecha=gte.${hoy}&fecha=lte.${ymd(hastaDt)}&_cb=${Date.now()}`;
           const r = await fetch(url, {
             headers: {
               apikey: supaKey,
@@ -349,66 +440,81 @@ function Inicio({ empleado, onIrAFichar, onIrAHorarios, onIrAQuincena }: {
               Pragma: 'no-cache',
             },
             cache: 'no-store',
-          })
-          const arr = await r.json()
-          directCount = Array.isArray(arr) ? arr.length : -2
+          });
+          const arr = await r.json();
+          directCount = Array.isArray(arr) ? arr.length : -2;
         } catch (e: any) {
-          directErr = e?.message ?? String(e)
+          directErr = e?.message ?? String(e);
         }
-        const tz = Intl.DateTimeFormat().resolvedOptions().timeZone
-        const offset = -ahoraDev.getTimezoneOffset() / 60
-        const supaUrl = (import.meta.env.VITE_SUPABASE_URL as string) || '(sin env)'
-        const supaHost = supaUrl.replace('https://', '').split('.')[0]
+        const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        const offset = -ahoraDev.getTimezoneOffset() / 60;
+        const supaUrl = (import.meta.env.VITE_SUPABASE_URL as string) || '(sin env)';
+        const supaHost = supaUrl.replace('https://', '').split('.')[0];
         // @ts-ignore
-        const conn = (navigator as any).connection
-        setDebugInfo(JSON.stringify({
-          empleado_id: empleado.id,
-          empleado_nombre: `${empleado.nombre} ${empleado.apellido}`,
-          dni: empleado.dni,
-          hoy_device: hoy,
-          ahora_iso: ahoraDev.toISOString(),
-          tz,
-          offset_hs: offset,
-          crono_hoy: c ? { fecha: (c as any).fecha, he: (c as any).hora_entrada, hs: (c as any).hora_salida, pub: (c as any).publicado } : null,
-          prox14_pub: prox?.length ?? 0,
-          prox14_todos: todos?.length ?? 0,
-          primera_pub: prox?.[0] ?? null,
-          err: proxErr?.message ?? null,
-          // Sanity checks
-          supabase_project: supaHost,
-          crono_total_en_db: cronoTotal ?? null,
-          empleados_total_en_db: empTotal ?? null,
-          // Fetch directo con cache-bust
-          direct_fetch_count: directCount,
-          direct_fetch_err: directErr,
-          // Red
-          net_type: conn?.effectiveType ?? 'n/a',
-          net_downlink: conn?.downlink ?? 'n/a',
-          // Build / URL
-          url: typeof window !== 'undefined' ? window.location.href : '',
-          ua: typeof navigator !== 'undefined' ? navigator.userAgent.slice(0, 80) : '',
-          // HIPÓTESIS CLAVE: sesión auth contaminada de la ERP principal
-          auth_session_present: !!authSession,
-          auth_session: authSession,
-        }, null, 2))
+        const conn = (navigator as any).connection;
+        setDebugInfo(
+          JSON.stringify(
+            {
+              empleado_id: empleado.id,
+              empleado_nombre: `${empleado.nombre} ${empleado.apellido}`,
+              dni: empleado.dni,
+              hoy_device: hoy,
+              ahora_iso: ahoraDev.toISOString(),
+              tz,
+              offset_hs: offset,
+              crono_hoy: c
+                ? {
+                    fecha: (c as any).fecha,
+                    he: (c as any).hora_entrada,
+                    hs: (c as any).hora_salida,
+                    pub: (c as any).publicado,
+                  }
+                : null,
+              prox14_pub: prox?.length ?? 0,
+              prox14_todos: todos?.length ?? 0,
+              primera_pub: prox?.[0] ?? null,
+              err: proxErr?.message ?? null,
+              // Sanity checks
+              supabase_project: supaHost,
+              crono_total_en_db: cronoTotal ?? null,
+              empleados_total_en_db: empTotal ?? null,
+              // Fetch directo con cache-bust
+              direct_fetch_count: directCount,
+              direct_fetch_err: directErr,
+              // Red
+              net_type: conn?.effectiveType ?? 'n/a',
+              net_downlink: conn?.downlink ?? 'n/a',
+              // Build / URL
+              url: typeof window !== 'undefined' ? window.location.href : '',
+              ua: typeof navigator !== 'undefined' ? navigator.userAgent.slice(0, 80) : '',
+              // HIPÓTESIS CLAVE: sesión auth contaminada de la ERP principal
+              auth_session_present: !!authSession,
+              auth_session: authSession,
+            },
+            null,
+            2,
+          ),
+        );
       }
-    })()
-  }, [empleado.id, hoy, debugOn])
+    })();
+  }, [empleado.id, hoy, debugOn]);
 
   // Si hoy no tiene fichadas pero ayer quedó una entrada abierta (turno nocturno),
   // el próximo fichaje es SALIDA, no entrada.
   // Excluimos fichadas legacy (entradas 00:xx que son salidas del turno nocturno) para
   // que no corran la paridad y tipen mal el próximo fichaje.
-  const fichadasHoyReales = fichadasHoy.filter((f) => !esSalidaNocturnaLegacy(f))
+  const fichadasHoyReales = fichadasHoy.filter((f) => !esSalidaNocturnaLegacy(f));
   const proximoTipo: 'entrada' | 'salida' =
     fichadasHoyReales.length === 0 && entradaAbiertaAyer
       ? 'salida'
-      : fichadasHoyReales.length % 2 === 0 ? 'entrada' : 'salida'
+      : fichadasHoyReales.length % 2 === 0
+        ? 'entrada'
+        : 'salida';
 
   return (
     <>
-      <div className="bg-white rounded-lg border border-gray-200 p-4 mb-3">
-        <p className="text-xs text-gray-500 mb-1">Tu turno hoy</p>
+      <div className="mb-3 rounded-lg border border-gray-200 bg-white p-4">
+        <p className="mb-1 text-xs text-gray-500">Tu turno hoy</p>
         {crono?.es_franco ? (
           <p className="text-base font-semibold text-blue-700">FRANCO</p>
         ) : crono?.hora_entrada ? (
@@ -419,15 +525,16 @@ function Inicio({ empleado, onIrAFichar, onIrAHorarios, onIrAQuincena }: {
           <p className="text-sm text-gray-500">No tenés turno asignado hoy</p>
         )}
         {crono && !crono.publicado && (
-          <div className="mt-2 bg-amber-50 border border-amber-200 rounded px-2 py-1.5 text-[11px] text-amber-800">
-            ⚠️ Tu horario todavía está en <strong>borrador</strong> (sin publicar por el encargado). Podés fichar igual, pero sin horario de referencia.
+          <div className="mt-2 rounded border border-amber-200 bg-amber-50 px-2 py-1.5 text-[11px] text-amber-800">
+            ⚠️ Tu horario todavía está en <strong>borrador</strong> (sin publicar por el encargado).
+            Podés fichar igual, pero sin horario de referencia.
           </div>
         )}
       </div>
 
       {fichadasHoy.length > 0 && (
-        <div className="bg-white rounded-lg border border-gray-200 p-3 mb-3 text-xs text-gray-700">
-          <p className="font-medium mb-1">Fichajes de hoy:</p>
+        <div className="mb-3 rounded-lg border border-gray-200 bg-white p-3 text-xs text-gray-700">
+          <p className="mb-1 font-medium">Fichajes de hoy:</p>
           {fichadasHoy.map((f) => (
             <div key={f.id} className="flex justify-between">
               <span className="capitalize">{f.tipo}</span>
@@ -439,134 +546,151 @@ function Inicio({ empleado, onIrAFichar, onIrAHorarios, onIrAQuincena }: {
 
       <button
         onClick={onIrAFichar}
-        className="w-full bg-rodziny-700 hover:bg-rodziny-800 text-white py-4 rounded-lg font-semibold text-base mb-3 shadow"
+        className="mb-3 w-full rounded-lg bg-rodziny-700 py-4 text-base font-semibold text-white shadow hover:bg-rodziny-800"
       >
         FICHAR {proximoTipo.toUpperCase()}
       </button>
 
       <div className="grid grid-cols-2 gap-2">
-        <button onClick={onIrAHorarios} className="bg-white border border-gray-200 rounded-lg py-3 text-xs text-gray-700 hover:bg-gray-50">
+        <button
+          onClick={onIrAHorarios}
+          className="rounded-lg border border-gray-200 bg-white py-3 text-xs text-gray-700 hover:bg-gray-50"
+        >
           Mis horarios
         </button>
-        <button onClick={onIrAQuincena} className="bg-white border border-gray-200 rounded-lg py-3 text-xs text-gray-700 hover:bg-gray-50">
+        <button
+          onClick={onIrAQuincena}
+          className="rounded-lg border border-gray-200 bg-white py-3 text-xs text-gray-700 hover:bg-gray-50"
+        >
           Mi quincena
         </button>
       </div>
 
       {debugOn && debugInfo && (
-        <pre className="mt-4 p-2 bg-gray-900 text-green-300 text-[10px] rounded overflow-x-auto whitespace-pre-wrap break-all">
+        <pre className="mt-4 overflow-x-auto whitespace-pre-wrap break-all rounded bg-gray-900 p-2 text-[10px] text-green-300">
           {debugInfo}
         </pre>
       )}
     </>
-  )
+  );
 }
 
 // ─── Flujo de fichaje ───────────────────────────────────────────────────────
-type PasoFichaje = 'foto' | 'subiendo' | 'ok' | 'error'
+type PasoFichaje = 'foto' | 'subiendo' | 'ok' | 'error';
 
-function Fichando({ empleado, onCancelar, onListo }: {
-  empleado: Empleado
-  onCancelar: () => void
-  onListo: () => void
+function Fichando({
+  empleado,
+  onCancelar,
+  onListo,
+}: {
+  empleado: Empleado;
+  onCancelar: () => void;
+  onListo: () => void;
 }) {
-  const [paso, setPaso] = useState<PasoFichaje>('foto')
-  const [mensaje, setMensaje] = useState<string>('')
-  const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null)
-  const [localDetectado, setLocalDetectado] = useState<LocalKey | null>(null)
-  const [warning, setWarning] = useState<string | null>(null)
-  const videoRef = useRef<HTMLVideoElement | null>(null)
-  const streamRef = useRef<MediaStream | null>(null)
-  const [fotoBlob, setFotoBlob] = useState<Blob | null>(null)
-  const [fotoPreview, setFotoPreview] = useState<string | null>(null)
-  const [resultado, setResultado] = useState<{ tipo: string; minutos: number | null } | null>(null)
+  const [paso, setPaso] = useState<PasoFichaje>('foto');
+  const [mensaje, setMensaje] = useState<string>('');
+  const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [localDetectado, setLocalDetectado] = useState<LocalKey | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const [fotoBlob, setFotoBlob] = useState<Blob | null>(null);
+  const [fotoPreview, setFotoPreview] = useState<string | null>(null);
+  const [resultado, setResultado] = useState<{ tipo: string; minutos: number | null } | null>(null);
 
   // GPS silencioso en background — no bloquea, solo registra
   useEffect(() => {
     if (import.meta.env.DEV) {
-      const v = LOCALES.vedia
-      setCoords({ lat: v.lat, lng: v.lng })
-      setLocalDetectado('vedia')
-      return
+      const v = LOCALES.vedia;
+      setCoords({ lat: v.lat, lng: v.lng });
+      setLocalDetectado('vedia');
+      return;
     }
-    if (!navigator.geolocation) return
+    if (!navigator.geolocation) return;
     navigator.geolocation.getCurrentPosition(
       (pos) => {
-        setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude })
-        const det = detectarLocal(pos.coords.latitude, pos.coords.longitude)
-        if (det) setLocalDetectado(det.key)
+        setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        const det = detectarLocal(pos.coords.latitude, pos.coords.longitude);
+        if (det) setLocalDetectado(det.key);
       },
-      () => { /* GPS falló silenciosamente, no pasa nada */ },
-      { enableHighAccuracy: false, timeout: 10000 }
-    )
-  }, [])
+      () => {
+        /* GPS falló silenciosamente, no pasa nada */
+      },
+      { enableHighAccuracy: false, timeout: 10000 },
+    );
+  }, []);
 
   // Cámara — arranca directo
   useEffect(() => {
-    if (paso !== 'foto') return
-    let cancelado = false
-    ;(async () => {
+    if (paso !== 'foto') return;
+    let cancelado = false;
+    (async () => {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
           audio: false,
-        })
-        if (cancelado) { stream.getTracks().forEach((t) => t.stop()); return }
-        streamRef.current = stream
+        });
+        if (cancelado) {
+          stream.getTracks().forEach((t) => t.stop());
+          return;
+        }
+        streamRef.current = stream;
         if (videoRef.current) {
-          videoRef.current.srcObject = stream
-          await videoRef.current.play().catch(() => {})
+          videoRef.current.srcObject = stream;
+          await videoRef.current.play().catch(() => {});
         }
       } catch (e: any) {
-        const msg = e?.name === 'NotAllowedError' || (e?.message || '').includes('denied')
-          ? 'La cámara está bloqueada para este sitio.'
-          : 'No pude acceder a la cámara.'
-        setMensaje(msg)
+        const msg =
+          e?.name === 'NotAllowedError' || (e?.message || '').includes('denied')
+            ? 'La cámara está bloqueada para este sitio.'
+            : 'No pude acceder a la cámara.';
+        setMensaje(msg);
         setWarning(
           'En iPhone: Ajustes → Safari → Cámara → Permitir. ' +
-          'En Android: tocá el candado en la barra de dirección → Permisos → Cámara → Permitir. ' +
-          'Después tocá Reintentar.'
-        )
-        setPaso('error')
+            'En Android: tocá el candado en la barra de dirección → Permisos → Cámara → Permitir. ' +
+            'Después tocá Reintentar.',
+        );
+        setPaso('error');
       }
-    })()
+    })();
     return () => {
-      cancelado = true
-      streamRef.current?.getTracks().forEach((t) => t.stop())
-      streamRef.current = null
-    }
-  }, [paso])
+      cancelado = true;
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+    };
+  }, [paso]);
 
   function tomarFoto() {
-    const video = videoRef.current
-    if (!video) return
-    const canvas = document.createElement('canvas')
-    canvas.width = video.videoWidth
-    canvas.height = video.videoHeight
-    const ctx = canvas.getContext('2d')!
-    ctx.drawImage(video, 0, 0)
+    const video = videoRef.current;
+    if (!video) return;
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext('2d')!;
+    ctx.drawImage(video, 0, 0);
     canvas.toBlob(
       (blob) => {
-        if (!blob) return
-        setFotoBlob(blob)
-        setFotoPreview(URL.createObjectURL(blob))
-        streamRef.current?.getTracks().forEach((t) => t.stop())
-        streamRef.current = null
+        if (!blob) return;
+        setFotoBlob(blob);
+        setFotoPreview(URL.createObjectURL(blob));
+        streamRef.current?.getTracks().forEach((t) => t.stop());
+        streamRef.current = null;
       },
       'image/jpeg',
-      0.85
-    )
+      0.85,
+    );
   }
 
   async function confirmarFichaje() {
-    if (!fotoBlob) return
-    setPaso('subiendo')
-    setMensaje('Guardando...')
+    if (!fotoBlob) return;
+    setPaso('subiendo');
+    setMensaje('Guardando...');
     try {
-      const ahora = new Date()
-      const fechaHoy = ymd(ahora)
-      const ayerDt2 = new Date(ahora); ayerDt2.setDate(ayerDt2.getDate() - 1)
-      const fechaAyer = ymd(ayerDt2)
+      const ahora = new Date();
+      const fechaHoy = ymd(ahora);
+      const ayerDt2 = new Date(ahora);
+      ayerDt2.setDate(ayerDt2.getDate() - 1);
+      const fechaAyer = ymd(ayerDt2);
 
       // Verificar si hay entrada abierta de ayer (turno nocturno).
       // Filtramos fichadas legacy de madrugada (entradas 00:xx que son salidas del día anterior)
@@ -575,27 +699,27 @@ function Fichando({ empleado, onCancelar, onListo }: {
         .from('fichadas')
         .select('id, tipo, timestamp')
         .eq('empleado_id', empleado.id)
-        .eq('fecha', fechaAyer)
-      const fichadasAyer = (fichadasAyerRaw ?? []).filter((f: any) => !esSalidaNocturnaLegacy(f))
-      const entradaAbiertaDeAyer = fichadasAyer.length > 0 && fichadasAyer.length % 2 !== 0
+        .eq('fecha', fechaAyer);
+      const fichadasAyer = (fichadasAyerRaw ?? []).filter((f: any) => !esSalidaNocturnaLegacy(f));
+      const entradaAbiertaDeAyer = fichadasAyer.length > 0 && fichadasAyer.length % 2 !== 0;
 
       // Determinar tipo (entrada o salida)
       const { data: yaHoyRaw } = await supabase
         .from('fichadas')
         .select('id, tipo, timestamp')
         .eq('empleado_id', empleado.id)
-        .eq('fecha', fechaHoy)
-      const yaHoy = (yaHoyRaw ?? []).filter((f: any) => !esSalidaNocturnaLegacy(f))
+        .eq('fecha', fechaHoy);
+      const yaHoy = (yaHoyRaw ?? []).filter((f: any) => !esSalidaNocturnaLegacy(f));
 
-      let tipo: 'entrada' | 'salida'
-      let fechaFichada: string
+      let tipo: 'entrada' | 'salida';
+      let fechaFichada: string;
 
       if (yaHoy.length === 0 && entradaAbiertaDeAyer) {
-        tipo = 'salida'
-        fechaFichada = fechaAyer
+        tipo = 'salida';
+        fechaFichada = fechaAyer;
       } else {
-        tipo = yaHoy.length % 2 === 0 ? 'entrada' : 'salida'
-        fechaFichada = fechaHoy
+        tipo = yaHoy.length % 2 === 0 ? 'entrada' : 'salida';
+        fechaFichada = fechaHoy;
       }
 
       // Cronograma del día correspondiente (con turnos partidos)
@@ -604,38 +728,40 @@ function Fichando({ empleado, onCancelar, onListo }: {
         .select('hora_entrada, hora_salida, turnos, es_franco, publicado')
         .eq('empleado_id', empleado.id)
         .eq('fecha', fechaFichada)
-        .maybeSingle()
+        .maybeSingle();
 
-      const turnosDia = (crono?.turnos as TurnoCrono[] | null) ?? null
+      const turnosDia = (crono?.turnos as TurnoCrono[] | null) ?? null;
       const minutosDif = diffMinutosVsTurnos(
         ahora,
         turnosDia,
         tipo,
         crono?.hora_entrada ?? null,
         crono?.hora_salida ?? null,
-      )
-      const tieneHorario = (turnosDia && turnosDia.length > 0) || !!crono?.hora_entrada
+      );
+      const tieneHorario = (turnosDia && turnosDia.length > 0) || !!crono?.hora_entrada;
 
       // Warnings (no bloquean)
-      let w: string | null = null
-      if (crono?.es_franco) w = 'Hoy figurás de franco. Quedará registrado igual.'
-      else if (crono && !crono.publicado) w = 'Tu horario de hoy está en borrador (sin publicar). Queda registrado igual.'
-      else if (!tieneHorario) w = 'No tenés horario asignado para hoy.'
+      let w: string | null = null;
+      if (crono?.es_franco) w = 'Hoy figurás de franco. Quedará registrado igual.';
+      else if (crono && !crono.publicado)
+        w = 'Tu horario de hoy está en borrador (sin publicar). Queda registrado igual.';
+      else if (!tieneHorario) w = 'No tenés horario asignado para hoy.';
       else if (minutosDif !== null && Math.abs(minutosDif) > TOLERANCIA_MIN)
-        w = `Estás ${minutosDif > 0 ? 'tarde' : 'antes'} ${Math.abs(minutosDif)} min vs tu horario.`
-      setWarning(w)
+        w = `Estás ${minutosDif > 0 ? 'tarde' : 'antes'} ${Math.abs(minutosDif)} min vs tu horario.`;
+      setWarning(w);
 
       // Subir foto comprimida
-      const comprimida = await comprimirImagen(fotoBlob)
-      const nonce = Math.random().toString(36).slice(2, 8)
-      const path = `${empleado.id}/${fechaFichada}/${ahora.getTime()}_${nonce}_${tipo}.jpg`
+      const comprimida = await comprimirImagen(fotoBlob);
+      const nonce = Math.random().toString(36).slice(2, 8);
+      const path = `${empleado.id}/${fechaFichada}/${ahora.getTime()}_${nonce}_${tipo}.jpg`;
       const { error: upErr } = await supabase.storage
         .from('fichadas-fotos')
-        .upload(path, comprimida, { contentType: 'image/jpeg', upsert: false })
-      if (upErr) throw upErr
+        .upload(path, comprimida, { contentType: 'image/jpeg', upsert: false });
+      if (upErr) throw upErr;
 
       // Detectar local más cercano (si GPS llegó) — solo informativo
-      const localParaGuardar = localDetectado ?? (empleado.local !== 'ambos' ? empleado.local as LocalKey : null)
+      const localParaGuardar =
+        localDetectado ?? (empleado.local !== 'ambos' ? (empleado.local as LocalKey) : null);
 
       // Insertar fichada
       const { error: insErr } = await supabase.from('fichadas').insert({
@@ -649,73 +775,98 @@ function Fichando({ empleado, onCancelar, onListo }: {
         foto_path: path,
         minutos_diferencia: minutosDif,
         origen: 'pwa',
-      })
+      });
       if (insErr) {
-        await supabase.storage.from('fichadas-fotos').remove([path]).catch(() => {})
-        throw insErr
+        await supabase.storage
+          .from('fichadas-fotos')
+          .remove([path])
+          .catch(() => {});
+        throw insErr;
       }
 
-      setResultado({ tipo, minutos: minutosDif })
-      setPaso('ok')
+      setResultado({ tipo, minutos: minutosDif });
+      setPaso('ok');
     } catch (e: any) {
-      setMensaje('Error: ' + (e?.message || e))
-      setPaso('error')
+      setMensaje('Error: ' + (e?.message || e));
+      setPaso('error');
     }
   }
 
   return (
-    <div className="bg-white rounded-lg border border-gray-200 p-4">
+    <div className="rounded-lg border border-gray-200 bg-white p-4">
       {paso === 'foto' && (
         <>
           {!fotoPreview ? (
             <>
-              <video ref={videoRef} playsInline muted className="w-full rounded bg-black aspect-[3/4] object-cover" />
+              <video
+                ref={videoRef}
+                playsInline
+                muted
+                className="aspect-[3/4] w-full rounded bg-black object-cover"
+              />
               <button
                 onClick={tomarFoto}
-                className="w-full bg-rodziny-700 text-white py-3 rounded font-medium text-sm mt-3"
+                className="mt-3 w-full rounded bg-rodziny-700 py-3 text-sm font-medium text-white"
               >
                 Tomar foto
               </button>
             </>
           ) : (
             <>
-              <img src={fotoPreview} alt="selfie" className="w-full rounded aspect-[3/4] object-cover" />
-              <div className="grid grid-cols-2 gap-2 mt-3">
+              <img
+                src={fotoPreview}
+                alt="selfie"
+                className="aspect-[3/4] w-full rounded object-cover"
+              />
+              <div className="mt-3 grid grid-cols-2 gap-2">
                 <button
-                  onClick={() => { setFotoBlob(null); setFotoPreview(null); setPaso('foto') }}
-                  className="bg-gray-100 hover:bg-gray-200 text-gray-700 py-2.5 rounded text-sm"
+                  onClick={() => {
+                    setFotoBlob(null);
+                    setFotoPreview(null);
+                    setPaso('foto');
+                  }}
+                  className="rounded bg-gray-100 py-2.5 text-sm text-gray-700 hover:bg-gray-200"
                 >
                   Reintentar
                 </button>
                 <button
                   onClick={confirmarFichaje}
-                  className="bg-rodziny-700 hover:bg-rodziny-800 text-white py-2.5 rounded text-sm font-medium"
+                  className="rounded bg-rodziny-700 py-2.5 text-sm font-medium text-white hover:bg-rodziny-800"
                 >
                   Confirmar
                 </button>
               </div>
             </>
           )}
-          <button onClick={onCancelar} className="block w-full text-xs text-gray-500 underline mt-3">Cancelar</button>
+          <button
+            onClick={onCancelar}
+            className="mt-3 block w-full text-xs text-gray-500 underline"
+          >
+            Cancelar
+          </button>
         </>
       )}
 
       {paso === 'subiendo' && (
-        <div className="text-center py-6">
+        <div className="py-6 text-center">
           <p className="text-sm text-gray-700">{mensaje}</p>
         </div>
       )}
 
       {paso === 'ok' && resultado && (
-        <div className="text-center py-4">
-          <div className="text-3xl mb-2">✓</div>
-          <p className="text-base font-semibold text-gray-900 capitalize">{resultado.tipo} registrada</p>
-          <p className="text-xs text-gray-500 mt-1">{hhmm(new Date())}</p>
+        <div className="py-4 text-center">
+          <div className="mb-2 text-3xl">✓</div>
+          <p className="text-base font-semibold capitalize text-gray-900">
+            {resultado.tipo} registrada
+          </p>
+          <p className="mt-1 text-xs text-gray-500">{hhmm(new Date())}</p>
           {resultado.minutos !== null && (
-            <p className={cn(
-              'text-xs mt-2',
-              Math.abs(resultado.minutos) <= TOLERANCIA_MIN ? 'text-green-700' : 'text-amber-700'
-            )}>
+            <p
+              className={cn(
+                'mt-2 text-xs',
+                Math.abs(resultado.minutos) <= TOLERANCIA_MIN ? 'text-green-700' : 'text-amber-700',
+              )}
+            >
               {resultado.minutos === 0
                 ? 'Puntual'
                 : resultado.minutos > 0
@@ -724,11 +875,11 @@ function Fichando({ empleado, onCancelar, onListo }: {
             </p>
           )}
           {/* Mensaje disuasorio — el empleado cree que se verifica la ubicación */}
-          <p className="text-[10px] text-gray-400 mt-2">Ubicación y foto registradas</p>
-          {warning && <p className="text-xs text-amber-700 mt-2">{warning}</p>}
+          <p className="mt-2 text-[10px] text-gray-400">Ubicación y foto registradas</p>
+          {warning && <p className="mt-2 text-xs text-amber-700">{warning}</p>}
           <button
             onClick={onListo}
-            className="w-full bg-rodziny-700 hover:bg-rodziny-800 text-white py-2.5 rounded font-medium text-sm mt-4"
+            className="mt-4 w-full rounded bg-rodziny-700 py-2.5 text-sm font-medium text-white hover:bg-rodziny-800"
           >
             Listo
           </button>
@@ -736,31 +887,47 @@ function Fichando({ empleado, onCancelar, onListo }: {
       )}
 
       {paso === 'error' && (
-        <div className="text-center py-4">
-          <div className="text-3xl mb-2">⚠</div>
+        <div className="py-4 text-center">
+          <div className="mb-2 text-3xl">⚠</div>
           <p className="text-sm text-red-700">{mensaje}</p>
           {warning && (
-            <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded p-2.5 mt-3 text-left">{warning}</p>
+            <p className="mt-3 rounded border border-amber-200 bg-amber-50 p-2.5 text-left text-xs text-amber-800">
+              {warning}
+            </p>
           )}
-          <div className="grid grid-cols-2 gap-2 mt-4">
-            <button onClick={onCancelar} className="bg-gray-100 hover:bg-gray-200 text-gray-700 py-2.5 rounded text-sm">Volver</button>
-            <button onClick={() => { setWarning(null); setPaso('foto') }} className="bg-rodziny-700 text-white py-2.5 rounded text-sm">Reintentar</button>
+          <div className="mt-4 grid grid-cols-2 gap-2">
+            <button
+              onClick={onCancelar}
+              className="rounded bg-gray-100 py-2.5 text-sm text-gray-700 hover:bg-gray-200"
+            >
+              Volver
+            </button>
+            <button
+              onClick={() => {
+                setWarning(null);
+                setPaso('foto');
+              }}
+              className="rounded bg-rodziny-700 py-2.5 text-sm text-white"
+            >
+              Reintentar
+            </button>
           </div>
         </div>
       )}
     </div>
-  )
+  );
 }
 
 // ─── Mis horarios ───────────────────────────────────────────────────────────
 function MisHorarios({ empleado, onVolver }: { empleado: Empleado; onVolver: () => void }) {
-  const [filas, setFilas] = useState<Cronograma[]>([])
+  const [filas, setFilas] = useState<Cronograma[]>([]);
 
   useEffect(() => {
-    const hoy = new Date()
-    const desde = ymd(hoy)
-    const hastaDt = new Date(hoy); hastaDt.setDate(hastaDt.getDate() + 14)
-    const hasta = ymd(hastaDt)
+    const hoy = new Date();
+    const desde = ymd(hoy);
+    const hastaDt = new Date(hoy);
+    hastaDt.setDate(hastaDt.getDate() + 14);
+    const hasta = ymd(hastaDt);
     supabase
       .from('cronograma')
       .select('*')
@@ -769,97 +936,120 @@ function MisHorarios({ empleado, onVolver }: { empleado: Empleado; onVolver: () 
       .gte('fecha', desde)
       .lte('fecha', hasta)
       .order('fecha')
-      .then(({ data }) => setFilas((data as Cronograma[]) || []))
-  }, [empleado.id])
+      .then(({ data }) => setFilas((data as Cronograma[]) || []));
+  }, [empleado.id]);
 
   return (
-    <div className="bg-white rounded-lg border border-gray-200 p-4">
-      <div className="flex items-center justify-between mb-3">
+    <div className="rounded-lg border border-gray-200 bg-white p-4">
+      <div className="mb-3 flex items-center justify-between">
         <h3 className="text-sm font-semibold text-gray-900">Próximos 14 días</h3>
-        <button onClick={onVolver} className="text-xs text-gray-500 underline">Volver</button>
+        <button onClick={onVolver} className="text-xs text-gray-500 underline">
+          Volver
+        </button>
       </div>
       {filas.length === 0 ? (
         <p className="text-xs text-gray-500">Sin horarios publicados.</p>
       ) : (
         <div className="space-y-1.5">
           {filas.map((f) => {
-            const d = new Date(f.fecha + 'T00:00:00')
-            const DIAS = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb']
-            const dd = String(d.getDate()).padStart(2, '0')
-            const mm = String(d.getMonth() + 1).padStart(2, '0')
-            const dia = `${DIAS[d.getDay()]} ${dd}-${mm}`
+            const d = new Date(f.fecha + 'T00:00:00');
+            const DIAS = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+            const dd = String(d.getDate()).padStart(2, '0');
+            const mm = String(d.getMonth() + 1).padStart(2, '0');
+            const dia = `${DIAS[d.getDay()]} ${dd}-${mm}`;
             return (
-              <div key={f.id} className="flex justify-between text-xs border-b border-gray-100 py-1.5">
+              <div
+                key={f.id}
+                className="flex justify-between border-b border-gray-100 py-1.5 text-xs"
+              >
                 <span className="capitalize text-gray-700">{dia}</span>
-                <span className={cn('font-medium', f.es_franco ? 'text-blue-700' : 'text-gray-900')}>
+                <span
+                  className={cn('font-medium', f.es_franco ? 'text-blue-700' : 'text-gray-900')}
+                >
                   {f.es_franco ? 'Franco' : formatTurnos(f.turnos, f.hora_entrada, f.hora_salida)}
                 </span>
               </div>
-            )
+            );
           })}
         </div>
       )}
     </div>
-  )
+  );
 }
 
 // ─── Mi quincena ────────────────────────────────────────────────────────────
 function MiQuincena({ empleado, onVolver }: { empleado: Empleado; onVolver: () => void }) {
   const [stats, setStats] = useState<{
-    fichadas: number
-    tardanzasMayores: number
-    ausencias: number
-    horasTrabajadas: number
-    horasRequeridas: number
-  } | null>(null)
+    fichadas: number;
+    tardanzasMayores: number;
+    ausencias: number;
+    horasTrabajadas: number;
+    horasRequeridas: number;
+  } | null>(null);
 
   useEffect(() => {
     (async () => {
-      const hoy = new Date()
-      const dia = hoy.getDate()
-      const ini = new Date(hoy.getFullYear(), hoy.getMonth(), dia <= 14 ? 1 : 15)
-      const finDia = dia <= 14 ? 14 : new Date(hoy.getFullYear(), hoy.getMonth() + 1, 0).getDate()
-      const fin = new Date(hoy.getFullYear(), hoy.getMonth(), finDia)
-      const desde = ymd(ini)
-      const hasta = ymd(fin)
+      const hoy = new Date();
+      const dia = hoy.getDate();
+      const ini = new Date(hoy.getFullYear(), hoy.getMonth(), dia <= 14 ? 1 : 15);
+      const finDia = dia <= 14 ? 14 : new Date(hoy.getFullYear(), hoy.getMonth() + 1, 0).getDate();
+      const fin = new Date(hoy.getFullYear(), hoy.getMonth(), finDia);
+      const desde = ymd(ini);
+      const hasta = ymd(fin);
 
       const [{ data: fich }, { data: crono }] = await Promise.all([
-        supabase.from('fichadas').select('*').eq('empleado_id', empleado.id).gte('fecha', desde).lte('fecha', hasta),
-        supabase.from('cronograma').select('*').eq('empleado_id', empleado.id).gte('fecha', desde).lte('fecha', hasta),
-      ])
+        supabase
+          .from('fichadas')
+          .select('*')
+          .eq('empleado_id', empleado.id)
+          .gte('fecha', desde)
+          .lte('fecha', hasta),
+        supabase
+          .from('cronograma')
+          .select('*')
+          .eq('empleado_id', empleado.id)
+          .gte('fecha', desde)
+          .lte('fecha', hasta),
+      ]);
 
-      const fichArr = (fich as Fichada[]) || []
-      const cronoArr = (crono as Cronograma[]) || []
+      const fichArr = (fich as Fichada[]) || [];
+      const cronoArr = (crono as Cronograma[]) || [];
 
       // Tardanzas > tolerancia en entradas
       const tardanzasMayores = fichArr.filter(
-        (f) => f.tipo === 'entrada' && f.minutos_diferencia !== null && f.minutos_diferencia > TOLERANCIA_MIN
-      ).length
+        (f) =>
+          f.tipo === 'entrada' &&
+          f.minutos_diferencia !== null &&
+          f.minutos_diferencia > TOLERANCIA_MIN,
+      ).length;
 
       // Ausencias: días con cronograma no franco y publicado, sin ninguna fichada
       const ausencias = cronoArr.filter((c) => {
-        if (c.es_franco || !c.publicado) return false
-        if (new Date(c.fecha + 'T00:00:00') > hoy) return false
-        return !fichArr.some((f) => f.fecha === c.fecha)
-      }).length
+        if (c.es_franco || !c.publicado) return false;
+        if (new Date(c.fecha + 'T00:00:00') > hoy) return false;
+        return !fichArr.some((f) => f.fecha === c.fecha);
+      }).length;
 
       // Horas trabajadas (pares entrada/salida por día)
-      let horasTrabajadas = 0
-      const porDia: Record<string, Fichada[]> = {}
-      fichArr.forEach((f) => { (porDia[f.fecha] ||= []).push(f) })
+      let horasTrabajadas = 0;
+      const porDia: Record<string, Fichada[]> = {};
+      fichArr.forEach((f) => {
+        (porDia[f.fecha] ||= []).push(f);
+      });
       Object.values(porDia).forEach((arr) => {
-        arr.sort((a, b) => a.timestamp.localeCompare(b.timestamp))
+        arr.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
         for (let i = 0; i + 1 < arr.length; i += 2) {
-          const t1 = new Date(arr[i].timestamp).getTime()
-          const t2 = new Date(arr[i + 1].timestamp).getTime()
-          horasTrabajadas += Math.max(0, (t2 - t1) / 3600000)
+          const t1 = new Date(arr[i].timestamp).getTime();
+          const t2 = new Date(arr[i + 1].timestamp).getTime();
+          horasTrabajadas += Math.max(0, (t2 - t1) / 3600000);
         }
-      })
+      });
 
       // Horas requeridas (flexibles): horas_semanales × 2
-      const horasRequeridas = empleado.horario_tipo === 'flexible' && empleado.horas_semanales_requeridas
-        ? empleado.horas_semanales_requeridas * 2
-        : 0
+      const horasRequeridas =
+        empleado.horario_tipo === 'flexible' && empleado.horas_semanales_requeridas
+          ? empleado.horas_semanales_requeridas * 2
+          : 0;
 
       setStats({
         fichadas: fichArr.length,
@@ -867,21 +1057,25 @@ function MiQuincena({ empleado, onVolver }: { empleado: Empleado; onVolver: () =
         ausencias,
         horasTrabajadas: Math.round(horasTrabajadas * 10) / 10,
         horasRequeridas,
-      })
-    })()
-  }, [empleado])
+      });
+    })();
+  }, [empleado]);
 
   const ganaPresentismo = stats
     ? empleado.horario_tipo === 'flexible'
-      ? stats.horasRequeridas > 0 && stats.horasTrabajadas >= stats.horasRequeridas && stats.ausencias === 0
+      ? stats.horasRequeridas > 0 &&
+        stats.horasTrabajadas >= stats.horasRequeridas &&
+        stats.ausencias === 0
       : stats.ausencias === 0 && stats.tardanzasMayores === 0
-    : false
+    : false;
 
   return (
-    <div className="bg-white rounded-lg border border-gray-200 p-4">
-      <div className="flex items-center justify-between mb-3">
+    <div className="rounded-lg border border-gray-200 bg-white p-4">
+      <div className="mb-3 flex items-center justify-between">
         <h3 className="text-sm font-semibold text-gray-900">Mi quincena</h3>
-        <button onClick={onVolver} className="text-xs text-gray-500 underline">Volver</button>
+        <button onClick={onVolver} className="text-xs text-gray-500 underline">
+          Volver
+        </button>
       </div>
 
       {!stats ? (
@@ -902,23 +1096,25 @@ function MiQuincena({ empleado, onVolver }: { empleado: Empleado; onVolver: () =
             />
           </div>
 
-          <div className={cn(
-            'mt-3 rounded p-3 text-xs font-medium text-center',
-            ganaPresentismo ? 'bg-green-50 text-green-800' : 'bg-amber-50 text-amber-800'
-          )}>
+          <div
+            className={cn(
+              'mt-3 rounded p-3 text-center text-xs font-medium',
+              ganaPresentismo ? 'bg-green-50 text-green-800' : 'bg-amber-50 text-amber-800',
+            )}
+          >
             {ganaPresentismo ? '✓ Estás ganando el presentismo' : 'Presentismo en riesgo'}
           </div>
         </>
       )}
     </div>
-  )
+  );
 }
 
 function Tarjeta({ label, value }: { label: string; value: string }) {
   return (
-    <div className="bg-gray-50 rounded p-2.5">
-      <p className="text-[10px] text-gray-500 uppercase">{label}</p>
+    <div className="rounded bg-gray-50 p-2.5">
+      <p className="text-[10px] uppercase text-gray-500">{label}</p>
       <p className="text-base font-semibold text-gray-900">{value}</p>
     </div>
-  )
+  );
 }

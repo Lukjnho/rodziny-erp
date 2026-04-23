@@ -1,5 +1,5 @@
-import { PageContainer } from '@/components/layout/PageContainer'
-import { ProximasEfemeridesCard } from '@/modules/cocina/components/ProximasEfemeridesCard'
+import { PageContainer } from '@/components/layout/PageContainer';
+import { ProximasEfemeridesCard } from '@/modules/cocina/components/ProximasEfemeridesCard';
 
 export function DashboardPage() {
   return (
@@ -8,5 +8,5 @@ export function DashboardPage() {
         <ProximasEfemeridesCard diasAdelante={15} />
       </div>
     </PageContainer>
-  )
+  );
 }

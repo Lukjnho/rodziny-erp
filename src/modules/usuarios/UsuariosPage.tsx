@@ -1,8 +1,8 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { supabase } from '@/lib/supabase'
-import { PageContainer } from '@/components/layout/PageContainer'
-import { useAuth, type Perfil, type Modulo } from '@/lib/auth'
-import { cn } from '@/lib/utils'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { supabase } from '@/lib/supabase';
+import { PageContainer } from '@/components/layout/PageContainer';
+import { useAuth, type Perfil, type Modulo } from '@/lib/auth';
+import { cn } from '@/lib/utils';
 
 const MODULOS: { key: Modulo; label: string; campo: keyof Perfil }[] = [
   { key: 'dashboard', label: 'Dashboard', campo: 'puede_ver_dashboard' },
@@ -16,23 +16,20 @@ const MODULOS: { key: Modulo; label: string; campo: keyof Perfil }[] = [
   { key: 'cocina', label: 'Cocina', campo: 'puede_ver_cocina' },
   { key: 'almacen', label: 'Almacén', campo: 'puede_ver_almacen' },
   { key: 'usuarios', label: 'Usuarios', campo: 'puede_ver_usuarios' },
-]
+];
 
 export function UsuariosPage() {
-  const { user: usuarioActual, refetchPerfil } = useAuth()
-  const qc = useQueryClient()
+  const { user: usuarioActual, refetchPerfil } = useAuth();
+  const qc = useQueryClient();
 
   const { data: perfiles, isLoading } = useQuery({
     queryKey: ['perfiles'],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('perfiles')
-        .select('*')
-        .order('nombre')
-      if (error) throw error
-      return data as Perfil[]
+      const { data, error } = await supabase.from('perfiles').select('*').order('nombre');
+      if (error) throw error;
+      return data as Perfil[];
     },
-  })
+  });
 
   const actualizar = useMutation({
     mutationFn: async (payload: { user_id: string; patch: Partial<Perfil> }) => {
@@ -40,68 +37,78 @@ export function UsuariosPage() {
         .from('perfiles')
         .update(payload.patch)
         .eq('user_id', payload.user_id)
-        .select('user_id')
-      if (error) throw error
-      if (!data || data.length === 0) throw new Error('No se actualizó ninguna fila (RLS?)')
+        .select('user_id');
+      if (error) throw error;
+      if (!data || data.length === 0) throw new Error('No se actualizó ninguna fila (RLS?)');
     },
     onMutate: async ({ user_id, patch }) => {
-      await qc.cancelQueries({ queryKey: ['perfiles'] })
-      const previo = qc.getQueryData<Perfil[]>(['perfiles'])
+      await qc.cancelQueries({ queryKey: ['perfiles'] });
+      const previo = qc.getQueryData<Perfil[]>(['perfiles']);
       if (previo) {
         qc.setQueryData<Perfil[]>(
           ['perfiles'],
           previo.map((p) => (p.user_id === user_id ? { ...p, ...patch } : p)),
-        )
+        );
       }
-      return { previo }
+      return { previo };
     },
     onError: (e: Error, _v, ctx) => {
-      if (ctx?.previo) qc.setQueryData(['perfiles'], ctx.previo)
-      window.alert(`Error: ${e.message}`)
+      if (ctx?.previo) qc.setQueryData(['perfiles'], ctx.previo);
+      window.alert(`Error: ${e.message}`);
     },
     onSettled: (_d, _e, vars) => {
-      qc.invalidateQueries({ queryKey: ['perfiles'] })
+      qc.invalidateQueries({ queryKey: ['perfiles'] });
       // Si el admin se modificó a sí mismo, refrescar su propio perfil para que el sidebar reaccione
-      if (vars.user_id === usuarioActual?.id) refetchPerfil()
+      if (vars.user_id === usuarioActual?.id) refetchPerfil();
     },
-  })
+  });
 
   return (
     <PageContainer title="Usuarios" subtitle="Gestión de accesos y permisos">
-      <div className="bg-white rounded-lg border border-gray-200 p-4 mb-4 text-xs text-gray-600">
-        <p className="font-semibold text-gray-800 mb-1">Cómo sumar un usuario nuevo</p>
-        <ol className="list-decimal list-inside space-y-0.5">
+      <div className="mb-4 rounded-lg border border-gray-200 bg-white p-4 text-xs text-gray-600">
+        <p className="mb-1 font-semibold text-gray-800">Cómo sumar un usuario nuevo</p>
+        <ol className="list-inside list-decimal space-y-0.5">
           <li>Entrá a Supabase Dashboard → Authentication → Users → Add user.</li>
-          <li>Cargá email (ej. <code>nombre@rodziny.com.ar</code>) y contraseña.</li>
+          <li>
+            Cargá email (ej. <code>nombre@rodziny.com.ar</code>) y contraseña.
+          </li>
           <li>Destildá "Auto confirm user" → activalo para que pueda ingresar de una.</li>
           <li>Volvé acá y marcá los módulos a los que tiene que tener acceso.</li>
         </ol>
       </div>
 
       {isLoading ? (
-        <div className="bg-white rounded-lg border border-gray-200 p-8 text-center text-sm text-gray-400">
+        <div className="rounded-lg border border-gray-200 bg-white p-8 text-center text-sm text-gray-400">
           Cargando...
         </div>
       ) : (
-        <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+        <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
-              <thead className="bg-gray-50 border-b border-gray-200">
-                <tr className="text-[10px] uppercase text-gray-500 tracking-wide">
-                  <th className="text-left px-3 py-2 font-semibold">Usuario</th>
-                  <th className="text-center px-2 py-2 font-semibold">Admin</th>
+              <thead className="border-b border-gray-200 bg-gray-50">
+                <tr className="text-[10px] uppercase tracking-wide text-gray-500">
+                  <th className="px-3 py-2 text-left font-semibold">Usuario</th>
+                  <th className="px-2 py-2 text-center font-semibold">Admin</th>
                   {MODULOS.map((m) => (
-                    <th key={m.key} className="text-center px-2 py-2 font-semibold whitespace-nowrap">{m.label}</th>
+                    <th
+                      key={m.key}
+                      className="whitespace-nowrap px-2 py-2 text-center font-semibold"
+                    >
+                      {m.label}
+                    </th>
                   ))}
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {perfiles?.map((p) => {
-                  const esYo = p.user_id === usuarioActual?.id
+                  const esYo = p.user_id === usuarioActual?.id;
                   return (
-                    <tr key={p.user_id} className={cn('hover:bg-gray-50', esYo && 'bg-rodziny-50/30')}>
+                    <tr
+                      key={p.user_id}
+                      className={cn('hover:bg-gray-50', esYo && 'bg-rodziny-50/30')}
+                    >
                       <td className="px-3 py-2">
-                        <div className="font-medium text-gray-900 capitalize">{p.nombre}</div>
+                        <div className="font-medium capitalize text-gray-900">{p.nombre}</div>
                         {esYo && <div className="text-[9px] text-rodziny-700">(vos)</div>}
                       </td>
                       <td className="px-2 py-2 text-center">
@@ -116,7 +123,7 @@ export function UsuariosPage() {
                               patch: { es_admin: e.target.checked },
                             })
                           }
-                          className="w-4 h-4"
+                          className="h-4 w-4"
                         />
                       </td>
                       {MODULOS.map((m) => (
@@ -132,12 +139,12 @@ export function UsuariosPage() {
                                 patch: { [m.campo]: e.target.checked } as Partial<Perfil>,
                               })
                             }
-                            className="w-4 h-4"
+                            className="h-4 w-4"
                           />
                         </td>
                       ))}
                     </tr>
-                  )
+                  );
                 })}
               </tbody>
             </table>
@@ -145,5 +152,5 @@ export function UsuariosPage() {
         </div>
       )}
     </PageContainer>
-  )
+  );
 }

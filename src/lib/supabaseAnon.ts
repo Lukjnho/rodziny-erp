@@ -1,4 +1,4 @@
-import { createClient } from '@supabase/supabase-js'
+import { createClient } from '@supabase/supabase-js';
 
 // Cliente Supabase dedicado para la PWA pública /fichar y otras páginas anónimas.
 //
@@ -9,8 +9,8 @@ import { createClient } from '@supabase/supabase-js'
 // (fichadas, cronograma, empleados, recepciones_*) devuelvan 0 filas o tiren
 // "row-level security policy" al insertar.
 
-const url = import.meta.env.VITE_SUPABASE_URL as string
-const key = import.meta.env.VITE_SUPABASE_ANON_KEY as string
+const url = import.meta.env.VITE_SUPABASE_URL as string;
+const key = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
 
 export const supabaseAnon = createClient(url, key, {
   auth: {
@@ -18,4 +18,4 @@ export const supabaseAnon = createClient(url, key, {
     autoRefreshToken: false,
     detectSessionInUrl: false,
   },
-})
+});

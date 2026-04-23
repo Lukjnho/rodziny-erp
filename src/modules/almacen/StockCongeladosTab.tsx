@@ -1,38 +1,38 @@
-import { useQuery } from '@tanstack/react-query'
-import { supabase } from '@/lib/supabase'
-import { cn } from '@/lib/utils'
+import { useQuery } from '@tanstack/react-query';
+import { supabase } from '@/lib/supabase';
+import { cn } from '@/lib/utils';
 
 interface LotePasta {
-  producto_id: string
-  porciones: number | null
-  producto: { nombre: string; codigo: string; minimo_produccion: number }[] | null
+  producto_id: string;
+  porciones: number | null;
+  producto: { nombre: string; codigo: string; minimo_produccion: number }[] | null;
 }
 
 interface Traspaso {
-  producto_id: string
-  porciones: number
+  producto_id: string;
+  porciones: number;
 }
 
 interface Merma {
-  producto_id: string
-  porciones: number
+  producto_id: string;
+  porciones: number;
 }
 
 interface PedidoEntregado {
-  producto_nombre: string
-  cantidad: number
+  producto_nombre: string;
+  cantidad: number;
 }
 
 interface StockItem {
-  productoId: string
-  nombre: string
-  codigo: string
-  producido: number
-  traspasado: number
-  merma: number
-  entregadoPedidos: number
-  stock: number
-  minimo: number
+  productoId: string;
+  nombre: string;
+  codigo: string;
+  producido: number;
+  traspasado: number;
+  merma: number;
+  entregadoPedidos: number;
+  stock: number;
+  minimo: number;
 }
 
 export function StockCongeladosTab() {
@@ -42,12 +42,14 @@ export function StockCongeladosTab() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cocina_lotes_pasta')
-        .select('producto_id, porciones, producto:cocina_productos(nombre, codigo, minimo_produccion)')
-        .eq('local', 'saavedra')
-      if (error) throw error
-      return data as LotePasta[]
+        .select(
+          'producto_id, porciones, producto:cocina_productos(nombre, codigo, minimo_produccion)',
+        )
+        .eq('local', 'saavedra');
+      if (error) throw error;
+      return data as LotePasta[];
     },
-  })
+  });
 
   // Traspasos de saavedra
   const { data: traspasos } = useQuery({
@@ -56,11 +58,11 @@ export function StockCongeladosTab() {
       const { data, error } = await supabase
         .from('cocina_traspasos')
         .select('producto_id, porciones')
-        .eq('local', 'saavedra')
-      if (error) throw error
-      return data as Traspaso[]
+        .eq('local', 'saavedra');
+      if (error) throw error;
+      return data as Traspaso[];
     },
-  })
+  });
 
   // Merma de saavedra
   const { data: mermas } = useQuery({
@@ -69,11 +71,11 @@ export function StockCongeladosTab() {
       const { data, error } = await supabase
         .from('cocina_merma')
         .select('producto_id, porciones')
-        .eq('local', 'saavedra')
-      if (error) throw error
-      return data as Merma[]
+        .eq('local', 'saavedra');
+      if (error) throw error;
+      return data as Merma[];
     },
-  })
+  });
 
   // Pedidos entregados (para descontar del stock)
   const { data: pedidosEntregados } = useQuery({
@@ -83,24 +85,24 @@ export function StockCongeladosTab() {
         .from('almacen_pedidos')
         .select('producto_nombre, cantidad')
         .eq('estado', 'entregado')
-        .eq('local', 'saavedra')
-      if (error) throw error
-      return data as PedidoEntregado[]
+        .eq('local', 'saavedra');
+      if (error) throw error;
+      return data as PedidoEntregado[];
     },
-  })
+  });
 
   // Calcular stock por producto
-  const isLoading = !lotes || !traspasos || !mermas || !pedidosEntregados
+  const isLoading = !lotes || !traspasos || !mermas || !pedidosEntregados;
 
-  const stockItems: StockItem[] = []
+  const stockItems: StockItem[] = [];
 
   if (!isLoading) {
-    const mapa = new Map<string, StockItem>()
+    const mapa = new Map<string, StockItem>();
 
     // Producido
     for (const l of lotes) {
-      const prod = Array.isArray(l.producto) ? l.producto[0] : l.producto
-      if (!prod) continue
+      const prod = Array.isArray(l.producto) ? l.producto[0] : l.producto;
+      if (!prod) continue;
       if (!mapa.has(l.producto_id)) {
         mapa.set(l.producto_id, {
           productoId: l.producto_id,
@@ -112,138 +114,194 @@ export function StockCongeladosTab() {
           entregadoPedidos: 0,
           stock: 0,
           minimo: prod.minimo_produccion,
-        })
+        });
       }
-      mapa.get(l.producto_id)!.producido += l.porciones ?? 0
+      mapa.get(l.producto_id)!.producido += l.porciones ?? 0;
     }
 
     // Traspasado
     for (const t of traspasos) {
-      const item = mapa.get(t.producto_id)
-      if (item) item.traspasado += t.porciones
+      const item = mapa.get(t.producto_id);
+      if (item) item.traspasado += t.porciones;
     }
 
     // Merma
     for (const m of mermas) {
-      const item = mapa.get(m.producto_id)
-      if (item) item.merma += m.porciones
+      const item = mapa.get(m.producto_id);
+      if (item) item.merma += m.porciones;
     }
 
     // Pedidos entregados (matchear por nombre ya que producto_id puede no estar seteado)
     for (const p of pedidosEntregados) {
       for (const item of mapa.values()) {
         if (item.nombre.toLowerCase() === p.producto_nombre.toLowerCase()) {
-          item.entregadoPedidos += p.cantidad
+          item.entregadoPedidos += p.cantidad;
         }
       }
     }
 
     // Calcular stock final
     for (const item of mapa.values()) {
-      item.stock = item.producido - item.traspasado - item.merma - item.entregadoPedidos
-      stockItems.push(item)
+      item.stock = item.producido - item.traspasado - item.merma - item.entregadoPedidos;
+      stockItems.push(item);
     }
 
-    stockItems.sort((a, b) => a.stock - b.stock)
+    stockItems.sort((a, b) => a.stock - b.stock);
   }
 
   // KPIs
-  const totalProductos = stockItems.length
-  const sinStock = stockItems.filter(s => s.stock <= 0).length
-  const bajoMinimo = stockItems.filter(s => s.stock > 0 && s.stock < s.minimo).length
-  const ok = stockItems.filter(s => s.stock >= s.minimo).length
+  const totalProductos = stockItems.length;
+  const sinStock = stockItems.filter((s) => s.stock <= 0).length;
+  const bajoMinimo = stockItems.filter((s) => s.stock > 0 && s.stock < s.minimo).length;
+  const ok = stockItems.filter((s) => s.stock >= s.minimo).length;
 
   return (
     <div className="space-y-4">
       {/* KPIs */}
       <div className="grid grid-cols-4 gap-3">
-        <div className="rounded-lg border bg-white border-gray-200 p-3 text-center">
+        <div className="rounded-lg border border-gray-200 bg-white p-3 text-center">
           <div className="text-2xl font-bold text-gray-700">{totalProductos}</div>
           <div className="text-xs text-gray-500">Productos</div>
         </div>
-        <div className={cn('rounded-lg border p-3 text-center', ok > 0 ? 'bg-green-50 border-green-200' : 'bg-gray-50 border-gray-200')}>
-          <div className={cn('text-2xl font-bold', ok > 0 ? 'text-green-600' : 'text-gray-400')}>{ok}</div>
+        <div
+          className={cn(
+            'rounded-lg border p-3 text-center',
+            ok > 0 ? 'border-green-200 bg-green-50' : 'border-gray-200 bg-gray-50',
+          )}
+        >
+          <div className={cn('text-2xl font-bold', ok > 0 ? 'text-green-600' : 'text-gray-400')}>
+            {ok}
+          </div>
           <div className="text-xs text-gray-500">OK</div>
         </div>
-        <div className={cn('rounded-lg border p-3 text-center', bajoMinimo > 0 ? 'bg-amber-50 border-amber-200' : 'bg-gray-50 border-gray-200')}>
-          <div className={cn('text-2xl font-bold', bajoMinimo > 0 ? 'text-amber-600' : 'text-gray-400')}>{bajoMinimo}</div>
+        <div
+          className={cn(
+            'rounded-lg border p-3 text-center',
+            bajoMinimo > 0 ? 'border-amber-200 bg-amber-50' : 'border-gray-200 bg-gray-50',
+          )}
+        >
+          <div
+            className={cn(
+              'text-2xl font-bold',
+              bajoMinimo > 0 ? 'text-amber-600' : 'text-gray-400',
+            )}
+          >
+            {bajoMinimo}
+          </div>
           <div className="text-xs text-gray-500">Bajo mínimo</div>
         </div>
-        <div className={cn('rounded-lg border p-3 text-center', sinStock > 0 ? 'bg-red-50 border-red-200' : 'bg-gray-50 border-gray-200')}>
-          <div className={cn('text-2xl font-bold', sinStock > 0 ? 'text-red-600' : 'text-gray-400')}>{sinStock}</div>
+        <div
+          className={cn(
+            'rounded-lg border p-3 text-center',
+            sinStock > 0 ? 'border-red-200 bg-red-50' : 'border-gray-200 bg-gray-50',
+          )}
+        >
+          <div
+            className={cn('text-2xl font-bold', sinStock > 0 ? 'text-red-600' : 'text-gray-400')}
+          >
+            {sinStock}
+          </div>
           <div className="text-xs text-gray-500">Sin stock</div>
         </div>
       </div>
 
       {/* Info */}
-      <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-700">
-        El stock se calcula automáticamente: <strong>Producción</strong> (lotes de pasta) - <strong>Traspasos</strong> (depósito → mostrador) - <strong>Merma</strong> - <strong>Pedidos entregados</strong> (almacén).
-        Los datos vienen del módulo Cocina.
+      <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs text-blue-700">
+        El stock se calcula automáticamente: <strong>Producción</strong> (lotes de pasta) -{' '}
+        <strong>Traspasos</strong> (depósito → mostrador) - <strong>Merma</strong> -{' '}
+        <strong>Pedidos entregados</strong> (almacén). Los datos vienen del módulo Cocina.
       </div>
 
       {/* Tabla */}
       {isLoading ? (
-        <div className="bg-white rounded-lg border border-gray-200 p-8 text-center text-sm text-gray-400">Cargando...</div>
+        <div className="rounded-lg border border-gray-200 bg-white p-8 text-center text-sm text-gray-400">
+          Cargando...
+        </div>
       ) : stockItems.length === 0 ? (
-        <div className="bg-white rounded-lg border border-gray-200 p-8 text-center">
-          <div className="text-3xl mb-2">📦</div>
-          <p className="text-sm text-gray-500">No hay producción registrada para Saavedra todavía.</p>
-          <p className="text-xs text-gray-400 mt-1">Registrá lotes en el módulo Cocina → Producción para ver el stock acá.</p>
+        <div className="rounded-lg border border-gray-200 bg-white p-8 text-center">
+          <div className="mb-2 text-3xl">📦</div>
+          <p className="text-sm text-gray-500">
+            No hay producción registrada para Saavedra todavía.
+          </p>
+          <p className="mt-1 text-xs text-gray-400">
+            Registrá lotes en el módulo Cocina → Producción para ver el stock acá.
+          </p>
         </div>
       ) : (
-        <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+        <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
           <table className="w-full text-sm">
-            <thead className="bg-gray-50 border-b border-gray-200">
-              <tr className="text-xs text-gray-500 uppercase">
-                <th className="text-left px-4 py-2 font-semibold">Producto</th>
-                <th className="text-center px-3 py-2 font-semibold">Código</th>
-                <th className="text-center px-3 py-2 font-semibold">Producido</th>
-                <th className="text-center px-3 py-2 font-semibold">Traspasos</th>
-                <th className="text-center px-3 py-2 font-semibold">Merma</th>
-                <th className="text-center px-3 py-2 font-semibold">Pedidos</th>
-                <th className="text-center px-3 py-2 font-semibold">Stock actual</th>
-                <th className="text-center px-3 py-2 font-semibold">Mínimo</th>
-                <th className="text-center px-3 py-2 font-semibold">Estado</th>
+            <thead className="border-b border-gray-200 bg-gray-50">
+              <tr className="text-xs uppercase text-gray-500">
+                <th className="px-4 py-2 text-left font-semibold">Producto</th>
+                <th className="px-3 py-2 text-center font-semibold">Código</th>
+                <th className="px-3 py-2 text-center font-semibold">Producido</th>
+                <th className="px-3 py-2 text-center font-semibold">Traspasos</th>
+                <th className="px-3 py-2 text-center font-semibold">Merma</th>
+                <th className="px-3 py-2 text-center font-semibold">Pedidos</th>
+                <th className="px-3 py-2 text-center font-semibold">Stock actual</th>
+                <th className="px-3 py-2 text-center font-semibold">Mínimo</th>
+                <th className="px-3 py-2 text-center font-semibold">Estado</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {stockItems.map((item) => {
-                const estado = item.stock <= 0 ? 'sin-stock' : item.stock < item.minimo ? 'bajo' : 'ok'
+                const estado =
+                  item.stock <= 0 ? 'sin-stock' : item.stock < item.minimo ? 'bajo' : 'ok';
                 return (
-                  <tr key={item.productoId} className={cn(
-                    'hover:bg-gray-50',
-                    estado === 'sin-stock' && 'bg-red-50/50',
-                    estado === 'bajo' && 'bg-amber-50/50',
-                  )}>
+                  <tr
+                    key={item.productoId}
+                    className={cn(
+                      'hover:bg-gray-50',
+                      estado === 'sin-stock' && 'bg-red-50/50',
+                      estado === 'bajo' && 'bg-amber-50/50',
+                    )}
+                  >
                     <td className="px-4 py-2 font-medium text-gray-900">{item.nombre}</td>
-                    <td className="px-3 py-2 text-center text-gray-500 font-mono text-xs">{item.codigo}</td>
+                    <td className="px-3 py-2 text-center font-mono text-xs text-gray-500">
+                      {item.codigo}
+                    </td>
                     <td className="px-3 py-2 text-center text-gray-600">{item.producido}</td>
                     <td className="px-3 py-2 text-center text-gray-600">{item.traspasado}</td>
                     <td className="px-3 py-2 text-center text-gray-600">{item.merma}</td>
                     <td className="px-3 py-2 text-center text-gray-600">{item.entregadoPedidos}</td>
-                    <td className={cn('px-3 py-2 text-center font-bold',
-                      estado === 'sin-stock' ? 'text-red-600' : estado === 'bajo' ? 'text-amber-600' : 'text-green-600'
-                    )}>
+                    <td
+                      className={cn(
+                        'px-3 py-2 text-center font-bold',
+                        estado === 'sin-stock'
+                          ? 'text-red-600'
+                          : estado === 'bajo'
+                            ? 'text-amber-600'
+                            : 'text-green-600',
+                      )}
+                    >
                       {item.stock}
                     </td>
                     <td className="px-3 py-2 text-center text-gray-400">{item.minimo}</td>
                     <td className="px-3 py-2 text-center">
-                      <span className={cn(
-                        'text-xs font-medium px-2 py-0.5 rounded-full',
-                        estado === 'sin-stock' ? 'bg-red-100 text-red-700' :
-                        estado === 'bajo' ? 'bg-amber-100 text-amber-700' :
-                        'bg-green-100 text-green-700'
-                      )}>
-                        {estado === 'sin-stock' ? 'Sin stock' : estado === 'bajo' ? 'Bajo mínimo' : 'OK'}
+                      <span
+                        className={cn(
+                          'rounded-full px-2 py-0.5 text-xs font-medium',
+                          estado === 'sin-stock'
+                            ? 'bg-red-100 text-red-700'
+                            : estado === 'bajo'
+                              ? 'bg-amber-100 text-amber-700'
+                              : 'bg-green-100 text-green-700',
+                        )}
+                      >
+                        {estado === 'sin-stock'
+                          ? 'Sin stock'
+                          : estado === 'bajo'
+                            ? 'Bajo mínimo'
+                            : 'OK'}
                       </span>
                     </td>
                   </tr>
-                )
+                );
               })}
             </tbody>
           </table>
         </div>
       )}
     </div>
-  )
+  );
 }

@@ -1,44 +1,53 @@
-import { useState, useMemo } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { supabase } from '@/lib/supabase'
-import { KPICard } from '@/components/ui/KPICard'
-import { cn, formatARS } from '@/lib/utils'
-import { useCostosRecetas } from '@/modules/cocina/hooks/useCostosRecetas'
-import { useConfigCosteo, type ConfigCosteo } from '@/modules/cocina/hooks/useConfigCosteo'
+import { useState, useMemo } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { supabase } from '@/lib/supabase';
+import { KPICard } from '@/components/ui/KPICard';
+import { cn, formatARS } from '@/lib/utils';
+import { useCostosRecetas } from '@/modules/cocina/hooks/useCostosRecetas';
+import { useConfigCosteo, type ConfigCosteo } from '@/modules/cocina/hooks/useConfigCosteo';
 
 interface Receta {
-  id: string
-  nombre: string
-  tipo: string
-  rendimiento_kg: number | null
-  rendimiento_unidad: 'kg' | 'l' | 'unidad' | null
-  rendimiento_porciones: number | null
-  activo: boolean
-  local: string | null
+  id: string;
+  nombre: string;
+  tipo: string;
+  rendimiento_kg: number | null;
+  rendimiento_unidad: 'kg' | 'l' | 'unidad' | null;
+  rendimiento_porciones: number | null;
+  activo: boolean;
+  local: string | null;
 }
 
 interface Producto {
-  id: string
-  nombre: string
-  codigo: string
-  tipo: string
-  unidad: string
-  local: string
-  activo: boolean
-  receta_id: string | null
-  precio_venta: number | null
-  costo_empaque: number | null
+  id: string;
+  nombre: string;
+  codigo: string;
+  tipo: string;
+  unidad: string;
+  local: string;
+  activo: boolean;
+  receta_id: string | null;
+  precio_venta: number | null;
+  costo_empaque: number | null;
 }
 
 const TIPO_RECETA_LABEL: Record<string, string> = {
-  relleno: 'Relleno', masa: 'Masa', salsa: 'Salsa', subreceta: 'Subreceta', otro: 'Otro',
-}
+  relleno: 'Relleno',
+  masa: 'Masa',
+  salsa: 'Salsa',
+  subreceta: 'Subreceta',
+  otro: 'Otro',
+};
 const TIPO_PRODUCTO_LABEL: Record<string, string> = {
-  pasta: 'Pasta', salsa: 'Salsa', postre: 'Postre', relleno: 'Relleno', masa: 'Masa', panificado: 'Panificado',
-}
+  pasta: 'Pasta',
+  salsa: 'Salsa',
+  postre: 'Postre',
+  relleno: 'Relleno',
+  masa: 'Masa',
+  panificado: 'Panificado',
+};
 
 export function CosteoTab() {
-  const [subtab, setSubtab] = useState<'productos' | 'recetas'>('productos')
+  const [subtab, setSubtab] = useState<'productos' | 'recetas'>('productos');
 
   return (
     <div className="space-y-4">
@@ -47,80 +56,103 @@ export function CosteoTab() {
         <button
           onClick={() => setSubtab('productos')}
           className={cn(
-            'px-4 py-2 text-sm font-medium border-b-2 transition-colors',
-            subtab === 'productos' ? 'border-rodziny-600 text-rodziny-800' : 'border-transparent text-gray-500 hover:text-gray-700'
+            'border-b-2 px-4 py-2 text-sm font-medium transition-colors',
+            subtab === 'productos'
+              ? 'border-rodziny-600 text-rodziny-800'
+              : 'border-transparent text-gray-500 hover:text-gray-700',
           )}
-        >Productos y márgenes</button>
+        >
+          Productos y márgenes
+        </button>
         <button
           onClick={() => setSubtab('recetas')}
           className={cn(
-            'px-4 py-2 text-sm font-medium border-b-2 transition-colors',
-            subtab === 'recetas' ? 'border-rodziny-600 text-rodziny-800' : 'border-transparent text-gray-500 hover:text-gray-700'
+            'border-b-2 px-4 py-2 text-sm font-medium transition-colors',
+            subtab === 'recetas'
+              ? 'border-rodziny-600 text-rodziny-800'
+              : 'border-transparent text-gray-500 hover:text-gray-700',
           )}
-        >Recetas y parámetros</button>
+        >
+          Recetas y parámetros
+        </button>
       </div>
 
       {subtab === 'productos' && <VistaProductos />}
       {subtab === 'recetas' && <VistaRecetas />}
     </div>
-  )
+  );
 }
 
 // ─── Card de parámetros globales ────────────────────────────────────────────
 function CardParametros({ config }: { config: ConfigCosteo | undefined }) {
-  const { actualizar } = useConfigCosteo()
-  const [edits, setEdits] = useState<Partial<Record<keyof ConfigCosteo, string>>>({})
-  const [guardado, setGuardado] = useState<string | null>(null)
-  const [errorKey, setErrorKey] = useState<{ key: string; msg: string } | null>(null)
+  const { actualizar } = useConfigCosteo();
+  const [edits, setEdits] = useState<Partial<Record<keyof ConfigCosteo, string>>>({});
+  const [guardado, setGuardado] = useState<string | null>(null);
+  const [errorKey, setErrorKey] = useState<{ key: string; msg: string } | null>(null);
 
   function display(c: ConfigCosteo | undefined, k: keyof ConfigCosteo): string {
-    if (!c) return '0.0'
-    return (c[k] * 100).toFixed(1)
+    if (!c) return '0.0';
+    return (c[k] * 100).toFixed(1);
   }
 
   function guardar(k: keyof ConfigCosteo) {
-    const raw = edits[k]
-    if (raw == null) return
-    const num = parseFloat(raw.replace(',', '.'))
-    if (isNaN(num) || num < 0) return
-    setErrorKey(null)
-    actualizar.mutate({ clave: k, valor: num / 100 }, {
-      onSuccess: () => {
-        setEdits((s) => ({ ...s, [k]: undefined }))
-        setGuardado(k)
-        setTimeout(() => setGuardado(null), 1500)
+    const raw = edits[k];
+    if (raw == null) return;
+    const num = parseFloat(raw.replace(',', '.'));
+    if (isNaN(num) || num < 0) return;
+    setErrorKey(null);
+    actualizar.mutate(
+      { clave: k, valor: num / 100 },
+      {
+        onSuccess: () => {
+          setEdits((s) => ({ ...s, [k]: undefined }));
+          setGuardado(k);
+          setTimeout(() => setGuardado(null), 1500);
+        },
+        onError: (err: unknown) => {
+          const msg = err instanceof Error ? err.message : 'Error desconocido';
+          setErrorKey({ key: k, msg });
+          console.error('[config-costeo] error guardando', k, err);
+        },
       },
-      onError: (err: unknown) => {
-        const msg = err instanceof Error ? err.message : 'Error desconocido'
-        setErrorKey({ key: k, msg })
-        console.error('[config-costeo] error guardando', k, err)
-      },
-    })
+    );
   }
 
   const items: { key: keyof ConfigCosteo; label: string; hint: string }[] = [
-    { key: 'margen_seguridad_pct', label: 'Margen de seguridad', hint: 'Colchón sobre costo base (merma, variación)' },
+    {
+      key: 'margen_seguridad_pct',
+      label: 'Margen de seguridad',
+      hint: 'Colchón sobre costo base (merma, variación)',
+    },
     { key: 'iva_pct', label: 'IVA', hint: 'Para calcular precio neto sin impuesto' },
-    { key: 'comision_pago_pct', label: 'Comisión bancaria', hint: 'MercadoPago / tarjeta sobre el neto' },
-  ]
+    {
+      key: 'comision_pago_pct',
+      label: 'Comisión bancaria',
+      hint: 'MercadoPago / tarjeta sobre el neto',
+    },
+  ];
 
   return (
-    <div className="bg-gradient-to-br from-rodziny-50 to-white border border-rodziny-200 rounded-lg p-4">
-      <h3 className="text-sm font-semibold text-rodziny-800 mb-1">⚙ Parámetros globales de costeo</h3>
-      <p className="text-xs text-gray-600 mb-3">Aplican a todos los productos. Cambiá el valor y hacé click en ✓ para guardar.</p>
+    <div className="border-rodziny-200 rounded-lg border bg-gradient-to-br from-rodziny-50 to-white p-4">
+      <h3 className="mb-1 text-sm font-semibold text-rodziny-800">
+        ⚙ Parámetros globales de costeo
+      </h3>
+      <p className="mb-3 text-xs text-gray-600">
+        Aplican a todos los productos. Cambiá el valor y hacé click en ✓ para guardar.
+      </p>
       {errorKey && (
-        <div className="mb-3 bg-red-50 border border-red-200 rounded px-3 py-2 text-xs text-red-700">
+        <div className="mb-3 rounded border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
           <strong>Error guardando {errorKey.key}:</strong> {errorKey.msg}
         </div>
       )}
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
         {items.map((it) => {
-          const actual = display(config, it.key)
-          const nuevo = edits[it.key]
-          const editando = nuevo != null
+          const actual = display(config, it.key);
+          const nuevo = edits[it.key];
+          const editando = nuevo != null;
           return (
-            <div key={it.key} className="bg-white rounded border border-gray-200 p-2.5">
-              <div className="text-[10px] text-gray-500 uppercase font-medium mb-1">{it.label}</div>
+            <div key={it.key} className="rounded border border-gray-200 bg-white p-2.5">
+              <div className="mb-1 text-[10px] font-medium uppercase text-gray-500">{it.label}</div>
               <div className="flex items-center gap-1">
                 <input
                   type="number"
@@ -128,49 +160,57 @@ function CardParametros({ config }: { config: ConfigCosteo | undefined }) {
                   min="0"
                   value={editando ? nuevo : actual}
                   onChange={(e) => setEdits((s) => ({ ...s, [it.key]: e.target.value }))}
-                  onKeyDown={(e) => { if (e.key === 'Enter') guardar(it.key) }}
-                  className="w-full border border-gray-300 rounded px-2 py-1 text-sm text-right tabular-nums"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') guardar(it.key);
+                  }}
+                  className="w-full rounded border border-gray-300 px-2 py-1 text-right text-sm tabular-nums"
                 />
                 <span className="text-sm text-gray-500">%</span>
                 {editando && (
                   <button
                     onClick={() => guardar(it.key)}
-                    className="bg-rodziny-700 hover:bg-rodziny-800 text-white rounded px-2 py-1 text-xs"
+                    className="rounded bg-rodziny-700 px-2 py-1 text-xs text-white hover:bg-rodziny-800"
                     title="Guardar"
-                  >✓</button>
+                  >
+                    ✓
+                  </button>
                 )}
-                {guardado === it.key && (
-                  <span className="text-xs text-green-600">✓</span>
-                )}
+                {guardado === it.key && <span className="text-xs text-green-600">✓</span>}
               </div>
-              <div className="text-[10px] text-gray-400 mt-1 leading-tight">{it.hint}</div>
+              <div className="mt-1 text-[10px] leading-tight text-gray-400">{it.hint}</div>
             </div>
-          )
+          );
         })}
       </div>
     </div>
-  )
+  );
 }
 
 // ─── Vista Productos: costo real, precio neto, margen real ──────────────────
 function VistaProductos() {
-  const qc = useQueryClient()
-  const [busqueda, setBusqueda] = useState('')
-  const [filtroLocal, setFiltroLocal] = useState<'todos' | 'vedia' | 'saavedra'>('todos')
-  const [editando, setEditando] = useState<{ id: string; campo: 'precio' | 'empaque'; valor: string } | null>(null)
+  const qc = useQueryClient();
+  const [busqueda, setBusqueda] = useState('');
+  const [filtroLocal, setFiltroLocal] = useState<'todos' | 'vedia' | 'saavedra'>('todos');
+  const [editando, setEditando] = useState<{
+    id: string;
+    campo: 'precio' | 'empaque';
+    valor: string;
+  } | null>(null);
 
   const { data: productos } = useQuery({
     queryKey: ['cocina-productos'],
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cocina_productos')
-        .select('id, nombre, codigo, tipo, unidad, local, activo, receta_id, precio_venta, costo_empaque')
+        .select(
+          'id, nombre, codigo, tipo, unidad, local, activo, receta_id, precio_venta, costo_empaque',
+        )
         .eq('activo', true)
-        .order('nombre')
-      if (error) throw error
-      return data as Producto[]
+        .order('nombre');
+      if (error) throw error;
+      return data as Producto[];
     },
-  })
+  });
 
   const { data: recetas } = useQuery({
     queryKey: ['cocina-recetas-opciones-costeo'],
@@ -178,102 +218,138 @@ function VistaProductos() {
       const { data, error } = await supabase
         .from('cocina_recetas')
         .select('id, nombre')
-        .order('nombre')
-      if (error) throw error
-      return data as { id: string; nombre: string }[]
+        .order('nombre');
+      if (error) throw error;
+      return data as { id: string; nombre: string }[];
     },
-  })
+  });
 
-  const { costos } = useCostosRecetas()
-  const { config, comision } = useConfigCosteo()
+  const { costos } = useCostosRecetas();
+  const { config, comision } = useConfigCosteo();
 
   const actualizar = useMutation({
-    mutationFn: async ({ id, campo, valor }: { id: string; campo: 'precio_venta' | 'costo_empaque'; valor: number | null }) => {
-      const { error } = await supabase.from('cocina_productos').update({ [campo]: valor }).eq('id', id)
-      if (error) throw error
+    mutationFn: async ({
+      id,
+      campo,
+      valor,
+    }: {
+      id: string;
+      campo: 'precio_venta' | 'costo_empaque';
+      valor: number | null;
+    }) => {
+      const { error } = await supabase
+        .from('cocina_productos')
+        .update({ [campo]: valor })
+        .eq('id', id);
+      if (error) throw error;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['cocina-productos'] }),
-  })
+  });
 
   // Cálculo de costos + márgenes reales
   const analisis = useMemo(() => {
-    const ivaPct = config?.iva_pct ?? 0
-    const map = new Map<string, {
-      costoReceta: number | null
-      costoBase: string | null
-      empaque: number
-      costoTotal: number | null
-      precioNeto: number | null
-      precioRecibido: number | null
-      margenPct: number | null
-      margenAbs: number | null
-    }>()
+    const ivaPct = config?.iva_pct ?? 0;
+    const map = new Map<
+      string,
+      {
+        costoReceta: number | null;
+        costoBase: string | null;
+        empaque: number;
+        costoTotal: number | null;
+        precioNeto: number | null;
+        precioRecibido: number | null;
+        margenPct: number | null;
+        margenAbs: number | null;
+      }
+    >();
     for (const p of productos ?? []) {
-      const empaque = p.costo_empaque ?? 0
-      let costoReceta: number | null = null
-      let costoBase: string | null = null
+      const empaque = p.costo_empaque ?? 0;
+      let costoReceta: number | null = null;
+      let costoBase: string | null = null;
       if (p.receta_id) {
-        const c = costos.get(p.receta_id)
+        const c = costos.get(p.receta_id);
         if (c) {
-          const u = (p.unidad ?? '').toLowerCase()
-          const esPeso = u === 'kg' || u === 'litros' || u === 'lt'
-          if (esPeso && c.costoPorKg != null) { costoReceta = c.costoPorKg; costoBase = 'kg' }
-          else if (!esPeso && c.costoPorPorcion != null) { costoReceta = c.costoPorPorcion; costoBase = 'porción' }
+          const u = (p.unidad ?? '').toLowerCase();
+          const esPeso = u === 'kg' || u === 'litros' || u === 'lt';
+          if (esPeso && c.costoPorKg != null) {
+            costoReceta = c.costoPorKg;
+            costoBase = 'kg';
+          } else if (!esPeso && c.costoPorPorcion != null) {
+            costoReceta = c.costoPorPorcion;
+            costoBase = 'porción';
+          }
         }
       }
-      const costoTotal = costoReceta != null ? costoReceta + empaque : null
-      const precioNeto = p.precio_venta != null && ivaPct >= 0 ? p.precio_venta / (1 + ivaPct) : null
-      const precioRecibido = precioNeto != null ? precioNeto * (1 - comision) : null
-      let margenPct: number | null = null
-      let margenAbs: number | null = null
+      const costoTotal = costoReceta != null ? costoReceta + empaque : null;
+      const precioNeto =
+        p.precio_venta != null && ivaPct >= 0 ? p.precio_venta / (1 + ivaPct) : null;
+      const precioRecibido = precioNeto != null ? precioNeto * (1 - comision) : null;
+      let margenPct: number | null = null;
+      let margenAbs: number | null = null;
       if (precioRecibido != null && costoTotal != null && precioRecibido > 0) {
-        margenAbs = precioRecibido - costoTotal
-        margenPct = (margenAbs / precioRecibido) * 100
+        margenAbs = precioRecibido - costoTotal;
+        margenPct = (margenAbs / precioRecibido) * 100;
       }
-      map.set(p.id, { costoReceta, costoBase, empaque, costoTotal, precioNeto, precioRecibido, margenPct, margenAbs })
+      map.set(p.id, {
+        costoReceta,
+        costoBase,
+        empaque,
+        costoTotal,
+        precioNeto,
+        precioRecibido,
+        margenPct,
+        margenAbs,
+      });
     }
-    return map
-  }, [productos, costos, config, comision])
+    return map;
+  }, [productos, costos, config, comision]);
 
   const filtrados = useMemo(() => {
-    let lista = productos ?? []
-    if (filtroLocal === 'vedia') lista = lista.filter((p) => p.local === 'vedia')
-    else if (filtroLocal === 'saavedra') lista = lista.filter((p) => p.local === 'saavedra')
+    let lista = productos ?? [];
+    if (filtroLocal === 'vedia') lista = lista.filter((p) => p.local === 'vedia');
+    else if (filtroLocal === 'saavedra') lista = lista.filter((p) => p.local === 'saavedra');
     if (busqueda.trim()) {
-      const q = busqueda.toLowerCase()
-      lista = lista.filter((p) => p.nombre.toLowerCase().includes(q) || p.codigo.toLowerCase().includes(q))
+      const q = busqueda.toLowerCase();
+      lista = lista.filter(
+        (p) => p.nombre.toLowerCase().includes(q) || p.codigo.toLowerCase().includes(q),
+      );
     }
-    return lista
-  }, [productos, filtroLocal, busqueda])
+    return lista;
+  }, [productos, filtroLocal, busqueda]);
 
   const kpis = useMemo(() => {
-    const all = productos ?? []
-    let conPrecio = 0, sinPrecio = 0, margenSum = 0, margenN = 0
-    let mejor: { nombre: string; pct: number } | null = null
-    let peor: { nombre: string; pct: number } | null = null
+    const all = productos ?? [];
+    let conPrecio = 0,
+      sinPrecio = 0,
+      margenSum = 0,
+      margenN = 0;
+    let mejor: { nombre: string; pct: number } | null = null;
+    let peor: { nombre: string; pct: number } | null = null;
     for (const p of all) {
-      const a = analisis.get(p.id)
+      const a = analisis.get(p.id);
       if (p.precio_venta && a?.margenPct != null) {
-        conPrecio++
-        margenSum += a.margenPct
-        margenN++
-        if (!mejor || a.margenPct > mejor.pct) mejor = { nombre: p.nombre, pct: a.margenPct }
-        if (!peor || a.margenPct < peor.pct) peor = { nombre: p.nombre, pct: a.margenPct }
-      } else if (!p.precio_venta) sinPrecio++
+        conPrecio++;
+        margenSum += a.margenPct;
+        margenN++;
+        if (!mejor || a.margenPct > mejor.pct) mejor = { nombre: p.nombre, pct: a.margenPct };
+        if (!peor || a.margenPct < peor.pct) peor = { nombre: p.nombre, pct: a.margenPct };
+      } else if (!p.precio_venta) sinPrecio++;
     }
     return {
-      conPrecio, sinPrecio,
+      conPrecio,
+      sinPrecio,
       margenProm: margenN > 0 ? margenSum / margenN : null,
-      mejor, peor,
-    }
-  }, [productos, analisis])
+      mejor,
+      peor,
+    };
+  }, [productos, analisis]);
 
   function guardar(id: string, campo: 'precio' | 'empaque', valor: string) {
-    const num = valor === '' ? null : parseFloat(valor.replace(',', '.'))
-    const final = num != null && !isNaN(num) ? num : null
-    const col = campo === 'precio' ? 'precio_venta' : 'costo_empaque'
-    actualizar.mutate({ id, campo: col, valor: final })
-    setEditando(null)
+    const num = valor === '' ? null : parseFloat(valor.replace(',', '.'));
+    const final = num != null && !isNaN(num) ? num : null;
+    const col = campo === 'precio' ? 'precio_venta' : 'costo_empaque';
+    actualizar.mutate({ id, campo: col, valor: final });
+    setEditando(null);
   }
 
   return (
@@ -282,13 +358,23 @@ function VistaProductos() {
       <CardParametros config={config} />
 
       {/* KPIs */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <KPICard label="Con precio" value={String(kpis.conPrecio)} color="green" />
-        <KPICard label="Sin precio" value={String(kpis.sinPrecio)} color={kpis.sinPrecio > 0 ? 'yellow' : 'neutral'} />
+        <KPICard
+          label="Sin precio"
+          value={String(kpis.sinPrecio)}
+          color={kpis.sinPrecio > 0 ? 'yellow' : 'neutral'}
+        />
         <KPICard
           label="Margen real promedio"
           value={kpis.margenProm != null ? `${kpis.margenProm.toFixed(1)}%` : '—'}
-          color={kpis.margenProm != null && kpis.margenProm > 50 ? 'green' : kpis.margenProm != null && kpis.margenProm > 30 ? 'yellow' : 'neutral'}
+          color={
+            kpis.margenProm != null && kpis.margenProm > 50
+              ? 'green'
+              : kpis.margenProm != null && kpis.margenProm > 30
+                ? 'yellow'
+                : 'neutral'
+          }
         />
         <KPICard
           label="Mejor margen"
@@ -298,17 +384,17 @@ function VistaProductos() {
       </div>
 
       {/* Toolbar */}
-      <div className="bg-white rounded-lg border border-surface-border p-3 flex flex-wrap gap-2 items-center">
+      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-surface-border bg-white p-3">
         <input
           placeholder="Buscar por nombre o código..."
           value={busqueda}
           onChange={(e) => setBusqueda(e.target.value)}
-          className="border border-gray-300 rounded px-3 py-1.5 text-sm w-56"
+          className="w-56 rounded border border-gray-300 px-3 py-1.5 text-sm"
         />
         <select
           value={filtroLocal}
           onChange={(e) => setFiltroLocal(e.target.value as typeof filtroLocal)}
-          className="border border-gray-300 rounded px-2 py-1.5 text-sm"
+          className="rounded border border-gray-300 px-2 py-1.5 text-sm"
         >
           <option value="todos">Todos los locales</option>
           <option value="vedia">Vedia</option>
@@ -320,10 +406,10 @@ function VistaProductos() {
       </div>
 
       {/* Tabla */}
-      <div className="bg-white rounded-lg border border-surface-border overflow-x-auto">
+      <div className="overflow-x-auto rounded-lg border border-surface-border bg-white">
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b border-surface-border bg-gray-50 text-left text-[11px] text-gray-500 uppercase">
+            <tr className="border-b border-surface-border bg-gray-50 text-left text-[11px] uppercase text-gray-500">
               <th className="px-3 py-2">Producto</th>
               <th className="px-3 py-2">Tipo</th>
               <th className="px-3 py-2">Local</th>
@@ -339,25 +425,29 @@ function VistaProductos() {
           </thead>
           <tbody>
             {filtrados.map((p) => {
-              const rec = recetas?.find((r) => r.id === p.receta_id) ?? null
-              const a = analisis.get(p.id)
-              const edPrecio = editando?.id === p.id && editando.campo === 'precio'
-              const edEmpaque = editando?.id === p.id && editando.campo === 'empaque'
+              const rec = recetas?.find((r) => r.id === p.receta_id) ?? null;
+              const a = analisis.get(p.id);
+              const edPrecio = editando?.id === p.id && editando.campo === 'precio';
+              const edEmpaque = editando?.id === p.id && editando.campo === 'empaque';
               return (
                 <tr key={p.id} className="border-b border-surface-border hover:bg-gray-50">
                   <td className="px-3 py-2">
                     <div className="font-medium">{p.nombre}</div>
-                    <div className="text-[10px] text-gray-400 font-mono">{p.codigo} · {p.unidad}</div>
+                    <div className="font-mono text-[10px] text-gray-400">
+                      {p.codigo} · {p.unidad}
+                    </div>
                   </td>
                   <td className="px-3 py-2">
-                    <span className="px-2 py-0.5 rounded-full text-[10px] bg-gray-100 text-gray-700">{TIPO_PRODUCTO_LABEL[p.tipo] ?? p.tipo}</span>
+                    <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] text-gray-700">
+                      {TIPO_PRODUCTO_LABEL[p.tipo] ?? p.tipo}
+                    </span>
                   </td>
-                  <td className="px-3 py-2 capitalize text-[11px] text-gray-500">{p.local}</td>
+                  <td className="px-3 py-2 text-[11px] capitalize text-gray-500">{p.local}</td>
                   <td className="px-3 py-2 text-[11px]">
                     {rec ? (
                       <span className="text-gray-700">{rec.nombre}</span>
                     ) : (
-                      <span className="text-gray-300 italic">—</span>
+                      <span className="italic text-gray-300">—</span>
                     )}
                   </td>
                   <td className="px-3 py-2 text-right tabular-nums">
@@ -366,7 +456,9 @@ function VistaProductos() {
                         <div className="text-gray-700">{formatARS(a.costoReceta)}</div>
                         <div className="text-[9px] text-gray-400">/{a.costoBase}</div>
                       </div>
-                    ) : <span className="text-gray-300">—</span>}
+                    ) : (
+                      <span className="text-gray-300">—</span>
+                    )}
                   </td>
                   <td className="px-3 py-2 text-right tabular-nums">
                     {edEmpaque ? (
@@ -375,25 +467,41 @@ function VistaProductos() {
                         type="number"
                         step="0.01"
                         value={editando.valor}
-                        onChange={(e) => setEditando({ id: p.id, campo: 'empaque', valor: e.target.value })}
+                        onChange={(e) =>
+                          setEditando({ id: p.id, campo: 'empaque', valor: e.target.value })
+                        }
                         onBlur={() => guardar(p.id, 'empaque', editando.valor)}
                         onKeyDown={(e) => {
-                          if (e.key === 'Enter') guardar(p.id, 'empaque', editando.valor)
-                          if (e.key === 'Escape') setEditando(null)
+                          if (e.key === 'Enter') guardar(p.id, 'empaque', editando.valor);
+                          if (e.key === 'Escape') setEditando(null);
                         }}
-                        className="w-20 border border-rodziny-400 rounded px-2 py-0.5 text-sm text-right"
+                        className="w-20 rounded border border-rodziny-400 px-2 py-0.5 text-right text-sm"
                       />
                     ) : (
                       <button
-                        onClick={() => setEditando({ id: p.id, campo: 'empaque', valor: a?.empaque != null ? String(a.empaque) : '' })}
-                        className="text-gray-600 hover:bg-rodziny-50 rounded px-2 py-0.5 min-w-[60px] text-right"
+                        onClick={() =>
+                          setEditando({
+                            id: p.id,
+                            campo: 'empaque',
+                            valor: a?.empaque != null ? String(a.empaque) : '',
+                          })
+                        }
+                        className="min-w-[60px] rounded px-2 py-0.5 text-right text-gray-600 hover:bg-rodziny-50"
                       >
-                        {a?.empaque ? formatARS(a.empaque) : <span className="text-gray-300 text-xs">—</span>}
+                        {a?.empaque ? (
+                          formatARS(a.empaque)
+                        ) : (
+                          <span className="text-xs text-gray-300">—</span>
+                        )}
                       </button>
                     )}
                   </td>
-                  <td className="px-3 py-2 text-right tabular-nums font-semibold text-gray-800">
-                    {a?.costoTotal != null ? formatARS(a.costoTotal) : <span className="text-gray-300">—</span>}
+                  <td className="px-3 py-2 text-right font-semibold tabular-nums text-gray-800">
+                    {a?.costoTotal != null ? (
+                      formatARS(a.costoTotal)
+                    ) : (
+                      <span className="text-gray-300">—</span>
+                    )}
                   </td>
                   <td className="px-3 py-2 text-right tabular-nums">
                     {edPrecio ? (
@@ -402,46 +510,73 @@ function VistaProductos() {
                         type="number"
                         step="0.01"
                         value={editando.valor}
-                        onChange={(e) => setEditando({ id: p.id, campo: 'precio', valor: e.target.value })}
+                        onChange={(e) =>
+                          setEditando({ id: p.id, campo: 'precio', valor: e.target.value })
+                        }
                         onBlur={() => guardar(p.id, 'precio', editando.valor)}
                         onKeyDown={(e) => {
-                          if (e.key === 'Enter') guardar(p.id, 'precio', editando.valor)
-                          if (e.key === 'Escape') setEditando(null)
+                          if (e.key === 'Enter') guardar(p.id, 'precio', editando.valor);
+                          if (e.key === 'Escape') setEditando(null);
                         }}
-                        className="w-24 border border-rodziny-400 rounded px-2 py-0.5 text-sm text-right"
+                        className="w-24 rounded border border-rodziny-400 px-2 py-0.5 text-right text-sm"
                       />
                     ) : (
                       <button
-                        onClick={() => setEditando({ id: p.id, campo: 'precio', valor: p.precio_venta != null ? String(p.precio_venta) : '' })}
-                        className="font-medium text-gray-800 hover:bg-rodziny-50 rounded px-2 py-0.5 min-w-[70px] text-right"
+                        onClick={() =>
+                          setEditando({
+                            id: p.id,
+                            campo: 'precio',
+                            valor: p.precio_venta != null ? String(p.precio_venta) : '',
+                          })
+                        }
+                        className="min-w-[70px] rounded px-2 py-0.5 text-right font-medium text-gray-800 hover:bg-rodziny-50"
                       >
-                        {p.precio_venta != null ? formatARS(p.precio_venta) : <span className="text-gray-300 italic">—</span>}
+                        {p.precio_venta != null ? (
+                          formatARS(p.precio_venta)
+                        ) : (
+                          <span className="italic text-gray-300">—</span>
+                        )}
                       </button>
                     )}
                   </td>
-                  <td className="px-3 py-2 text-right tabular-nums text-xs text-gray-500">
+                  <td className="px-3 py-2 text-right text-xs tabular-nums text-gray-500">
                     {a?.precioNeto != null ? formatARS(a.precioNeto) : '—'}
                   </td>
-                  <td className="px-3 py-2 text-right tabular-nums text-xs text-gray-500">
+                  <td className="px-3 py-2 text-right text-xs tabular-nums text-gray-500">
                     {a?.precioRecibido != null ? formatARS(a.precioRecibido) : '—'}
                   </td>
                   <td className="px-3 py-2 text-right tabular-nums">
                     {a?.margenPct != null ? (
                       <div>
-                        <div className={cn('font-semibold', a.margenPct > 50 ? 'text-green-600' : a.margenPct > 30 ? 'text-amber-600' : 'text-red-600')}>
+                        <div
+                          className={cn(
+                            'font-semibold',
+                            a.margenPct > 50
+                              ? 'text-green-600'
+                              : a.margenPct > 30
+                                ? 'text-amber-600'
+                                : 'text-red-600',
+                          )}
+                        >
                           {a.margenPct.toFixed(1)}%
                         </div>
-                        {a.margenAbs != null && <div className="text-[10px] text-gray-400">{formatARS(a.margenAbs)}</div>}
+                        {a.margenAbs != null && (
+                          <div className="text-[10px] text-gray-400">{formatARS(a.margenAbs)}</div>
+                        )}
                       </div>
                     ) : (
                       <span className="text-gray-300">—</span>
                     )}
                   </td>
                 </tr>
-              )
+              );
             })}
             {filtrados.length === 0 && (
-              <tr><td colSpan={11} className="px-4 py-8 text-center text-gray-400">No hay productos</td></tr>
+              <tr>
+                <td colSpan={11} className="px-4 py-8 text-center text-gray-400">
+                  No hay productos
+                </td>
+              </tr>
             )}
           </tbody>
         </table>
@@ -449,20 +584,23 @@ function VistaProductos() {
 
       {/* Advertencia */}
       {(kpis.sinPrecio > 0 || (kpis.peor && kpis.peor.pct < 20)) && (
-        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800 space-y-1">
+        <div className="space-y-1 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
           {kpis.sinPrecio > 0 && (
             <div>⚠ {kpis.sinPrecio} producto(s) sin precio de venta cargado.</div>
           )}
           {kpis.peor && kpis.peor.pct < 20 && (
-            <div>⚠ Menor margen real: <strong>{kpis.peor.nombre}</strong> ({kpis.peor.pct.toFixed(1)}%) — considerá revisar el precio.</div>
+            <div>
+              ⚠ Menor margen real: <strong>{kpis.peor.nombre}</strong> ({kpis.peor.pct.toFixed(1)}%)
+              — considerá revisar el precio.
+            </div>
           )}
         </div>
       )}
 
       {/* Leyenda de cálculo */}
-      <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-[11px] text-gray-600">
-        <div className="font-medium text-gray-700 mb-1">📐 Cómo se calcula el margen real:</div>
-        <div className="font-mono text-[10px] space-y-0.5">
+      <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-[11px] text-gray-600">
+        <div className="mb-1 font-medium text-gray-700">📐 Cómo se calcula el margen real:</div>
+        <div className="space-y-0.5 font-mono text-[10px]">
           <div>costo_total = costo_insumo (con margen seguridad) + empaque</div>
           <div>precio_neto = precio_venta ÷ (1 + IVA)</div>
           <div>recibido = precio_neto × (1 − comisión bancaria)</div>
@@ -470,42 +608,44 @@ function VistaProductos() {
         </div>
       </div>
     </div>
-  )
+  );
 }
 
 // ─── Vista Recetas: tabla con costos ─────────────────────────────────────────
 function VistaRecetas() {
-  const [busqueda, setBusqueda] = useState('')
-  const [filtroTipo, setFiltroTipo] = useState<string>('todos')
-  const [filtroLocal, setFiltroLocal] = useState<string>('todos')
+  const [busqueda, setBusqueda] = useState('');
+  const [filtroTipo, setFiltroTipo] = useState<string>('todos');
+  const [filtroLocal, setFiltroLocal] = useState<string>('todos');
 
   const { data: recetas } = useQuery({
     queryKey: ['cocina-recetas'],
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cocina_recetas')
-        .select('id, nombre, tipo, rendimiento_kg, rendimiento_unidad, rendimiento_porciones, activo, local')
+        .select(
+          'id, nombre, tipo, rendimiento_kg, rendimiento_unidad, rendimiento_porciones, activo, local',
+        )
         .eq('activo', true)
-        .order('nombre')
-      if (error) throw error
-      return data as Receta[]
+        .order('nombre');
+      if (error) throw error;
+      return data as Receta[];
     },
-  })
+  });
 
-  const { costos } = useCostosRecetas()
-  const { config } = useConfigCosteo()
+  const { costos } = useCostosRecetas();
+  const { config } = useConfigCosteo();
 
   const filtrados = useMemo(() => {
-    let lista = recetas ?? []
-    if (filtroTipo !== 'todos') lista = lista.filter((r) => r.tipo === filtroTipo)
-    if (filtroLocal === 'vedia') lista = lista.filter((r) => r.local === 'vedia')
-    else if (filtroLocal === 'saavedra') lista = lista.filter((r) => r.local === 'saavedra')
+    let lista = recetas ?? [];
+    if (filtroTipo !== 'todos') lista = lista.filter((r) => r.tipo === filtroTipo);
+    if (filtroLocal === 'vedia') lista = lista.filter((r) => r.local === 'vedia');
+    else if (filtroLocal === 'saavedra') lista = lista.filter((r) => r.local === 'saavedra');
     if (busqueda.trim()) {
-      const q = busqueda.toLowerCase()
-      lista = lista.filter((r) => r.nombre.toLowerCase().includes(q))
+      const q = busqueda.toLowerCase();
+      lista = lista.filter((r) => r.nombre.toLowerCase().includes(q));
     }
-    return lista
-  }, [recetas, filtroTipo, filtroLocal, busqueda])
+    return lista;
+  }, [recetas, filtroTipo, filtroLocal, busqueda]);
 
   return (
     <div className="space-y-4">
@@ -513,14 +653,18 @@ function VistaRecetas() {
       <CardParametros config={config} />
 
       {/* Toolbar */}
-      <div className="bg-white rounded-lg border border-surface-border p-3 flex flex-wrap gap-2 items-center">
+      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-surface-border bg-white p-3">
         <input
           placeholder="Buscar receta..."
           value={busqueda}
           onChange={(e) => setBusqueda(e.target.value)}
-          className="border border-gray-300 rounded px-3 py-1.5 text-sm w-56"
+          className="w-56 rounded border border-gray-300 px-3 py-1.5 text-sm"
         />
-        <select value={filtroTipo} onChange={(e) => setFiltroTipo(e.target.value)} className="border border-gray-300 rounded px-2 py-1.5 text-sm">
+        <select
+          value={filtroTipo}
+          onChange={(e) => setFiltroTipo(e.target.value)}
+          className="rounded border border-gray-300 px-2 py-1.5 text-sm"
+        >
           <option value="todos">Todos los tipos</option>
           <option value="subreceta">Subrecetas</option>
           <option value="relleno">Rellenos</option>
@@ -528,7 +672,11 @@ function VistaRecetas() {
           <option value="salsa">Salsas</option>
           <option value="otro">Otro</option>
         </select>
-        <select value={filtroLocal} onChange={(e) => setFiltroLocal(e.target.value)} className="border border-gray-300 rounded px-2 py-1.5 text-sm">
+        <select
+          value={filtroLocal}
+          onChange={(e) => setFiltroLocal(e.target.value)}
+          className="rounded border border-gray-300 px-2 py-1.5 text-sm"
+        >
           <option value="todos">Todos los locales</option>
           <option value="vedia">Vedia</option>
           <option value="saavedra">Saavedra</option>
@@ -536,10 +684,10 @@ function VistaRecetas() {
       </div>
 
       {/* Tabla */}
-      <div className="bg-white rounded-lg border border-surface-border overflow-x-auto">
+      <div className="overflow-x-auto rounded-lg border border-surface-border bg-white">
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b border-surface-border bg-gray-50 text-left text-xs text-gray-500 uppercase">
+            <tr className="border-b border-surface-border bg-gray-50 text-left text-xs uppercase text-gray-500">
               <th className="px-4 py-2">Receta</th>
               <th className="px-4 py-2">Tipo</th>
               <th className="px-4 py-2 text-right">Rinde</th>
@@ -551,49 +699,79 @@ function VistaRecetas() {
           </thead>
           <tbody>
             {filtrados.map((r) => {
-              const c = costos.get(r.id)
+              const c = costos.get(r.id);
               return (
                 <tr key={r.id} className="border-b border-surface-border hover:bg-gray-50">
                   <td className="px-4 py-2 font-medium text-gray-900">
                     <div className="flex items-center gap-1.5">
                       <span>{r.nombre}</span>
                       {c && c.advertencias.length > 0 && (
-                        <span title={c.advertencias.join('\n')} className="text-amber-500 text-xs">⚠</span>
+                        <span title={c.advertencias.join('\n')} className="text-xs text-amber-500">
+                          ⚠
+                        </span>
                       )}
                     </div>
                   </td>
                   <td className="px-4 py-2">
-                    <span className="px-2 py-0.5 rounded-full text-xs bg-gray-100 text-gray-700">{TIPO_RECETA_LABEL[r.tipo] ?? r.tipo}</span>
+                    <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-700">
+                      {TIPO_RECETA_LABEL[r.tipo] ?? r.tipo}
+                    </span>
                   </td>
-                  <td className="px-4 py-2 text-right text-xs text-gray-500 tabular-nums">
-                    {r.rendimiento_kg != null && (() => {
-                      const u = (r.rendimiento_unidad ?? 'kg') === 'l' ? 'L' : (r.rendimiento_unidad ?? 'kg') === 'unidad' ? 'unid.' : 'kg'
-                      return `${r.rendimiento_kg} ${u}`
-                    })()}
+                  <td className="px-4 py-2 text-right text-xs tabular-nums text-gray-500">
+                    {r.rendimiento_kg != null &&
+                      (() => {
+                        const u =
+                          (r.rendimiento_unidad ?? 'kg') === 'l'
+                            ? 'L'
+                            : (r.rendimiento_unidad ?? 'kg') === 'unidad'
+                              ? 'unid.'
+                              : 'kg';
+                        return `${r.rendimiento_kg} ${u}`;
+                      })()}
                     {r.rendimiento_kg != null && r.rendimiento_porciones != null && <br />}
                     {r.rendimiento_porciones != null && `${r.rendimiento_porciones} porc.`}
                   </td>
                   <td className="px-4 py-2 text-right tabular-nums text-gray-700">
-                    {c && c.costoBase > 0 ? formatARS(c.costoBase) : <span className="text-gray-300">—</span>}
+                    {c && c.costoBase > 0 ? (
+                      formatARS(c.costoBase)
+                    ) : (
+                      <span className="text-gray-300">—</span>
+                    )}
                   </td>
-                  <td className="px-4 py-2 text-right tabular-nums font-semibold text-gray-800">
-                    {c && c.costoConMargen > 0 ? formatARS(c.costoConMargen) : <span className="text-gray-300">—</span>}
+                  <td className="px-4 py-2 text-right font-semibold tabular-nums text-gray-800">
+                    {c && c.costoConMargen > 0 ? (
+                      formatARS(c.costoConMargen)
+                    ) : (
+                      <span className="text-gray-300">—</span>
+                    )}
                   </td>
                   <td className="px-4 py-2 text-right tabular-nums text-gray-700">
-                    {c?.costoPorKg != null ? formatARS(c.costoPorKg) : <span className="text-gray-300">—</span>}
+                    {c?.costoPorKg != null ? (
+                      formatARS(c.costoPorKg)
+                    ) : (
+                      <span className="text-gray-300">—</span>
+                    )}
                   </td>
                   <td className="px-4 py-2 text-right tabular-nums text-gray-700">
-                    {c?.costoPorPorcion != null ? formatARS(c.costoPorPorcion) : <span className="text-gray-300">—</span>}
+                    {c?.costoPorPorcion != null ? (
+                      formatARS(c.costoPorPorcion)
+                    ) : (
+                      <span className="text-gray-300">—</span>
+                    )}
                   </td>
                 </tr>
-              )
+              );
             })}
             {filtrados.length === 0 && (
-              <tr><td colSpan={7} className="px-4 py-8 text-center text-gray-400">No hay recetas</td></tr>
+              <tr>
+                <td colSpan={7} className="px-4 py-8 text-center text-gray-400">
+                  No hay recetas
+                </td>
+              </tr>
             )}
           </tbody>
         </table>
       </div>
     </div>
-  )
+  );
 }

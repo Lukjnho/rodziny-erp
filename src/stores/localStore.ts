@@ -1,11 +1,11 @@
-import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
+import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
 
-type Local = 'ambos' | 'vedia' | 'saavedra'
+type Local = 'ambos' | 'vedia' | 'saavedra';
 
 interface LocalStore {
-  local: Local
-  setLocal: (l: Local) => void
+  local: Local;
+  setLocal: (l: Local) => void;
 }
 
 export const useLocalStore = create<LocalStore>()(
@@ -14,6 +14,6 @@ export const useLocalStore = create<LocalStore>()(
       local: 'ambos',
       setLocal: (local) => set({ local }),
     }),
-    { name: 'rodziny-local' }
-  )
-)
+    { name: 'rodziny-local' },
+  ),
+);

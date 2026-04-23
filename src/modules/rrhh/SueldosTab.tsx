@@ -1,68 +1,65 @@
-import { useState, useMemo, useEffect, useRef, Fragment } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { supabase } from '@/lib/supabase'
-import { cn, formatARS } from '@/lib/utils'
-import type { Empleado } from './RRHHPage'
-import {
-  MESES,
-  diasDeQuincena,
-  ultimoDiaDelMes,
-  normalizarTexto,
-  type Quincena,
-} from './utils'
-import type { Liquidacion, Adelanto, Sancion, Descuento, MedioPagoSueldo } from './sueldos/tipos'
-import { periodoQuincena, periodoMes } from './sueldos/tipos'
-import { PanelAdelantos } from './sueldos/PanelAdelantos'
-import { PanelSanciones } from './sueldos/PanelSanciones'
-import { PanelDescuentos } from './sueldos/PanelDescuentos'
-import { PanelErroresCaja, type CierreCajaError } from './sueldos/PanelErroresCaja'
-import { SeccionImpuestos } from './sueldos/SeccionImpuestos'
+import { useState, useMemo, useEffect, useRef, Fragment } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { supabase } from '@/lib/supabase';
+import { cn, formatARS } from '@/lib/utils';
+import type { Empleado } from './RRHHPage';
+import { MESES, diasDeQuincena, ultimoDiaDelMes, normalizarTexto, type Quincena } from './utils';
+import type { Liquidacion, Adelanto, Sancion, Descuento, MedioPagoSueldo } from './sueldos/tipos';
+import { periodoQuincena, periodoMes } from './sueldos/tipos';
+import { PanelAdelantos } from './sueldos/PanelAdelantos';
+import { PanelSanciones } from './sueldos/PanelSanciones';
+import { PanelDescuentos } from './sueldos/PanelDescuentos';
+import { PanelErroresCaja, type CierreCajaError } from './sueldos/PanelErroresCaja';
+import { SeccionImpuestos } from './sueldos/SeccionImpuestos';
 
-type FiltroLocal = 'todos' | 'vedia' | 'saavedra' | 'ambos'
-type PanelEstado = { tipo: 'adelantos' | 'sanciones' | 'descuentos' | 'errores_caja'; empleadoId: string } | null
+type FiltroLocal = 'todos' | 'vedia' | 'saavedra' | 'ambos';
+type PanelEstado = {
+  tipo: 'adelantos' | 'sanciones' | 'descuentos' | 'errores_caja';
+  empleadoId: string;
+} | null;
 
 // Mapeo nombre Fudo (closedBy) → { nombre, apellido } del empleado en RRHH.
 // Cuando hay apellidos duplicados (ej: 2 Lis) se matchea por nombre + apellido.
 // Incluye cajeros de Vedia y Saavedra (nombres tal como aparecen en Fudo closedBy)
 const FUDO_CAJERO_EMPLEADO: Record<string, { nombre: string; apellido: string }> = {
   // ── Vedia ──
-  'marcos':           { nombre: 'marcos',   apellido: 'paredes' },
-  'brian':            { nombre: 'brian',     apellido: 'martinez' },
-  'maxi vera':        { nombre: 'maximiliano', apellido: 'vera' },
-  'martin':           { nombre: 'martin',   apellido: 'baez' },
-  'tomas':            { nombre: 'tomas',    apellido: 'lis' },
-  'lucas lis':        { nombre: 'lucas',    apellido: 'lis' },
-  'tamara':           { nombre: 'tamara',   apellido: 'arzamendia' },
+  marcos: { nombre: 'marcos', apellido: 'paredes' },
+  brian: { nombre: 'brian', apellido: 'martinez' },
+  'maxi vera': { nombre: 'maximiliano', apellido: 'vera' },
+  martin: { nombre: 'martin', apellido: 'baez' },
+  tomas: { nombre: 'tomas', apellido: 'lis' },
+  'lucas lis': { nombre: 'lucas', apellido: 'lis' },
+  tamara: { nombre: 'tamara', apellido: 'arzamendia' },
   // ── Saavedra ──
-  'karen':            { nombre: 'karen',    apellido: 'valenzuela' },
-  'ian':              { nombre: 'ian',      apellido: 'polaski' },
-  'lily':             { nombre: 'liliana',  apellido: 'gomez' },
-  'leandro':          { nombre: 'leandro',  apellido: 'acevedo' },
-  'leandro acevedo':  { nombre: 'leandro',  apellido: 'acevedo' },
-  'selene':           { nombre: 'selene',   apellido: 'jara' },
-  'nahiara':          { nombre: 'nahiara',  apellido: 'robledo' },
-  'emanuel':          { nombre: 'emanuel',  apellido: 'aguilar' },
-  'gerardo':          { nombre: 'gerardo',  apellido: 'herrera' },
-  'lucas mariano lis': { nombre: 'lucas',   apellido: 'lis' },
-  'tomás lis':        { nombre: 'tomas',    apellido: 'lis' },
-}
+  karen: { nombre: 'karen', apellido: 'valenzuela' },
+  ian: { nombre: 'ian', apellido: 'polaski' },
+  lily: { nombre: 'liliana', apellido: 'gomez' },
+  leandro: { nombre: 'leandro', apellido: 'acevedo' },
+  'leandro acevedo': { nombre: 'leandro', apellido: 'acevedo' },
+  selene: { nombre: 'selene', apellido: 'jara' },
+  nahiara: { nombre: 'nahiara', apellido: 'robledo' },
+  emanuel: { nombre: 'emanuel', apellido: 'aguilar' },
+  gerardo: { nombre: 'gerardo', apellido: 'herrera' },
+  'lucas mariano lis': { nombre: 'lucas', apellido: 'lis' },
+  'tomás lis': { nombre: 'tomas', apellido: 'lis' },
+};
 
 interface Cronograma {
-  id: string
-  empleado_id: string
-  fecha: string
-  hora_entrada: string | null
-  hora_salida: string | null
-  es_franco: boolean
-  publicado: boolean
+  id: string;
+  empleado_id: string;
+  fecha: string;
+  hora_entrada: string | null;
+  hora_salida: string | null;
+  es_franco: boolean;
+  publicado: boolean;
 }
 
 interface Fichada {
-  id: string
-  empleado_id: string
-  fecha: string
-  tipo: 'entrada' | 'salida'
-  minutos_diferencia: number | null
+  id: string;
+  empleado_id: string;
+  fecha: string;
+  tipo: 'entrada' | 'salida';
+  minutos_diferencia: number | null;
 }
 
 // ── Presentismo CCT ─────────────────────────────────────────────────────────
@@ -74,61 +71,67 @@ function calcularPresentismoAuto(
   cronograma: Cronograma[],
   hoyYmd: string,
 ): boolean {
-  let ausencias = 0
-  let tardanzasTotales = 0
-  let tardanzasGraves = 0
+  let ausencias = 0;
+  let tardanzasTotales = 0;
+  let tardanzasGraves = 0;
 
   for (const fecha of rangoFechas) {
-    if (fecha > hoyYmd) continue // ignorar días futuros
-    const crono = cronograma.find((c) => c.empleado_id === empleado.id && c.fecha === fecha)
-    if (!crono || !crono.publicado || crono.es_franco) continue
+    if (fecha > hoyYmd) continue; // ignorar días futuros
+    const crono = cronograma.find((c) => c.empleado_id === empleado.id && c.fecha === fecha);
+    if (!crono || !crono.publicado || crono.es_franco) continue;
 
-    const fs = fichadas.filter((f) => f.empleado_id === empleado.id && f.fecha === fecha)
+    const fs = fichadas.filter((f) => f.empleado_id === empleado.id && f.fecha === fecha);
     if (fs.length === 0) {
-      ausencias++
-      continue
+      ausencias++;
+      continue;
     }
 
-    const entrada = fs.find((f) => f.tipo === 'entrada')
+    const entrada = fs.find((f) => f.tipo === 'entrada');
     if (entrada && entrada.minutos_diferencia !== null && entrada.minutos_diferencia > 0) {
-      tardanzasTotales++
-      if (entrada.minutos_diferencia > 10) tardanzasGraves++
+      tardanzasTotales++;
+      if (entrada.minutos_diferencia > 10) tardanzasGraves++;
     }
   }
 
-  if (ausencias > 0) return false
-  if (tardanzasTotales === 0) return true
-  if (tardanzasTotales === 1 && tardanzasGraves === 0) return true
-  return false
+  if (ausencias > 0) return false;
+  if (tardanzasTotales === 0) return true;
+  if (tardanzasTotales === 1 && tardanzasGraves === 0) return true;
+  return false;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
 export function SueldosTab() {
-  const qc = useQueryClient()
-  const hoy = new Date()
-  const [year, setYear] = useState(hoy.getFullYear())
-  const [month, setMonth] = useState(hoy.getMonth())
-  const [quincena, setQuincena] = useState<Quincena>(hoy.getDate() <= 14 ? 'q1' : 'q2')
-  const [filtroLocal, setFiltroLocal] = useState<FiltroLocal>('todos')
-  const [busqueda, setBusqueda] = useState('')
-  const [panel, setPanel] = useState<PanelEstado>(null)
-  const [expandido, setExpandido] = useState<string | null>(null) // empleado_id expandido
+  const qc = useQueryClient();
+  const hoy = new Date();
+  const [year, setYear] = useState(hoy.getFullYear());
+  const [month, setMonth] = useState(hoy.getMonth());
+  const [quincena, setQuincena] = useState<Quincena>(hoy.getDate() <= 14 ? 'q1' : 'q2');
+  const [filtroLocal, setFiltroLocal] = useState<FiltroLocal>('todos');
+  const [busqueda, setBusqueda] = useState('');
+  const [panel, setPanel] = useState<PanelEstado>(null);
+  const [expandido, setExpandido] = useState<string | null>(null); // empleado_id expandido
 
-  const periodoActual = useMemo(() => periodoQuincena(year, month, quincena), [year, month, quincena])
-  const periodoQ1 = useMemo(() => periodoQuincena(year, month, 'q1'), [year, month])
-  const periodoQ2 = useMemo(() => periodoQuincena(year, month, 'q2'), [year, month])
-  const pMes = useMemo(() => periodoMes(year, month), [year, month])
+  const periodoActual = useMemo(
+    () => periodoQuincena(year, month, quincena),
+    [year, month, quincena],
+  );
+  const periodoQ1 = useMemo(() => periodoQuincena(year, month, 'q1'), [year, month]);
+  const periodoQ2 = useMemo(() => periodoQuincena(year, month, 'q2'), [year, month]);
+  const pMes = useMemo(() => periodoMes(year, month), [year, month]);
 
   // Rango del mes completo (para fetch de fichadas/cronograma)
-  const ultimoDia = ultimoDiaDelMes(year, month)
-  const fechaDesdeMes = `${pMes}-01`
-  const fechaHastaMes = `${pMes}-${String(ultimoDia).padStart(2, '0')}`
+  const ultimoDia = ultimoDiaDelMes(year, month);
+  const fechaDesdeMes = `${pMes}-01`;
+  const fechaHastaMes = `${pMes}-${String(ultimoDia).padStart(2, '0')}`;
 
-  const diasQuincenaActual = useMemo(() => diasDeQuincena(year, month, quincena), [year, month, quincena])
+  const diasQuincenaActual = useMemo(
+    () => diasDeQuincena(year, month, quincena),
+    [year, month, quincena],
+  );
   const diasMes = useMemo(
     () => [...diasDeQuincena(year, month, 'q1'), ...diasDeQuincena(year, month, 'q2')],
     [year, month],
-  )
+  );
 
   // ── Queries ──────────────────────────────────────────────────────────────
   const { data: empleados } = useQuery({
@@ -139,11 +142,11 @@ export function SueldosTab() {
         .select('*')
         .eq('activo', true)
         .neq('estado_laboral', 'baja')
-        .order('apellido')
-      if (error) throw error
-      return data as Empleado[]
+        .order('apellido');
+      if (error) throw error;
+      return data as Empleado[];
     },
-  })
+  });
 
   const { data: fichadas } = useQuery({
     queryKey: ['fichadas', fechaDesdeMes, fechaHastaMes],
@@ -152,11 +155,11 @@ export function SueldosTab() {
         .from('fichadas')
         .select('id, empleado_id, fecha, tipo, minutos_diferencia')
         .gte('fecha', fechaDesdeMes)
-        .lte('fecha', fechaHastaMes)
-      if (error) throw error
-      return data as Fichada[]
+        .lte('fecha', fechaHastaMes);
+      if (error) throw error;
+      return data as Fichada[];
     },
-  })
+  });
 
   const { data: cronograma } = useQuery({
     queryKey: ['cronograma', fechaDesdeMes, fechaHastaMes],
@@ -165,11 +168,11 @@ export function SueldosTab() {
         .from('cronograma')
         .select('*')
         .gte('fecha', fechaDesdeMes)
-        .lte('fecha', fechaHastaMes)
-      if (error) throw error
-      return data as Cronograma[]
+        .lte('fecha', fechaHastaMes);
+      if (error) throw error;
+      return data as Cronograma[];
     },
-  })
+  });
 
   const { data: liquidaciones } = useQuery({
     queryKey: ['liquidaciones', periodoQ1, periodoQ2],
@@ -177,11 +180,11 @@ export function SueldosTab() {
       const { data, error } = await supabase
         .from('liquidaciones_quincenales')
         .select('*')
-        .in('periodo', [periodoQ1, periodoQ2])
-      if (error) throw error
-      return data as Liquidacion[]
+        .in('periodo', [periodoQ1, periodoQ2]);
+      if (error) throw error;
+      return data as Liquidacion[];
     },
-  })
+  });
 
   const { data: adelantos } = useQuery({
     queryKey: ['adelantos', periodoQ1, periodoQ2],
@@ -189,11 +192,11 @@ export function SueldosTab() {
       const { data, error } = await supabase
         .from('adelantos')
         .select('*')
-        .in('periodo', [periodoQ1, periodoQ2])
-      if (error) throw error
-      return data as Adelanto[]
+        .in('periodo', [periodoQ1, periodoQ2]);
+      if (error) throw error;
+      return data as Adelanto[];
     },
-  })
+  });
 
   const { data: sanciones } = useQuery({
     queryKey: ['sanciones', periodoQ1, periodoQ2],
@@ -201,11 +204,11 @@ export function SueldosTab() {
       const { data, error } = await supabase
         .from('sanciones')
         .select('*')
-        .in('periodo', [periodoQ1, periodoQ2])
-      if (error) throw error
-      return data as Sancion[]
+        .in('periodo', [periodoQ1, periodoQ2]);
+      if (error) throw error;
+      return data as Sancion[];
     },
-  })
+  });
 
   const { data: descuentos } = useQuery({
     queryKey: ['descuentos', periodoQ1, periodoQ2],
@@ -213,11 +216,11 @@ export function SueldosTab() {
       const { data, error } = await supabase
         .from('descuentos')
         .select('*')
-        .in('periodo', [periodoQ1, periodoQ2])
-      if (error) throw error
-      return data as Descuento[]
+        .in('periodo', [periodoQ1, periodoQ2]);
+      if (error) throw error;
+      return data as Descuento[];
     },
-  })
+  });
 
   // Cierres de caja con diferencia (para trackear errores por cajero)
   const { data: cierresCaja } = useQuery({
@@ -225,94 +228,92 @@ export function SueldosTab() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cierres_caja')
-        .select('id, fecha, turno, caja, diferencia, monto_contado, monto_esperado, cajero_nombre, nota')
+        .select(
+          'id, fecha, turno, caja, diferencia, monto_contado, monto_esperado, cajero_nombre, nota',
+        )
         .gte('fecha', fechaDesdeMes)
         .lte('fecha', fechaHastaMes)
         .not('diferencia', 'eq', 0)
-        .not('cajero_nombre', 'is', null)
-      if (error) throw error
-      return data as CierreCajaError[]
+        .not('cajero_nombre', 'is', null);
+      if (error) throw error;
+      return data as CierreCajaError[];
     },
-  })
+  });
 
   // ── Mutaciones ────────────────────────────────────────────────────────────
   const upsertLiquidacion = useMutation({
     mutationFn: async (payload: {
-      empleado_id: string
-      periodo: string
-      patch: Partial<Liquidacion>
+      empleado_id: string;
+      periodo: string;
+      patch: Partial<Liquidacion>;
     }) => {
       const { error } = await supabase
         .from('liquidaciones_quincenales')
         .upsert(
           { empleado_id: payload.empleado_id, periodo: payload.periodo, ...payload.patch },
           { onConflict: 'empleado_id,periodo' },
-        )
-      if (error) throw error
+        );
+      if (error) throw error;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['liquidaciones'] }),
     onError: (e: Error) => window.alert(`Error: ${e.message}`),
-  })
+  });
 
   // Mutación específica para cambio de pago: actualiza liquidación + sincroniza pagos_sueldos
   const cambiarPago = useMutation({
     mutationFn: async (payload: {
-      empleado_id: string
-      periodo: string
-      medio: MedioPagoSueldo | null
-      monto: number
-      local: string
-      empleado_nombre: string
+      empleado_id: string;
+      periodo: string;
+      medio: MedioPagoSueldo | null;
+      monto: number;
+      local: string;
+      empleado_nombre: string;
     }) => {
       // 1) Actualizar liquidación
-      const { error: errLiq } = await supabase
-        .from('liquidaciones_quincenales')
-        .upsert(
-          {
-            empleado_id: payload.empleado_id,
-            periodo: payload.periodo,
-            pagado: payload.medio !== null,
-            medio_pago: payload.medio,
-            fecha_pago: payload.medio !== null ? hoyYmd : null,
-          },
-          { onConflict: 'empleado_id,periodo' },
-        )
-      if (errLiq) throw errLiq
+      const { error: errLiq } = await supabase.from('liquidaciones_quincenales').upsert(
+        {
+          empleado_id: payload.empleado_id,
+          periodo: payload.periodo,
+          pagado: payload.medio !== null,
+          medio_pago: payload.medio,
+          fecha_pago: payload.medio !== null ? hoyYmd : null,
+        },
+        { onConflict: 'empleado_id,periodo' },
+      );
+      if (errLiq) throw errLiq;
 
       // 2) Sincronizar pagos_sueldos
       if (payload.medio !== null) {
         // Upsert: crear o actualizar el pago
-        const { error: errPago } = await supabase
-          .from('pagos_sueldos')
-          .upsert(
-            {
-              empleado_id: payload.empleado_id,
-              periodo: payload.periodo,
-              fecha_pago: hoyYmd,
-              monto: payload.monto,
-              medio_pago: payload.medio,
-              local: payload.local,
-              empleado_nombre: payload.empleado_nombre,
-              updated_at: new Date().toISOString(),
-            },
-            { onConflict: 'empleado_id,periodo' },
-          )
-        if (errPago) throw errPago
+        const { error: errPago } = await supabase.from('pagos_sueldos').upsert(
+          {
+            empleado_id: payload.empleado_id,
+            periodo: payload.periodo,
+            fecha_pago: hoyYmd,
+            monto: payload.monto,
+            medio_pago: payload.medio,
+            local: payload.local,
+            empleado_nombre: payload.empleado_nombre,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: 'empleado_id,periodo' },
+        );
+        if (errPago) throw errPago;
       } else {
         // Desmarcar pago: eliminar de pagos_sueldos
         await supabase
           .from('pagos_sueldos')
           .delete()
           .eq('empleado_id', payload.empleado_id)
-          .eq('periodo', payload.periodo)
+          .eq('periodo', payload.periodo);
       }
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['liquidaciones'] })
-      qc.invalidateQueries({ queryKey: ['fc_pagos_sueldos'] })
+      qc.invalidateQueries({ queryKey: ['liquidaciones'] });
+      qc.invalidateQueries({ queryKey: ['fc_pagos_sueldos'] });
     },
     onError: (e: Error) => window.alert(`Error al registrar pago: ${e.message}`),
-  })
+  });
 
   const updateModalidad = useMutation({
     mutationFn: async (payload: { id: string; modalidad: 'quincenal' | 'mensual' }) => {
@@ -320,100 +321,106 @@ export function SueldosTab() {
         .from('empleados')
         .update({ modalidad_cobro: payload.modalidad })
         .eq('id', payload.id)
-        .select('id, modalidad_cobro')
-      if (error) throw error
+        .select('id, modalidad_cobro');
+      if (error) throw error;
       if (!data || data.length === 0) {
-        throw new Error('El update no afectó ninguna fila. Posible causa: RLS bloquea UPDATE en empleados, o la columna modalidad_cobro no existe todavía.')
+        throw new Error(
+          'El update no afectó ninguna fila. Posible causa: RLS bloquea UPDATE en empleados, o la columna modalidad_cobro no existe todavía.',
+        );
       }
       if (data[0].modalidad_cobro !== payload.modalidad) {
-        throw new Error(`El DB devolvió modalidad=${data[0].modalidad_cobro}, esperaba ${payload.modalidad}`)
+        throw new Error(
+          `El DB devolvió modalidad=${data[0].modalidad_cobro}, esperaba ${payload.modalidad}`,
+        );
       }
     },
     onMutate: async (payload) => {
-      await qc.cancelQueries({ queryKey: ['empleados'] })
-      const previo = qc.getQueryData<Empleado[]>(['empleados'])
+      await qc.cancelQueries({ queryKey: ['empleados'] });
+      const previo = qc.getQueryData<Empleado[]>(['empleados']);
       if (previo) {
         qc.setQueryData<Empleado[]>(
           ['empleados'],
-          previo.map((e) => (e.id === payload.id ? { ...e, modalidad_cobro: payload.modalidad } : e)),
-        )
+          previo.map((e) =>
+            e.id === payload.id ? { ...e, modalidad_cobro: payload.modalidad } : e,
+          ),
+        );
       }
-      return { previo }
+      return { previo };
     },
     onError: (e: Error, _v, ctx) => {
-      if (ctx?.previo) qc.setQueryData(['empleados'], ctx.previo)
-      window.alert(`Error al cambiar modalidad: ${e.message}`)
+      if (ctx?.previo) qc.setQueryData(['empleados'], ctx.previo);
+      window.alert(`Error al cambiar modalidad: ${e.message}`);
     },
     onSettled: () => qc.invalidateQueries({ queryKey: ['empleados'] }),
-  })
+  });
 
   // ── Empleados filtrados ──────────────────────────────────────────────────
   const empleadosFiltrados = useMemo(() => {
-    if (!empleados) return []
+    if (!empleados) return [];
     return empleados.filter((e) => {
-      if (filtroLocal === 'vedia' && e.local !== 'vedia' && e.local !== 'ambos') return false
-      if (filtroLocal === 'saavedra' && e.local !== 'saavedra' && e.local !== 'ambos') return false
-      if (filtroLocal === 'ambos' && e.local !== 'ambos') return false
+      if (filtroLocal === 'vedia' && e.local !== 'vedia' && e.local !== 'ambos') return false;
+      if (filtroLocal === 'saavedra' && e.local !== 'saavedra' && e.local !== 'ambos') return false;
+      if (filtroLocal === 'ambos' && e.local !== 'ambos') return false;
       if (busqueda.trim()) {
-        const q = normalizarTexto(busqueda)
-        const txt = normalizarTexto(`${e.nombre} ${e.apellido} ${e.dni ?? ''}`)
-        if (!txt.includes(q)) return false
+        const q = normalizarTexto(busqueda);
+        const txt = normalizarTexto(`${e.nombre} ${e.apellido} ${e.dni ?? ''}`);
+        if (!txt.includes(q)) return false;
       }
-      return true
-    })
-  }, [empleados, filtroLocal, busqueda])
+      return true;
+    });
+  }, [empleados, filtroLocal, busqueda]);
 
   // ── Filas calculadas ─────────────────────────────────────────────────────
   // Stats de asistencia por empleado (para resumen inline)
   type AsistenciaStats = {
-    diasLaborales: number
-    completos: number
-    ausencias: number
-    tardanzas: number
-    tardanzasGraves: number // >10 min
-    francos: number
-    detalleTardanzas: { fecha: string; minutos: number }[]
-    detalleFaltas: string[] // fechas de ausencia
-  }
+    diasLaborales: number;
+    completos: number;
+    ausencias: number;
+    tardanzas: number;
+    tardanzasGraves: number; // >10 min
+    francos: number;
+    detalleTardanzas: { fecha: string; minutos: number }[];
+    detalleFaltas: string[]; // fechas de ausencia
+  };
 
   type Fila = {
-    empleado: Empleado
-    modalidad: 'quincenal' | 'mensual'
-    esMensualEnQ1: boolean // mensual viendo Q1 → row atenuada, no cobra
-    base: number
-    liquidacion: Liquidacion | undefined
-    presentismoAuto: boolean
-    cobraPresentismo: boolean
-    presentismoOverride: boolean
-    deduccionPresentismo: number
-    adelantosEmp: Adelanto[]
-    sancionesEmp: Sancion[]
-    descuentosEmp: Descuento[]
-    erroresCajaEmp: CierreCajaError[]
-    adelantosMonto: number
-    sancionesMonto: number
-    descuentosMonto: number
-    total: number
-    pagado: boolean
-    medioPago: MedioPagoSueldo | null
-    asistencia: AsistenciaStats
-  }
+    empleado: Empleado;
+    modalidad: 'quincenal' | 'mensual';
+    esMensualEnQ1: boolean; // mensual viendo Q1 → row atenuada, no cobra
+    base: number;
+    liquidacion: Liquidacion | undefined;
+    presentismoAuto: boolean;
+    cobraPresentismo: boolean;
+    presentismoOverride: boolean;
+    deduccionPresentismo: number;
+    adelantosEmp: Adelanto[];
+    sancionesEmp: Sancion[];
+    descuentosEmp: Descuento[];
+    erroresCajaEmp: CierreCajaError[];
+    adelantosMonto: number;
+    sancionesMonto: number;
+    descuentosMonto: number;
+    total: number;
+    pagado: boolean;
+    medioPago: MedioPagoSueldo | null;
+    asistencia: AsistenciaStats;
+  };
 
-  const hoyYmd = `${hoy.getFullYear()}-${String(hoy.getMonth() + 1).padStart(2, '0')}-${String(hoy.getDate()).padStart(2, '0')}`
+  const hoyYmd = `${hoy.getFullYear()}-${String(hoy.getMonth() + 1).padStart(2, '0')}-${String(hoy.getDate()).padStart(2, '0')}`;
 
   const filas: Fila[] = useMemo(() => {
-    if (!empleadosFiltrados.length || !fichadas || !cronograma) return []
+    if (!empleadosFiltrados.length || !fichadas || !cronograma) return [];
 
     return empleadosFiltrados.map((emp) => {
-      const modalidad = (emp.modalidad_cobro ?? 'quincenal') as 'quincenal' | 'mensual'
-      const esMensualEnQ1 = modalidad === 'mensual' && quincena === 'q1'
-      const esMensualEnQ2 = modalidad === 'mensual' && quincena === 'q2'
+      const modalidad = (emp.modalidad_cobro ?? 'quincenal') as 'quincenal' | 'mensual';
+      const esMensualEnQ1 = modalidad === 'mensual' && quincena === 'q1';
+      const esMensualEnQ2 = modalidad === 'mensual' && quincena === 'q2';
 
       // Base
-      let base = 0
-      if (modalidad === 'quincenal') base = Number(emp.sueldo_neto) / 2
-      else if (esMensualEnQ2) base = Number(emp.sueldo_neto)
-      else base = 0
+      let base = 0;
+      if (modalidad === 'quincenal') base = Number(emp.sueldo_neto) / 2;
+      else if (esMensualEnQ2) base = Number(emp.sueldo_neto);
+      else base = 0;
 
       // Presentismo: rango según modalidad
       const rangoPres =
@@ -421,84 +428,99 @@ export function SueldosTab() {
           ? diasQuincenaActual
           : esMensualEnQ2
             ? diasMes
-            : diasQuincenaActual // Q1 mensual: no aplica pero calculamos igual para mostrar
-      const presentismoAuto = calcularPresentismoAuto(emp, rangoPres, fichadas, cronograma, hoyYmd)
+            : diasQuincenaActual; // Q1 mensual: no aplica pero calculamos igual para mostrar
+      const presentismoAuto = calcularPresentismoAuto(emp, rangoPres, fichadas, cronograma, hoyYmd);
 
       // Liquidación: siempre en la quincena actual
       const liquidacion = liquidaciones?.find(
         (l) => l.empleado_id === emp.id && l.periodo === periodoActual,
-      )
+      );
       const cobraPresentismo =
         liquidacion && liquidacion.cobra_presentismo !== null
           ? liquidacion.cobra_presentismo
-          : presentismoAuto
-      const presentismoOverride = !!liquidacion && liquidacion.cobra_presentismo !== presentismoAuto
+          : presentismoAuto;
+      const presentismoOverride =
+        !!liquidacion && liquidacion.cobra_presentismo !== presentismoAuto;
 
-      const deduccionPresentismo = !cobraPresentismo && base > 0 ? (base * 10) / 110 : 0
+      const deduccionPresentismo = !cobraPresentismo && base > 0 ? (base * 10) / 110 : 0;
 
       // Adelantos y sanciones
       // - quincenal: solo los del periodo actual
       // - mensual Q1: los del Q1 (se muestran pero no descuentan porque base=0)
       // - mensual Q2: los de todo el mes (Q1 + Q2)
-      const periodosRelevantes = esMensualEnQ2 ? [periodoQ1, periodoQ2] : [periodoActual]
+      const periodosRelevantes = esMensualEnQ2 ? [periodoQ1, periodoQ2] : [periodoActual];
       const adelantosEmp =
-        adelantos?.filter((a) => a.empleado_id === emp.id && periodosRelevantes.includes(a.periodo)) ?? []
+        adelantos?.filter(
+          (a) => a.empleado_id === emp.id && periodosRelevantes.includes(a.periodo),
+        ) ?? [];
       const sancionesEmp =
-        sanciones?.filter((s) => s.empleado_id === emp.id && periodosRelevantes.includes(s.periodo)) ?? []
+        sanciones?.filter(
+          (s) => s.empleado_id === emp.id && periodosRelevantes.includes(s.periodo),
+        ) ?? [];
       const descuentosEmp =
-        descuentos?.filter((d) => d.empleado_id === emp.id && periodosRelevantes.includes(d.periodo)) ?? []
-      const adelantosMonto = adelantosEmp.reduce((s, a) => s + Number(a.monto), 0)
-      const sancionesMonto = sancionesEmp.reduce((s, a) => s + Number(a.monto), 0)
-      const descuentosMonto = descuentosEmp.reduce((s, d) => s + Number(d.monto), 0)
+        descuentos?.filter(
+          (d) => d.empleado_id === emp.id && periodosRelevantes.includes(d.periodo),
+        ) ?? [];
+      const adelantosMonto = adelantosEmp.reduce((s, a) => s + Number(a.monto), 0);
+      const sancionesMonto = sancionesEmp.reduce((s, a) => s + Number(a.monto), 0);
+      const descuentosMonto = descuentosEmp.reduce((s, d) => s + Number(d.monto), 0);
 
       // Errores de caja: vincular por cajero_nombre → empleado (nombre + apellido)
       const erroresCajaEmp = (cierresCaja ?? []).filter((c) => {
-        if (!c.cajero_nombre) return false
-        const match = FUDO_CAJERO_EMPLEADO[c.cajero_nombre.toLowerCase()]
-        if (!match) return false
-        return emp.apellido.toLowerCase() === match.apellido
-          && emp.nombre.toLowerCase().startsWith(match.nombre)
-      })
+        if (!c.cajero_nombre) return false;
+        const match = FUDO_CAJERO_EMPLEADO[c.cajero_nombre.toLowerCase()];
+        if (!match) return false;
+        return (
+          emp.apellido.toLowerCase() === match.apellido &&
+          emp.nombre.toLowerCase().startsWith(match.nombre)
+        );
+      });
 
-      const total = base - deduccionPresentismo - adelantosMonto - sancionesMonto - descuentosMonto
+      const total = base - deduccionPresentismo - adelantosMonto - sancionesMonto - descuentosMonto;
 
       // ── Calcular stats de asistencia ──
-      const rangoPresentismo = modalidad === 'quincenal'
-        ? diasQuincenaActual
-        : esMensualEnQ2 ? diasMes : diasQuincenaActual
-      let statsAusencias = 0
-      let statsTardanzas = 0
-      let statsTardanzasGraves = 0
-      let statsCompletos = 0
-      let statsFrancos = 0
-      let statsLaborales = 0
-      const detalleTardanzas: { fecha: string; minutos: number }[] = []
-      const detalleFaltas: string[] = []
+      const rangoPresentismo =
+        modalidad === 'quincenal'
+          ? diasQuincenaActual
+          : esMensualEnQ2
+            ? diasMes
+            : diasQuincenaActual;
+      let statsAusencias = 0;
+      let statsTardanzas = 0;
+      let statsTardanzasGraves = 0;
+      let statsCompletos = 0;
+      let statsFrancos = 0;
+      let statsLaborales = 0;
+      const detalleTardanzas: { fecha: string; minutos: number }[] = [];
+      const detalleFaltas: string[] = [];
 
       for (const fecha of rangoPresentismo) {
-        if (fecha > hoyYmd) continue
-        const crono = cronograma.find((c) => c.empleado_id === emp.id && c.fecha === fecha)
-        if (!crono || !crono.publicado) continue
-        if (crono.es_franco) { statsFrancos++; continue }
-        statsLaborales++
+        if (fecha > hoyYmd) continue;
+        const crono = cronograma.find((c) => c.empleado_id === emp.id && c.fecha === fecha);
+        if (!crono || !crono.publicado) continue;
+        if (crono.es_franco) {
+          statsFrancos++;
+          continue;
+        }
+        statsLaborales++;
 
-        const fs = fichadas.filter((f) => f.empleado_id === emp.id && f.fecha === fecha)
+        const fs = fichadas.filter((f) => f.empleado_id === emp.id && f.fecha === fecha);
         if (fs.length === 0) {
-          statsAusencias++
-          detalleFaltas.push(fecha)
-          continue
+          statsAusencias++;
+          detalleFaltas.push(fecha);
+          continue;
         }
 
-        const entrada = fs.find((f) => f.tipo === 'entrada')
+        const entrada = fs.find((f) => f.tipo === 'entrada');
         if (entrada && entrada.minutos_diferencia !== null && entrada.minutos_diferencia > 0) {
-          statsTardanzas++
-          if (entrada.minutos_diferencia > 10) statsTardanzasGraves++
-          detalleTardanzas.push({ fecha, minutos: entrada.minutos_diferencia })
+          statsTardanzas++;
+          if (entrada.minutos_diferencia > 10) statsTardanzasGraves++;
+          detalleTardanzas.push({ fecha, minutos: entrada.minutos_diferencia });
         }
 
         // Si tiene entrada y salida → completo
-        const tieneSalida = fs.some((f) => f.tipo === 'salida')
-        if (entrada && tieneSalida) statsCompletos++
+        const tieneSalida = fs.some((f) => f.tipo === 'salida');
+        if (entrada && tieneSalida) statsCompletos++;
       }
 
       const asistencia: AsistenciaStats = {
@@ -510,7 +532,7 @@ export function SueldosTab() {
         francos: statsFrancos,
         detalleTardanzas,
         detalleFaltas,
-      }
+      };
 
       return {
         empleado: emp,
@@ -533,8 +555,8 @@ export function SueldosTab() {
         pagado: !!liquidacion?.pagado,
         medioPago: (liquidacion?.medio_pago ?? null) as MedioPagoSueldo | null,
         asistencia,
-      }
-    })
+      };
+    });
   }, [
     empleadosFiltrados,
     fichadas,
@@ -551,23 +573,23 @@ export function SueldosTab() {
     diasQuincenaActual,
     diasMes,
     hoyYmd,
-  ])
+  ]);
 
   // ── KPIs ─────────────────────────────────────────────────────────────────
   const kpis = useMemo(() => {
-    const filasAPagar = filas.filter((f) => !f.esMensualEnQ1)
-    const totalAPagar = filasAPagar.reduce((s, f) => s + f.total, 0)
-    const totalAdelantos = filas.reduce((s, f) => s + f.adelantosMonto, 0)
-    const totalSanciones = filas.reduce((s, f) => s + f.sancionesMonto, 0)
-    const totalDescuentos = filas.reduce((s, f) => s + f.descuentosMonto, 0)
-    const pagados = filasAPagar.filter((f) => f.pagado).length
-    const totalEmpleados = filasAPagar.length
+    const filasAPagar = filas.filter((f) => !f.esMensualEnQ1);
+    const totalAPagar = filasAPagar.reduce((s, f) => s + f.total, 0);
+    const totalAdelantos = filas.reduce((s, f) => s + f.adelantosMonto, 0);
+    const totalSanciones = filas.reduce((s, f) => s + f.sancionesMonto, 0);
+    const totalDescuentos = filas.reduce((s, f) => s + f.descuentosMonto, 0);
+    const pagados = filasAPagar.filter((f) => f.pagado).length;
+    const totalEmpleados = filasAPagar.length;
     const pagadoEfectivo = filasAPagar
       .filter((f) => f.pagado && f.medioPago === 'efectivo')
-      .reduce((s, f) => s + f.total, 0)
+      .reduce((s, f) => s + f.total, 0);
     const pagadoTransferencia = filasAPagar
       .filter((f) => f.pagado && f.medioPago === 'transferencia')
-      .reduce((s, f) => s + f.total, 0)
+      .reduce((s, f) => s + f.total, 0);
     return {
       totalAPagar,
       totalAdelantos,
@@ -577,87 +599,104 @@ export function SueldosTab() {
       totalEmpleados,
       pagadoEfectivo,
       pagadoTransferencia,
-    }
-  }, [filas])
+    };
+  }, [filas]);
 
   // ── Sync pagos_sueldos cuando cambia el monto de un empleado ya pagado ──
   // (ej: se togglea presentismo, se agrega adelanto, etc. después de marcar pagado)
-  const syncRef = useRef(false)
+  const syncRef = useRef(false);
   useEffect(() => {
-    if (!filas.length || syncRef.current) return
+    if (!filas.length || syncRef.current) return;
     const pagadosConCambio = filas.filter(
       (f) => f.pagado && f.medioPago && f.total > 0 && !f.esMensualEnQ1,
-    )
-    if (!pagadosConCambio.length) return
+    );
+    if (!pagadosConCambio.length) return;
 
     // Debounce: solo sincronizar una vez por ciclo de render
-    syncRef.current = true
+    syncRef.current = true;
     const timeout = setTimeout(async () => {
       for (const fila of pagadosConCambio) {
-        await supabase
-          .from('pagos_sueldos')
-          .upsert(
-            {
-              empleado_id: fila.empleado.id,
-              periodo: periodoActual,
-              fecha_pago: fila.liquidacion?.fecha_pago ?? hoyYmd,
-              monto: fila.total,
-              medio_pago: fila.medioPago!,
-              local: fila.empleado.local,
-              empleado_nombre: `${fila.empleado.apellido}, ${fila.empleado.nombre}`,
-              updated_at: new Date().toISOString(),
-            },
-            { onConflict: 'empleado_id,periodo' },
-          )
+        await supabase.from('pagos_sueldos').upsert(
+          {
+            empleado_id: fila.empleado.id,
+            periodo: periodoActual,
+            fecha_pago: fila.liquidacion?.fecha_pago ?? hoyYmd,
+            monto: fila.total,
+            medio_pago: fila.medioPago!,
+            local: fila.empleado.local,
+            empleado_nombre: `${fila.empleado.apellido}, ${fila.empleado.nombre}`,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: 'empleado_id,periodo' },
+        );
       }
-      syncRef.current = false
-    }, 2000) // esperar 2s para no bombardear en cada re-render
-    return () => { clearTimeout(timeout); syncRef.current = false }
-  }, [filas, periodoActual, hoyYmd])
+      syncRef.current = false;
+    }, 2000); // esperar 2s para no bombardear en cada re-render
+    return () => {
+      clearTimeout(timeout);
+      syncRef.current = false;
+    };
+  }, [filas, periodoActual, hoyYmd]);
 
   // ── Navegación ───────────────────────────────────────────────────────────
   function navegarQuincena(delta: number) {
     if (delta > 0) {
-      if (quincena === 'q1') setQuincena('q2')
+      if (quincena === 'q1') setQuincena('q2');
       else {
-        setQuincena('q1')
-        if (month === 11) { setMonth(0); setYear(year + 1) } else setMonth(month + 1)
+        setQuincena('q1');
+        if (month === 11) {
+          setMonth(0);
+          setYear(year + 1);
+        } else setMonth(month + 1);
       }
     } else {
-      if (quincena === 'q2') setQuincena('q1')
+      if (quincena === 'q2') setQuincena('q1');
       else {
-        setQuincena('q2')
-        if (month === 0) { setMonth(11); setYear(year - 1) } else setMonth(month - 1)
+        setQuincena('q2');
+        if (month === 0) {
+          setMonth(11);
+          setYear(year - 1);
+        } else setMonth(month - 1);
       }
     }
   }
 
   // ── Panel abierto: data ──────────────────────────────────────────────────
   const panelData = useMemo(() => {
-    if (!panel) return null
-    const fila = filas.find((f) => f.empleado.id === panel.empleadoId)
-    if (!fila) return null
+    if (!panel) return null;
+    const fila = filas.find((f) => f.empleado.id === panel.empleadoId);
+    if (!fila) return null;
     // Para mensuales en Q2 el panel muestra todo el mes → usa periodoMes como label,
     // pero al cargar un adelanto lo asigna al periodo ACTUAL (quincena visible).
-    return { fila, periodo: periodoActual }
-  }, [panel, filas, periodoActual])
+    return { fila, periodo: periodoActual };
+  }, [panel, filas, periodoActual]);
 
   return (
     <div className="space-y-4">
       {/* ── Toolbar ───────────────────────────────────────────────────────── */}
-      <div className="bg-white rounded-lg border border-gray-200 p-3 flex flex-wrap items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3 rounded-lg border border-gray-200 bg-white p-3">
         <div className="flex items-center gap-1">
-          <button onClick={() => navegarQuincena(-1)} className="px-2 py-1 text-gray-500 hover:bg-gray-100 rounded">‹</button>
-          <span className="text-sm font-medium text-gray-900 min-w-[180px] text-center">
+          <button
+            onClick={() => navegarQuincena(-1)}
+            className="rounded px-2 py-1 text-gray-500 hover:bg-gray-100"
+          >
+            ‹
+          </button>
+          <span className="min-w-[180px] text-center text-sm font-medium text-gray-900">
             {MESES[month]} {year} · {quincena === 'q1' ? 'Q1 (1-14)' : `Q2 (15-${ultimoDia})`}
           </span>
-          <button onClick={() => navegarQuincena(1)} className="px-2 py-1 text-gray-500 hover:bg-gray-100 rounded">›</button>
+          <button
+            onClick={() => navegarQuincena(1)}
+            className="rounded px-2 py-1 text-gray-500 hover:bg-gray-100"
+          >
+            ›
+          </button>
         </div>
 
         <select
           value={filtroLocal}
           onChange={(e) => setFiltroLocal(e.target.value as FiltroLocal)}
-          className="border border-gray-300 rounded px-2 py-1 text-xs"
+          className="rounded border border-gray-300 px-2 py-1 text-xs"
         >
           <option value="todos">Todos los locales</option>
           <option value="vedia">Vedia</option>
@@ -670,14 +709,18 @@ export function SueldosTab() {
           placeholder="Buscar empleado..."
           value={busqueda}
           onChange={(e) => setBusqueda(e.target.value)}
-          className="border border-gray-300 rounded px-2 py-1 text-xs flex-1 min-w-[180px]"
+          className="min-w-[180px] flex-1 rounded border border-gray-300 px-2 py-1 text-xs"
         />
       </div>
 
       {/* ── KPIs ──────────────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-7">
         <KpiMini label="Total a pagar" value={formatARS(kpis.totalAPagar)} color="green" />
-        <KpiMini label="Pagados" value={`${kpis.pagados} / ${kpis.totalEmpleados}`} color={kpis.pagados === kpis.totalEmpleados ? 'green' : 'amber'} />
+        <KpiMini
+          label="Pagados"
+          value={`${kpis.pagados} / ${kpis.totalEmpleados}`}
+          color={kpis.pagados === kpis.totalEmpleados ? 'green' : 'amber'}
+        />
         <KpiMini label="Efectivo" value={formatARS(kpis.pagadoEfectivo)} color="green" />
         <KpiMini label="Transferencia" value={formatARS(kpis.pagadoTransferencia)} color="blue" />
         <KpiMini label="Adelantos" value={formatARS(kpis.totalAdelantos)} color="gray" />
@@ -686,21 +729,31 @@ export function SueldosTab() {
       </div>
 
       {/* ── Tabla de liquidación ──────────────────────────────────────────── */}
-      <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+      <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead className="bg-gray-50 border-b border-gray-200">
-              <tr className="text-[10px] uppercase text-gray-500 tracking-wide">
-                <th className="text-left px-3 py-2 font-semibold">Empleado</th>
-                <th className="text-left px-2 py-2 font-semibold">Local</th>
-                <th className="text-right px-2 py-2 font-semibold">Base</th>
-                <th className="text-center px-2 py-2 font-semibold">Presentismo</th>
-                <th className="text-right px-2 py-2 font-semibold">Adelantos</th>
-                <th className="text-right px-2 py-2 font-semibold">Sanciones</th>
-                <th className="text-center px-2 py-2 font-semibold" title="Errores de caja (faltantes/sobrantes) del mes">Caja</th>
-                <th className="text-right px-2 py-2 font-semibold" title="Días sin goce, licencias no remuneradas, etc.">Descuentos</th>
-                <th className="text-right px-2 py-2 font-semibold">Total</th>
-                <th className="text-center px-2 py-2 font-semibold">Pago</th>
+            <thead className="border-b border-gray-200 bg-gray-50">
+              <tr className="text-[10px] uppercase tracking-wide text-gray-500">
+                <th className="px-3 py-2 text-left font-semibold">Empleado</th>
+                <th className="px-2 py-2 text-left font-semibold">Local</th>
+                <th className="px-2 py-2 text-right font-semibold">Base</th>
+                <th className="px-2 py-2 text-center font-semibold">Presentismo</th>
+                <th className="px-2 py-2 text-right font-semibold">Adelantos</th>
+                <th className="px-2 py-2 text-right font-semibold">Sanciones</th>
+                <th
+                  className="px-2 py-2 text-center font-semibold"
+                  title="Errores de caja (faltantes/sobrantes) del mes"
+                >
+                  Caja
+                </th>
+                <th
+                  className="px-2 py-2 text-right font-semibold"
+                  title="Días sin goce, licencias no remuneradas, etc."
+                >
+                  Descuentos
+                </th>
+                <th className="px-2 py-2 text-right font-semibold">Total</th>
+                <th className="px-2 py-2 text-center font-semibold">Pago</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
@@ -716,7 +769,9 @@ export function SueldosTab() {
                   <FilaEmpleado
                     fila={fila}
                     expandido={expandido === fila.empleado.id}
-                    onToggleExpand={() => setExpandido(expandido === fila.empleado.id ? null : fila.empleado.id)}
+                    onToggleExpand={() =>
+                      setExpandido(expandido === fila.empleado.id ? null : fila.empleado.id)
+                    }
                     onTogglePresentismo={(nuevo) =>
                       upsertLiquidacion.mutate({
                         empleado_id: fila.empleado.id,
@@ -797,7 +852,7 @@ export function SueldosTab() {
         />
       )}
     </div>
-  )
+  );
 }
 
 // ─── Fila empleado ──────────────────────────────────────────────────────────
@@ -814,45 +869,66 @@ function FilaEmpleado({
   onAbrirErroresCaja,
 }: {
   fila: {
-    empleado: Empleado
-    modalidad: 'quincenal' | 'mensual'
-    esMensualEnQ1: boolean
-    base: number
-    presentismoAuto: boolean
-    cobraPresentismo: boolean
-    presentismoOverride: boolean
-    deduccionPresentismo: number
-    adelantosMonto: number
-    sancionesMonto: number
-    descuentosMonto: number
-    erroresCajaEmp: CierreCajaError[]
-    total: number
-    pagado: boolean
-    medioPago: MedioPagoSueldo | null
+    empleado: Empleado;
+    modalidad: 'quincenal' | 'mensual';
+    esMensualEnQ1: boolean;
+    base: number;
+    presentismoAuto: boolean;
+    cobraPresentismo: boolean;
+    presentismoOverride: boolean;
+    deduccionPresentismo: number;
+    adelantosMonto: number;
+    sancionesMonto: number;
+    descuentosMonto: number;
+    erroresCajaEmp: CierreCajaError[];
+    total: number;
+    pagado: boolean;
+    medioPago: MedioPagoSueldo | null;
     asistencia: {
-      diasLaborales: number
-      completos: number
-      ausencias: number
-      tardanzas: number
-      tardanzasGraves: number
-      francos: number
-    }
-  }
-  expandido: boolean
-  onToggleExpand: () => void
-  onTogglePresentismo: (v: boolean) => void
-  onCambiarPago: (v: MedioPagoSueldo | null) => void
-  onCambiarModalidad: (v: 'quincenal' | 'mensual') => void
-  onAbrirAdelantos: () => void
-  onAbrirSanciones: () => void
-  onAbrirDescuentos: () => void
-  onAbrirErroresCaja: () => void
+      diasLaborales: number;
+      completos: number;
+      ausencias: number;
+      tardanzas: number;
+      tardanzasGraves: number;
+      francos: number;
+    };
+  };
+  expandido: boolean;
+  onToggleExpand: () => void;
+  onTogglePresentismo: (v: boolean) => void;
+  onCambiarPago: (v: MedioPagoSueldo | null) => void;
+  onCambiarModalidad: (v: 'quincenal' | 'mensual') => void;
+  onAbrirAdelantos: () => void;
+  onAbrirSanciones: () => void;
+  onAbrirDescuentos: () => void;
+  onAbrirErroresCaja: () => void;
 }) {
-  const { empleado, modalidad, esMensualEnQ1, base, cobraPresentismo, presentismoOverride, deduccionPresentismo, adelantosMonto, sancionesMonto, descuentosMonto, erroresCajaEmp, total, medioPago, asistencia } = fila
-  const tieneProblemas = asistencia.ausencias > 0 || asistencia.tardanzasGraves > 0
+  const {
+    empleado,
+    modalidad,
+    esMensualEnQ1,
+    base,
+    cobraPresentismo,
+    presentismoOverride,
+    deduccionPresentismo,
+    adelantosMonto,
+    sancionesMonto,
+    descuentosMonto,
+    erroresCajaEmp,
+    total,
+    medioPago,
+    asistencia,
+  } = fila;
+  const tieneProblemas = asistencia.ausencias > 0 || asistencia.tardanzasGraves > 0;
 
   return (
-    <tr className={cn('hover:bg-gray-50', esMensualEnQ1 && 'bg-gray-50/60 text-gray-500', expandido && 'bg-blue-50/30')}>
+    <tr
+      className={cn(
+        'hover:bg-gray-50',
+        esMensualEnQ1 && 'bg-gray-50/60 text-gray-500',
+        expandido && 'bg-blue-50/30',
+      )}
+    >
       <td className="px-3 py-2">
         <div className="flex items-center gap-2">
           <div className="min-w-0">
@@ -860,44 +936,54 @@ function FilaEmpleado({
               <button
                 onClick={onToggleExpand}
                 className={cn(
-                  'text-[10px] w-4 h-4 flex items-center justify-center rounded transition-colors',
-                  expandido ? 'bg-rodziny-100 text-rodziny-700' : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100',
+                  'flex h-4 w-4 items-center justify-center rounded text-[10px] transition-colors',
+                  expandido
+                    ? 'bg-rodziny-100 text-rodziny-700'
+                    : 'text-gray-400 hover:bg-gray-100 hover:text-gray-600',
                 )}
                 title="Ver resumen de asistencia"
               >
                 {expandido ? '▾' : '▸'}
               </button>
-              <span className="font-medium text-gray-900 truncate">
+              <span className="truncate font-medium text-gray-900">
                 {empleado.apellido}, {empleado.nombre}
               </span>
               {tieneProblemas && !esMensualEnQ1 && (
                 <span className="flex items-center gap-0.5">
                   {asistencia.ausencias > 0 && (
-                    <span className="text-[9px] bg-red-100 text-red-700 px-1 py-0.5 rounded-full font-medium" title={`${asistencia.ausencias} falta(s)`}>
+                    <span
+                      className="rounded-full bg-red-100 px-1 py-0.5 text-[9px] font-medium text-red-700"
+                      title={`${asistencia.ausencias} falta(s)`}
+                    >
                       {asistencia.ausencias}F
                     </span>
                   )}
                   {asistencia.tardanzasGraves > 0 && (
-                    <span className="text-[9px] bg-amber-100 text-amber-700 px-1 py-0.5 rounded-full font-medium" title={`${asistencia.tardanzasGraves} tardanza(s) grave(s)`}>
+                    <span
+                      className="rounded-full bg-amber-100 px-1 py-0.5 text-[9px] font-medium text-amber-700"
+                      title={`${asistencia.tardanzasGraves} tardanza(s) grave(s)`}
+                    >
                       {asistencia.tardanzasGraves}T
                     </span>
                   )}
                 </span>
               )}
             </div>
-            <div className="flex items-center gap-2 text-[10px] text-gray-500 mt-0.5 ml-5">
+            <div className="ml-5 mt-0.5 flex items-center gap-2 text-[10px] text-gray-500">
               <span>{empleado.puesto}</span>
               <select
                 value={modalidad}
                 onChange={(e) => onCambiarModalidad(e.target.value as 'quincenal' | 'mensual')}
-                className="text-[10px] border border-gray-300 bg-white text-rodziny-700 hover:border-rodziny-500 rounded px-1 py-0.5 cursor-pointer"
+                className="cursor-pointer rounded border border-gray-300 bg-white px-1 py-0.5 text-[10px] text-rodziny-700 hover:border-rodziny-500"
                 title="Modalidad de cobro"
               >
                 <option value="quincenal">Quincenal</option>
                 <option value="mensual">Mensual</option>
               </select>
               {esMensualEnQ1 && (
-                <span className="text-[9px] bg-gray-200 text-gray-600 px-1.5 py-0.5 rounded-full">Cobra en Q2</span>
+                <span className="rounded-full bg-gray-200 px-1.5 py-0.5 text-[9px] text-gray-600">
+                  Cobra en Q2
+                </span>
               )}
             </div>
           </div>
@@ -909,14 +995,17 @@ function FilaEmpleado({
       </td>
       <td className="px-2 py-2 text-center">
         {esMensualEnQ1 ? (
-          <span className="text-gray-300 text-xs">—</span>
+          <span className="text-xs text-gray-300">—</span>
         ) : (
-          <label className="inline-flex items-center gap-1 cursor-pointer" title={presentismoOverride ? 'Modificado manualmente' : 'Automático según asistencia'}>
+          <label
+            className="inline-flex cursor-pointer items-center gap-1"
+            title={presentismoOverride ? 'Modificado manualmente' : 'Automático según asistencia'}
+          >
             <input
               type="checkbox"
               checked={cobraPresentismo}
               onChange={(e) => onTogglePresentismo(e.target.checked)}
-              className="w-4 h-4"
+              className="h-4 w-4"
             />
             {presentismoOverride && <span className="text-[10px] text-rodziny-700">🖊</span>}
             {!cobraPresentismo && (
@@ -929,8 +1018,8 @@ function FilaEmpleado({
         <button
           onClick={onAbrirAdelantos}
           className={cn(
-            'tabular-nums hover:underline text-xs',
-            adelantosMonto > 0 ? 'text-amber-700 font-medium' : 'text-gray-400',
+            'text-xs tabular-nums hover:underline',
+            adelantosMonto > 0 ? 'font-medium text-amber-700' : 'text-gray-400',
           )}
         >
           {adelantosMonto > 0 ? formatARS(adelantosMonto) : '+ agregar'}
@@ -940,8 +1029,8 @@ function FilaEmpleado({
         <button
           onClick={onAbrirSanciones}
           className={cn(
-            'tabular-nums hover:underline text-xs',
-            sancionesMonto > 0 ? 'text-red-700 font-medium' : 'text-gray-400',
+            'text-xs tabular-nums hover:underline',
+            sancionesMonto > 0 ? 'font-medium text-red-700' : 'text-gray-400',
           )}
         >
           {sancionesMonto > 0 ? formatARS(sancionesMonto) : '+ agregar'}
@@ -951,15 +1040,17 @@ function FilaEmpleado({
         {erroresCajaEmp.length > 0 ? (
           <button
             onClick={onAbrirErroresCaja}
-            className="hover:underline text-xs"
+            className="text-xs hover:underline"
             title={`${erroresCajaEmp.length} cierre(s) con diferencia`}
           >
-            <span className={cn(
-              'inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium',
-              erroresCajaEmp.some((e) => e.diferencia < 0)
-                ? 'bg-red-50 text-red-700'
-                : 'bg-blue-50 text-blue-700',
-            )}>
+            <span
+              className={cn(
+                'inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium',
+                erroresCajaEmp.some((e) => e.diferencia < 0)
+                  ? 'bg-red-50 text-red-700'
+                  : 'bg-blue-50 text-blue-700',
+              )}
+            >
               {erroresCajaEmp.length} error{erroresCajaEmp.length > 1 ? 'es' : ''}
             </span>
           </button>
@@ -971,32 +1062,33 @@ function FilaEmpleado({
         <button
           onClick={onAbrirDescuentos}
           className={cn(
-            'tabular-nums hover:underline text-xs',
-            descuentosMonto > 0 ? 'text-orange-700 font-medium' : 'text-gray-400',
+            'text-xs tabular-nums hover:underline',
+            descuentosMonto > 0 ? 'font-medium text-orange-700' : 'text-gray-400',
           )}
           title="Días sin goce, licencias no remuneradas, etc."
         >
           {descuentosMonto > 0 ? formatARS(descuentosMonto) : '+ agregar'}
         </button>
       </td>
-      <td className="px-2 py-2 text-right tabular-nums font-semibold text-gray-900">
-        {esMensualEnQ1 ? <span className="text-gray-400 font-normal">—</span> : formatARS(total)}
+      <td className="px-2 py-2 text-right font-semibold tabular-nums text-gray-900">
+        {esMensualEnQ1 ? <span className="font-normal text-gray-400">—</span> : formatARS(total)}
       </td>
       <td className="px-2 py-2 text-center">
         {esMensualEnQ1 ? (
-          <span className="text-gray-300 text-xs">—</span>
+          <span className="text-xs text-gray-300">—</span>
         ) : (
           <select
             value={medioPago ?? ''}
             onChange={(e) => {
-              const v = e.target.value
-              onCambiarPago(v === '' ? null : (v as MedioPagoSueldo))
+              const v = e.target.value;
+              onCambiarPago(v === '' ? null : (v as MedioPagoSueldo));
             }}
             className={cn(
-              'text-[11px] border rounded px-1.5 py-0.5 cursor-pointer',
-              medioPago === 'efectivo' && 'bg-green-50 border-green-300 text-green-800 font-medium',
-              medioPago === 'transferencia' && 'bg-blue-50 border-blue-300 text-blue-800 font-medium',
-              !medioPago && 'bg-white border-gray-300 text-gray-500',
+              'cursor-pointer rounded border px-1.5 py-0.5 text-[11px]',
+              medioPago === 'efectivo' && 'border-green-300 bg-green-50 font-medium text-green-800',
+              medioPago === 'transferencia' &&
+                'border-blue-300 bg-blue-50 font-medium text-blue-800',
+              !medioPago && 'border-gray-300 bg-white text-gray-500',
             )}
             title={medioPago ? `Pagado por ${medioPago}` : 'Sin pagar'}
           >
@@ -1007,25 +1099,28 @@ function FilaEmpleado({
         )}
       </td>
     </tr>
-  )
+  );
 }
 
 // ─── Fila expandible de asistencia ──────────────────────────────────────────
-function FilaAsistencia({ asistencia }: {
+function FilaAsistencia({
+  asistencia,
+}: {
   asistencia: {
-    diasLaborales: number
-    completos: number
-    ausencias: number
-    tardanzas: number
-    tardanzasGraves: number
-    francos: number
-    detalleTardanzas: { fecha: string; minutos: number }[]
-    detalleFaltas: string[]
-  }
+    diasLaborales: number;
+    completos: number;
+    ausencias: number;
+    tardanzas: number;
+    tardanzasGraves: number;
+    francos: number;
+    detalleTardanzas: { fecha: string; minutos: number }[];
+    detalleFaltas: string[];
+  };
 }) {
-  const pctAsistencia = asistencia.diasLaborales > 0
-    ? Math.round((asistencia.completos / asistencia.diasLaborales) * 100)
-    : 100
+  const pctAsistencia =
+    asistencia.diasLaborales > 0
+      ? Math.round((asistencia.completos / asistencia.diasLaborales) * 100)
+      : 100;
 
   return (
     <tr className="bg-blue-50/40">
@@ -1034,16 +1129,22 @@ function FilaAsistencia({ asistencia }: {
           {/* Resumen general */}
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-1.5">
-              <div className={cn(
-                'w-2 h-2 rounded-full',
-                pctAsistencia >= 90 ? 'bg-green-500' : pctAsistencia >= 70 ? 'bg-amber-500' : 'bg-red-500',
-              )} />
+              <div
+                className={cn(
+                  'h-2 w-2 rounded-full',
+                  pctAsistencia >= 90
+                    ? 'bg-green-500'
+                    : pctAsistencia >= 70
+                      ? 'bg-amber-500'
+                      : 'bg-red-500',
+                )}
+              />
               <span className="font-medium text-gray-700">Asistencia: {pctAsistencia}%</span>
             </div>
             <span className="text-gray-400">|</span>
             <span className="text-gray-600">{asistencia.diasLaborales} días laborales</span>
             <span className="text-gray-400">|</span>
-            <span className="text-green-700 font-medium">{asistencia.completos} completos</span>
+            <span className="font-medium text-green-700">{asistencia.completos} completos</span>
             {asistencia.francos > 0 && (
               <>
                 <span className="text-gray-400">|</span>
@@ -1054,60 +1155,75 @@ function FilaAsistencia({ asistencia }: {
 
           {/* Faltas */}
           {asistencia.ausencias > 0 && (
-            <div className="flex items-center gap-1.5 bg-red-50 border border-red-200 rounded px-2 py-1">
-              <span className="font-medium text-red-700">{asistencia.ausencias} falta{asistencia.ausencias > 1 ? 's' : ''}</span>
+            <div className="flex items-center gap-1.5 rounded border border-red-200 bg-red-50 px-2 py-1">
+              <span className="font-medium text-red-700">
+                {asistencia.ausencias} falta{asistencia.ausencias > 1 ? 's' : ''}
+              </span>
               <span className="text-red-500">—</span>
               <span className="text-red-600">
-                {asistencia.detalleFaltas.map((f) => {
-                  const d = new Date(f + 'T12:00:00')
-                  return `${d.getDate()}/${d.getMonth() + 1}`
-                }).join(', ')}
+                {asistencia.detalleFaltas
+                  .map((f) => {
+                    const d = new Date(f + 'T12:00:00');
+                    return `${d.getDate()}/${d.getMonth() + 1}`;
+                  })
+                  .join(', ')}
               </span>
             </div>
           )}
 
           {/* Tardanzas */}
           {asistencia.tardanzas > 0 && (
-            <div className="flex items-center gap-1.5 bg-amber-50 border border-amber-200 rounded px-2 py-1">
+            <div className="flex items-center gap-1.5 rounded border border-amber-200 bg-amber-50 px-2 py-1">
               <span className="font-medium text-amber-700">
                 {asistencia.tardanzas} tardanza{asistencia.tardanzas > 1 ? 's' : ''}
-                {asistencia.tardanzasGraves > 0 && ` (${asistencia.tardanzasGraves} grave${asistencia.tardanzasGraves > 1 ? 's' : ''})`}
+                {asistencia.tardanzasGraves > 0 &&
+                  ` (${asistencia.tardanzasGraves} grave${asistencia.tardanzasGraves > 1 ? 's' : ''})`}
               </span>
               <span className="text-amber-500">—</span>
               <span className="text-amber-600">
-                {asistencia.detalleTardanzas.map((t) => {
-                  const d = new Date(t.fecha + 'T12:00:00')
-                  return `${d.getDate()}/${d.getMonth() + 1} (+${t.minutos}min)`
-                }).join(', ')}
+                {asistencia.detalleTardanzas
+                  .map((t) => {
+                    const d = new Date(t.fecha + 'T12:00:00');
+                    return `${d.getDate()}/${d.getMonth() + 1} (+${t.minutos}min)`;
+                  })
+                  .join(', ')}
               </span>
             </div>
           )}
 
           {/* Sin problemas */}
           {asistencia.ausencias === 0 && asistencia.tardanzas === 0 && (
-            <div className="flex items-center gap-1.5 bg-green-50 border border-green-200 rounded px-2 py-1">
-              <span className="text-green-700 font-medium">Sin faltas ni tardanzas</span>
+            <div className="flex items-center gap-1.5 rounded border border-green-200 bg-green-50 px-2 py-1">
+              <span className="font-medium text-green-700">Sin faltas ni tardanzas</span>
             </div>
           )}
         </div>
       </td>
     </tr>
-  )
+  );
 }
 
 // ─── KPI mini (mismo estilo que AsistenciaTab) ──────────────────────────────
-function KpiMini({ label, value, color }: { label: string; value: string; color: 'gray' | 'green' | 'red' | 'amber' | 'blue' }) {
+function KpiMini({
+  label,
+  value,
+  color,
+}: {
+  label: string;
+  value: string;
+  color: 'gray' | 'green' | 'red' | 'amber' | 'blue';
+}) {
   const colorClass = {
     gray: 'text-gray-900',
     green: 'text-green-700',
     red: 'text-red-700',
     amber: 'text-amber-700',
     blue: 'text-blue-700',
-  }[color]
+  }[color];
   return (
-    <div className="bg-white rounded-lg border border-gray-200 p-3">
-      <p className="text-[10px] uppercase text-gray-500 font-medium tracking-wide">{label}</p>
-      <p className={cn('text-2xl font-bold mt-1', colorClass)}>{value}</p>
+    <div className="rounded-lg border border-gray-200 bg-white p-3">
+      <p className="text-[10px] font-medium uppercase tracking-wide text-gray-500">{label}</p>
+      <p className={cn('mt-1 text-2xl font-bold', colorClass)}>{value}</p>
     </div>
-  )
+  );
 }

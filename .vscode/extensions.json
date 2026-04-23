@@ -1,0 +1,15 @@
+{
+  "recommendations": [
+    "bradlc.vscode-tailwindcss",
+    "dbaeumer.vscode-eslint",
+    "esbenp.prettier-vscode",
+    "usernamehw.errorlens",
+    "yoavbls.pretty-ts-errors",
+    "eamodio.gitlens",
+    "supabase.vscode-supabase-extension",
+    "rangav.vscode-thunder-client",
+    "formulahendry.auto-rename-tag",
+    "christian-kohler.path-intellisense",
+    "mechatroner.rainbow-csv"
+  ]
+}
