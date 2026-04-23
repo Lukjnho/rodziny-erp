@@ -721,6 +721,20 @@ function ModalReceta({
   const [error, setError] = useState('')
   const [tab, setTab] = useState<'general' | 'ingredientes' | 'procedimiento'>('general')
 
+  // Errores por ingrediente (desde el costeo calculado) — se muestran como ⚠ en la grilla de ingredientes
+  // Nota: se basa en lo GUARDADO en DB, no en el state del form. Si el usuario edita y corrige, el ⚠ sigue hasta guardar.
+  const { costos } = useCostosRecetas()
+  const erroresPorIngId = useMemo(() => {
+    const m = new Map<string, string>()
+    if (!receta) return m
+    const costo = costos.get(receta.id)
+    if (!costo) return m
+    for (const d of costo.detalles) {
+      if (d.error) m.set(d.id, d.error)
+    }
+    return m
+  }, [receta, costos])
+
   // Productos de compras (para autocomplete), filtrados por local de la receta
   const { data: productosCompras } = useQuery({
     queryKey: ['productos-compras-recetas', local],
@@ -1007,20 +1021,29 @@ function ModalReceta({
                 </p>
               ) : (
                 <div className="border border-gray-200 rounded-lg overflow-hidden">
-                  <div className="grid grid-cols-[28px_minmax(0,1fr)_84px_64px_minmax(0,1fr)_74px] gap-2 bg-gray-100 border-b border-gray-200 px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+                  <div className="grid grid-cols-[28px_18px_minmax(0,1fr)_84px_64px_minmax(0,1fr)_74px] gap-2 bg-gray-100 border-b border-gray-200 px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-gray-500">
                     <span className="text-center">#</span>
+                    <span></span>
                     <span>Ingrediente</span>
                     <span className="text-right pr-2">Cantidad</span>
                     <span>Unidad</span>
                     <span>Observaciones</span>
                     <span className="text-right">Acciones</span>
                   </div>
-                  {ings.map((ing, idx) => (
+                  {ings.map((ing, idx) => {
+                    const errorIng = ing.dbId ? erroresPorIngId.get(ing.dbId) ?? null : null
+                    return (
                     <div
                       key={ing.tempId}
-                      className={'grid grid-cols-[28px_minmax(0,1fr)_84px_64px_minmax(0,1fr)_74px] gap-2 items-center px-2 py-1 border-b border-gray-100 last:border-b-0 hover:bg-rodziny-50/40 ' + (idx % 2 === 1 ? 'bg-gray-50/40' : 'bg-white')}
+                      className={'grid grid-cols-[28px_18px_minmax(0,1fr)_84px_64px_minmax(0,1fr)_74px] gap-2 items-center px-2 py-1 border-b border-gray-100 last:border-b-0 hover:bg-rodziny-50/40 ' + (idx % 2 === 1 ? 'bg-gray-50/40' : 'bg-white')}
                     >
                       <span className="text-[10px] text-gray-400 font-mono text-center">{idx + 1}</span>
+                      {errorIng ? (
+                        <span
+                          title={errorIng}
+                          className="text-amber-500 text-xs text-center cursor-help"
+                        >⚠</span>
+                      ) : <span />}
                       <AutocompleteIngrediente
                         valor={ing.nombre}
                         productos={productosCompras ?? []}
@@ -1070,7 +1093,8 @@ function ModalReceta({
                         >✕</button>
                       </div>
                     </div>
-                  ))}
+                    )
+                  })}
                 </div>
               )}
               <button
