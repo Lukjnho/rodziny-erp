@@ -165,8 +165,9 @@ export function ProduccionQRPage() {
     },
   });
 
-  // Plan del día: items pendientes/parciales del pizarrón para hoy + local.
-  // Se usa para ofrecer primero las recetas que el chef planificó.
+  // Plan del día: items vigentes del pizarrón para hoy + local (incluye hechos
+  // así el QR sigue priorizando lo planificado aunque ya esté cumplido).
+  // Se descartan solo los cancelados.
   const { data: planHoy } = useQuery({
     queryKey: ['cocina-plan-hoy-qr', local],
     queryFn: async () => {
@@ -175,7 +176,7 @@ export function ProduccionQRPage() {
         .select('tipo, receta_id, estado')
         .eq('local', local)
         .eq('fecha_objetivo', hoy())
-        .in('estado', ['pendiente', 'parcial']);
+        .neq('estado', 'cancelado');
       if (error) throw error;
       return data as Array<{
         tipo: 'relleno' | 'masa' | 'salsa' | 'postre' | 'pasteleria' | 'panaderia';
