@@ -225,8 +225,6 @@ export function ProduccionTab() {
   >('todos');
 
   // Modales
-  const [modalRelleno, setModalRelleno] = useState(false);
-  const [modalMasa, setModalMasa] = useState(false);
   const [modalCerrarMasa, setModalCerrarMasa] = useState<LoteMasa | null>(null);
   const [modalPasta, setModalPasta] = useState(false);
   const [modalPorcionar, setModalPorcionar] = useState<LotePasta | null>(null);
@@ -565,12 +563,6 @@ export function ProduccionTab() {
       <div>
         <div className="mb-3 flex items-center justify-between">
           <h3 className="text-base font-semibold text-gray-800">Rellenos del día</h3>
-          <button
-            onClick={() => setModalRelleno(true)}
-            className="rounded bg-rodziny-700 px-3 py-1.5 text-sm text-white hover:bg-rodziny-800"
-          >
-            + Registrar relleno
-          </button>
         </div>
 
         <div className="mb-3 grid grid-cols-1 gap-3 md:grid-cols-3">
@@ -637,12 +629,6 @@ export function ProduccionTab() {
       <div>
         <div className="mb-3 flex items-center justify-between">
           <h3 className="text-base font-semibold text-gray-800">Masas del día</h3>
-          <button
-            onClick={() => setModalMasa(true)}
-            className="rounded bg-rodziny-700 px-3 py-1.5 text-sm text-white hover:bg-rodziny-800"
-          >
-            + Registrar masa
-          </button>
         </div>
 
         <div className="mb-3 grid grid-cols-1 gap-3 md:grid-cols-3">
@@ -1072,32 +1058,6 @@ export function ProduccionTab() {
       </div>
 
       {/* Modales */}
-      {modalRelleno && (
-        <ModalRelleno
-          fecha={fecha}
-          recetas={(recetas ?? []).filter(
-            (r) => r.tipo === 'relleno' && matchLocal(r.local, filtroLocal),
-          )}
-          onClose={() => setModalRelleno(false)}
-          onSaved={() => {
-            qc.invalidateQueries({ queryKey: ['cocina-lotes-relleno', fecha] });
-            setModalRelleno(false);
-          }}
-        />
-      )}
-      {modalMasa && (
-        <ModalMasa
-          fecha={fecha}
-          recetas={(recetas ?? []).filter(
-            (r) => r.tipo === 'masa' && matchLocal(r.local, filtroLocal),
-          )}
-          onClose={() => setModalMasa(false)}
-          onSaved={() => {
-            qc.invalidateQueries({ queryKey: ['cocina-lotes-masa', fecha] });
-            setModalMasa(false);
-          }}
-        />
-      )}
       {modalCerrarMasa && (
         <ModalCerrarMasa
           lote={modalCerrarMasa}
@@ -1284,159 +1244,6 @@ function ModalPorcionar({
             className="rounded bg-blue-600 px-4 py-1.5 text-sm text-white hover:bg-blue-700 disabled:opacity-50"
           >
             {guardando ? 'Guardando...' : 'Mover a cámara'}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ── Modal: Registrar relleno ──────────────────────────────────────────────────
-
-function ModalRelleno({
-  fecha,
-  recetas,
-  onClose,
-  onSaved,
-}: {
-  fecha: string;
-  recetas: Receta[];
-  onClose: () => void;
-  onSaved: () => void;
-}) {
-  const [recetaId, setRecetaId] = useState(recetas[0]?.id ?? '');
-  const [cantRecetas, setCantRecetas] = useState(1);
-  const [pesoKg, setPesoKg] = useState('');
-  const [responsable, setResponsable] = useState('');
-  const [local, setLocal] = useState<'vedia' | 'saavedra'>('vedia');
-  const [notas, setNotas] = useState('');
-  const [guardando, setGuardando] = useState(false);
-  const [error, setError] = useState('');
-
-  const guardar = async () => {
-    if (!recetaId || !pesoKg) {
-      setError('Receta y peso son obligatorios');
-      return;
-    }
-    setGuardando(true);
-    setError('');
-    const { error: err } = await supabase.from('cocina_lotes_relleno').insert({
-      receta_id: recetaId,
-      fecha,
-      cantidad_recetas: cantRecetas,
-      peso_total_kg: Number(pesoKg),
-      responsable: responsable.trim() || null,
-      local,
-      notas: notas.trim() || null,
-    });
-    if (err) {
-      setError(err.message);
-      setGuardando(false);
-      return;
-    }
-    onSaved();
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={onClose}>
-      <div className="absolute inset-0 bg-black/30" />
-      <div
-        className="relative w-full max-w-md rounded-lg bg-white p-6 shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <h3 className="mb-4 text-lg font-bold text-gray-800">Registrar relleno</h3>
-        <div className="space-y-3">
-          <div>
-            <label className="mb-1 block text-xs text-gray-500">Receta de relleno</label>
-            <select
-              value={recetaId}
-              onChange={(e) => setRecetaId(e.target.value)}
-              className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
-            >
-              {recetas.length === 0 && <option value="">No hay recetas de relleno cargadas</option>}
-              {recetas.map((r) => {
-                const u =
-                  (r.rendimiento_unidad ?? 'kg') === 'l'
-                    ? 'L'
-                    : (r.rendimiento_unidad ?? 'kg') === 'unidad'
-                      ? 'unid.'
-                      : 'kg';
-                return (
-                  <option key={r.id} value={r.id}>
-                    {r.nombre}
-                    {r.rendimiento_kg ? ` (${r.rendimiento_kg} ${u}/receta)` : ''}
-                  </option>
-                );
-              })}
-            </select>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="mb-1 block text-xs text-gray-500">Cantidad de recetas</label>
-              <input
-                type="number"
-                min={1}
-                value={cantRecetas}
-                onChange={(e) => setCantRecetas(Number(e.target.value))}
-                className="w-full rounded border border-gray-300 px-3 py-1.5 text-sm"
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs text-gray-500">Peso total (kg)</label>
-              <input
-                type="number"
-                step="0.1"
-                value={pesoKg}
-                onChange={(e) => setPesoKg(e.target.value)}
-                className="w-full rounded border border-gray-300 px-3 py-1.5 text-sm"
-                placeholder="5.0"
-              />
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="mb-1 block text-xs text-gray-500">Responsable</label>
-              <input
-                value={responsable}
-                onChange={(e) => setResponsable(e.target.value)}
-                className="w-full rounded border border-gray-300 px-3 py-1.5 text-sm"
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs text-gray-500">Local</label>
-              <select
-                value={local}
-                onChange={(e) => setLocal(e.target.value as 'vedia' | 'saavedra')}
-                className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
-              >
-                <option value="vedia">Vedia</option>
-                <option value="saavedra">Saavedra</option>
-              </select>
-            </div>
-          </div>
-          <div>
-            <label className="mb-1 block text-xs text-gray-500">Notas</label>
-            <input
-              value={notas}
-              onChange={(e) => setNotas(e.target.value)}
-              className="w-full rounded border border-gray-300 px-3 py-1.5 text-sm"
-            />
-          </div>
-        </div>
-        {error && <p className="mt-2 text-xs text-red-500">{error}</p>}
-        <div className="mt-5 flex justify-end gap-2">
-          <button
-            onClick={onClose}
-            className="px-4 py-1.5 text-sm text-gray-600 hover:text-gray-800"
-          >
-            Cancelar
-          </button>
-          <button
-            onClick={guardar}
-            disabled={guardando}
-            className="rounded bg-rodziny-700 px-4 py-1.5 text-sm text-white hover:bg-rodziny-800 disabled:opacity-50"
-          >
-            {guardando ? 'Guardando...' : 'Guardar'}
           </button>
         </div>
       </div>
@@ -1704,145 +1511,6 @@ function ModalPasta({
           </div>
         </div>
 
-        {error && <p className="mt-2 text-xs text-red-500">{error}</p>}
-        <div className="mt-5 flex justify-end gap-2">
-          <button
-            onClick={onClose}
-            className="px-4 py-1.5 text-sm text-gray-600 hover:text-gray-800"
-          >
-            Cancelar
-          </button>
-          <button
-            onClick={guardar}
-            disabled={guardando}
-            className="rounded bg-rodziny-700 px-4 py-1.5 text-sm text-white hover:bg-rodziny-800 disabled:opacity-50"
-          >
-            {guardando ? 'Guardando...' : 'Guardar'}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ── Modal: Registrar masa ────────────────────────────────────────────────────
-
-function ModalMasa({
-  fecha,
-  recetas,
-  onClose,
-  onSaved,
-}: {
-  fecha: string;
-  recetas: Receta[];
-  onClose: () => void;
-  onSaved: () => void;
-}) {
-  const [recetaId, setRecetaId] = useState(recetas[0]?.id ?? '');
-  const [kgProducidos, setKgProducidos] = useState('');
-  const [responsable, setResponsable] = useState('');
-  const [local, setLocal] = useState<'vedia' | 'saavedra'>('vedia');
-  const [notas, setNotas] = useState('');
-  const [guardando, setGuardando] = useState(false);
-  const [error, setError] = useState('');
-
-  const guardar = async () => {
-    if (!recetaId || !kgProducidos) {
-      setError('Receta y kg producidos son obligatorios');
-      return;
-    }
-    setGuardando(true);
-    setError('');
-    const { error: err } = await supabase.from('cocina_lotes_masa').insert({
-      receta_id: recetaId,
-      fecha,
-      kg_producidos: Number(kgProducidos),
-      responsable: responsable.trim() || null,
-      local,
-      notas: notas.trim() || null,
-    });
-    if (err) {
-      setError(err.message);
-      setGuardando(false);
-      return;
-    }
-    onSaved();
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={onClose}>
-      <div className="absolute inset-0 bg-black/30" />
-      <div
-        className="relative w-full max-w-md rounded-lg bg-white p-6 shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <h3 className="mb-4 text-lg font-bold text-gray-800">Registrar masa</h3>
-        <div className="space-y-3">
-          <div>
-            <label className="mb-1 block text-xs text-gray-500">Receta de masa</label>
-            <select
-              value={recetaId}
-              onChange={(e) => setRecetaId(e.target.value)}
-              className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
-            >
-              {recetas.length === 0 && <option value="">No hay recetas de masa cargadas</option>}
-              {recetas.map((r) => {
-                const u =
-                  (r.rendimiento_unidad ?? 'kg') === 'l'
-                    ? 'L'
-                    : (r.rendimiento_unidad ?? 'kg') === 'unidad'
-                      ? 'unid.'
-                      : 'kg';
-                return (
-                  <option key={r.id} value={r.id}>
-                    {r.nombre}
-                    {r.rendimiento_kg ? ` (${r.rendimiento_kg} ${u}/receta)` : ''}
-                  </option>
-                );
-              })}
-            </select>
-          </div>
-          <div>
-            <label className="mb-1 block text-xs text-gray-500">Kg producidos</label>
-            <input
-              type="number"
-              step="0.1"
-              value={kgProducidos}
-              onChange={(e) => setKgProducidos(e.target.value)}
-              className="w-full rounded border border-gray-300 px-3 py-1.5 text-sm"
-              placeholder="10.0"
-            />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="mb-1 block text-xs text-gray-500">Responsable</label>
-              <input
-                value={responsable}
-                onChange={(e) => setResponsable(e.target.value)}
-                className="w-full rounded border border-gray-300 px-3 py-1.5 text-sm"
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs text-gray-500">Local</label>
-              <select
-                value={local}
-                onChange={(e) => setLocal(e.target.value as 'vedia' | 'saavedra')}
-                className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
-              >
-                <option value="vedia">Vedia</option>
-                <option value="saavedra">Saavedra</option>
-              </select>
-            </div>
-          </div>
-          <div>
-            <label className="mb-1 block text-xs text-gray-500">Notas</label>
-            <input
-              value={notas}
-              onChange={(e) => setNotas(e.target.value)}
-              className="w-full rounded border border-gray-300 px-3 py-1.5 text-sm"
-            />
-          </div>
-        </div>
         {error && <p className="mt-2 text-xs text-red-500">{error}</p>}
         <div className="mt-5 flex justify-end gap-2">
           <button
