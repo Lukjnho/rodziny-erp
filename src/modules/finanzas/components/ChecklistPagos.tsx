@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { formatARS, cn } from '@/lib/utils';
 import { type MedioPago, MEDIO_PAGO_LABEL } from '@/modules/gastos/types';
-import { urgenciaPago, type UrgenciaPago } from '@/modules/finanzas/hooks/usePagosAlertas';
+import { urgenciaPago, usePagosAlertas, type UrgenciaPago } from '@/modules/finanzas/hooks/usePagosAlertas';
 
 // ── tipos ────────────────────────────────────────────────────────────────────
 interface PagoFijo {
@@ -106,6 +106,21 @@ export function ChecklistPagos() {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
   });
+  const { data: alertas } = usePagosAlertas();
+
+  // Urgentes en otros meses distintos al que estoy viendo (vencen en ≤7 días).
+  // Si estoy en abril y hay 2 urgentes de mayo, los anuncio acá para no tener que
+  // acordarme de clickear la flecha para ir a ver qué había en el período siguiente.
+  const urgentesEnOtrosPeriodos = useMemo(() => {
+    const pp = alertas?.porPeriodo ?? {};
+    const otros = Object.entries(pp).filter(([p]) => p !== periodo);
+    if (otros.length === 0) return null;
+    const cantidad = otros.reduce((s, [, v]) => s + v.cantidad, 0);
+    const monto = otros.reduce((s, [, v]) => s + v.monto, 0);
+    // Período más cercano (ordenado lexicograficamente YYYY-MM funciona)
+    const proximoPeriodo = otros.map(([p]) => p).sort()[0];
+    return { cantidad, monto, proximoPeriodo, porPeriodo: Object.fromEntries(otros) };
+  }, [alertas, periodo]);
   const [showModal, setShowModal] = useState(false);
   const [seccionesAbiertas, setSeccionesAbiertas] = useState<Set<string>>(new Set(CATEGORIAS));
   const [medioPagoModal, setMedioPagoModal] = useState<{ pagoId: string; concepto: string } | null>(
@@ -414,18 +429,28 @@ export function ChecklistPagos() {
         <div className="flex items-center gap-2">
           <button
             onClick={() => setPeriodo(periodoAnterior(periodo))}
-            className="rounded px-2 py-1 text-gray-500 hover:bg-gray-100 hover:text-gray-700"
+            className="relative rounded px-2 py-1 text-gray-500 hover:bg-gray-100 hover:text-gray-700"
           >
             ←
+            {alertas?.porPeriodo?.[periodoAnterior(periodo)] && (
+              <span className="absolute -right-1 -top-1 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-amber-500 px-1 text-[9px] font-bold text-white">
+                {alertas.porPeriodo[periodoAnterior(periodo)].cantidad}
+              </span>
+            )}
           </button>
           <h3 className="min-w-[160px] text-center text-lg font-semibold text-gray-800">
             {labelMes(periodo)}
           </h3>
           <button
             onClick={() => setPeriodo(periodoSiguiente(periodo))}
-            className="rounded px-2 py-1 text-gray-500 hover:bg-gray-100 hover:text-gray-700"
+            className="relative rounded px-2 py-1 text-gray-500 hover:bg-gray-100 hover:text-gray-700"
           >
             →
+            {alertas?.porPeriodo?.[periodoSiguiente(periodo)] && (
+              <span className="absolute -right-1 -top-1 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-amber-500 px-1 text-[9px] font-bold text-white">
+                {alertas.porPeriodo[periodoSiguiente(periodo)].cantidad}
+              </span>
+            )}
           </button>
         </div>
         <div className="flex items-center gap-2">
@@ -450,6 +475,26 @@ export function ChecklistPagos() {
       {copiarMesAnterior.isError && (
         <div className="rounded bg-red-50 px-3 py-2 text-sm text-red-600">
           {(copiarMesAnterior.error as Error).message}
+        </div>
+      )}
+
+      {urgentesEnOtrosPeriodos && (
+        <div className="flex items-center justify-between gap-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm">
+          <div className="flex items-center gap-2 text-amber-900">
+            <span className="text-base leading-none">⚠️</span>
+            <span>
+              Tenés <strong>{urgentesEnOtrosPeriodos.cantidad}</strong>{' '}
+              {urgentesEnOtrosPeriodos.cantidad === 1 ? 'pago urgente' : 'pagos urgentes'} en{' '}
+              <strong>{labelMes(urgentesEnOtrosPeriodos.proximoPeriodo)}</strong> por{' '}
+              <strong>{formatARS(urgentesEnOtrosPeriodos.monto)}</strong>
+            </span>
+          </div>
+          <button
+            onClick={() => setPeriodo(urgentesEnOtrosPeriodos.proximoPeriodo)}
+            className="whitespace-nowrap rounded-md bg-amber-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-amber-700"
+          >
+            Ver {labelMes(urgentesEnOtrosPeriodos.proximoPeriodo)} →
+          </button>
         </div>
       )}
 
