@@ -772,7 +772,7 @@ export function ProduccionTab() {
         {frescosFiltrados.length > 0 && (
           <div className="mb-3 rounded-lg border border-blue-200 bg-blue-50 p-3">
             <p className="mb-2 text-sm font-medium text-blue-900">
-              {frescosFiltrados.length} cajón{frescosFiltrados.length > 1 ? 'es' : ''} pendiente
+              {frescosFiltrados.length} bandeja{frescosFiltrados.length > 1 ? 's' : ''} pendiente
               {frescosFiltrados.length > 1 ? 's' : ''} de porcionar (otras fechas)
             </p>
             <div className="space-y-1">
@@ -784,7 +784,7 @@ export function ProduccionTab() {
                   <span>
                     <span className="font-mono">{l.codigo_lote}</span> ·{' '}
                     {l.producto?.nombre ?? 'Pasta'} · {l.fecha}
-                    {l.cantidad_cajones && <> · {l.cantidad_cajones} cajones</>}
+                    {l.cantidad_cajones && <> · {l.cantidad_cajones} bandejas</>}
                     {l.porciones != null && <> · {l.porciones} porc. est.</>}
                   </span>
                   <button
@@ -830,7 +830,7 @@ export function ProduccionTab() {
                     <td className="px-4 py-2">
                       {esFresco ? (
                         <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-medium text-blue-700">
-                          Fresco {l.cantidad_cajones ? `· ${l.cantidad_cajones} caj.` : ''}
+                          Fresco {l.cantidad_cajones ? `· ${l.cantidad_cajones} band.` : ''}
                         </span>
                       ) : (
                         <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-700">
@@ -1140,7 +1140,7 @@ function ModalPorcionar({
           </div>
           <div>
             <span className="text-gray-500">Armado:</span> {lote.fecha}
-            {lote.cantidad_cajones ? ` · ${lote.cantidad_cajones} cajones` : ''}
+            {lote.cantidad_cajones ? ` · ${lote.cantidad_cajones} bandejas` : ''}
           </div>
           {estimadas != null && (
             <div>
@@ -1566,7 +1566,7 @@ function ModalPasta({
               />
             </div>
             <div>
-              <label className="mb-1 block text-xs text-gray-500">Cajones</label>
+              <label className="mb-1 block text-xs text-gray-500">Bandejas</label>
               <input
                 type="number"
                 value={cantidadCajones}

@@ -495,7 +495,7 @@ function Inicio({
     { vista: 'masa', label: 'Cargar Masa', color: 'bg-amber-500 hover:bg-amber-600' },
     {
       vista: 'pasta',
-      label: 'Armar Pasta (cajones)',
+      label: 'Armar Pasta (bandejas)',
       color: 'bg-rodziny-700 hover:bg-rodziny-800',
     },
     {
@@ -545,7 +545,7 @@ function Inicio({
         )}
         {frescosPendientes > 0 && (
           <p className="mt-1 text-sm text-blue-600">
-            {frescosPendientes} cajón{frescosPendientes > 1 ? 'es' : ''} pendiente
+            {frescosPendientes} bandeja{frescosPendientes > 1 ? 's' : ''} pendiente
             {frescosPendientes > 1 ? 's' : ''} de porcionar
           </p>
         )}
@@ -870,7 +870,7 @@ function FormPasta({
       return;
     }
     onGuardado(
-      `${prodSel?.nombre ?? 'Pasta'} armada — ${cantidadCajones || '?'} cajones en freezer (${codigoLote})`,
+      `${prodSel?.nombre ?? 'Pasta'} armada — ${cantidadCajones || '?'} bandejas en freezer (${codigoLote})`,
     );
   }
 
@@ -884,8 +884,8 @@ function FormPasta({
       </div>
 
       <div className="rounded border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">
-        Las pastas armadas quedan en cajones en el freezer de producción. Al día siguiente las
-        porcionás en bolsitas de 200g y pasan a la cámara de congelado.
+        Las pastas armadas quedan en bandejas en el freezer de producción. Al día siguiente las
+        porcionás en bolsitas de 200g y pasan a la cámara de congelado (cajones).
       </div>
 
       <div className="space-y-3 rounded-lg border border-gray-200 bg-white p-4">
@@ -1062,7 +1062,7 @@ function FormPasta({
         )}
 
         <div>
-          <label className="mb-1 block text-xs font-medium text-gray-700">Cajones armados</label>
+          <label className="mb-1 block text-xs font-medium text-gray-700">Bandejas armadas</label>
           <input
             type="number"
             inputMode="numeric"
@@ -1191,7 +1191,7 @@ function FormPorcionar({
           </button>
         </div>
         <div className="rounded-lg border border-gray-200 bg-white p-6 text-center text-sm text-gray-500">
-          No hay cajones pendientes de porcionar en {local}.
+          No hay bandejas pendientes de porcionar en {local}.
         </div>
       </div>
     );
@@ -1222,7 +1222,7 @@ function FormPorcionar({
             {lotesFrescos.map((l) => (
               <option key={l.id} value={l.id}>
                 {l.codigo_lote} · {l.producto?.nombre ?? 'Pasta'}
-                {l.cantidad_cajones ? ` · ${l.cantidad_cajones} caj.` : ''}
+                {l.cantidad_cajones ? ` · ${l.cantidad_cajones} band.` : ''}
               </option>
             ))}
           </select>
@@ -1231,7 +1231,7 @@ function FormPorcionar({
         {loteSel && (
           <div className="space-y-0.5 rounded border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-600">
             <div>Armado: {loteSel.fecha}</div>
-            {loteSel.cantidad_cajones && <div>Cajones: {loteSel.cantidad_cajones}</div>}
+            {loteSel.cantidad_cajones && <div>Bandejas: {loteSel.cantidad_cajones}</div>}
             {estimadas != null && (
               <div>
                 Estimado: <span className="font-semibold">{estimadas}</span> porciones

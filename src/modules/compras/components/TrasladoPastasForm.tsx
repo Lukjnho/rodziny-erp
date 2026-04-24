@@ -7,13 +7,15 @@ interface PastaRow {
   id: string;
   nombre: string;
   codigo: string;
+  porcionesPorCajon: number | null;
   stockCamara: number;
 }
 
 export function TrasladoPastasForm({ local }: { local: 'vedia' | 'saavedra' }) {
   const [busqueda, setBusqueda] = useState('');
   const [seleccionado, setSeleccionado] = useState<PastaRow | null>(null);
-  const [porciones, setPorciones] = useState('');
+  const [cajones, setCajones] = useState('');
+  const [porcionesManuales, setPorcionesManuales] = useState('');
   const [responsable, setResponsable] = useState('');
   const [notas, setNotas] = useState('');
   const [exito, setExito] = useState(false);
@@ -24,13 +26,19 @@ export function TrasladoPastasForm({ local }: { local: 'vedia' | 'saavedra' }) {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cocina_productos')
-        .select('id, nombre, codigo, local')
+        .select('id, nombre, codigo, local, porciones_por_cajon')
         .eq('tipo', 'pasta')
         .eq('activo', true)
         .eq('local', local)
         .order('nombre');
       if (error) throw error;
-      return data as Array<{ id: string; nombre: string; codigo: string; local: string }>;
+      return data as Array<{
+        id: string;
+        nombre: string;
+        codigo: string;
+        local: string;
+        porciones_por_cajon: number | null;
+      }>;
     },
   });
 
@@ -87,6 +95,7 @@ export function TrasladoPastasForm({ local }: { local: 'vedia' | 'saavedra' }) {
         id: p.id,
         nombre: p.nombre,
         codigo: p.codigo,
+        porcionesPorCajon: p.porciones_por_cajon,
         stockCamara: enCamara - traspasado - merma,
       };
     });
@@ -107,12 +116,20 @@ export function TrasladoPastasForm({ local }: { local: 'vedia' | 'saavedra' }) {
     );
   }, [rows, busqueda]);
 
+  // Porciones calculadas según modo (cajones × ppc  o  porciones manuales)
+  const porcionesACargar = useMemo(() => {
+    if (!seleccionado) return 0;
+    if (seleccionado.porcionesPorCajon && cajones) {
+      return Number(cajones) * seleccionado.porcionesPorCajon;
+    }
+    return porcionesManuales ? Number(porcionesManuales) : 0;
+  }, [seleccionado, cajones, porcionesManuales]);
+
   const registrarMut = useMutation({
     mutationFn: async () => {
-      if (!seleccionado || !porciones) throw new Error('Faltan datos');
-      const cant = parseInt(porciones, 10);
-      if (!cant || cant <= 0) throw new Error('Cantidad inválida');
-      if (cant > seleccionado.stockCamara) {
+      if (!seleccionado) throw new Error('Elegí un producto');
+      if (porcionesACargar <= 0) throw new Error('Cantidad inválida');
+      if (porcionesACargar > seleccionado.stockCamara) {
         throw new Error(`Solo hay ${seleccionado.stockCamara} porciones en cámara`);
       }
 
@@ -120,14 +137,19 @@ export function TrasladoPastasForm({ local }: { local: 'vedia' | 'saavedra' }) {
       const fecha = hoy.toISOString().slice(0, 10);
       const hora = hoy.toTimeString().slice(0, 8);
 
+      const notasFinales =
+        seleccionado.porcionesPorCajon && cajones
+          ? `${cajones} caj × ${seleccionado.porcionesPorCajon} porc${notas ? ' — ' + notas : ''}`
+          : notas || null;
+
       const { error } = await supabase.from('cocina_traspasos').insert({
         producto_id: seleccionado.id,
         local,
         fecha,
         hora,
-        porciones: cant,
+        porciones: porcionesACargar,
         responsable: responsable || null,
-        notas: notas || null,
+        notas: notasFinales,
       });
       if (error) throw error;
     },
@@ -138,7 +160,8 @@ export function TrasladoPastasForm({ local }: { local: 'vedia' | 'saavedra' }) {
       setTimeout(() => {
         setExito(false);
         setSeleccionado(null);
-        setPorciones('');
+        setCajones('');
+        setPorcionesManuales('');
         setNotas('');
         setBusqueda('');
       }, 1500);
@@ -146,6 +169,11 @@ export function TrasladoPastasForm({ local }: { local: 'vedia' | 'saavedra' }) {
   });
 
   if (seleccionado) {
+    const porCajon = seleccionado.porcionesPorCajon;
+    const cajonesMax = porCajon
+      ? Math.floor(seleccionado.stockCamara / porCajon)
+      : null;
+
     return (
       <div className="mx-auto max-w-md space-y-4 p-4">
         {exito ? (
@@ -153,7 +181,10 @@ export function TrasladoPastasForm({ local }: { local: 'vedia' | 'saavedra' }) {
             <div className="mb-3 text-5xl">📦</div>
             <p className="text-lg font-semibold text-green-700">Traslado registrado</p>
             <p className="text-sm text-gray-500">
-              {porciones} porciones de {seleccionado.nombre}
+              {porCajon && cajones
+                ? `${cajones} cajón${Number(cajones) > 1 ? 'es' : ''} · ${porcionesACargar} porciones`
+                : `${porcionesACargar} porciones`}{' '}
+              de {seleccionado.nombre}
             </p>
           </div>
         ) : (
@@ -171,6 +202,9 @@ export function TrasladoPastasForm({ local }: { local: 'vedia' | 'saavedra' }) {
                       )}
                     >
                       {seleccionado.stockCamara} porc.
+                      {porCajon && cajonesMax != null && cajonesMax > 0 && (
+                        <> · {cajonesMax} cajón{cajonesMax > 1 ? 'es' : ''}</>
+                      )}
                     </span>
                   </p>
                 </div>
@@ -183,26 +217,55 @@ export function TrasladoPastasForm({ local }: { local: 'vedia' | 'saavedra' }) {
               </div>
             </div>
 
-            <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700">
-                Porciones a trasladar al mostrador
-              </label>
-              <input
-                type="number"
-                inputMode="numeric"
-                step="1"
-                min="1"
-                max={seleccionado.stockCamara}
-                value={porciones}
-                onChange={(e) => setPorciones(e.target.value)}
-                placeholder="0"
-                className="w-full rounded-lg border-2 border-gray-300 px-4 py-3 text-lg font-medium focus:border-rodziny-500 focus:outline-none"
-                autoFocus
-              />
-              <p className="mt-1 text-[11px] text-gray-400">
-                Tip: si movés un cajón completo, cargá la cantidad total de porciones del cajón.
-              </p>
-            </div>
+            {porCajon ? (
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">
+                  Cajones a trasladar al mostrador
+                </label>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  step="1"
+                  min="1"
+                  max={cajonesMax ?? undefined}
+                  value={cajones}
+                  onChange={(e) => setCajones(e.target.value)}
+                  placeholder="1"
+                  className="w-full rounded-lg border-2 border-gray-300 px-4 py-3 text-lg font-medium focus:border-rodziny-500 focus:outline-none"
+                  autoFocus
+                />
+                <p className="mt-1 text-xs text-gray-500">
+                  1 cajón = {porCajon} porciones
+                  {cajones && Number(cajones) > 0 && (
+                    <span className="ml-2 font-semibold text-rodziny-700">
+                      → {porcionesACargar} porciones
+                    </span>
+                  )}
+                </p>
+              </div>
+            ) : (
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">
+                  Porciones a trasladar al mostrador
+                </label>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  step="1"
+                  min="1"
+                  max={seleccionado.stockCamara}
+                  value={porcionesManuales}
+                  onChange={(e) => setPorcionesManuales(e.target.value)}
+                  placeholder="0"
+                  className="w-full rounded-lg border-2 border-gray-300 px-4 py-3 text-lg font-medium focus:border-rodziny-500 focus:outline-none"
+                  autoFocus
+                />
+                <p className="mt-1 text-[11px] text-amber-600">
+                  Tip: si configurás "porciones por cajón" desde Cocina → Productos, podés
+                  cargar directamente en cajones.
+                </p>
+              </div>
+            )}
 
             <div>
               <label className="mb-1 block text-sm font-medium text-gray-700">
@@ -225,19 +288,21 @@ export function TrasladoPastasForm({ local }: { local: 'vedia' | 'saavedra' }) {
                 type="text"
                 value={notas}
                 onChange={(e) => setNotas(e.target.value)}
-                placeholder="Ej: cajón 2 del día"
+                placeholder="Ej: para turno noche"
                 className="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm focus:border-rodziny-500 focus:outline-none"
               />
             </div>
 
             <button
               onClick={() => registrarMut.mutate()}
-              disabled={registrarMut.isPending || !porciones}
+              disabled={registrarMut.isPending || porcionesACargar <= 0}
               className="w-full rounded-lg bg-rodziny-800 py-3 text-base font-semibold text-white transition-colors hover:bg-rodziny-700 disabled:opacity-50"
             >
               {registrarMut.isPending
                 ? 'Guardando...'
-                : `Trasladar ${porciones || '0'} porciones al mostrador`}
+                : porCajon && cajones
+                ? `Trasladar ${cajones} cajón${Number(cajones) > 1 ? 'es' : ''} (${porcionesACargar} porc.)`
+                : `Trasladar ${porcionesACargar || 0} porciones`}
             </button>
 
             {registrarMut.isError && (
@@ -275,6 +340,9 @@ export function TrasladoPastasForm({ local }: { local: 'vedia' | 'saavedra' }) {
         ) : (
           filtradas.map((r) => {
             const sin = r.stockCamara <= 0;
+            const cajonesDisp = r.porcionesPorCajon
+              ? Math.floor(r.stockCamara / r.porcionesPorCajon)
+              : null;
             return (
               <button
                 key={r.id}
@@ -298,9 +366,17 @@ export function TrasladoPastasForm({ local }: { local: 'vedia' | 'saavedra' }) {
                       sin ? 'text-red-600' : 'text-gray-700',
                     )}
                   >
-                    {r.stockCamara} porc.
+                    {cajonesDisp != null ? (
+                      <>
+                        {cajonesDisp} cajón{cajonesDisp !== 1 ? 'es' : ''}
+                      </>
+                    ) : (
+                      <>{r.stockCamara} porc.</>
+                    )}
                   </p>
-                  <p className="text-[10px] text-gray-400">en cámara</p>
+                  <p className="text-[10px] text-gray-400">
+                    {cajonesDisp != null ? `${r.stockCamara} porc.` : 'en cámara'}
+                  </p>
                 </div>
               </button>
             );
