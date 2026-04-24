@@ -12,7 +12,6 @@ interface Producto {
   tipo: 'pasta' | 'salsa' | 'postre' | 'relleno' | 'masa' | 'panificado';
   unidad: string;
   minimo_produccion: number | null;
-  porciones_por_cajon: number | null;
   local: 'vedia' | 'saavedra';
   activo: boolean;
   receta_id: string | null;
@@ -357,9 +356,6 @@ function ModalProducto({
   const [tipo, setTipo] = useState(producto?.tipo ?? 'pasta');
   const [unidad, setUnidad] = useState(producto?.unidad ?? 'porciones');
   const [minimo, setMinimo] = useState(producto?.minimo_produccion ?? 100);
-  const [porcionesPorCajon, setPorcionesPorCajon] = useState<string>(
-    producto?.porciones_por_cajon != null ? String(producto.porciones_por_cajon) : '',
-  );
   const [local, setLocal] = useState(producto?.local ?? 'vedia');
   const [recetaId, setRecetaId] = useState<string>(producto?.receta_id ?? '');
   const [guardando, setGuardando] = useState(false);
@@ -391,8 +387,6 @@ function ModalProducto({
       tipo,
       unidad,
       minimo_produccion: minimo,
-      porciones_por_cajon:
-        tipo === 'pasta' && porcionesPorCajon.trim() ? Number(porcionesPorCajon) : null,
       local,
       receta_id: recetaId || null,
     };
@@ -488,26 +482,6 @@ function ModalProducto({
               </select>
             </div>
           </div>
-
-          {tipo === 'pasta' && (
-            <div>
-              <label className="mb-1 block text-xs text-gray-500">
-                Porciones por cajón{' '}
-                <span className="italic text-gray-400">
-                  (para el traslado cámara → mostrador)
-                </span>
-              </label>
-              <input
-                type="number"
-                inputMode="numeric"
-                min="1"
-                value={porcionesPorCajon}
-                onChange={(e) => setPorcionesPorCajon(e.target.value)}
-                className="w-full rounded border border-gray-300 px-3 py-1.5 text-sm"
-                placeholder="Ej: 40"
-              />
-            </div>
-          )}
 
           <div className="mt-3 space-y-2 border-t border-gray-200 pt-3">
             <div>
