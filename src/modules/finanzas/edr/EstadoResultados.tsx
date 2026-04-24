@@ -50,7 +50,13 @@ const FILAS: FilaEdR[] = [
     depth: 1,
     formato: 'moneda',
   },
-  { key: 'iva_debito', label: '(-) IVA Débito Fiscal', tipo: 'auto', depth: 1, formato: 'moneda' },
+  {
+    key: 'iva_debito',
+    label: '(-) IVA Débito (21% s/facturadas)',
+    tipo: 'auto',
+    depth: 1,
+    formato: 'moneda',
+  },
   { key: '__ing_netos', label: 'INGRESOS NETOS', tipo: 'calculada', depth: 0, formato: 'moneda' },
   {
     key: '__ticket_prom',
@@ -126,30 +132,6 @@ const FILAS: FilaEdR[] = [
   { key: 'impuestos_op', label: 'Impuestos y Tasas', tipo: 'auto', depth: 1, formato: 'moneda' },
   { key: '_esp4', label: '', tipo: 'espacio', depth: 0 },
 
-  { key: '_iva', label: 'POSICIÓN IVA', tipo: 'seccion', depth: 0 },
-  {
-    key: '__iva_debito_d',
-    label: 'IVA Débito (ventas)',
-    tipo: 'calculada',
-    depth: 1,
-    formato: 'moneda',
-  },
-  {
-    key: 'iva_credito',
-    label: 'IVA Crédito (compras c/factura)',
-    tipo: 'manual',
-    depth: 1,
-    formato: 'moneda',
-  },
-  {
-    key: '__iva_saldo',
-    label: 'Saldo fiscal del mes',
-    tipo: 'calculada',
-    depth: 1,
-    formato: 'moneda',
-  },
-  { key: '_esp5', label: '', tipo: 'espacio', depth: 0 },
-
   { key: '__ebitda', label: 'EBITDA', tipo: 'calculada', depth: 0, formato: 'moneda' },
   {
     key: '_kpi_ebitda',
@@ -192,6 +174,34 @@ const FILAS: FilaEdR[] = [
     depth: 1,
     formato: 'porcentaje',
     benchmark: '> 5%',
+  },
+  { key: '_esp_memo', label: '', tipo: 'espacio', depth: 0 },
+
+  // ── Memo fiscal ────────────────────────────────────────────────────────────
+  // Informativo. Ventas y gastos del EdR ya se muestran netos de IVA, así que
+  // esta sección queda aparte para ver la posición frente a ARCA (débito,
+  // crédito y saldo del mes) sin afectar ningún cálculo del resultado.
+  { key: '_memo_fiscal', label: 'MEMO FISCAL — POSICIÓN IVA', tipo: 'seccion', depth: 0 },
+  {
+    key: '__iva_debito_d',
+    label: 'IVA Débito (ventas facturadas)',
+    tipo: 'calculada',
+    depth: 1,
+    formato: 'moneda',
+  },
+  {
+    key: 'iva_credito',
+    label: 'IVA Crédito (compras c/factura)',
+    tipo: 'manual',
+    depth: 1,
+    formato: 'moneda',
+  },
+  {
+    key: '__iva_saldo',
+    label: 'Saldo fiscal del mes',
+    tipo: 'calculada',
+    depth: 1,
+    formato: 'moneda',
   },
 ];
 
@@ -946,7 +956,10 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
 
       <p className="mt-3 text-xs text-gray-400">
         Ingresos Brutos e IVA Débito se calculan automáticamente desde los tickets importados de
-        Fudo. Cortesías y descuentos son informativos (ya incluidos en la venta bruta por Fudo). El
+        Fudo (21% sobre facturadas). Gastos se agregan netos de IVA cuando el comprobante lo
+        discrimina (factura A); si no, se toma el total como neto. El bloque "Memo fiscal" al pie
+        es solo informativo para ver la posición frente a ARCA y no afecta el Resultado Neto.
+        Cortesías y descuentos son informativos (ya incluidos en la venta bruta por Fudo). El
         resto de las celdas (azules) son editables — hacé clic para ingresar el valor.
       </p>
     </>
