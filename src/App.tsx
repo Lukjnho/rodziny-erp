@@ -11,6 +11,7 @@ import { LoginPage } from '@/modules/auth/LoginPage';
 import { UsuariosPage } from '@/modules/usuarios/UsuariosPage';
 import { CocinaPage } from '@/modules/cocina/CocinaPage';
 import { ProduccionQRPage } from '@/modules/cocina/ProduccionQRPage';
+import { MostradorPage } from '@/modules/cocina/MostradorPage';
 import { AlmacenPage } from '@/modules/almacen/AlmacenPage';
 import { DashboardPage } from '@/modules/dashboard/DashboardPage';
 import { PageContainer } from '@/components/layout/PageContainer';
@@ -198,6 +199,7 @@ export default function App() {
             <Route path="/recepcion" element={<RecepcionPage />} />
             <Route path="/fichar" element={<FicharPage />} />
             <Route path="/produccion" element={<ProduccionQRPage />} />
+            <Route path="/mostrador" element={<MostradorPage />} />
 
             {/* Resto del ERP protegido */}
             <Route path="*" element={<AppInterna />} />
