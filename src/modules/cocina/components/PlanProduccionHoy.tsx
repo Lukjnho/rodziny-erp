@@ -39,10 +39,14 @@ const TIPO_EMOJI: Record<PizarronItem['tipo'], string> = {
 export function PlanProduccionHoy({
   fecha,
   local,
+  fechaLabel,
+  esHoy = true,
   onAbrirEditor,
 }: {
   fecha: string;
   local: 'vedia' | 'saavedra';
+  fechaLabel?: string;
+  esHoy?: boolean;
   onAbrirEditor: () => void;
 }) {
   const { data: items, isLoading } = useQuery({
@@ -79,7 +83,14 @@ export function PlanProduccionHoy({
     <div className="rounded-lg border border-surface-border bg-white">
       <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3">
         <div>
-          <h3 className="text-base font-semibold text-gray-900">Plan del día</h3>
+          <h3 className="text-base font-semibold text-gray-900">
+            {esHoy ? 'Plan del día' : 'Plan'}
+            {fechaLabel && !esHoy && (
+              <span className="ml-2 text-xs font-normal capitalize text-gray-500">
+                · {fechaLabel}
+              </span>
+            )}
+          </h3>
           <p className="text-[11px] text-gray-500 capitalize">
             {local} ·{' '}
             {total === 0
@@ -99,7 +110,9 @@ export function PlanProduccionHoy({
         <div className="px-4 py-6 text-center text-xs text-gray-400">Cargando…</div>
       ) : total === 0 ? (
         <div className="px-4 py-8 text-center text-xs text-gray-400">
-          Todavía no cargaste el plan de producción de hoy.
+          {esHoy
+            ? 'Todavía no cargaste el plan de producción de hoy.'
+            : 'No hay plan cargado para esta fecha.'}
         </div>
       ) : (
         <div className="p-3">

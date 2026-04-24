@@ -530,25 +530,28 @@ export function ProduccionTab() {
 
       {/* ── Sección: Plan del día ─────────────────────────────────────────────
           El chef define el plan desde acá; al registrar lotes, los items se
-          autocompletan vía trigger de DB. Se muestra por local según filtro. */}
-      {fecha === hoy() && (
-        <div className="space-y-3">
-          {(filtroLocal === 'todos' || filtroLocal === 'vedia') && (
-            <PlanProduccionHoy
-              fecha={fecha}
-              local="vedia"
-              onAbrirEditor={() => setEditorPlanLocal('vedia')}
-            />
-          )}
-          {(filtroLocal === 'todos' || filtroLocal === 'saavedra') && (
-            <PlanProduccionHoy
-              fecha={fecha}
-              local="saavedra"
-              onAbrirEditor={() => setEditorPlanLocal('saavedra')}
-            />
-          )}
-        </div>
-      )}
+          autocompletan vía trigger de DB. Se muestra el plan de la fecha
+          seleccionada en la toolbar (hoy, mañana, pasado o cualquier otra). */}
+      <div className="space-y-3">
+        {(filtroLocal === 'todos' || filtroLocal === 'vedia') && (
+          <PlanProduccionHoy
+            fecha={fecha}
+            local="vedia"
+            fechaLabel={fechaLabel}
+            esHoy={fecha === hoy()}
+            onAbrirEditor={() => setEditorPlanLocal('vedia')}
+          />
+        )}
+        {(filtroLocal === 'todos' || filtroLocal === 'saavedra') && (
+          <PlanProduccionHoy
+            fecha={fecha}
+            local="saavedra"
+            fechaLabel={fechaLabel}
+            esHoy={fecha === hoy()}
+            onAbrirEditor={() => setEditorPlanLocal('saavedra')}
+          />
+        )}
+      </div>
 
       {/* ── Sección: Rellenos del día ────────────────────────────────────────── */}
       <div>
