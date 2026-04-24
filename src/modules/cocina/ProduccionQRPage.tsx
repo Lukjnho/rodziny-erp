@@ -157,6 +157,26 @@ export function ProduccionQRPage() {
     },
   });
 
+  // Plan del día: items pendientes/parciales del pizarrón para hoy + local.
+  // Se usa para ofrecer primero las recetas que el chef planificó.
+  const { data: planHoy } = useQuery({
+    queryKey: ['cocina-plan-hoy-qr', local],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('cocina_pizarron_items')
+        .select('tipo, receta_id, estado')
+        .eq('local', local)
+        .eq('fecha_objetivo', hoy())
+        .in('estado', ['pendiente', 'parcial']);
+      if (error) throw error;
+      return data as Array<{
+        tipo: 'relleno' | 'masa' | 'salsa' | 'postre' | 'pasteleria' | 'panaderia';
+        receta_id: string | null;
+        estado: string;
+      }>;
+    },
+  });
+
   // Lotes de relleno / masa: últimos N días (para poder seguir usando rellenos
   // y masas que quedaron parcialmente en heladera de días anteriores).
   const desdeLotes = fechaHaceDias(DIAS_VENTANA_LOTES_ABIERTOS);
@@ -334,6 +354,25 @@ export function ProduccionQRPage() {
     () => (recetas ?? []).filter((r) => r.local === local),
     [recetas, local],
   );
+
+  // Receta IDs planificados hoy, agrupados por tipo. Se usa para ofrecer por
+  // default solo las recetas planificadas en el QR de los chicos.
+  const planPorTipo = useMemo(() => {
+    const m: Record<'relleno' | 'salsa' | 'postre' | 'pasteleria' | 'panaderia', Set<string>> = {
+      relleno: new Set(),
+      salsa: new Set(),
+      postre: new Set(),
+      pasteleria: new Set(),
+      panaderia: new Set(),
+    };
+    for (const it of planHoy ?? []) {
+      if (!it.receta_id) continue;
+      if (it.tipo in m) {
+        m[it.tipo as keyof typeof m].add(it.receta_id);
+      }
+    }
+    return m;
+  }, [planHoy]);
   const productosPasta = useMemo(
     () => (productos ?? []).filter((p) => p.tipo === 'pasta' && p.local === local),
     [productos, local],
@@ -366,6 +405,7 @@ export function ProduccionQRPage() {
         <FormRelleno
           local={local}
           recetas={recetasRelleno}
+          recetaIdsPlan={planPorTipo.relleno}
           onGuardado={(msg) => onGuardado(msg)}
           onVolver={() => setVista('inicio')}
         />
@@ -416,6 +456,7 @@ export function ProduccionQRPage() {
           local={local}
           categoria="salsa"
           recetas={recetasSalsa}
+          recetaIdsPlan={planPorTipo.salsa}
           onGuardado={onGuardado}
           onVolver={() => setVista('inicio')}
         />
@@ -426,6 +467,7 @@ export function ProduccionQRPage() {
           local={local}
           categoria="postre"
           recetas={recetasPostre}
+          recetaIdsPlan={planPorTipo.postre}
           onGuardado={onGuardado}
           onVolver={() => setVista('inicio')}
         />
@@ -436,6 +478,7 @@ export function ProduccionQRPage() {
           local={local}
           categoria="pasteleria"
           recetas={recetasPasteleria}
+          recetaIdsPlan={planPorTipo.pasteleria}
           onGuardado={onGuardado}
           onVolver={() => setVista('inicio')}
         />
@@ -446,6 +489,7 @@ export function ProduccionQRPage() {
           local={local}
           categoria="panaderia"
           recetas={recetasPanaderia}
+          recetaIdsPlan={planPorTipo.panaderia}
           onGuardado={onGuardado}
           onVolver={() => setVista('inicio')}
         />
@@ -585,15 +629,24 @@ function Inicio({
 function FormRelleno({
   local,
   recetas,
+  recetaIdsPlan,
   onGuardado,
   onVolver,
 }: {
   local: string;
   recetas: Receta[];
+  recetaIdsPlan?: Set<string>;
   onGuardado: (msg: string) => void;
   onVolver: () => void;
 }) {
-  const [recetaId, setRecetaId] = useState(recetas[0]?.id ?? '');
+  const hayPlan = (recetaIdsPlan?.size ?? 0) > 0;
+  const [verTodas, setVerTodas] = useState(!hayPlan);
+  const recetasVisibles = useMemo(() => {
+    if (verTodas || !recetaIdsPlan || recetaIdsPlan.size === 0) return recetas;
+    return recetas.filter((r) => recetaIdsPlan.has(r.id));
+  }, [recetas, recetaIdsPlan, verTodas]);
+
+  const [recetaId, setRecetaId] = useState(recetasVisibles[0]?.id ?? '');
   const [cantRecetas, setCantRecetas] = useState('1');
   const [pesoKg, setPesoKg] = useState('');
   const [responsable, setResponsable] = useState('');
@@ -601,6 +654,14 @@ function FormRelleno({
   const [ingredientesReales, setIngredientesReales] = useState<IngredienteReal[]>([]);
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState('');
+
+  // Si el usuario cambia de filtrado (plan <-> todas) y la receta seleccionada
+  // ya no está en la lista, resetea al primero disponible.
+  useEffect(() => {
+    if (recetaId && !recetasVisibles.some((r) => r.id === recetaId)) {
+      setRecetaId(recetasVisibles[0]?.id ?? '');
+    }
+  }, [recetasVisibles, recetaId]);
 
   const recetaSel = recetas.find((r) => r.id === recetaId);
   const onGrillaChange = useCallback((ings: IngredienteReal[]) => setIngredientesReales(ings), []);
@@ -646,6 +707,19 @@ function FormRelleno({
       </div>
 
       <div className="space-y-3 rounded-lg border border-gray-200 bg-white p-4">
+        {hayPlan && (
+          <div className="flex items-center justify-between rounded border border-rodziny-200 bg-rodziny-50 px-2.5 py-1.5 text-[11px]">
+            <span className="font-medium text-rodziny-800">
+              📋 {verTodas ? 'Catálogo completo' : `Plan de hoy · ${recetaIdsPlan?.size ?? 0} receta${(recetaIdsPlan?.size ?? 0) === 1 ? '' : 's'}`}
+            </span>
+            <button
+              onClick={() => setVerTodas((v) => !v)}
+              className="text-[11px] text-rodziny-700 underline"
+            >
+              {verTodas ? 'Volver al plan' : '¿No está? Ver todas'}
+            </button>
+          </div>
+        )}
         <div>
           <label className="mb-1 block text-xs font-medium text-gray-700">Receta de relleno</label>
           <select
@@ -653,9 +727,10 @@ function FormRelleno({
             onChange={(e) => setRecetaId(e.target.value)}
             className="w-full rounded border border-gray-300 px-3 py-2.5 text-sm"
           >
-            {recetas.length === 0 && <option value="">No hay recetas cargadas</option>}
-            {recetas.map((r) => (
+            {recetasVisibles.length === 0 && <option value="">No hay recetas cargadas</option>}
+            {recetasVisibles.map((r) => (
               <option key={r.id} value={r.id}>
+                {recetaIdsPlan?.has(r.id) ? '📋 ' : ''}
                 {r.nombre}
                 {r.rendimiento_kg ? ` (${r.rendimiento_kg} ${unidadReceta(r)}/receta)` : ''}
               </option>
@@ -1647,6 +1722,7 @@ function FormGenerico({
   local,
   categoria,
   recetas,
+  recetaIdsPlan,
   permitirLibre,
   permitirLitros,
   onGuardado,
@@ -1655,12 +1731,26 @@ function FormGenerico({
   local: string;
   categoria: CategoriaGenerica;
   recetas: Receta[];
+  recetaIdsPlan?: Set<string>;
   permitirLibre?: boolean;
   permitirLitros?: boolean;
   onGuardado: (msg: string) => void;
   onVolver: () => void;
 }) {
+  const hayPlan = (recetaIdsPlan?.size ?? 0) > 0;
+  const [verTodas, setVerTodas] = useState(!hayPlan);
+  const recetasVisibles = useMemo(() => {
+    if (verTodas || !recetaIdsPlan || recetaIdsPlan.size === 0) return recetas;
+    return recetas.filter((r) => recetaIdsPlan.has(r.id));
+  }, [recetas, recetaIdsPlan, verTodas]);
+
   const [recetaId, setRecetaId] = useState('');
+
+  useEffect(() => {
+    if (recetaId && !recetasVisibles.some((r) => r.id === recetaId)) {
+      setRecetaId('');
+    }
+  }, [recetasVisibles, recetaId]);
   const [nombreLibre, setNombreLibre] = useState('');
   const [cantidad, setCantidad] = useState('');
   const [unidad, setUnidad] = useState<'kg' | 'unid' | 'lt'>(
@@ -1742,7 +1832,20 @@ function FormGenerico({
             </p>
           </div>
         )}
-        {recetas.length > 0 && (
+        {hayPlan && (
+          <div className="flex items-center justify-between rounded border border-rodziny-200 bg-rodziny-50 px-2.5 py-1.5 text-[11px]">
+            <span className="font-medium text-rodziny-800">
+              📋 {verTodas ? 'Catálogo completo' : `Plan de hoy · ${recetaIdsPlan?.size ?? 0} receta${(recetaIdsPlan?.size ?? 0) === 1 ? '' : 's'}`}
+            </span>
+            <button
+              onClick={() => setVerTodas((v) => !v)}
+              className="text-[11px] text-rodziny-700 underline"
+            >
+              {verTodas ? 'Volver al plan' : '¿No está? Ver todas'}
+            </button>
+          </div>
+        )}
+        {recetasVisibles.length > 0 && (
           <div>
             <label className="mb-1 block text-xs font-medium text-gray-700">Receta</label>
             <select
@@ -1751,8 +1854,9 @@ function FormGenerico({
               className="w-full rounded border border-gray-300 px-3 py-2.5 text-sm"
             >
               <option value="">— Elegir receta —</option>
-              {recetas.map((r) => (
+              {recetasVisibles.map((r) => (
                 <option key={r.id} value={r.id}>
+                  {recetaIdsPlan?.has(r.id) ? '📋 ' : ''}
                   {r.nombre}
                 </option>
               ))}
