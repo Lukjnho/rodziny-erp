@@ -1282,27 +1282,19 @@ function FormPorcionar({
     setGuardando(true);
     setError('');
 
-    // Actualizar el lote: pasa a cámara congelado, con porciones reales y responsable.
-    // Si el lote tenía estimado (flujo viejo) y reales < estimadas, se registra merma.
-    // Los lotes armados sin estimado no generan merma automática.
+    // El QR es público (anon) y RLS bloquea UPDATE directo a cocina_lotes_pasta.
+    // El RPC SECURITY DEFINER es el único punto de entrada válido para porcionar.
     const merma = diferencia != null && diferencia < 0 ? Math.abs(diferencia) : 0;
     const sobrante = sobranteGramos ? Number(sobranteGramos) : null;
-    const payload: Record<string, unknown> = {
-      ubicacion: 'camara_congelado',
-      porciones: reales,
-      fecha_porcionado: hoy(),
-      responsable_porcionado: responsable.trim() || null,
-      merma_porcionado: merma,
-      sobrante_gramos: sobrante && sobrante > 0 ? sobrante : null,
-      sobrante_origen_lote_id: usarSobranteId,
-    };
-    if (notas.trim()) {
-      payload.notas = `[Porcionado] ${notas.trim()}`;
-    }
-    const { error: err } = await supabase
-      .from('cocina_lotes_pasta')
-      .update(payload)
-      .eq('id', loteId);
+    const { error: err } = await supabase.rpc('porcionar_pasta_lote', {
+      p_lote_id: loteId,
+      p_porciones: reales,
+      p_responsable: responsable.trim() || null,
+      p_sobrante_gramos: sobrante && sobrante > 0 ? sobrante : null,
+      p_sobrante_origen_lote_id: usarSobranteId,
+      p_merma_porcionado: merma,
+      p_notas: notas.trim() || null,
+    });
 
     if (err) {
       setError(err.message);

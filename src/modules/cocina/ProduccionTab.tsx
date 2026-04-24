@@ -1183,18 +1183,13 @@ function ModalPorcionar({
     setGuardando(true);
     setError('');
     const merma = diferencia != null && diferencia < 0 ? Math.abs(diferencia) : 0;
-    const payload: Record<string, unknown> = {
-      ubicacion: 'camara_congelado',
-      porciones: reales,
-      fecha_porcionado: hoy(),
-      responsable_porcionado: responsable.trim() || null,
-      merma_porcionado: merma,
-    };
-    if (notas.trim()) payload.notas = `[Porcionado] ${notas.trim()}`;
-    const { error: err } = await supabase
-      .from('cocina_lotes_pasta')
-      .update(payload)
-      .eq('id', lote.id);
+    const { error: err } = await supabase.rpc('porcionar_pasta_lote', {
+      p_lote_id: lote.id,
+      p_porciones: reales,
+      p_responsable: responsable.trim() || null,
+      p_merma_porcionado: merma,
+      p_notas: notas.trim() || null,
+    });
     if (err) {
       setError(err.message);
       setGuardando(false);
