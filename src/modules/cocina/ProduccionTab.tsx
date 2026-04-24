@@ -658,15 +658,23 @@ export function ProduccionTab() {
               </tr>
             </thead>
             <tbody>
-              {masasFiltradas.map((l) => (
+              {masasFiltradas.map((l) => {
+                const usado = consumoPorMasaAdm.get(l.id) ?? 0;
+                const disp = Math.max(0, +(l.kg_producidos - usado).toFixed(3));
+                return (
                 <tr key={l.id} className="border-b border-surface-border hover:bg-gray-50">
                   <td className="px-4 py-2 font-medium">{l.receta?.nombre ?? '—'}</td>
                   <td className="px-4 py-2">{l.kg_producidos} kg</td>
                   <td className="px-4 py-2">
                     {l.kg_sobrante == null ? (
-                      <span className="inline-block rounded-full bg-blue-100 px-2 py-0.5 text-xs text-blue-700">
-                        Abierto
-                      </span>
+                      <div className="flex flex-col gap-0.5">
+                        <span className="inline-block w-fit rounded-full bg-blue-100 px-2 py-0.5 text-xs text-blue-700">
+                          En uso
+                        </span>
+                        <span className="text-[11px] text-gray-500">
+                          {disp} kg disp. · {+usado.toFixed(3)} kg usados
+                        </span>
+                      </div>
                     ) : (
                       `${l.kg_sobrante} kg`
                     )}
@@ -713,7 +721,8 @@ export function ProduccionTab() {
                     </button>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
               {masasFiltradas.length === 0 && (
                 <tr>
                   <td colSpan={8} className="px-4 py-6 text-center text-gray-400">
@@ -789,9 +798,10 @@ export function ProduccionTab() {
                   </span>
                   <button
                     onClick={() => setModalPorcionar(l)}
-                    className="rounded bg-blue-600 px-2 py-0.5 text-[11px] text-white hover:bg-blue-700"
+                    className="rounded border border-gray-300 bg-white px-2 py-0.5 text-[11px] text-gray-600 hover:bg-gray-50"
+                    title="Corregir — usar solo si hay error de tipeo o no se cargó desde el QR"
                   >
-                    Porcionar
+                    Corregir
                   </button>
                 </div>
               ))}
@@ -862,9 +872,10 @@ export function ProduccionTab() {
                       {esFresco && (
                         <button
                           onClick={() => setModalPorcionar(l)}
-                          className="text-xs text-blue-600 hover:text-blue-800"
+                          className="text-xs text-gray-600 hover:text-gray-800"
+                          title="Corregir — usar solo si hay error de tipeo o no se cargó desde el QR"
                         >
-                          Porcionar
+                          Corregir
                         </button>
                       )}
                       <button
