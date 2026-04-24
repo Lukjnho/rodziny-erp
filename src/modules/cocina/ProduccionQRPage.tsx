@@ -63,6 +63,14 @@ interface LotePastaFresco {
   producto?: { nombre: string } | null;
 }
 
+interface SobrantePendiente {
+  id: string;
+  producto_id: string;
+  codigo_lote: string;
+  fecha: string;
+  sobrante_gramos: number;
+}
+
 type Vista =
   | 'inicio'
   | 'relleno'
@@ -321,6 +329,36 @@ export function ProduccionQRPage() {
     },
   });
 
+  // Sobrantes de porcionados anteriores que aún no fueron reutilizados.
+  // Trae todos los lotes con sobrante > 0 y filtra los ya consumidos en JS
+  // (un lote consumió un sobrante cuando otro lote lo apunta vía sobrante_origen_lote_id).
+  const { data: sobrantesPendientes } = useQuery({
+    queryKey: ['cocina-pasta-sobrantes-qr', local],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('cocina_lotes_pasta')
+        .select('id, producto_id, codigo_lote, fecha, sobrante_gramos, sobrante_origen_lote_id')
+        .eq('local', local)
+        .gt('sobrante_gramos', 0)
+        .order('fecha', { ascending: false });
+      if (error) throw error;
+      const consumidos = new Set(
+        (data ?? [])
+          .map((r) => r.sobrante_origen_lote_id)
+          .filter((v): v is string => typeof v === 'string'),
+      );
+      return (data ?? [])
+        .filter((r) => !consumidos.has(r.id))
+        .map((r) => ({
+          id: r.id,
+          producto_id: r.producto_id,
+          codigo_lote: r.codigo_lote,
+          fecha: r.fecha,
+          sobrante_gramos: Number(r.sobrante_gramos),
+        })) as SobrantePendiente[];
+    },
+  });
+
   const frescosPendientes = lotesFrescos?.length ?? 0;
 
   // Filtro estricto por local: solo muestra lo asignado explícitamente a este local.
@@ -427,6 +465,7 @@ export function ProduccionQRPage() {
         <FormPorcionar
           local={local}
           lotesFrescos={lotesFrescos ?? []}
+          sobrantesPendientes={sobrantesPendientes ?? []}
           onGuardado={(msg) => onGuardado(msg)}
           onVolver={() => setVista('inicio')}
         />
@@ -1189,16 +1228,20 @@ function FormPasta({
 function FormPorcionar({
   local,
   lotesFrescos,
+  sobrantesPendientes,
   onGuardado,
   onVolver,
 }: {
   local: string;
   lotesFrescos: LotePastaFresco[];
+  sobrantesPendientes: SobrantePendiente[];
   onGuardado: (msg: string) => void;
   onVolver: () => void;
 }) {
   const [loteId, setLoteId] = useState(lotesFrescos[0]?.id ?? '');
   const [porcionesReales, setPorcionesReales] = useState('');
+  const [sobranteGramos, setSobranteGramos] = useState('');
+  const [usarSobranteId, setUsarSobranteId] = useState<string | null>(null);
   const [responsable, setResponsable] = useState('');
   const [notas, setNotas] = useState('');
   const [guardando, setGuardando] = useState(false);
@@ -1208,6 +1251,24 @@ function FormPorcionar({
   const estimadas = loteSel?.porciones ?? null;
   const reales = Number(porcionesReales) || 0;
   const diferencia = estimadas != null ? reales - estimadas : null;
+
+  // Sobrante disponible del producto que estoy porcionando hoy.
+  // Solo muestro el más reciente (debería haber 1 por producto en condiciones normales).
+  const sobranteDisponible = useMemo(() => {
+    if (!loteSel) return null;
+    return (
+      sobrantesPendientes
+        .filter((s) => s.producto_id === loteSel.producto_id && s.id !== loteSel.id)
+        .sort((a, b) => (a.fecha < b.fecha ? 1 : -1))[0] ?? null
+    );
+  }, [sobrantesPendientes, loteSel]);
+
+  // Si cambio de lote y el sobrante ya no aplica, lo deselecciono.
+  useEffect(() => {
+    if (usarSobranteId && (!sobranteDisponible || sobranteDisponible.id !== usarSobranteId)) {
+      setUsarSobranteId(null);
+    }
+  }, [sobranteDisponible, usarSobranteId]);
 
   async function guardar() {
     if (!loteId || !loteSel) {
@@ -1225,12 +1286,15 @@ function FormPorcionar({
     // Si el lote tenía estimado (flujo viejo) y reales < estimadas, se registra merma.
     // Los lotes armados sin estimado no generan merma automática.
     const merma = diferencia != null && diferencia < 0 ? Math.abs(diferencia) : 0;
+    const sobrante = sobranteGramos ? Number(sobranteGramos) : null;
     const payload: Record<string, unknown> = {
       ubicacion: 'camara_congelado',
       porciones: reales,
       fecha_porcionado: hoy(),
       responsable_porcionado: responsable.trim() || null,
       merma_porcionado: merma,
+      sobrante_gramos: sobrante && sobrante > 0 ? sobrante : null,
+      sobrante_origen_lote_id: usarSobranteId,
     };
     if (notas.trim()) {
       payload.notas = `[Porcionado] ${notas.trim()}`;
@@ -1247,13 +1311,11 @@ function FormPorcionar({
     }
 
     const nombre = loteSel.producto?.nombre ?? 'Pasta';
-    const detalle =
-      merma > 0
-        ? `${reales} porciones (merma ${merma})`
-        : diferencia != null && diferencia > 0
-          ? `${reales} porciones (+${diferencia} vs estimado)`
-          : `${reales} porciones`;
-    onGuardado(`${nombre} porcionada — ${detalle}`);
+    const partes: string[] = [`${reales} porciones`];
+    if (merma > 0) partes.push(`merma ${merma}`);
+    else if (diferencia != null && diferencia > 0) partes.push(`+${diferencia} vs estimado`);
+    if (sobrante && sobrante > 0) partes.push(`sobrante ${sobrante}g`);
+    onGuardado(`${nombre} porcionada — ${partes.join(' · ')}`);
   }
 
   if (lotesFrescos.length === 0) {
@@ -1315,6 +1377,35 @@ function FormPorcionar({
           </div>
         )}
 
+        {sobranteDisponible && (
+          <div className="flex items-start justify-between gap-2 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs">
+            <div className="flex-1">
+              <div className="font-semibold text-amber-900">
+                💡 Sobrante del porcionado anterior
+              </div>
+              <div className="text-amber-800">
+                Quedaron <span className="font-semibold">{sobranteDisponible.sobrante_gramos}g</span>{' '}
+                del lote <span className="font-mono">{sobranteDisponible.codigo_lote}</span> (
+                {formatDDMM(sobranteDisponible.fecha)})
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() =>
+                setUsarSobranteId(usarSobranteId === sobranteDisponible.id ? null : sobranteDisponible.id)
+              }
+              className={cn(
+                'shrink-0 rounded px-2 py-1 text-[11px] font-medium',
+                usarSobranteId === sobranteDisponible.id
+                  ? 'bg-amber-600 text-white hover:bg-amber-700'
+                  : 'border border-amber-300 bg-white text-amber-800 hover:bg-amber-100',
+              )}
+            >
+              {usarSobranteId === sobranteDisponible.id ? '✓ Sumado' : 'Sumar'}
+            </button>
+          </div>
+        )}
+
         <div>
           <label className="mb-1 block text-xs font-medium text-gray-700">
             Porciones totales (bolsitas 200g)
@@ -1339,6 +1430,26 @@ function FormPorcionar({
                 : `+${diferencia} porciones vs estimado`}
             </p>
           )}
+        </div>
+
+        <div>
+          <label className="mb-1 block text-xs font-medium text-gray-700">
+            Sobrante (g)
+            <span className="ml-1 font-normal text-gray-400">— opcional</span>
+          </label>
+          <input
+            type="number"
+            inputMode="numeric"
+            min={0}
+            value={sobranteGramos}
+            onChange={(e) => setSobranteGramos(e.target.value)}
+            className="w-full rounded border border-gray-300 px-3 py-2.5 text-sm"
+            placeholder="Ej: 70"
+          />
+          <p className="mt-1 text-[11px] text-gray-500">
+            Gramos que no alcanzaron para una bolsita. Quedan reservados para el próximo
+            porcionado de esta misma pasta.
+          </p>
         </div>
 
         <div>
