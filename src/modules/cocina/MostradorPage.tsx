@@ -88,6 +88,21 @@ function ControlVedia() {
     },
   });
 
+  // ── Traslados del día (para saber qué pastas aparecen en la planilla) ───
+  const { data: traspasosHoy } = useQuery({
+    queryKey: ['mostrador-traspasos-hoy', 'vedia', fecha],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('cocina_traspasos')
+        .select('producto_id')
+        .eq('local', 'vedia')
+        .eq('fecha', fecha);
+      if (error) throw error;
+      return data as Array<{ producto_id: string }>;
+    },
+    refetchInterval: 60_000,
+  });
+
   // ── Cierre previo del mismo turno (para precargar si ya cargaron algo) ───
   const { data: cierrePrevio } = useQuery({
     queryKey: ['mostrador-cierre-previo', 'vedia', fecha, turno],
@@ -195,6 +210,15 @@ function ControlVedia() {
     },
   });
 
+  // Filtrar pastas: solo las que tuvieron traslado hoy o que ya están en el cierre del turno.
+  const pastasVisibles = useMemo(() => {
+    if (!pastas) return [];
+    const idsConMovimiento = new Set<string>();
+    for (const t of traspasosHoy ?? []) idsConMovimiento.add(t.producto_id);
+    for (const c of cierrePrevio ?? []) idsConMovimiento.add(c.producto_id);
+    return pastas.filter((p) => idsConMovimiento.has(p.id));
+  }, [pastas, traspasosHoy, cierrePrevio]);
+
   if (loadingPastas) {
     return <div className="py-12 text-center text-sm text-gray-400">Cargando…</div>;
   }
@@ -239,6 +263,20 @@ function ControlVedia() {
         )}
       </div>
 
+      {/* Empty state — sin traslados hoy */}
+      {pastasVisibles.length === 0 ? (
+        <div className="rounded-lg border border-dashed border-gray-300 bg-white p-6 text-center">
+          <p className="text-2xl">📦</p>
+          <p className="mt-2 text-sm font-medium text-gray-700">
+            Todavía no hay traslados del depósito hoy
+          </p>
+          <p className="mt-1 text-xs text-gray-500">
+            Pedí al depósito que registren el traslado de los cajones desde el QR. Las pastas
+            trasladadas van a aparecer acá.
+          </p>
+        </div>
+      ) : (
+      <>
       {/* Tabla de pastas */}
       <div className="overflow-hidden rounded-lg border border-surface-border bg-white">
         <div className="overflow-x-auto">
@@ -266,7 +304,7 @@ function ControlVedia() {
               </tr>
             </thead>
             <tbody>
-              {(pastas ?? []).map((p) => {
+              {pastasVisibles.map((p) => {
                 const f = filas[p.id] ?? { inicial: '', entrega: '', vendido: '', real: '' };
                 const merma = mermaDe(f);
                 return (
@@ -350,6 +388,8 @@ function ControlVedia() {
       >
         {guardar.isPending ? 'Guardando…' : 'Guardar cierre de turno'}
       </button>
+      </>
+      )}
     </div>
   );
 }
