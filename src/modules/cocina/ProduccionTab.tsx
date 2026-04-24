@@ -3,6 +3,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { KPICard } from '@/components/ui/KPICard';
 import { StockProduccionSection } from './components/StockProduccionSection';
+import { PlanProduccionEditor } from './components/PlanProduccionEditor';
+import { PlanProduccionHoy } from './components/PlanProduccionHoy';
 import { cn } from '@/lib/utils';
 
 // Badge que muestra si un lote tiene ingredientes reales guardados y un popover con el detalle
@@ -227,6 +229,7 @@ export function ProduccionTab() {
   const [modalCerrarMasa, setModalCerrarMasa] = useState<LoteMasa | null>(null);
   const [modalPasta, setModalPasta] = useState(false);
   const [modalPorcionar, setModalPorcionar] = useState<LotePasta | null>(null);
+  const [editorPlanLocal, setEditorPlanLocal] = useState<'vedia' | 'saavedra' | null>(null);
 
   // Catálogos
   const { data: productos } = useQuery({
@@ -525,6 +528,28 @@ export function ProduccionTab() {
         </select>
       </div>
 
+      {/* ── Sección: Plan del día ─────────────────────────────────────────────
+          El chef define el plan desde acá; al registrar lotes, los items se
+          autocompletan vía trigger de DB. Se muestra por local según filtro. */}
+      {fecha === hoy() && (
+        <div className="space-y-3">
+          {(filtroLocal === 'todos' || filtroLocal === 'vedia') && (
+            <PlanProduccionHoy
+              fecha={fecha}
+              local="vedia"
+              onAbrirEditor={() => setEditorPlanLocal('vedia')}
+            />
+          )}
+          {(filtroLocal === 'todos' || filtroLocal === 'saavedra') && (
+            <PlanProduccionHoy
+              fecha={fecha}
+              local="saavedra"
+              onAbrirEditor={() => setEditorPlanLocal('saavedra')}
+            />
+          )}
+        </div>
+      )}
+
       {/* ── Sección: Rellenos del día ────────────────────────────────────────── */}
       <div>
         <div className="mb-3 flex items-center justify-between">
@@ -537,17 +562,11 @@ export function ProduccionTab() {
           </button>
         </div>
 
-        <div className="mb-3 grid grid-cols-2 gap-3 md:grid-cols-3">
+        <div className="mb-3 grid grid-cols-1 gap-3 md:grid-cols-3">
           <KPICard
             label="Lotes de relleno"
             value={String(kpiRelleno.lotes)}
             color="green"
-            loading={cargandoR}
-          />
-          <KPICard
-            label="Total kg"
-            value={`${kpiRelleno.kgTotal.toFixed(1)} kg`}
-            color="blue"
             loading={cargandoR}
           />
         </div>
@@ -615,17 +634,11 @@ export function ProduccionTab() {
           </button>
         </div>
 
-        <div className="mb-3 grid grid-cols-2 gap-3 md:grid-cols-3">
+        <div className="mb-3 grid grid-cols-1 gap-3 md:grid-cols-3">
           <KPICard
             label="Lotes de masa"
             value={String(kpiMasa.lotes)}
             color="green"
-            loading={cargandoM}
-          />
-          <KPICard
-            label="Total kg"
-            value={`${kpiMasa.kgTotal.toFixed(1)} kg`}
-            color="blue"
             loading={cargandoM}
           />
         </div>
@@ -1046,6 +1059,12 @@ export function ProduccionTab() {
             qc.invalidateQueries({ queryKey: ['cocina-stock'] });
             setModalPorcionar(null);
           }}
+        />
+      )}
+      {editorPlanLocal && (
+        <PlanProduccionEditor
+          local={editorPlanLocal}
+          onClose={() => setEditorPlanLocal(null)}
         />
       )}
     </div>
