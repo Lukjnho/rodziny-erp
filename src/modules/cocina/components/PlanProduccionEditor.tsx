@@ -211,6 +211,7 @@ export function PlanProduccionEditor({
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['cocina-pizarron-editor'] });
       qc.invalidateQueries({ queryKey: ['cocina-pizarron-hoy'] });
+      qc.invalidateQueries({ queryKey: ['plan-semanal-pizarron'] });
       onClose();
     },
   });
