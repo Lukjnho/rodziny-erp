@@ -4,7 +4,7 @@ import { supabase } from '@/lib/supabase';
 import { KPICard } from '@/components/ui/KPICard';
 import { StockProduccionSection } from './components/StockProduccionSection';
 import { PlanProduccionEditor } from './components/PlanProduccionEditor';
-import { PlanProduccionHoy } from './components/PlanProduccionHoy';
+import { PlanSemanal } from './components/PlanSemanal';
 import { cn } from '@/lib/utils';
 
 // Badge que muestra si un lote tiene ingredientes reales guardados y un popover con el detalle
@@ -540,26 +540,22 @@ export function ProduccionTab() {
         </select>
       </div>
 
-      {/* ── Sección: Plan del día ─────────────────────────────────────────────
-          El chef define el plan desde acá; al registrar lotes, los items se
-          autocompletan vía trigger de DB. Se muestra el plan de la fecha
-          seleccionada en la toolbar (hoy, mañana, pasado o cualquier otra). */}
+      {/* ── Sección: Plan semanal ─────────────────────────────────────────────
+          Vista lunes-domingo de la semana de la fecha seleccionada. Muestra el
+          plan del chef, completados (cliclo completo), pendientes (a terminar),
+          lotes registrados sin estar planeados (fuera del plan) y pastas armadas. */}
       <div className="space-y-3">
         {(filtroLocal === 'todos' || filtroLocal === 'vedia') && (
-          <PlanProduccionHoy
-            fecha={fecha}
+          <PlanSemanal
+            fechaActiva={fecha}
             local="vedia"
-            fechaLabel={fechaLabel}
-            esHoy={fecha === hoy()}
             onAbrirEditor={() => setEditorPlanLocal('vedia')}
           />
         )}
         {(filtroLocal === 'todos' || filtroLocal === 'saavedra') && (
-          <PlanProduccionHoy
-            fecha={fecha}
+          <PlanSemanal
+            fechaActiva={fecha}
             local="saavedra"
-            fechaLabel={fechaLabel}
-            esHoy={fecha === hoy()}
             onAbrirEditor={() => setEditorPlanLocal('saavedra')}
           />
         )}
