@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabaseAnon as supabase } from '@/lib/supabaseAnon';
@@ -270,6 +270,19 @@ export function ProduccionQRPage() {
       .filter((l) => (l.disponible_kg ?? 0) > 0.01);
   }, [lotesMasaHoy, consumoPorMasa]);
 
+  // Mapping pasta ↔ recetas (relleno/masa) predeterminadas. Sirve para autocompletar
+  // la pasta al elegir relleno+masa disponibles en el formulario de armado.
+  const { data: pastaRecetas } = useQuery({
+    queryKey: ['cocina-pasta-recetas-qr'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('cocina_pasta_recetas')
+        .select('pasta_id, receta_id');
+      if (error) throw error;
+      return (data ?? []) as { pasta_id: string; receta_id: string }[];
+    },
+  });
+
   // Lotes de pasta "frescos" pendientes de porcionar (cualquier fecha, no solo hoy —
   // el armado suele ser el día anterior)
   const { data: lotesFrescos } = useQuery({
@@ -364,6 +377,7 @@ export function ProduccionQRPage() {
           productos={productosPasta}
           lotesRelleno={rellenosDisponibles}
           lotesMasa={masasDisponibles.filter((m) => m.kg_sobrante === null)}
+          pastaRecetas={pastaRecetas ?? []}
           onGuardado={(msg) => onGuardado(msg)}
           onVolver={() => setVista('inicio')}
         />
@@ -717,11 +731,15 @@ function FormRelleno({
 
 // ── Formulario Pasta ───────────────────────────────────────────────────────────
 
+// Códigos de pasta que llevan muzzarella extra al armar (ñoquis rellenos ambos locales).
+const PASTAS_CON_MUZZARELLA = new Set(['noqr', 'noqrsg']);
+
 function FormPasta({
   local,
   productos,
   lotesRelleno,
   lotesMasa,
+  pastaRecetas,
   onGuardado,
   onVolver,
 }: {
@@ -729,26 +747,100 @@ function FormPasta({
   productos: Producto[];
   lotesRelleno: LoteRelleno[];
   lotesMasa: LoteMasa[];
+  pastaRecetas: { pasta_id: string; receta_id: string }[];
   onGuardado: (msg: string) => void;
   onVolver: () => void;
 }) {
-  const [productoId, setProductoId] = useState(productos[0]?.id ?? '');
   const [loteRellenoId, setLoteRellenoId] = useState('');
+  const [productoId, setProductoId] = useState('');
   const [loteMasaId, setLoteMasaId] = useState('');
   const [masaKg, setMasaKg] = useState('');
   const [rellenoKg, setRellenoKg] = useState('');
+  const [muzzarellaGramos, setMuzzarellaGramos] = useState('');
   const [cantidadCajones, setCantidadCajones] = useState('');
   const [responsable, setResponsable] = useState('');
   const [notas, setNotas] = useState('');
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState('');
 
+  // Mapping invertido: receta_id -> Set de pasta_id
+  const pastasPorReceta = useMemo(() => {
+    const m = new Map<string, Set<string>>();
+    for (const pr of pastaRecetas) {
+      const s = m.get(pr.receta_id) ?? new Set<string>();
+      s.add(pr.pasta_id);
+      m.set(pr.receta_id, s);
+    }
+    return m;
+  }, [pastaRecetas]);
+
+  // Mapping: pasta_id -> Set de receta_id (masas candidatas, etc.)
+  const recetasPorPasta = useMemo(() => {
+    const m = new Map<string, Set<string>>();
+    for (const pr of pastaRecetas) {
+      const s = m.get(pr.pasta_id) ?? new Set<string>();
+      s.add(pr.receta_id);
+      m.set(pr.pasta_id, s);
+    }
+    return m;
+  }, [pastaRecetas]);
+
+  // Pastas candidatas según el relleno elegido
+  const pastasCandidatas = useMemo<Producto[]>(() => {
+    if (!loteRellenoId) {
+      // Sin relleno: pastas que no tengan ninguna receta tipo relleno mapeada
+      // (básicamente spaghetti/tagliatelles/ñoquis comunes), o sea, pastas donde
+      // el único mapping son masas. Aproximamos mostrando pastas sin relleno mapeado
+      // en pastaRecetas → las que tienen mapping pero ninguna receta es relleno.
+      // Simplificación: dejamos que el operario elija libre entre todas las del local.
+      return productos;
+    }
+    const lote = lotesRelleno.find((l) => l.id === loteRellenoId);
+    if (!lote) return productos;
+    const pastaIds = pastasPorReceta.get(lote.receta_id);
+    if (!pastaIds || pastaIds.size === 0) {
+      // Relleno sin mapping → mostrar todas las pastas (fallback)
+      return productos;
+    }
+    return productos.filter((p) => pastaIds.has(p.id));
+  }, [loteRellenoId, lotesRelleno, pastasPorReceta, productos]);
+
+  // Auto-seleccionar pasta cuando hay un único candidato; si la selección actual
+  // ya no matchea con los candidatos, se resetea.
+  useEffect(() => {
+    if (pastasCandidatas.length === 1 && productoId !== pastasCandidatas[0].id) {
+      setProductoId(pastasCandidatas[0].id);
+    } else if (pastasCandidatas.length > 1 && !pastasCandidatas.some((p) => p.id === productoId)) {
+      setProductoId('');
+    } else if (pastasCandidatas.length === 0) {
+      setProductoId('');
+    }
+  }, [pastasCandidatas, productoId]);
+
+  // Masas candidatas según la pasta elegida
+  const masasFiltradas = useMemo<LoteMasa[]>(() => {
+    if (!productoId) return lotesMasa;
+    const recetasOk = recetasPorPasta.get(productoId);
+    if (!recetasOk || recetasOk.size === 0) {
+      // Pasta sin mapping de masa (ej: tagliatelles mixtos) → mostrar todas
+      return lotesMasa;
+    }
+    const filtradas = lotesMasa.filter((m) => m.receta_id && recetasOk.has(m.receta_id));
+    return filtradas.length > 0 ? filtradas : lotesMasa;
+  }, [productoId, lotesMasa, recetasPorPasta]);
+
   const prodSel = productos.find((p) => p.id === productoId);
   const codigoLote = prodSel ? `${prodSel.codigo}-${formatDDMM(hoy())}` : '';
+  const esConMuzzarella = prodSel ? PASTAS_CON_MUZZARELLA.has(prodSel.codigo) : false;
+  const rellenoSel = lotesRelleno.find((l) => l.id === loteRellenoId);
 
   async function guardar() {
     if (!productoId) {
-      setError('Seleccioná un producto');
+      setError('Seleccioná qué pasta estás armando');
+      return;
+    }
+    if (esConMuzzarella && (!muzzarellaGramos || Number(muzzarellaGramos) <= 0)) {
+      setError('Cargá los gramos de muzzarella usados');
       return;
     }
     setGuardando(true);
@@ -763,6 +855,7 @@ function FormPasta({
       receta_masa_id: lotesMasa.find((m) => m.id === loteMasaId)?.receta_id ?? null,
       masa_kg: masaKg ? Number(masaKg) : null,
       relleno_kg: rellenoKg ? Number(rellenoKg) : null,
+      muzzarella_gramos: esConMuzzarella && muzzarellaGramos ? Number(muzzarellaGramos) : null,
       porciones: null,
       cantidad_cajones: cantidadCajones ? Number(cantidadCajones) : null,
       ubicacion: 'freezer_produccion',
@@ -796,44 +889,23 @@ function FormPasta({
       </div>
 
       <div className="space-y-3 rounded-lg border border-gray-200 bg-white p-4">
+        {/* Paso 1 — Relleno disponible */}
         <div>
-          <label className="mb-1 block text-xs font-medium text-gray-700">Producto</label>
-          <select
-            value={productoId}
-            onChange={(e) => setProductoId(e.target.value)}
-            className="w-full rounded border border-gray-300 px-3 py-2.5 text-sm"
-          >
-            {productos.length === 0 && <option value="">No hay productos tipo pasta</option>}
-            {productos.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.nombre}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        {codigoLote && (
-          <div className="rounded border border-gray-200 bg-gray-50 px-3 py-2 text-center">
-            <span className="block text-[10px] text-gray-500">Código de lote</span>
-            <span className="font-mono font-bold text-gray-900">{codigoLote}</span>
-          </div>
-        )}
-
-        <div>
-          <label className="mb-1 block text-xs font-medium text-gray-700">Relleno usado</label>
+          <label className="mb-1 block text-xs font-medium text-gray-700">
+            1) Relleno disponible
+          </label>
           <select
             value={loteRellenoId}
             onChange={(e) => {
               const id = e.target.value;
               setLoteRellenoId(id);
-              // Auto-rellenar con el disponible del lote elegido (el operario puede ajustar después)
               const l = lotesRelleno.find((x) => x.id === id);
               if (l && l.disponible_kg != null) setRellenoKg(String(l.disponible_kg));
               else if (!id) setRellenoKg('');
             }}
             className="w-full rounded border border-gray-300 px-3 py-2.5 text-sm"
           >
-            <option value="">Sin relleno</option>
+            <option value="">Sin relleno (pasta simple)</option>
             {lotesRelleno.map((l) => {
               const esDeHoy = l.fecha === hoy();
               const fechaSufijo = esDeHoy ? '' : ` (${formatDDMM(l.fecha)})`;
@@ -847,8 +919,50 @@ function FormPasta({
           </select>
         </div>
 
+        {/* Paso 2 — Pasta (auto o manual) */}
         <div>
-          <label className="mb-1 block text-xs font-medium text-gray-700">Masa usada</label>
+          <label className="mb-1 block text-xs font-medium text-gray-700">
+            2) Pasta a armar
+            {pastasCandidatas.length === 1 && (
+              <span className="ml-1 text-[10px] font-normal text-green-600">
+                · autocompletada
+              </span>
+            )}
+          </label>
+          <select
+            value={productoId}
+            onChange={(e) => setProductoId(e.target.value)}
+            className="w-full rounded border border-gray-300 px-3 py-2.5 text-sm"
+          >
+            {pastasCandidatas.length === 0 && (
+              <option value="">Sin pastas disponibles para este local</option>
+            )}
+            {pastasCandidatas.length > 1 && <option value="">Elegí la pasta…</option>}
+            {pastasCandidatas.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.nombre}
+              </option>
+            ))}
+          </select>
+          {rellenoSel && pastasCandidatas.length === 0 && (
+            <p className="mt-1 text-[10px] text-amber-600">
+              No hay pastas mapeadas a "{rellenoSel.receta?.nombre}". Mostrando todas.
+            </p>
+          )}
+        </div>
+
+        {codigoLote && (
+          <div className="rounded border border-gray-200 bg-gray-50 px-3 py-2 text-center">
+            <span className="block text-[10px] text-gray-500">Código de lote</span>
+            <span className="font-mono font-bold text-gray-900">{codigoLote}</span>
+          </div>
+        )}
+
+        {/* Paso 3 — Masa */}
+        <div>
+          <label className="mb-1 block text-xs font-medium text-gray-700">
+            3) Masa disponible
+          </label>
           <select
             value={loteMasaId}
             onChange={(e) => {
@@ -861,7 +975,7 @@ function FormPasta({
             className="w-full rounded border border-gray-300 px-3 py-2.5 text-sm"
           >
             <option value="">Sin lote de masa</option>
-            {lotesMasa.map((m) => {
+            {masasFiltradas.map((m) => {
               const esDeHoy = m.fecha === hoy();
               const fechaSufijo = esDeHoy ? '' : ` (${formatDDMM(m.fecha)})`;
               return (
@@ -908,6 +1022,7 @@ function FormPasta({
               value={rellenoKg}
               onChange={(e) => setRellenoKg(e.target.value)}
               className="w-full rounded border border-gray-300 px-3 py-2.5 text-sm"
+              disabled={!loteRellenoId}
             />
             {(() => {
               const r = lotesRelleno.find((x) => x.id === loteRellenoId);
@@ -924,6 +1039,27 @@ function FormPasta({
             })()}
           </div>
         </div>
+
+        {esConMuzzarella && (
+          <div className="rounded border border-yellow-200 bg-yellow-50 p-3">
+            <label className="mb-1 block text-xs font-medium text-yellow-900">
+              Muzzarella usada (gramos)
+            </label>
+            <input
+              type="number"
+              inputMode="numeric"
+              value={muzzarellaGramos}
+              onChange={(e) => setMuzzarellaGramos(e.target.value)}
+              className="w-full rounded border border-yellow-300 bg-white px-3 py-2.5 text-sm"
+              placeholder="500"
+            />
+            {muzzarellaGramos && Number(muzzarellaGramos) > 0 && (
+              <p className="mt-1 text-[10px] text-yellow-800">
+                ≈ {(Number(muzzarellaGramos) / 1000).toFixed(2).replace('.', ',')} kg
+              </p>
+            )}
+          </div>
+        )}
 
         <div>
           <label className="mb-1 block text-xs font-medium text-gray-700">Cajones armados</label>
