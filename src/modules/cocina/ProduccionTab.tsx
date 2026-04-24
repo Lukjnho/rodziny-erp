@@ -139,6 +139,7 @@ interface LotePasta {
   fecha_porcionado: string | null;
   responsable_porcionado: string | null;
   merma_porcionado: number;
+  sobrante_gramos: number | null;
   producto?: { nombre: string; codigo: string } | null;
   lote_relleno?: { receta?: { nombre: string } | null; peso_total_kg: number } | null;
   receta_masa?: { nombre: string } | null;
@@ -288,12 +289,14 @@ export function ProduccionTab() {
   const { data: lotesPasta, isLoading: cargandoP } = useQuery({
     queryKey: ['cocina-lotes-pasta', fecha],
     queryFn: async () => {
+      // Traemos lotes que ARMARON ese día O que PORCIONARON ese día.
+      // Así un lote armado ayer y porcionado hoy aparece en ambos días, con su info de ciclo completo.
       const { data, error } = await supabase
         .from('cocina_lotes_pasta')
         .select(
           '*, producto:cocina_productos(nombre, codigo), lote_relleno:cocina_lotes_relleno(peso_total_kg, receta:cocina_recetas(nombre)), receta_masa:cocina_recetas(nombre)',
         )
-        .eq('fecha', fecha)
+        .or(`fecha.eq.${fecha},fecha_porcionado.eq.${fecha}`)
         .order('created_at', { ascending: false });
       if (error) throw error;
       return data as LotePasta[];
@@ -430,10 +433,19 @@ export function ProduccionTab() {
     [pastasFiltradas],
   );
 
-  // Frescos pendientes (todos los días, filtrado por local) — se muestra como alerta
+  // Frescos pendientes de OTRAS fechas (las del día seleccionado ya aparecen en la tabla principal).
+  // Solo se muestran acá para no perder de vista bandejas armadas días anteriores que siguen en freezer.
   const frescosFiltrados = useMemo(() => {
-    if (filtroLocal === 'todos') return lotesFrescosPendientes ?? [];
-    return (lotesFrescosPendientes ?? []).filter((l) => l.local === filtroLocal);
+    let lista = (lotesFrescosPendientes ?? []).filter((l) => l.fecha !== fecha);
+    if (filtroLocal !== 'todos') lista = lista.filter((l) => l.local === filtroLocal);
+    return lista;
+  }, [lotesFrescosPendientes, filtroLocal, fecha]);
+
+  // KPI de frescos: cuenta TODOS los pendientes del local (incluyendo el día seleccionado).
+  const frescosKpiCount = useMemo(() => {
+    const lista = lotesFrescosPendientes ?? [];
+    if (filtroLocal === 'todos') return lista.length;
+    return lista.filter((l) => l.local === filtroLocal).length;
   }, [lotesFrescosPendientes, filtroLocal]);
 
   // Navegación de fecha
@@ -771,8 +783,8 @@ export function ProduccionTab() {
           />
           <KPICard
             label="Frescos por porcionar"
-            value={String(frescosFiltrados.length)}
-            color={frescosFiltrados.length > 0 ? 'yellow' : 'neutral'}
+            value={String(frescosKpiCount)}
+            color={frescosKpiCount > 0 ? 'yellow' : 'neutral'}
             loading={cargandoP}
             active={filtroPastaEstado === 'fresco'}
             onClick={() =>
@@ -830,6 +842,23 @@ export function ProduccionTab() {
             <tbody>
               {pastasFiltradas.map((l) => {
                 const esFresco = l.ubicacion === 'freezer_produccion';
+                const fechaArmado = formatDDMM(l.fecha);
+                const fechaPorc = l.fecha_porcionado ? formatDDMM(l.fecha_porcionado) : null;
+                const diasCiclo =
+                  l.fecha && l.fecha_porcionado
+                    ? Math.max(
+                        0,
+                        Math.round(
+                          (new Date(l.fecha_porcionado + 'T00:00:00').getTime() -
+                            new Date(l.fecha + 'T00:00:00').getTime()) /
+                            86400000,
+                        ),
+                      )
+                    : null;
+                const rinde =
+                  l.porciones != null && l.cantidad_cajones && l.cantidad_cajones > 0
+                    ? Math.round((l.porciones / l.cantidad_cajones) * 10) / 10
+                    : null;
                 return (
                   <tr
                     key={l.id}
@@ -841,15 +870,28 @@ export function ProduccionTab() {
                     <td className="px-4 py-2 font-mono text-xs font-medium">{l.codigo_lote}</td>
                     <td className="px-4 py-2 font-medium">{l.producto?.nombre ?? '—'}</td>
                     <td className="px-4 py-2">
-                      {esFresco ? (
-                        <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-medium text-blue-700">
-                          Fresco {l.cantidad_cajones ? `· ${l.cantidad_cajones} band.` : ''}
+                      <div className="flex flex-col gap-0.5">
+                        {esFresco ? (
+                          <span className="inline-block w-fit rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-medium text-blue-700">
+                            Fresco {l.cantidad_cajones ? `· ${l.cantidad_cajones} band.` : ''}
+                          </span>
+                        ) : (
+                          <span className="inline-block w-fit rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-700">
+                            En cámara{l.cantidad_cajones ? ` · ${l.cantidad_cajones} band.` : ''}
+                          </span>
+                        )}
+                        <span className="text-[10px] text-gray-500">
+                          Armado {fechaArmado}
+                          {fechaPorc && (
+                            <>
+                              {' '}· Porcionado {fechaPorc}
+                              {diasCiclo != null && diasCiclo > 0 && (
+                                <span className="text-gray-400"> ({diasCiclo}d)</span>
+                              )}
+                            </>
+                          )}
                         </span>
-                      ) : (
-                        <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-700">
-                          En cámara
-                        </span>
-                      )}
+                      </div>
                     </td>
                     <td className="px-4 py-2 text-gray-600">
                       {l.lote_relleno?.receta?.nombre
@@ -861,16 +903,43 @@ export function ProduccionTab() {
                         ? `${l.receta_masa.nombre} (${l.masa_kg ?? '?'} kg)`
                         : '—'}
                     </td>
-                    <td className="px-4 py-2 font-semibold">
-                      {l.porciones ?? '—'}
-                      {l.merma_porcionado > 0 && (
-                        <span className="ml-1 text-[10px] text-red-500">
-                          (-{l.merma_porcionado})
+                    <td className="px-4 py-2">
+                      <div className="flex flex-col gap-0.5">
+                        <span className="font-semibold">
+                          {l.porciones ?? '—'}
+                          {l.merma_porcionado > 0 && (
+                            <span className="ml-1 text-[10px] text-red-500">
+                              (-{l.merma_porcionado})
+                            </span>
+                          )}
                         </span>
-                      )}
+                        {rinde != null && (
+                          <span className="text-[10px] text-gray-500">
+                            {rinde} porc/band.
+                          </span>
+                        )}
+                        {l.sobrante_gramos != null && l.sobrante_gramos > 0 && (
+                          <span className="text-[10px] text-amber-600">
+                            +{l.sobrante_gramos}g sobrante
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="px-4 py-2 capitalize">{l.local}</td>
-                    <td className="px-4 py-2">{l.responsable || '—'}</td>
+                    <td className="px-4 py-2">
+                      <div className="flex flex-col gap-0.5 text-xs">
+                        <span>
+                          <span className="text-gray-400">Armó:</span>{' '}
+                          {l.responsable || '—'}
+                        </span>
+                        {l.responsable_porcionado && (
+                          <span>
+                            <span className="text-gray-400">Porcionó:</span>{' '}
+                            {l.responsable_porcionado}
+                          </span>
+                        )}
+                      </div>
+                    </td>
                     <td className="space-x-2 px-4 py-2">
                       {esFresco && (
                         <button
