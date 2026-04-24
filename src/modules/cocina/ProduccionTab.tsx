@@ -180,20 +180,52 @@ interface LoteProduccion {
   receta?: { nombre: string } | null;
 }
 
-const CATEGORIA_LABEL_PROD: Record<string, string> = {
-  salsa: 'Salsa',
-  postre: 'Postre',
+type TipoLote = 'relleno' | 'masa' | 'salsa' | 'postre' | 'pasteleria' | 'panaderia' | 'prueba';
+
+const TIPO_LOTE_ORDEN: TipoLote[] = [
+  'relleno',
+  'masa',
+  'salsa',
+  'postre',
+  'pasteleria',
+  'panaderia',
+  'prueba',
+];
+
+const TIPO_LOTE_LABEL: Record<TipoLote, string> = {
+  relleno: 'Rellenos',
+  masa: 'Masas',
+  salsa: 'Salsas',
+  postre: 'Postres',
   pasteleria: 'Pastelería',
   panaderia: 'Panadería',
-  prueba: 'Prueba',
+  prueba: 'Pruebas',
 };
-const CATEGORIA_COLOR_PROD: Record<string, string> = {
+
+const TIPO_LOTE_COLOR: Record<TipoLote, string> = {
+  relleno: 'bg-green-100 text-green-700',
+  masa: 'bg-amber-100 text-amber-700',
   salsa: 'bg-orange-100 text-orange-700',
   postre: 'bg-pink-100 text-pink-700',
-  pasteleria: 'bg-pink-100 text-pink-700',
+  pasteleria: 'bg-rose-100 text-rose-700',
   panaderia: 'bg-yellow-100 text-yellow-700',
   prueba: 'bg-purple-100 text-purple-700',
 };
+
+interface LoteUnificado {
+  id: string;
+  tipo: TipoLote;
+  tabla: 'cocina_lotes_relleno' | 'cocina_lotes_masa' | 'cocina_lotes_produccion';
+  nombre: string;
+  cantidadStr: string;
+  detalleExtra: string | null;
+  local: string;
+  responsable: string | null;
+  hora: string;
+  notas: string | null;
+  ingredientes: IngredienteRealRow[] | null;
+  masaRow?: LoteMasa;
+}
 
 type FiltroLocal = 'todos' | 'vedia' | 'saavedra';
 
@@ -220,9 +252,7 @@ export function ProduccionTab() {
   const [filtroPastaEstado, setFiltroPastaEstado] = useState<'todos' | 'fresco' | 'camara'>(
     'todos',
   );
-  const [filtroCategoriaProd, setFiltroCategoriaProd] = useState<
-    'todos' | 'salsa' | 'postre' | 'pasteleria' | 'panaderia' | 'prueba'
-  >('todos');
+  const [filtroTipoLote, setFiltroTipoLote] = useState<'todos' | TipoLote>('todos');
 
   // Modales
   const [modalCerrarMasa, setModalCerrarMasa] = useState<LoteMasa | null>(null);
@@ -377,16 +407,6 @@ export function ProduccionTab() {
   }, [lotesMasa, consumoPorMasaAdm]);
 
   // Filtrar por local
-  const rellenosFiltrados = useMemo(() => {
-    if (filtroLocal === 'todos') return lotesRelleno ?? [];
-    return (lotesRelleno ?? []).filter((l) => l.local === filtroLocal);
-  }, [lotesRelleno, filtroLocal]);
-
-  const masasFiltradas = useMemo(() => {
-    if (filtroLocal === 'todos') return lotesMasa ?? [];
-    return (lotesMasa ?? []).filter((l) => l.local === filtroLocal);
-  }, [lotesMasa, filtroLocal]);
-
   const pastasFiltradas = useMemo(() => {
     let lista = lotesPasta ?? [];
     if (filtroLocal !== 'todos') lista = lista.filter((l) => l.local === filtroLocal);
@@ -397,31 +417,6 @@ export function ProduccionTab() {
     return lista;
   }, [lotesPasta, filtroLocal, filtroPastaEstado]);
 
-  const produccionesFiltradas = useMemo(() => {
-    let lista = lotesProduccion ?? [];
-    if (filtroLocal !== 'todos') lista = lista.filter((l) => l.local === filtroLocal);
-    if (filtroCategoriaProd !== 'todos')
-      lista = lista.filter((l) => l.categoria === filtroCategoriaProd);
-    return lista;
-  }, [lotesProduccion, filtroLocal, filtroCategoriaProd]);
-
-  // KPIs
-  const kpiRelleno = useMemo(
-    () => ({
-      lotes: rellenosFiltrados.length,
-      kgTotal: rellenosFiltrados.reduce((s, l) => s + l.peso_total_kg, 0),
-    }),
-    [rellenosFiltrados],
-  );
-
-  const kpiMasa = useMemo(
-    () => ({
-      lotes: masasFiltradas.length,
-      kgTotal: masasFiltradas.reduce((s, l) => s + l.kg_producidos, 0),
-    }),
-    [masasFiltradas],
-  );
-
   const kpiPasta = useMemo(
     () => ({
       lotes: pastasFiltradas.length,
@@ -430,6 +425,119 @@ export function ProduccionTab() {
     }),
     [pastasFiltradas],
   );
+
+  // Vista unificada de lotes (relleno + masa + producción adicional). La pasta queda
+  // aparte porque tiene ciclo propio (armado→porcionado→cámara). Mantiene datos
+  // específicos por tipo en `detalleExtra` y deja la masa pendiente de cerrar
+  // accesible para abrir el modal correspondiente.
+  const lotesUnificados = useMemo<LoteUnificado[]>(() => {
+    const fmtHora = (iso: string | null | undefined) => {
+      if (!iso) return '—';
+      const d = new Date(iso);
+      return d.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+    };
+    const fmtUnidad = (u: string | null | undefined) =>
+      u === 'l' || u === 'lt' ? 'L' : u === 'unidad' || u === 'unid' ? 'unid' : 'kg';
+
+    const out: LoteUnificado[] = [];
+
+    for (const l of lotesRelleno ?? []) {
+      const detalle = l.cantidad_recetas > 1 ? `${l.cantidad_recetas} recetas` : null;
+      out.push({
+        id: l.id,
+        tipo: 'relleno',
+        tabla: 'cocina_lotes_relleno',
+        nombre: l.receta?.nombre ?? '—',
+        cantidadStr: `${l.peso_total_kg} kg`,
+        detalleExtra: detalle,
+        local: l.local,
+        responsable: l.responsable,
+        hora: fmtHora(l.created_at),
+        notas: l.notas,
+        ingredientes: l.ingredientes_reales,
+      });
+    }
+
+    for (const l of lotesMasa ?? []) {
+      const usado = consumoPorMasaAdm.get(l.id) ?? 0;
+      const disp = Math.max(0, +(l.kg_producidos - usado).toFixed(3));
+      const partes: string[] = [];
+      if (l.kg_sobrante == null) {
+        partes.push(`${disp} kg disp · ${+usado.toFixed(3)} kg usados`);
+      } else {
+        const destino =
+          l.destino_sobrante === 'fideos'
+            ? 'fideos (reutilizar)'
+            : l.destino_sobrante === 'merma'
+              ? 'merma (descartar)'
+              : 'próxima masa';
+        partes.push(`Sobrante ${l.kg_sobrante} kg → ${destino}`);
+      }
+      out.push({
+        id: l.id,
+        tipo: 'masa',
+        tabla: 'cocina_lotes_masa',
+        nombre: l.receta?.nombre ?? '—',
+        cantidadStr: `${l.kg_producidos} kg`,
+        detalleExtra: partes.join(' · '),
+        local: l.local,
+        responsable: l.responsable,
+        hora: fmtHora(l.created_at),
+        notas: l.notas,
+        ingredientes: l.ingredientes_reales,
+        masaRow: l,
+      });
+    }
+
+    for (const l of lotesProduccion ?? []) {
+      const u = fmtUnidad(l.unidad);
+      const merma =
+        l.merma_cantidad && l.merma_cantidad > 0
+          ? `Merma ${l.merma_cantidad} ${u}${l.merma_motivo ? ` · ${l.merma_motivo}` : ''}`
+          : null;
+      out.push({
+        id: l.id,
+        tipo: l.categoria,
+        tabla: 'cocina_lotes_produccion',
+        nombre: l.receta?.nombre ?? l.nombre_libre ?? '—',
+        cantidadStr: `${l.cantidad_producida} ${u}`,
+        detalleExtra: merma,
+        local: l.local,
+        responsable: l.responsable,
+        hora: fmtHora(l.created_at),
+        notas: l.notas,
+        ingredientes: l.ingredientes_reales,
+      });
+    }
+
+    out.sort((a, b) => (a.hora < b.hora ? 1 : a.hora > b.hora ? -1 : 0));
+    return out;
+  }, [lotesRelleno, lotesMasa, lotesProduccion, consumoPorMasaAdm]);
+
+  const lotesUnificadosFiltrados = useMemo(() => {
+    return lotesUnificados.filter((l) => {
+      if (filtroLocal !== 'todos' && l.local !== filtroLocal) return false;
+      if (filtroTipoLote !== 'todos' && l.tipo !== filtroTipoLote) return false;
+      return true;
+    });
+  }, [lotesUnificados, filtroLocal, filtroTipoLote]);
+
+  const conteoPorTipo = useMemo(() => {
+    const base = lotesUnificados.filter(
+      (l) => filtroLocal === 'todos' || l.local === filtroLocal,
+    );
+    const m: Record<TipoLote, number> = {
+      relleno: 0,
+      masa: 0,
+      salsa: 0,
+      postre: 0,
+      pasteleria: 0,
+      panaderia: 0,
+      prueba: 0,
+    };
+    for (const l of base) m[l.tipo]++;
+    return { total: base.length, porTipo: m };
+  }, [lotesUnificados, filtroLocal]);
 
   // Frescos pendientes de OTRAS fechas (las del día seleccionado ya aparecen en la tabla principal).
   // Solo se muestran acá para no perder de vista bandejas armadas días anteriores que siguen en freezer.
@@ -559,29 +667,44 @@ export function ProduccionTab() {
         )}
       </div>
 
-      {/* ── Sección: Rellenos del día ────────────────────────────────────────── */}
+      {/* ── Sección: Lotes registrados (relleno + masa + producción adicional) ── */}
       <div>
         <div className="mb-3 flex items-center justify-between">
-          <h3 className="text-base font-semibold text-gray-800">Rellenos del día</h3>
+          <h3 className="text-base font-semibold text-gray-800">Lotes registrados</h3>
+          <span className="text-xs text-gray-500">Cargados desde el QR por el equipo</span>
         </div>
 
-        <div className="mb-3 grid grid-cols-1 gap-3 md:grid-cols-3">
+        <div className="mb-3 grid grid-cols-2 gap-2 md:grid-cols-4 xl:grid-cols-8">
           <KPICard
-            label="Lotes de relleno"
-            value={String(kpiRelleno.lotes)}
+            label="Total"
+            value={String(conteoPorTipo.total)}
             color="green"
-            loading={cargandoR}
+            loading={cargandoR || cargandoM || cargandoProd}
+            active={filtroTipoLote === 'todos'}
+            onClick={() => setFiltroTipoLote('todos')}
           />
+          {TIPO_LOTE_ORDEN.map((t) => (
+            <KPICard
+              key={t}
+              label={TIPO_LOTE_LABEL[t]}
+              value={String(conteoPorTipo.porTipo[t])}
+              color="neutral"
+              active={filtroTipoLote === t}
+              onClick={() => setFiltroTipoLote(filtroTipoLote === t ? 'todos' : t)}
+            />
+          ))}
         </div>
 
         <div className="overflow-x-auto rounded-lg border border-surface-border bg-white">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-surface-border bg-gray-50 text-left text-xs uppercase text-gray-500">
+                <th className="px-4 py-2">Hora</th>
+                <th className="px-4 py-2">Tipo</th>
                 <th className="px-4 py-2">Receta</th>
-                <th className="px-4 py-2">Recetas</th>
-                <th className="px-4 py-2">Peso total</th>
-                <th className="px-4 py-2">Ingredientes</th>
+                <th className="px-4 py-2">Cantidad</th>
+                <th className="px-4 py-2">Detalle</th>
+                <th className="px-4 py-2">Ing.</th>
                 <th className="px-4 py-2">Local</th>
                 <th className="px-4 py-2">Responsable</th>
                 <th className="px-4 py-2">Notas</th>
@@ -589,141 +712,62 @@ export function ProduccionTab() {
               </tr>
             </thead>
             <tbody>
-              {rellenosFiltrados.map((l) => (
-                <tr key={l.id} className="border-b border-surface-border hover:bg-gray-50">
-                  <td className="px-4 py-2 font-medium">{l.receta?.nombre ?? '—'}</td>
-                  <td className="px-4 py-2">{l.cantidad_recetas}</td>
-                  <td className="px-4 py-2">{l.peso_total_kg} kg</td>
-                  <td className="px-4 py-2">
-                    <IngredientesRealesBadge ingredientes={l.ingredientes_reales} />
-                  </td>
-                  <td className="px-4 py-2 capitalize">{l.local}</td>
-                  <td className="px-4 py-2">{l.responsable || '—'}</td>
-                  <td className="max-w-xs truncate px-4 py-2 text-gray-500">{l.notas || '—'}</td>
-                  <td className="px-4 py-2">
-                    <button
-                      onClick={() => {
-                        if (window.confirm('¿Eliminar este lote de relleno?'))
-                          eliminarRelleno.mutate(l.id);
-                      }}
-                      className="text-xs text-red-500 hover:text-red-700"
-                    >
-                      Eliminar
-                    </button>
-                  </td>
-                </tr>
-              ))}
-              {rellenosFiltrados.length === 0 && (
-                <tr>
-                  <td colSpan={8} className="px-4 py-6 text-center text-gray-400">
-                    {cargandoR ? 'Cargando...' : 'No hay rellenos registrados hoy'}
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* ── Sección: Masas del día ───────────────────────────────────────────── */}
-      <div>
-        <div className="mb-3 flex items-center justify-between">
-          <h3 className="text-base font-semibold text-gray-800">Masas del día</h3>
-        </div>
-
-        <div className="mb-3 grid grid-cols-1 gap-3 md:grid-cols-3">
-          <KPICard
-            label="Lotes de masa"
-            value={String(kpiMasa.lotes)}
-            color="green"
-            loading={cargandoM}
-          />
-        </div>
-
-        <div className="overflow-x-auto rounded-lg border border-surface-border bg-white">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-surface-border bg-gray-50 text-left text-xs uppercase text-gray-500">
-                <th className="px-4 py-2">Receta</th>
-                <th className="px-4 py-2">Kg producidos</th>
-                <th className="px-4 py-2">Kg sobrante</th>
-                <th className="px-4 py-2">Destino</th>
-                <th className="px-4 py-2">Ingredientes</th>
-                <th className="px-4 py-2">Local</th>
-                <th className="px-4 py-2">Responsable</th>
-                <th className="px-4 py-2">Acciones</th>
-              </tr>
-            </thead>
-            <tbody>
-              {masasFiltradas.map((l) => {
-                const usado = consumoPorMasaAdm.get(l.id) ?? 0;
-                const disp = Math.max(0, +(l.kg_producidos - usado).toFixed(3));
+              {lotesUnificadosFiltrados.map((l) => {
+                const masaPendiente = l.tipo === 'masa' && l.masaRow?.kg_sobrante == null;
                 return (
-                <tr key={l.id} className="border-b border-surface-border hover:bg-gray-50">
-                  <td className="px-4 py-2 font-medium">{l.receta?.nombre ?? '—'}</td>
-                  <td className="px-4 py-2">{l.kg_producidos} kg</td>
-                  <td className="px-4 py-2">
-                    {l.kg_sobrante == null ? (
-                      <div className="flex flex-col gap-0.5">
-                        <span className="inline-block w-fit rounded-full bg-blue-100 px-2 py-0.5 text-xs text-blue-700">
-                          En uso
-                        </span>
-                        <span className="text-[11px] text-gray-500">
-                          {disp} kg disp. · {+usado.toFixed(3)} kg usados
-                        </span>
-                      </div>
-                    ) : (
-                      `${l.kg_sobrante} kg`
-                    )}
-                  </td>
-                  <td className="px-4 py-2">
-                    {l.destino_sobrante == null ? (
-                      '—'
-                    ) : l.destino_sobrante === 'fideos' ? (
-                      <span className="inline-block rounded-full bg-blue-100 px-2 py-0.5 text-xs text-blue-700">
-                        Fideos (reutilizar)
-                      </span>
-                    ) : l.destino_sobrante === 'merma' ? (
-                      <span className="inline-block rounded-full bg-red-100 px-2 py-0.5 text-xs text-red-700">
-                        Merma (descartar)
-                      </span>
-                    ) : (
-                      <span className="inline-block rounded-full bg-green-100 px-2 py-0.5 text-xs text-green-700">
-                        Próxima masa
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-4 py-2">
-                    <IngredientesRealesBadge ingredientes={l.ingredientes_reales} />
-                  </td>
-                  <td className="px-4 py-2 capitalize">{l.local}</td>
-                  <td className="px-4 py-2">{l.responsable || '—'}</td>
-                  <td className="flex gap-2 px-4 py-2">
-                    {l.kg_sobrante == null && (
-                      <button
-                        onClick={() => setModalCerrarMasa(l)}
-                        className="text-xs text-blue-600 hover:text-blue-800"
+                  <tr key={`${l.tabla}-${l.id}`} className="border-b border-surface-border hover:bg-gray-50">
+                    <td className="px-4 py-2 tabular-nums text-xs text-gray-500">{l.hora}</td>
+                    <td className="px-4 py-2">
+                      <span
+                        className={cn(
+                          'rounded-full px-2 py-0.5 text-[10px] font-medium',
+                          TIPO_LOTE_COLOR[l.tipo],
+                        )}
                       >
-                        Cerrar
+                        {TIPO_LOTE_LABEL[l.tipo].replace(/s$/, '')}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2 font-medium">{l.nombre}</td>
+                    <td className="px-4 py-2 tabular-nums">{l.cantidadStr}</td>
+                    <td className="px-4 py-2 text-[11px] text-gray-500">
+                      {l.detalleExtra ?? '—'}
+                    </td>
+                    <td className="px-4 py-2">
+                      <IngredientesRealesBadge ingredientes={l.ingredientes} />
+                    </td>
+                    <td className="px-4 py-2 capitalize">{l.local}</td>
+                    <td className="px-4 py-2">{l.responsable || '—'}</td>
+                    <td className="max-w-xs truncate px-4 py-2 text-gray-500">{l.notas || '—'}</td>
+                    <td className="space-x-2 px-4 py-2">
+                      {masaPendiente && l.masaRow && (
+                        <button
+                          onClick={() => setModalCerrarMasa(l.masaRow!)}
+                          className="text-xs text-blue-600 hover:text-blue-800"
+                        >
+                          Cerrar
+                        </button>
+                      )}
+                      <button
+                        onClick={() => {
+                          if (!window.confirm('¿Eliminar este lote?')) return;
+                          if (l.tabla === 'cocina_lotes_relleno') eliminarRelleno.mutate(l.id);
+                          else if (l.tabla === 'cocina_lotes_masa') eliminarMasa.mutate(l.id);
+                          else eliminarProduccion.mutate(l.id);
+                        }}
+                        className="text-xs text-red-500 hover:text-red-700"
+                      >
+                        Eliminar
                       </button>
-                    )}
-                    <button
-                      onClick={() => {
-                        if (window.confirm('¿Eliminar este lote de masa?'))
-                          eliminarMasa.mutate(l.id);
-                      }}
-                      className="text-xs text-red-500 hover:text-red-700"
-                    >
-                      Eliminar
-                    </button>
-                  </td>
-                </tr>
+                    </td>
+                  </tr>
                 );
               })}
-              {masasFiltradas.length === 0 && (
+              {lotesUnificadosFiltrados.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="px-4 py-6 text-center text-gray-400">
-                    {cargandoM ? 'Cargando...' : 'No hay masas registradas hoy'}
+                  <td colSpan={10} className="px-4 py-6 text-center text-gray-400">
+                    {cargandoR || cargandoM || cargandoProd
+                      ? 'Cargando...'
+                      : 'No hay lotes registrados'}
                   </td>
                 </tr>
               )}
@@ -959,103 +1003,6 @@ export function ProduccionTab() {
 
       {/* ── Sección: Stock de producción (salsas/postres en stock con FIFO + Fudo) ─── */}
       <StockProduccionSection filtroLocal={filtroLocal} />
-
-      {/* ── Sección: Producción adicional (salsa/postre/pastelería/panadería/prueba) ─── */}
-      <div>
-        <div className="mb-3 flex items-center justify-between">
-          <h3 className="text-base font-semibold text-gray-800">Producción adicional del día</h3>
-          <span className="text-xs text-gray-500">Cargada desde el QR por el equipo</span>
-        </div>
-
-        <div className="mb-3 grid grid-cols-2 gap-3 md:grid-cols-5">
-          {(['salsa', 'postre', 'pasteleria', 'panaderia', 'prueba'] as const).map((cat) => {
-            // Contar sobre el total del día (ignorando el filtro de categoría) para que el KPI no se "vacíe" al filtrar
-            const baseTotal = (lotesProduccion ?? []).filter(
-              (p) => filtroLocal === 'todos' || p.local === filtroLocal,
-            );
-            const count = baseTotal.filter((p) => p.categoria === cat).length;
-            return (
-              <KPICard
-                key={cat}
-                label={CATEGORIA_LABEL_PROD[cat]}
-                value={String(count)}
-                color="neutral"
-                loading={cargandoProd}
-                active={filtroCategoriaProd === cat}
-                onClick={() => setFiltroCategoriaProd(filtroCategoriaProd === cat ? 'todos' : cat)}
-              />
-            );
-          })}
-        </div>
-
-        <div className="overflow-x-auto rounded-lg border border-surface-border bg-white">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-surface-border bg-gray-50 text-left text-xs uppercase text-gray-500">
-                <th className="px-4 py-2">Categoría</th>
-                <th className="px-4 py-2">Receta / Nombre</th>
-                <th className="px-4 py-2">Cantidad</th>
-                <th className="px-4 py-2">Merma</th>
-                <th className="px-4 py-2">Ingredientes</th>
-                <th className="px-4 py-2">Local</th>
-                <th className="px-4 py-2">Responsable</th>
-                <th className="px-4 py-2">Notas</th>
-                <th className="px-4 py-2">Acciones</th>
-              </tr>
-            </thead>
-            <tbody>
-              {produccionesFiltradas.map((l) => (
-                <tr key={l.id} className="border-b border-surface-border hover:bg-gray-50">
-                  <td className="px-4 py-2">
-                    <span
-                      className={
-                        'rounded-full px-2 py-0.5 text-xs font-medium ' +
-                        (CATEGORIA_COLOR_PROD[l.categoria] ?? 'bg-gray-100 text-gray-700')
-                      }
-                    >
-                      {CATEGORIA_LABEL_PROD[l.categoria] ?? l.categoria}
-                    </span>
-                  </td>
-                  <td className="px-4 py-2 font-medium">
-                    {l.receta?.nombre ?? l.nombre_libre ?? '—'}
-                  </td>
-                  <td className="px-4 py-2 tabular-nums">
-                    {l.cantidad_producida} {l.unidad}
-                  </td>
-                  <td className="px-4 py-2 text-gray-600">
-                    {l.merma_cantidad
-                      ? `${l.merma_cantidad} ${l.unidad}${l.merma_motivo ? ` · ${l.merma_motivo}` : ''}`
-                      : '—'}
-                  </td>
-                  <td className="px-4 py-2">
-                    <IngredientesRealesBadge ingredientes={l.ingredientes_reales} />
-                  </td>
-                  <td className="px-4 py-2 capitalize">{l.local}</td>
-                  <td className="px-4 py-2">{l.responsable || '—'}</td>
-                  <td className="max-w-xs truncate px-4 py-2 text-gray-500">{l.notas || '—'}</td>
-                  <td className="px-4 py-2">
-                    <button
-                      onClick={() => {
-                        if (window.confirm('¿Eliminar este lote?')) eliminarProduccion.mutate(l.id);
-                      }}
-                      className="text-xs text-red-500 hover:text-red-700"
-                    >
-                      Eliminar
-                    </button>
-                  </td>
-                </tr>
-              ))}
-              {produccionesFiltradas.length === 0 && (
-                <tr>
-                  <td colSpan={9} className="px-4 py-6 text-center text-gray-400">
-                    {cargandoProd ? 'Cargando...' : 'Sin producción adicional registrada hoy'}
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
 
       {/* Modales */}
       {modalCerrarMasa && (
