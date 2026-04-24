@@ -23,16 +23,15 @@ interface PlanItem {
   estado?: 'pendiente' | 'hecho' | 'parcial' | 'cancelado';
 }
 
+// Las masas no se planifican acá — se hacen a demanda según producción.
 const TIPOS_VEDIA: { tipo: TipoItem; label: string; emoji: string }[] = [
   { tipo: 'relleno', label: 'Rellenos', emoji: '🥟' },
-  { tipo: 'masa', label: 'Masas', emoji: '🍝' },
   { tipo: 'salsa', label: 'Salsas', emoji: '🍅' },
   { tipo: 'postre', label: 'Postres', emoji: '🍰' },
 ];
 
 const TIPOS_SAAVEDRA: { tipo: TipoItem; label: string; emoji: string }[] = [
   { tipo: 'relleno', label: 'Rellenos', emoji: '🥟' },
-  { tipo: 'masa', label: 'Masas', emoji: '🍝' },
   { tipo: 'salsa', label: 'Salsas', emoji: '🍅' },
   { tipo: 'pasteleria', label: 'Pastelería', emoji: '🥐' },
   { tipo: 'panaderia', label: 'Panadería', emoji: '🍞' },

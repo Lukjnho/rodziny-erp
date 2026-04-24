@@ -62,7 +62,8 @@ export function PlanProduccionHoy({
     },
   });
 
-  const activos = (items ?? []).filter((it) => it.estado !== 'cancelado');
+  // Las masas no se planifican — se hacen a demanda. Se ocultan del dashboard del chef.
+  const activos = (items ?? []).filter((it) => it.estado !== 'cancelado' && it.tipo !== 'masa');
   const hechos = activos.filter((it) => it.estado === 'hecho' || it.estado === 'parcial').length;
   const total = activos.length;
   const pct = total === 0 ? 0 : Math.round((hechos / total) * 100);
