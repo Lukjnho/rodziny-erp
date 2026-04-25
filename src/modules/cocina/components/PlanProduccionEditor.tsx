@@ -179,12 +179,13 @@ export function PlanProduccionEditor({
         const itemsFecha = items[fecha] ?? [];
 
         // 1) Borrar pendientes/cancelados existentes de esta fecha+local
-        await supabase
+        const { error: errDel } = await supabase
           .from('cocina_pizarron_items')
           .delete()
           .eq('fecha_objetivo', fecha)
           .eq('local', local)
           .in('estado', ['pendiente', 'cancelado']);
+        if (errDel) throw errDel;
 
         // 2) Items editables (no 'hecho'/'parcial' — esos se mantienen intactos)
         const nuevos = itemsFecha
@@ -203,16 +204,20 @@ export function PlanProduccionEditor({
           }));
 
         if (nuevos.length > 0) {
-          const { error } = await supabase.from('cocina_pizarron_items').insert(nuevos);
-          if (error) throw error;
+          const { error: errIns } = await supabase
+            .from('cocina_pizarron_items')
+            .insert(nuevos);
+          if (errIns) throw errIns;
         }
       }
     },
     onSuccess: () => {
+      // Cerrar el modal primero para que el feedback al usuario sea inmediato;
+      // las invalidaciones disparan refetches en background.
+      onClose();
       qc.invalidateQueries({ queryKey: ['cocina-pizarron-editor'] });
       qc.invalidateQueries({ queryKey: ['cocina-pizarron-hoy'] });
       qc.invalidateQueries({ queryKey: ['plan-semanal-pizarron'] });
-      onClose();
     },
   });
 
