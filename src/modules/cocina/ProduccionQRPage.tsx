@@ -37,7 +37,11 @@ interface LoteRelleno {
   peso_total_kg: number;
   local: string;
   fecha: string;
-  receta?: { nombre: string } | null;
+  receta?: {
+    nombre: string;
+    g_semolin_por_kg: number | null;
+    g_huevo_por_kg: number | null;
+  } | null;
   // Campos calculados en memoria a partir de las pastas que consumieron este lote.
   consumido_kg?: number;
   disponible_kg?: number;
@@ -195,7 +199,9 @@ export function ProduccionQRPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cocina_lotes_relleno')
-        .select('id, receta_id, peso_total_kg, fecha, local, receta:cocina_recetas(nombre)')
+        .select(
+          'id, receta_id, peso_total_kg, fecha, local, receta:cocina_recetas(nombre, g_semolin_por_kg, g_huevo_por_kg)',
+        )
         .gte('fecha', desdeLotes)
         .eq('local', local)
         .order('created_at', { ascending: false });
@@ -872,6 +878,8 @@ function FormPasta({
   const [masaKg, setMasaKg] = useState('');
   const [rellenoKg, setRellenoKg] = useState('');
   const [muzzarellaGramos, setMuzzarellaGramos] = useState('');
+  const [semolinGramos, setSemolinGramos] = useState('');
+  const [huevoGramos, setHuevoGramos] = useState('');
   const [cantidadCajones, setCantidadCajones] = useState('');
   const [responsable, setResponsable] = useState('');
   const [notas, setNotas] = useState('');
@@ -949,6 +957,29 @@ function FormPasta({
   const esConMuzzarella = prodSel ? PASTAS_CON_MUZZARELLA.has(prodSel.codigo) : false;
   const rellenoSel = lotesRelleno.find((l) => l.id === loteRellenoId);
 
+  // Si la receta del relleno define ratios (ej: puré de papa para ñoquis →
+  // 350g semolín + 180g huevo por kg), sugerir los gramos a partir del
+  // relleno_kg cargado. El operario puede sobreescribir.
+  const ratioSemolinPorKg = rellenoSel?.receta?.g_semolin_por_kg ?? null;
+  const ratioHuevoPorKg = rellenoSel?.receta?.g_huevo_por_kg ?? null;
+  const requiereSemolinHuevo = ratioSemolinPorKg != null && ratioHuevoPorKg != null;
+
+  useEffect(() => {
+    if (!requiereSemolinHuevo) {
+      setSemolinGramos('');
+      setHuevoGramos('');
+      return;
+    }
+    const kg = parseFloat(rellenoKg.replace(',', '.'));
+    if (!Number.isFinite(kg) || kg <= 0) {
+      setSemolinGramos('');
+      setHuevoGramos('');
+      return;
+    }
+    setSemolinGramos(String(Math.round(kg * (ratioSemolinPorKg ?? 0))));
+    setHuevoGramos(String(Math.round(kg * (ratioHuevoPorKg ?? 0))));
+  }, [requiereSemolinHuevo, rellenoKg, ratioSemolinPorKg, ratioHuevoPorKg]);
+
   async function guardar() {
     if (!productoId) {
       setError('Seleccioná qué pasta estás armando');
@@ -957,6 +988,16 @@ function FormPasta({
     if (esConMuzzarella && (!muzzarellaGramos || Number(muzzarellaGramos) <= 0)) {
       setError('Cargá los gramos de muzzarella usados');
       return;
+    }
+    if (requiereSemolinHuevo) {
+      if (!semolinGramos || Number(semolinGramos) <= 0) {
+        setError('Cargá los gramos de semolín agregados al puré');
+        return;
+      }
+      if (!huevoGramos || Number(huevoGramos) <= 0) {
+        setError('Cargá los gramos de huevo agregados al puré');
+        return;
+      }
     }
     setGuardando(true);
     setError('');
@@ -971,6 +1012,8 @@ function FormPasta({
       masa_kg: masaKg ? Number(masaKg) : null,
       relleno_kg: rellenoKg ? Number(rellenoKg) : null,
       muzzarella_gramos: esConMuzzarella && muzzarellaGramos ? Number(muzzarellaGramos) : null,
+      semolin_gramos: requiereSemolinHuevo && semolinGramos ? Number(semolinGramos) : null,
+      huevo_gramos: requiereSemolinHuevo && huevoGramos ? Number(huevoGramos) : null,
       porciones: null,
       cantidad_cajones: cantidadCajones ? Number(cantidadCajones) : null,
       ubicacion: 'freezer_produccion',
@@ -1154,6 +1197,43 @@ function FormPasta({
             })()}
           </div>
         </div>
+
+        {requiereSemolinHuevo && (
+          <div className="rounded border border-amber-200 bg-amber-50 p-3">
+            <p className="mb-2 text-[11px] text-amber-900">
+              El puré lleva semolín y huevo: sugerencia automática a partir del puré usado
+              ({ratioSemolinPorKg}g semolín + {ratioHuevoPorKg}g huevo por kg). Editable.
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-amber-900">
+                  Semolín (g)
+                </label>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  value={semolinGramos}
+                  onChange={(e) => setSemolinGramos(e.target.value)}
+                  className="w-full rounded border border-amber-300 bg-white px-3 py-2.5 text-sm"
+                  placeholder="0"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-amber-900">
+                  Huevo (g)
+                </label>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  value={huevoGramos}
+                  onChange={(e) => setHuevoGramos(e.target.value)}
+                  className="w-full rounded border border-amber-300 bg-white px-3 py-2.5 text-sm"
+                  placeholder="0"
+                />
+              </div>
+            </div>
+          </div>
+        )}
 
         {esConMuzzarella && (
           <div className="rounded border border-yellow-200 bg-yellow-50 p-3">
