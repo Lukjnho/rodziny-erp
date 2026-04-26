@@ -1058,8 +1058,16 @@ function FormPasta({
               const id = e.target.value;
               setLoteRellenoId(id);
               const l = lotesRelleno.find((x) => x.id === id);
-              if (l && l.disponible_kg != null) setRellenoKg(String(l.disponible_kg));
-              else if (!id) setRellenoKg('');
+              // Si la receta lleva semolín/huevo (puré de papa), no autocompletar:
+              // el operario divide el puré entre los productos que va a armar y
+              // tipea cuántos kg usa para esta bandeja específica.
+              const llevaRatio =
+                l?.receta?.g_semolin_por_kg != null && l?.receta?.g_huevo_por_kg != null;
+              if (l && l.disponible_kg != null && !llevaRatio) {
+                setRellenoKg(String(l.disponible_kg));
+              } else if (!id || llevaRatio) {
+                setRellenoKg('');
+              }
             }}
             className="w-full rounded border border-gray-300 px-3 py-2.5 text-sm"
           >
@@ -1116,63 +1124,101 @@ function FormPasta({
           </div>
         )}
 
-        {/* Paso 3 — Masa */}
-        <div>
-          <label className="mb-1 block text-xs font-medium text-gray-700">
-            3) Masa disponible
-          </label>
-          <select
-            value={loteMasaId}
-            onChange={(e) => {
-              const id = e.target.value;
-              setLoteMasaId(id);
-              const m = lotesMasa.find((x) => x.id === id);
-              if (m && m.disponible_kg != null) setMasaKg(String(m.disponible_kg));
-              else if (!id) setMasaKg('');
-            }}
-            className="w-full rounded border border-gray-300 px-3 py-2.5 text-sm"
-          >
-            <option value="">Sin lote de masa</option>
-            {masasFiltradas.map((m) => {
-              const esDeHoy = m.fecha === hoy();
-              const fechaSufijo = esDeHoy ? '' : ` (${formatDDMM(m.fecha)})`;
-              return (
-                <option key={m.id} value={m.id}>
-                  {m.receta?.nombre ?? 'Masa'}
-                  {fechaSufijo} — {m.disponible_kg ?? m.kg_producidos} kg disponibles
-                </option>
-              );
-            })}
-          </select>
-        </div>
+        {/* Paso 3 — Masa (oculto cuando el relleno es puré: los ñoquis no llevan masa) */}
+        {!requiereSemolinHuevo && (
+          <>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-gray-700">
+                3) Masa disponible
+              </label>
+              <select
+                value={loteMasaId}
+                onChange={(e) => {
+                  const id = e.target.value;
+                  setLoteMasaId(id);
+                  const m = lotesMasa.find((x) => x.id === id);
+                  if (m && m.disponible_kg != null) setMasaKg(String(m.disponible_kg));
+                  else if (!id) setMasaKg('');
+                }}
+                className="w-full rounded border border-gray-300 px-3 py-2.5 text-sm"
+              >
+                <option value="">Sin lote de masa</option>
+                {masasFiltradas.map((m) => {
+                  const esDeHoy = m.fecha === hoy();
+                  const fechaSufijo = esDeHoy ? '' : ` (${formatDDMM(m.fecha)})`;
+                  return (
+                    <option key={m.id} value={m.id}>
+                      {m.receta?.nombre ?? 'Masa'}
+                      {fechaSufijo} — {m.disponible_kg ?? m.kg_producidos} kg disponibles
+                    </option>
+                  );
+                })}
+              </select>
+            </div>
 
-        <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-700">Masa (kg)</label>
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  step="0.1"
+                  value={masaKg}
+                  onChange={(e) => setMasaKg(e.target.value)}
+                  className="w-full rounded border border-gray-300 px-3 py-2.5 text-sm"
+                />
+                {(() => {
+                  const m = lotesMasa.find((x) => x.id === loteMasaId);
+                  const disp = m?.disponible_kg ?? null;
+                  const v = parseFloat(masaKg.replace(',', '.')) || 0;
+                  if (disp != null && v > disp + 0.01) {
+                    return (
+                      <p className="mt-1 text-[10px] text-amber-600">
+                        ⚠ Excede el disponible del lote ({disp} kg)
+                      </p>
+                    );
+                  }
+                  return null;
+                })()}
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-700">
+                  Relleno (kg)
+                </label>
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  step="0.1"
+                  value={rellenoKg}
+                  onChange={(e) => setRellenoKg(e.target.value)}
+                  className="w-full rounded border border-gray-300 px-3 py-2.5 text-sm"
+                  disabled={!loteRellenoId}
+                />
+                {(() => {
+                  const r = lotesRelleno.find((x) => x.id === loteRellenoId);
+                  const disp = r?.disponible_kg ?? null;
+                  const v = parseFloat(rellenoKg.replace(',', '.')) || 0;
+                  if (disp != null && v > disp + 0.01) {
+                    return (
+                      <p className="mt-1 text-[10px] text-amber-600">
+                        ⚠ Excede el disponible del lote ({disp} kg)
+                      </p>
+                    );
+                  }
+                  return null;
+                })()}
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* Para ñoquis: un único campo "Puré a usar". El semolín y huevo se calculan
+            sobre este valor (ver panel ámbar más abajo). */}
+        {requiereSemolinHuevo && (
           <div>
-            <label className="mb-1 block text-xs font-medium text-gray-700">Masa (kg)</label>
-            <input
-              type="number"
-              inputMode="decimal"
-              step="0.1"
-              value={masaKg}
-              onChange={(e) => setMasaKg(e.target.value)}
-              className="w-full rounded border border-gray-300 px-3 py-2.5 text-sm"
-            />
-            {(() => {
-              const m = lotesMasa.find((x) => x.id === loteMasaId);
-              const disp = m?.disponible_kg ?? null;
-              const v = parseFloat(masaKg.replace(',', '.')) || 0;
-              if (disp != null && v > disp + 0.01) {
-                return (
-                  <p className="mt-1 text-[10px] text-amber-600">
-                    ⚠ Excede el disponible del lote ({disp} kg)
-                  </p>
-                );
-              }
-              return null;
-            })()}
-          </div>
-          <div>
-            <label className="mb-1 block text-xs font-medium text-gray-700">Relleno (kg)</label>
+            <label className="mb-1 block text-xs font-medium text-gray-700">
+              Puré a usar (kg)
+            </label>
             <input
               type="number"
               inputMode="decimal"
@@ -1180,23 +1226,33 @@ function FormPasta({
               value={rellenoKg}
               onChange={(e) => setRellenoKg(e.target.value)}
               className="w-full rounded border border-gray-300 px-3 py-2.5 text-sm"
-              disabled={!loteRellenoId}
+              placeholder={
+                rellenoSel?.disponible_kg != null
+                  ? `Disponibles: ${rellenoSel.disponible_kg} kg`
+                  : 'Cantidad de puré para esta bandeja'
+              }
             />
             {(() => {
-              const r = lotesRelleno.find((x) => x.id === loteRellenoId);
-              const disp = r?.disponible_kg ?? null;
+              const disp = rellenoSel?.disponible_kg ?? null;
               const v = parseFloat(rellenoKg.replace(',', '.')) || 0;
               if (disp != null && v > disp + 0.01) {
                 return (
                   <p className="mt-1 text-[10px] text-amber-600">
-                    ⚠ Excede el disponible del lote ({disp} kg)
+                    ⚠ Excede el puré disponible ({disp} kg)
+                  </p>
+                );
+              }
+              if (disp != null && v > 0) {
+                return (
+                  <p className="mt-1 text-[10px] text-gray-500">
+                    Disponibles: {disp} kg · usás {v} kg → quedan {(disp - v).toFixed(1)} kg
                   </p>
                 );
               }
               return null;
             })()}
           </div>
-        </div>
+        )}
 
         {requiereSemolinHuevo && (
           <div className="rounded border border-amber-200 bg-amber-50 p-3">
