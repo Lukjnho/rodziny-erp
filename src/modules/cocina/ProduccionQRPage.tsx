@@ -432,6 +432,9 @@ export function ProduccionQRPage() {
     qc.invalidateQueries({ queryKey: ['cocina-lotes-produccion-qr'] });
     qc.invalidateQueries({ queryKey: ['cocina-lotes-pasta-frescos-qr'] });
     qc.invalidateQueries({ queryKey: ['cocina-pastas-consumo-qr'] });
+    // Invalidar el stock derivado del Dashboard del chef para que se actualice
+    // sin esperar al refetch periódico cuando QR y Dashboard están en la misma pestaña.
+    qc.invalidateQueries({ queryKey: ['cocina_stock_pastas'] });
   }
 
   return (

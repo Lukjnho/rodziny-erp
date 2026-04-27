@@ -714,6 +714,11 @@ export function DashboardTab() {
       }
       return m;
     },
+    // Refetch periódico mientras la pestaña está activa para reflejar lotes
+    // recién registrados desde el QR (cubre el caso multi-pestaña / multi-dispositivo).
+    refetchInterval: 30_000,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
   });
 
   // ── Query: último conteo de stock por producto ──
