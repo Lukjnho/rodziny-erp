@@ -6,7 +6,6 @@ import { ProduccionTab } from './ProduccionTab';
 import { StockTab } from './StockTab';
 import { TraspasosTab } from './TraspasosTab';
 import { RecetasTab } from './RecetasTab';
-import { ProductosTab } from './ProductosTab';
 import { AnalisisTab } from './AnalisisTab';
 import { CalendarioTab } from './CalendarioTab';
 
@@ -16,7 +15,6 @@ type Tab =
   | 'stock'
   | 'traspasos'
   | 'recetas'
-  | 'productos'
   | 'analisis'
   | 'calendario';
 
@@ -64,14 +62,6 @@ const ayudaPorTab: Record<Tab, { titulo: string; pasos: string[] }> = {
       'Las recetas se usan al registrar producción.',
     ],
   },
-  productos: {
-    titulo: 'Productos',
-    pasos: [
-      'Cargá los productos que se fabrican: pastas, salsas, postres.',
-      'El código (ej: sor, rav) se usa para generar el código de lote.',
-      'El mínimo de producción indica cuánto producir como mínimo.',
-    ],
-  },
   analisis: {
     titulo: 'Análisis',
     pasos: [
@@ -115,9 +105,6 @@ export function CocinaPage() {
         <TabButton activo={tab === 'recetas'} onClick={() => setTab('recetas')}>
           Recetas
         </TabButton>
-        <TabButton activo={tab === 'productos'} onClick={() => setTab('productos')}>
-          Productos
-        </TabButton>
         <TabButton activo={tab === 'analisis'} onClick={() => setTab('analisis')}>
           Análisis
         </TabButton>
@@ -138,7 +125,6 @@ export function CocinaPage() {
       {tab === 'stock' && <StockTab />}
       {tab === 'traspasos' && <TraspasosTab />}
       {tab === 'recetas' && <RecetasTab />}
-      {tab === 'productos' && <ProductosTab />}
       {tab === 'analisis' && <AnalisisTab />}
       {tab === 'calendario' && <CalendarioTab />}
 

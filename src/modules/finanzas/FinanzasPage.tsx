@@ -9,6 +9,7 @@ import { EstadoResultados } from './edr/EstadoResultados';
 import { AmortizacionesPage } from './amortizaciones/AmortizacionesPage';
 import { ChecklistPagos } from './components/ChecklistPagos';
 import { CosteoTab } from './components/CosteoTab';
+import { ProductosTab } from '@/modules/cocina/ProductosTab';
 import { useAuth, type Modulo } from '@/lib/auth';
 import { cn } from '@/lib/utils';
 
@@ -20,6 +21,7 @@ type Tab =
   | 'amortizaciones'
   | 'checklist'
   | 'costeo'
+  | 'productos'
   | 'cierres'
   | 'importar';
 
@@ -72,6 +74,13 @@ const TABS: TabDef[] = [
     label: 'Costeo',
     icon: '🧮',
     subtitle: 'Costos de recetas, precios y márgenes de productos',
+    modulo: 'finanzas',
+  },
+  {
+    id: 'productos',
+    label: 'Productos',
+    icon: '🍝',
+    subtitle: 'Catálogo de productos: códigos, mínimos de producción y receta vinculada',
     modulo: 'finanzas',
   },
   {
@@ -142,6 +151,7 @@ export function FinanzasPage() {
       {tab === 'flujo' && <FlujoCaja />}
       {tab === 'checklist' && <ChecklistPagos />}
       {tab === 'costeo' && <CosteoTab />}
+      {tab === 'productos' && <ProductosTab />}
       {tab === 'amortizaciones' && <AmortizacionesPage embedded />}
       {tab === 'cierres' && <CierreCaja />}
       {tab === 'importar' && <UploadFudo />}
