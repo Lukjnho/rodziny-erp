@@ -583,6 +583,8 @@ export function RecetasTab() {
           onSaved={() => {
             qc.invalidateQueries({ queryKey: ['cocina-recetas'] });
             qc.invalidateQueries({ queryKey: ['cocina-receta-ingredientes'] });
+            qc.invalidateQueries({ queryKey: ['cocina-recetas-costeo'] });
+            qc.invalidateQueries({ queryKey: ['cocina-receta-ingredientes-costeo'] });
             setModalAbierto(false);
           }}
         />
