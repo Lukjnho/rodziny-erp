@@ -39,9 +39,8 @@ const TIPO_LABEL: Record<string, string> = {
 };
 
 // Mapping producto.tipo → tipos de receta candidatas (igual que el QR de cocina).
-// Para "pasta" mostramos rellenos (pastas rellenas) y masas (pastas simples) del mismo local.
 const TIPOS_RECETA_POR_PRODUCTO: Record<string, string[]> = {
-  pasta: ['relleno', 'masa'],
+  pasta: ['relleno'],
   salsa: ['salsa'],
   postre: ['postre'],
   relleno: ['relleno'],
