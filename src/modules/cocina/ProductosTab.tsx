@@ -39,13 +39,24 @@ const TIPO_LABEL: Record<string, string> = {
 };
 
 // Mapping producto.tipo → tipos de receta candidatas (igual que el QR de cocina).
+// Para "pasta": rellenos arriba (pasta rellena, caso 95%) + masas abajo (tagliatelles,
+// ñoquis simples) agrupados en el dropdown via optgroup.
 const TIPOS_RECETA_POR_PRODUCTO: Record<string, string[]> = {
-  pasta: ['relleno'],
+  pasta: ['relleno', 'masa'],
   salsa: ['salsa'],
   postre: ['postre'],
   relleno: ['relleno'],
   masa: ['masa'],
   panificado: ['pasteleria', 'panaderia'],
+};
+
+const LABEL_GRUPO_RECETA: Record<string, string> = {
+  relleno: 'Rellenos',
+  masa: 'Masas',
+  salsa: 'Salsas',
+  postre: 'Postres',
+  pasteleria: 'Pastelería',
+  panaderia: 'Panadería',
 };
 
 type FiltroLocal = 'todos' | 'vedia' | 'saavedra';
@@ -519,11 +530,33 @@ function ModalProducto({
                 className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
               >
                 <option value="">— Sin receta —</option>
-                {recetasFiltradas.map((r) => (
-                  <option key={r.id} value={r.id}>
-                    {r.nombre}
-                  </option>
-                ))}
+                {(TIPOS_RECETA_POR_PRODUCTO[tipo] ?? []).map((tipoReceta) => {
+                  const recetasGrupo = recetasFiltradas.filter((r) => r.tipo === tipoReceta);
+                  if (recetasGrupo.length === 0) return null;
+                  return (
+                    <optgroup
+                      key={tipoReceta}
+                      label={LABEL_GRUPO_RECETA[tipoReceta] ?? tipoReceta}
+                    >
+                      {recetasGrupo.map((r) => (
+                        <option key={r.id} value={r.id}>
+                          {r.nombre}
+                        </option>
+                      ))}
+                    </optgroup>
+                  );
+                })}
+                {/* Receta vinculada que cae fuera del filtro actual: la mostramos al final
+                    sin grupo para no romper el vínculo si cambió tipo o local. */}
+                {recetasFiltradas
+                  .filter(
+                    (r) => !(TIPOS_RECETA_POR_PRODUCTO[tipo] ?? []).includes(r.tipo ?? ''),
+                  )
+                  .map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {r.nombre} (vínculo previo)
+                    </option>
+                  ))}
                 {recetasFiltradas.length === 0 && (
                   <option disabled>
                     (No hay recetas {TIPO_LABEL[tipo]?.toLowerCase()} cargadas en {local})
