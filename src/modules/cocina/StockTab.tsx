@@ -233,20 +233,17 @@ export function StockTab() {
 
         const stock = producido - traspasado - mermaTotal;
 
-        // Solo mostrar si hay actividad o stock
-        if (producido > 0 || fresco > 0 || traspasado > 0 || mermaTotal > 0 || mostrador > 0) {
-          rows.push({
-            producto: prod,
-            local: loc,
-            producido,
-            fresco,
-            traspasado,
-            vendidoHoy,
-            mostrador,
-            merma: mermaTotal,
-            stock,
-          });
-        }
+        rows.push({
+          producto: prod,
+          local: loc,
+          producido,
+          fresco,
+          traspasado,
+          vendidoHoy,
+          mostrador,
+          merma: mermaTotal,
+          stock,
+        });
       }
     }
 
@@ -263,7 +260,7 @@ export function StockTab() {
   ]);
 
   const kpis = useMemo(() => {
-    const totalProductos = stockRows.length;
+    const totalProductos = stockRows.filter((r) => r.stock > 0).length;
     const bajoMinimo = stockRows.filter(
       (r) => r.producto.minimo_produccion && r.stock < r.producto.minimo_produccion && r.stock > 0,
     ).length;
