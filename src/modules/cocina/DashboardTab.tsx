@@ -581,6 +581,10 @@ export type FilaDashboard = ProductoCocina & {
   estado: 'ok' | 'bajo' | 'critico' | 'sin_datos';
   recetaNombre: string | null;
   rendPorciones: number | null;
+  // Lotes registrados en QR (solo aplica a tipo === 'pasta').
+  enCamaraPorciones: number;
+  enColaPorciones: number;
+  stockEsFallback: boolean; // true si stockCantidad es null y usamos cámara como aproximación
 };
 
 // Shape crudo devuelto por Supabase para la query de cocina_productos con receta
@@ -597,6 +601,16 @@ type ProductoDBRow = {
     rendimiento_kg: number | null;
   } | null;
 };
+
+// Stock derivado de la vista v_cocina_stock_pastas (lotes registrados en QR).
+// Se usa para mostrar bandejas en cola y como fallback cuando no hay conteo manual.
+interface StockPastaDB {
+  porcionesCamara: number;
+  porcionesFresco: number;
+  porcionesTraspasadas: number;
+  porcionesMerma: number;
+  porcionesVendibles: number; // camara - traspasos - merma
+}
 
 // Normaliza nombres para matchear entre PRODUCTOS_COCINA y la tabla cocina_productos.
 export function normNombre(s: string): string {
@@ -659,6 +673,45 @@ export function DashboardTab() {
       }));
       const m = new Map<string, ProductoDB>();
       for (const p of filas) m.set(normNombre(p.nombre), p);
+      return m;
+    },
+  });
+
+  // ── Query: stock de pastas derivado de lotes registrados en QR ──
+  // La vista v_cocina_stock_pastas suma porciones por ubicación
+  // (cámara_congelado vs freezer_produccion) descontando traspasos y merma.
+  // Mostramos las bandejas "en cola" y usamos las de cámara como fallback
+  // cuando no hay conteo manual reciente del chef.
+  const { data: stockPastasDB } = useQuery({
+    queryKey: ['cocina_stock_pastas', local],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('v_cocina_stock_pastas')
+        .select(
+          'nombre, porciones_camara, porciones_fresco, porciones_traspasadas, porciones_merma',
+        )
+        .eq('local', local);
+      if (error) throw error;
+      const m = new Map<string, StockPastaDB>();
+      for (const r of (data ?? []) as Array<{
+        nombre: string;
+        porciones_camara: number | null;
+        porciones_fresco: number | null;
+        porciones_traspasadas: number | null;
+        porciones_merma: number | null;
+      }>) {
+        const camara = Number(r.porciones_camara) || 0;
+        const fresco = Number(r.porciones_fresco) || 0;
+        const traspasos = Number(r.porciones_traspasadas) || 0;
+        const merma = Number(r.porciones_merma) || 0;
+        m.set(normNombre(r.nombre), {
+          porcionesCamara: camara,
+          porcionesFresco: fresco,
+          porcionesTraspasadas: traspasos,
+          porcionesMerma: merma,
+          porcionesVendibles: Math.max(0, camara - traspasos - merma),
+        });
+      }
       return m;
     },
   });
@@ -753,6 +806,13 @@ export function DashboardTab() {
       const stockCantidad = conteo?.cantidad ?? null;
       const stockFecha = conteo?.fecha ?? null;
 
+      // Stock derivado de lotes registrados en QR (solo pastas).
+      // Vendibles = porciones en cámara − traspasos − merma. En cola = freezer producción.
+      const stockDB =
+        prod.tipo === 'pasta' ? (stockPastasDB?.get(normNombre(prod.nombre)) ?? null) : null;
+      const enCamaraPorciones = stockDB?.porcionesVendibles ?? 0;
+      const enColaPorciones = stockDB?.porcionesFresco ?? 0;
+
       // Ventas diarias promedio desde Fudo
       const nombres = prod.fudoNombres ?? [prod.nombre];
       let ventasTotal = 0;
@@ -779,18 +839,25 @@ export function DashboardTab() {
 
       // Calcular porciones aprox del stock (redondeo al alza: el chef prefiere un estimado conservador)
       let porcionesStock = 0;
+      let stockEsFallback = false;
       if (stockCantidad !== null) {
         if (prod.tipo === 'salsa') {
           porcionesStock = Math.ceil((stockCantidad * 1000) / prod.gramosporcion);
         } else {
           porcionesStock = Math.ceil(stockCantidad * prod.porcionesporunidad);
         }
+      } else if (prod.tipo === 'pasta' && enCamaraPorciones > 0) {
+        // Sin conteo manual: usamos las porciones en cámara como aproximación
+        // para no decir "sin datos" cuando la DB ya sabe que hay stock.
+        porcionesStock = enCamaraPorciones;
+        stockEsFallback = true;
       }
 
       // Días de stock restante (usar ajustada para ser conservador)
       const ventasParaCalculo = Math.max(ventasDiariasPromedio, ventasDiariasAjustadas);
+      const tieneStock = stockCantidad !== null || stockEsFallback;
       const diasRestantes =
-        ventasParaCalculo > 0 && stockCantidad !== null ? porcionesStock / ventasParaCalculo : null;
+        ventasParaCalculo > 0 && tieneStock ? porcionesStock / ventasParaCalculo : null;
 
       // Match con tabla BD para obtener receta vinculada y mínimos
       const prodDB = productosDB?.get(normNombre(prod.nombre)) ?? null;
@@ -867,9 +934,21 @@ export function DashboardTab() {
         estado,
         recetaNombre: prodDB?.receta_nombre ?? null,
         rendPorciones,
+        enCamaraPorciones,
+        enColaPorciones,
+        stockEsFallback,
       };
     });
-  }, [conteos, fudoData, fudoReciente, factorManana, ventanaDias, productosDB, local]);
+  }, [
+    conteos,
+    fudoData,
+    fudoReciente,
+    factorManana,
+    ventanaDias,
+    productosDB,
+    stockPastasDB,
+    local,
+  ]);
 
   // Agrupar filas por categoría, en orden definido
   const categorias = useMemo(() => {
@@ -911,8 +990,9 @@ export function DashboardTab() {
   const countSinDatos = filas.filter((f) => f.estado === 'sin_datos').length;
 
   // ── Plan de producción: items que necesitan producción, ordenados por urgencia ──
+  // Incluye items con stock por conteo manual y los que estimamos por lotes (fallback).
   const planProduccion = filas
-    .filter((f) => f.producirCantidad > 0 && f.stockCantidad !== null)
+    .filter((f) => f.producirCantidad > 0 && (f.stockCantidad !== null || f.stockEsFallback))
     .sort((a, b) => (a.diasRestantes ?? 0) - (b.diasRestantes ?? 0));
 
   // ── Pizarrón ──
@@ -963,11 +1043,17 @@ export function DashboardTab() {
       if (okEnCat.length === 0 && bajoEnCat.length === 0) continue;
 
       txt += `${cat.nombre.toUpperCase()}:\n`;
+      const fmtStock = (f: FilaDashboard) =>
+        f.stockCantidad !== null
+          ? `${f.stockCantidad} ${f.unidadstock}`
+          : f.stockEsFallback
+            ? `~${f.porcionesStock} porc.`
+            : '—';
       for (const f of okEnCat) {
-        txt += `  OK  ${f.nombre} — ${f.diasRestantes}d (${f.stockCantidad} ${f.unidadstock})\n`;
+        txt += `  OK  ${f.nombre} — ${f.diasRestantes}d (${fmtStock(f)})\n`;
       }
       for (const f of bajoEnCat) {
-        txt += `  *   ${f.nombre} — ${f.diasRestantes}d (${f.stockCantidad} ${f.unidadstock})\n`;
+        txt += `  *   ${f.nombre} — ${f.diasRestantes}d (${fmtStock(f)})\n`;
       }
       txt += '\n';
     }
@@ -1284,6 +1370,23 @@ function CategoriaAccordion({
                               })}
                             </div>
                           )}
+                          {f.tipo === 'pasta' && f.enColaPorciones > 0 && (
+                            <div className="text-[10px] text-blue-600">
+                              + {f.enColaPorciones} porc. en cola
+                            </div>
+                          )}
+                        </div>
+                      ) : f.stockEsFallback ? (
+                        <div>
+                          <span className="font-medium text-gray-700">
+                            ~{f.porcionesStock} porc.
+                          </span>
+                          <div className="text-[10px] text-gray-400">cámara (auto)</div>
+                          {f.enColaPorciones > 0 && (
+                            <div className="text-[10px] text-blue-600">
+                              + {f.enColaPorciones} porc. en cola
+                            </div>
+                          )}
                         </div>
                       ) : (
                         <span className="text-gray-300">—</span>
@@ -1346,9 +1449,9 @@ function CategoriaAccordion({
                       )}
                     </td>
                     <td className="px-4 py-3 text-right">
-                      {f.producirCantidad > 0 && f.stockCantidad !== null ? (
+                      {f.producirCantidad > 0 && (f.stockCantidad !== null || f.stockEsFallback) ? (
                         <span className="font-medium text-rodziny-700">{f.producirLabel}</span>
-                      ) : f.stockCantidad === null ? (
+                      ) : f.stockCantidad === null && !f.stockEsFallback ? (
                         <span className="text-gray-300">—</span>
                       ) : (
                         <span className="text-xs text-green-600">Suficiente</span>

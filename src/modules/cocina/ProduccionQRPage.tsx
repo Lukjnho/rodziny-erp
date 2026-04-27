@@ -985,10 +985,6 @@ function FormPasta({
       setError('Seleccioná qué pasta estás armando');
       return;
     }
-    if (esConMuzzarella && (!muzzarellaGramos || Number(muzzarellaGramos) <= 0)) {
-      setError('Cargá los gramos de muzzarella usados');
-      return;
-    }
     if (requiereSemolinHuevo) {
       if (!semolinGramos || Number(semolinGramos) <= 0) {
         setError('Cargá los gramos de semolín agregados al puré');
@@ -1254,42 +1250,73 @@ function FormPasta({
           </div>
         )}
 
-        {requiereSemolinHuevo && (
-          <div className="rounded border border-amber-200 bg-amber-50 p-3">
-            <p className="mb-2 text-[11px] text-amber-900">
-              El puré lleva semolín y huevo: sugerencia automática a partir del puré usado
-              ({ratioSemolinPorKg}g semolín + {ratioHuevoPorKg}g huevo por kg). Editable.
-            </p>
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="mb-1 block text-xs font-medium text-amber-900">
-                  Semolín (g)
-                </label>
-                <input
-                  type="number"
-                  inputMode="numeric"
-                  value={semolinGramos}
-                  onChange={(e) => setSemolinGramos(e.target.value)}
-                  className="w-full rounded border border-amber-300 bg-white px-3 py-2.5 text-sm"
-                  placeholder="0"
-                />
+        {requiereSemolinHuevo && (() => {
+          const pureKg = parseFloat(rellenoKg.replace(',', '.'));
+          const tienePure = Number.isFinite(pureKg) && pureKg > 0;
+          const semolinSug =
+            tienePure && ratioSemolinPorKg ? Math.round(pureKg * ratioSemolinPorKg) : null;
+          const huevoSug =
+            tienePure && ratioHuevoPorKg ? Math.round(pureKg * ratioHuevoPorKg) : null;
+          const semolinReal = Number(semolinGramos);
+          const huevoReal = Number(huevoGramos);
+          const desvSem =
+            semolinSug && semolinReal > 0 ? Math.abs(semolinReal - semolinSug) / semolinSug : 0;
+          const desvHue =
+            huevoSug && huevoReal > 0 ? Math.abs(huevoReal - huevoSug) / huevoSug : 0;
+          const fueraDeRango = desvSem > 0.1 || desvHue > 0.1;
+          return (
+            <div className="rounded border border-amber-200 bg-amber-50 p-3">
+              <p className="mb-2 text-[11px] text-amber-900">
+                El puré lleva semolín y huevo: sugerencia automática a partir del puré usado
+                ({ratioSemolinPorKg}g semolín + {ratioHuevoPorKg}g huevo por kg). Editable.
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-amber-900">
+                    Semolín (g)
+                  </label>
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    value={semolinGramos}
+                    onChange={(e) => setSemolinGramos(e.target.value)}
+                    className="w-full rounded border border-amber-300 bg-white px-3 py-2.5 text-sm"
+                    placeholder="0"
+                  />
+                  {semolinSug != null && semolinReal > 0 && desvSem > 0.1 && (
+                    <p className="mt-1 text-[10px] text-amber-700">
+                      ⚠ Sugerido ~{semolinSug}g (±{Math.round(desvSem * 100)}%)
+                    </p>
+                  )}
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-amber-900">
+                    Huevo (g)
+                  </label>
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    value={huevoGramos}
+                    onChange={(e) => setHuevoGramos(e.target.value)}
+                    className="w-full rounded border border-amber-300 bg-white px-3 py-2.5 text-sm"
+                    placeholder="0"
+                  />
+                  {huevoSug != null && huevoReal > 0 && desvHue > 0.1 && (
+                    <p className="mt-1 text-[10px] text-amber-700">
+                      ⚠ Sugerido ~{huevoSug}g (±{Math.round(desvHue * 100)}%)
+                    </p>
+                  )}
+                </div>
               </div>
-              <div>
-                <label className="mb-1 block text-xs font-medium text-amber-900">
-                  Huevo (g)
-                </label>
-                <input
-                  type="number"
-                  inputMode="numeric"
-                  value={huevoGramos}
-                  onChange={(e) => setHuevoGramos(e.target.value)}
-                  className="w-full rounded border border-amber-300 bg-white px-3 py-2.5 text-sm"
-                  placeholder="0"
-                />
-              </div>
+              {fueraDeRango && (
+                <p className="mt-2 text-[11px] font-medium text-amber-800">
+                  Los valores cargados se alejan más de 10% del ratio teórico. Confirmá que es
+                  intencional antes de guardar.
+                </p>
+              )}
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {esConMuzzarella && (
           <div className="rounded border border-yellow-200 bg-yellow-50 p-3">
@@ -1304,9 +1331,13 @@ function FormPasta({
               className="w-full rounded border border-yellow-300 bg-white px-3 py-2.5 text-sm"
               placeholder="500"
             />
-            {muzzarellaGramos && Number(muzzarellaGramos) > 0 && (
+            {muzzarellaGramos && Number(muzzarellaGramos) > 0 ? (
               <p className="mt-1 text-[10px] text-yellow-800">
                 ≈ {(Number(muzzarellaGramos) / 1000).toFixed(2).replace('.', ',')} kg
+              </p>
+            ) : (
+              <p className="mt-1 text-[11px] font-medium text-yellow-800">
+                ⚠ Los ñoquis rellenos llevan muzzarella. Cargá los gramos antes de guardar.
               </p>
             )}
           </div>
