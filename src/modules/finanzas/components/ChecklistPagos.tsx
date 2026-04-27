@@ -48,6 +48,22 @@ const CAT_ICONS: Record<string, string> = {
   Cheques: '📝',
 };
 
+// Heurística de icono para grupos EdR (matching por substring del nombre)
+function iconoGrupo(cat: string): string {
+  if (CAT_ICONS[cat]) return CAT_ICONS[cat];
+  const c = cat.toLowerCase();
+  if (c.includes('estructura') || c.includes('servicio')) return '🏠';
+  if (c.includes('impuesto') || c.includes('tasa')) return '🏛';
+  if (c.includes('rrhh') || c.includes('personal') || c.includes('sueldo')) return '👥';
+  if (c.includes('administ')) return '💼';
+  if (c.includes('financ') || c.includes('banco')) return '💰';
+  if (c.includes('marketing') || c.includes('publicidad')) return '📣';
+  if (c.includes('cheque')) return '📝';
+  if (c.includes('mercader') || c.includes('insumo') || c.includes('compra')) return '🛒';
+  if (c.includes('regulariz')) return '📋';
+  return '📂';
+}
+
 const MEDIOS: MedioPago[] = [
   'efectivo',
   'transferencia_mp',
@@ -91,6 +107,14 @@ function hoy(): string {
   return new Date().toISOString().split('T')[0];
 }
 
+// Comparador: vencimiento ASC, nulls al final
+function compararPorVencimiento(a: PagoFijo, b: PagoFijo): number {
+  if (!a.fecha_vencimiento && !b.fecha_vencimiento) return 0;
+  if (!a.fecha_vencimiento) return 1;
+  if (!b.fecha_vencimiento) return -1;
+  return a.fecha_vencimiento.localeCompare(b.fecha_vencimiento);
+}
+
 // Derivar local del concepto (heurística simple)
 function derivarLocal(concepto: string): 'vedia' | 'saavedra' {
   const c = concepto.toLowerCase();
@@ -122,7 +146,10 @@ export function ChecklistPagos() {
     return { cantidad, monto, proximoPeriodo, porPeriodo: Object.fromEntries(otros) };
   }, [alertas, periodo]);
   const [showModal, setShowModal] = useState(false);
-  const [seccionesAbiertas, setSeccionesAbiertas] = useState<Set<string>>(new Set(CATEGORIAS));
+  const [agruparPor, setAgruparPor] = useState<'seccion' | 'edr'>('seccion');
+  // Trackear secciones cerradas (default = todas abiertas, así al cambiar modo
+  // los grupos nuevos aparecen expandidos automáticamente)
+  const [seccionesCerradas, setSeccionesCerradas] = useState<Set<string>>(new Set());
   const [medioPagoModal, setMedioPagoModal] = useState<{ pagoId: string; concepto: string } | null>(
     null,
   );
@@ -353,19 +380,44 @@ export function ChecklistPagos() {
   // ── datos derivados ──────────────────────────────────────────────────────
   const porCategoria = useMemo(() => {
     const grupos = new Map<string, PagoFijo[]>();
-    for (const cat of CATEGORIAS) grupos.set(cat, []);
-    for (const p of pagos ?? []) {
-      const arr = grupos.get(p.categoria);
-      if (arr) arr.push(p);
-      else {
-        // Categoría no estándar
-        const existing = grupos.get(p.categoria) ?? [];
-        existing.push(p);
-        grupos.set(p.categoria, existing);
+
+    if (agruparPor === 'edr') {
+      // Agrupar por categoría EdR padre (gastos de estructura, impuestos y tasas, etc.)
+      const subcatsById = new Map(subcategorias.map((s) => [s.id, s]));
+      // Inicializar grupos en el orden de los padres para layout estable
+      for (const [, padreNombre] of padres) grupos.set(padreNombre, []);
+      for (const p of pagos ?? []) {
+        let groupName = 'Sin categoría EdR';
+        if (p.categoria_gasto_id) {
+          const sub = subcatsById.get(p.categoria_gasto_id);
+          if (sub?.parent_id) {
+            groupName = padres.get(sub.parent_id) ?? 'Sin categoría EdR';
+          }
+        }
+        const arr = grupos.get(groupName) ?? [];
+        arr.push(p);
+        grupos.set(groupName, arr);
+      }
+    } else {
+      for (const cat of CATEGORIAS) grupos.set(cat, []);
+      for (const p of pagos ?? []) {
+        const arr = grupos.get(p.categoria);
+        if (arr) arr.push(p);
+        else {
+          const existing = grupos.get(p.categoria) ?? [];
+          existing.push(p);
+          grupos.set(p.categoria, existing);
+        }
       }
     }
+
+    // Ordenar cada grupo por vencimiento ascendente
+    for (const [, items] of grupos) {
+      items.sort(compararPorVencimiento);
+    }
+
     return grupos;
-  }, [pagos]);
+  }, [pagos, agruparPor, subcategorias, padres]);
 
   const resumen = useMemo(() => {
     let totalEstimado = 0,
@@ -413,7 +465,7 @@ export function ChecklistPagos() {
   const tieneItems = (pagos?.length ?? 0) > 0;
 
   function toggleSeccion(cat: string) {
-    setSeccionesAbiertas((prev) => {
+    setSeccionesCerradas((prev) => {
       const next = new Set(prev);
       if (next.has(cat)) next.delete(cat);
       else next.add(cat);
@@ -453,7 +505,32 @@ export function ChecklistPagos() {
             )}
           </button>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-1 rounded-md border border-gray-200 bg-gray-50 p-0.5 text-xs">
+            <span className="px-2 text-gray-500">Agrupar:</span>
+            <button
+              onClick={() => setAgruparPor('seccion')}
+              className={cn(
+                'rounded px-2.5 py-1 transition-colors',
+                agruparPor === 'seccion'
+                  ? 'bg-white font-medium text-gray-800 shadow-sm'
+                  : 'text-gray-500 hover:text-gray-700',
+              )}
+            >
+              Sección
+            </button>
+            <button
+              onClick={() => setAgruparPor('edr')}
+              className={cn(
+                'rounded px-2.5 py-1 transition-colors',
+                agruparPor === 'edr'
+                  ? 'bg-white font-medium text-gray-800 shadow-sm'
+                  : 'text-gray-500 hover:text-gray-700',
+              )}
+            >
+              Categoría EdR
+            </button>
+          </div>
           <button
             onClick={() => copiarMesAnterior.mutate()}
             disabled={copiarMesAnterior.isPending}
@@ -618,7 +695,7 @@ export function ChecklistPagos() {
       {tieneItems &&
         [...porCategoria.entries()].map(([cat, filas]) => {
           if (!filas.length) return null;
-          const abierta = seccionesAbiertas.has(cat);
+          const abierta = !seccionesCerradas.has(cat);
           const subtotal = filas.reduce((s, p) => s + (p.monto ?? 0), 0);
           const pagados = filas.filter((p) => p.pagado).length;
 
@@ -633,7 +710,7 @@ export function ChecklistPagos() {
               >
                 <div className="flex items-center gap-2">
                   <span className="text-sm">{abierta ? '▼' : '▶'}</span>
-                  <span className="text-sm">{CAT_ICONS[cat] ?? '📄'}</span>
+                  <span className="text-sm">{iconoGrupo(cat)}</span>
                   <span className="text-sm font-semibold text-gray-800">{cat}</span>
                   <span className="text-xs text-gray-400">
                     ({pagados}/{filas.length})
