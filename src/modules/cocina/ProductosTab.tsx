@@ -24,6 +24,8 @@ interface RecetaOpcion {
   nombre: string;
   rendimiento_kg: number | null;
   rendimiento_porciones: number | null;
+  tipo: string | null;
+  local: string | null;
 }
 
 const TIPOS = ['pasta', 'salsa', 'postre', 'relleno', 'masa', 'panificado'] as const;
@@ -34,6 +36,17 @@ const TIPO_LABEL: Record<string, string> = {
   relleno: 'Relleno',
   masa: 'Masa',
   panificado: 'Panificado',
+};
+
+// Mapping producto.tipo → tipos de receta candidatas (igual que el QR de cocina).
+// Para "pasta" mostramos rellenos (pastas rellenas) y masas (pastas simples) del mismo local.
+const TIPOS_RECETA_POR_PRODUCTO: Record<string, string[]> = {
+  pasta: ['relleno', 'masa'],
+  salsa: ['salsa'],
+  postre: ['postre'],
+  relleno: ['relleno'],
+  masa: ['masa'],
+  panificado: ['pasteleria', 'panaderia'],
 };
 
 type FiltroLocal = 'todos' | 'vedia' | 'saavedra';
@@ -62,7 +75,7 @@ export function ProductosTab() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cocina_recetas')
-        .select('id, nombre, rendimiento_kg, rendimiento_porciones')
+        .select('id, nombre, rendimiento_kg, rendimiento_porciones, tipo, local')
         .eq('activo', true)
         .order('nombre');
       if (error) throw error;
@@ -363,6 +376,21 @@ function ModalProducto({
 
   const { costos } = useCostosRecetas();
 
+  // Recetas filtradas: mismo local del producto + tipo compatible (mapping tipo producto → tipos receta).
+  // Si el producto ya tenía una receta vinculada que queda fuera del filtro (ej. cambió el tipo o local),
+  // la incluimos igual para no romper el vínculo existente.
+  const recetasFiltradas = useMemo(() => {
+    const tiposPermitidos = TIPOS_RECETA_POR_PRODUCTO[tipo] ?? [];
+    const filtradas = recetas.filter(
+      (r) => r.local === local && tiposPermitidos.includes(r.tipo ?? ''),
+    );
+    if (recetaId && !filtradas.some((r) => r.id === recetaId)) {
+      const actual = recetas.find((r) => r.id === recetaId);
+      if (actual) return [actual, ...filtradas];
+    }
+    return filtradas;
+  }, [recetas, local, tipo, recetaId]);
+
   const costoPreview = useMemo(() => {
     if (!recetaId) return null;
     const c = costos.get(recetaId);
@@ -492,11 +520,16 @@ function ModalProducto({
                 className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
               >
                 <option value="">— Sin receta —</option>
-                {recetas.map((r) => (
+                {recetasFiltradas.map((r) => (
                   <option key={r.id} value={r.id}>
                     {r.nombre}
                   </option>
                 ))}
+                {recetasFiltradas.length === 0 && (
+                  <option disabled>
+                    (No hay recetas {TIPO_LABEL[tipo]?.toLowerCase()} cargadas en {local})
+                  </option>
+                )}
               </select>
             </div>
             {costoPreview && (
