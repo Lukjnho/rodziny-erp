@@ -15,7 +15,7 @@ interface PlanItem {
   texto_libre: string | null;
   cantidad_recetas: number;
   cantidad_hecha: number | null;
-  estado: 'pendiente' | 'hecho' | 'parcial' | 'cancelado';
+  estado: 'pendiente' | 'en_produccion' | 'en_bandejas' | 'ciclo_completo' | 'cancelado';
   lote_tabla: string | null;
   lote_id: string | null;
   receta?: { nombre: string } | null;
@@ -110,7 +110,7 @@ interface ItemRender {
   tipo: TipoPlan;
   nombre: string;
   cantidad: number | null;
-  estado: 'hecho' | 'parcial' | 'pendiente' | 'fuera';
+  estado: 'pendiente' | 'en_produccion' | 'en_bandejas' | 'ciclo_completo' | 'fuera';
   turno?: 'mañana' | 'tarde' | null;
 }
 
@@ -230,12 +230,7 @@ export function PlanSemanal({
         tipo: it.tipo,
         nombre,
         cantidad: it.cantidad_recetas,
-        estado:
-          it.estado === 'hecho'
-            ? 'hecho'
-            : it.estado === 'parcial'
-              ? 'parcial'
-              : 'pendiente',
+        estado: it.estado === 'cancelado' ? 'pendiente' : it.estado,
         turno: it.turno,
       });
     }
@@ -296,7 +291,7 @@ export function PlanSemanal({
     let total = 0;
     for (const it of items ?? []) {
       total++;
-      if (it.estado === 'hecho' || it.estado === 'parcial') hechos++;
+      if (it.estado === 'ciclo_completo') hechos++;
     }
     return { hechos, total, pct: total === 0 ? 0 : Math.round((hechos / total) * 100) };
   }, [items]);
@@ -399,8 +394,9 @@ export function PlanSemanal({
                               key={it.key}
                               className={cn(
                                 'rounded border-l-2 bg-white px-1.5 py-1 text-[11px]',
-                                it.estado === 'hecho' && 'border-green-400',
-                                it.estado === 'parcial' && 'border-amber-400',
+                                it.estado === 'ciclo_completo' && 'border-green-400',
+                                it.estado === 'en_bandejas' && 'border-blue-400',
+                                it.estado === 'en_produccion' && 'border-amber-400',
                                 it.estado === 'pendiente' && 'border-gray-200',
                                 it.estado === 'fuera' && 'border-purple-400',
                               )}
@@ -409,7 +405,7 @@ export function PlanSemanal({
                                 <span
                                   className={cn(
                                     'flex-1 truncate',
-                                    it.estado === 'hecho' && 'text-gray-500 line-through',
+                                    it.estado === 'ciclo_completo' && 'text-gray-500 line-through',
                                   )}
                                   title={it.nombre}
                                 >
@@ -427,14 +423,16 @@ export function PlanSemanal({
                               <div
                                 className={cn(
                                   'mt-0.5 text-[9px] font-semibold uppercase',
-                                  it.estado === 'hecho' && 'text-green-700',
-                                  it.estado === 'parcial' && 'text-amber-700',
+                                  it.estado === 'ciclo_completo' && 'text-green-700',
+                                  it.estado === 'en_bandejas' && 'text-blue-700',
+                                  it.estado === 'en_produccion' && 'text-amber-700',
                                   it.estado === 'pendiente' && 'text-gray-500',
                                   it.estado === 'fuera' && 'text-purple-700',
                                 )}
                               >
-                                {it.estado === 'hecho' && '✅ Ciclo completo'}
-                                {it.estado === 'parcial' && '🟡 Parcial'}
+                                {it.estado === 'ciclo_completo' && '✅ Ciclo completo'}
+                                {it.estado === 'en_bandejas' && '🧊 En bandejas'}
+                                {it.estado === 'en_produccion' && '🥣 En producción'}
                                 {it.estado === 'pendiente' && '⏳ A terminar'}
                                 {it.estado === 'fuera' && '🆕 Fuera del plan'}
                               </div>

@@ -20,7 +20,7 @@ interface PlanItem {
   cantidad_recetas: number;
   turno: 'mañana' | 'tarde' | null;
   notas: string | null;
-  estado?: 'pendiente' | 'hecho' | 'parcial' | 'cancelado';
+  estado?: 'pendiente' | 'en_produccion' | 'en_bandejas' | 'ciclo_completo' | 'cancelado';
 }
 
 // Las masas no se planifican acá — se hacen a demanda según producción.
@@ -122,7 +122,7 @@ export function PlanProduccionEditor({
         cantidad_recetas: number;
         turno: 'mañana' | 'tarde' | null;
         notas: string | null;
-        estado: 'pendiente' | 'hecho' | 'parcial' | 'cancelado';
+        estado: 'pendiente' | 'en_produccion' | 'en_bandejas' | 'ciclo_completo' | 'cancelado';
       };
       if (!porFecha[r.fecha_objetivo]) porFecha[r.fecha_objetivo] = [];
       porFecha[r.fecha_objetivo].push({
@@ -172,7 +172,7 @@ export function PlanProduccionEditor({
   }
 
   // Guardar: para cada fecha del plan, borrar los 'pendiente' existentes y re-insertar
-  // los que el chef dejó. Los 'hecho'/'parcial' no se tocan (son histórico).
+  // los que el chef dejó. Los items ya iniciados (en_produccion / en_bandejas / ciclo_completo) no se tocan.
   const guardar = useMutation({
     mutationFn: async () => {
       for (const fecha of fechas) {
@@ -187,7 +187,7 @@ export function PlanProduccionEditor({
           .in('estado', ['pendiente', 'cancelado']);
         if (errDel) throw errDel;
 
-        // 2) Items editables (no 'hecho'/'parcial' — esos se mantienen intactos)
+        // 2) Items editables (los iniciados/cumplidos se mantienen intactos)
         const nuevos = itemsFecha
           .filter((it) => !it.estado || it.estado === 'pendiente' || it.estado === 'cancelado')
           .filter((it) => it.receta_id || (it.texto_libre && it.texto_libre.trim()))
@@ -299,7 +299,18 @@ export function PlanProduccionEditor({
                 ) : (
                   <div className="space-y-2">
                     {itemsTipo.map((it) => {
-                      const bloqueado = it.estado === 'hecho' || it.estado === 'parcial';
+                      const bloqueado =
+                        it.estado === 'en_produccion' ||
+                        it.estado === 'en_bandejas' ||
+                        it.estado === 'ciclo_completo';
+                      const etiquetaEstado =
+                        it.estado === 'ciclo_completo'
+                          ? '✓ Ciclo completo'
+                          : it.estado === 'en_bandejas'
+                            ? '🧊 En bandejas'
+                            : it.estado === 'en_produccion'
+                              ? '🥣 En producción'
+                              : null;
                       return (
                         <div
                           key={it.id}
@@ -383,8 +394,17 @@ export function PlanProduccionEditor({
                           {/* Estado + acciones */}
                           <div className="col-span-3 flex items-center justify-end gap-2">
                             {bloqueado ? (
-                              <span className="rounded-full bg-green-200 px-2 py-0.5 text-[10px] font-semibold text-green-800">
-                                ✓ Hecho
+                              <span
+                                className={cn(
+                                  'rounded-full px-2 py-0.5 text-[10px] font-semibold',
+                                  it.estado === 'ciclo_completo' &&
+                                    'bg-green-200 text-green-800',
+                                  it.estado === 'en_bandejas' && 'bg-blue-200 text-blue-800',
+                                  it.estado === 'en_produccion' &&
+                                    'bg-amber-200 text-amber-800',
+                                )}
+                              >
+                                {etiquetaEstado}
                               </span>
                             ) : (
                               <button
