@@ -7,6 +7,7 @@ import {
   DIAS_SEMANA,
   diasDeQuincena,
   diffHoras,
+  normalizarTexto,
   sumHorasTurnos,
   sumarDias,
   ymd,
@@ -37,6 +38,7 @@ export function CronogramaTab() {
   const [quincena, setQuincena] = useState<Quincena>(hoy.getDate() <= 14 ? 'q1' : 'q2');
   const [filtroLocal, setFiltroLocal] = useState<FiltroLocal>('todos');
   const [filtroDia, setFiltroDia] = useState<number | null>(null); // 0=Dom, 1=Lun...
+  const [busqueda, setBusqueda] = useState('');
   const [celdaAbierta, setCeldaAbierta] = useState<{
     empleado: Empleado;
     fecha: string;
@@ -85,8 +87,14 @@ export function CronogramaTab() {
     else if (filtroLocal === 'saavedra')
       lista = lista.filter((e) => e.local === 'saavedra' || e.local === 'ambos');
     else if (filtroLocal === 'ambos') lista = lista.filter((e) => e.local === 'ambos');
+    if (busqueda.trim()) {
+      const q = normalizarTexto(busqueda);
+      lista = lista.filter((e) =>
+        normalizarTexto(`${e.nombre} ${e.apellido} ${e.puesto} ${e.dni ?? ''}`).includes(q),
+      );
+    }
     return lista;
-  }, [empleados, filtroLocal]);
+  }, [empleados, filtroLocal, busqueda]);
 
   const diasMostrados = useMemo(() => {
     if (filtroDia === null) return dias;
@@ -190,6 +198,14 @@ export function CronogramaTab() {
           <option value="saavedra">Saavedra</option>
           <option value="ambos">Ambos locales</option>
         </select>
+
+        <input
+          type="text"
+          placeholder="Buscar empleado..."
+          value={busqueda}
+          onChange={(e) => setBusqueda(e.target.value)}
+          className="min-w-[160px] rounded-md border border-gray-300 px-3 py-1.5 text-sm"
+        />
 
         <div className="flex items-center gap-1">
           <span className="mr-1 text-xs text-gray-500">Día:</span>

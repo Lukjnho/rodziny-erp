@@ -4,17 +4,25 @@ import { supabase } from '@/lib/supabase';
 import { cn, formatARS } from '@/lib/utils';
 import type { Empleado } from './RRHHPage';
 import { MESES, diasDeQuincena, ultimoDiaDelMes, normalizarTexto, type Quincena } from './utils';
-import type { Liquidacion, Adelanto, Sancion, Descuento, MedioPagoSueldo } from './sueldos/tipos';
+import type {
+  Liquidacion,
+  Adelanto,
+  Sancion,
+  Descuento,
+  Bono,
+  MedioPagoSueldo,
+} from './sueldos/tipos';
 import { periodoQuincena, periodoMes } from './sueldos/tipos';
 import { PanelAdelantos } from './sueldos/PanelAdelantos';
 import { PanelSanciones } from './sueldos/PanelSanciones';
 import { PanelDescuentos } from './sueldos/PanelDescuentos';
+import { PanelBonos } from './sueldos/PanelBonos';
 import { PanelErroresCaja, type CierreCajaError } from './sueldos/PanelErroresCaja';
 import { SeccionImpuestos } from './sueldos/SeccionImpuestos';
 
 type FiltroLocal = 'todos' | 'vedia' | 'saavedra' | 'ambos';
 type PanelEstado = {
-  tipo: 'adelantos' | 'sanciones' | 'descuentos' | 'errores_caja';
+  tipo: 'adelantos' | 'sanciones' | 'descuentos' | 'bonos' | 'errores_caja';
   empleadoId: string;
 } | null;
 
@@ -222,6 +230,18 @@ export function SueldosTab() {
     },
   });
 
+  const { data: bonos } = useQuery({
+    queryKey: ['bonos', periodoQ1, periodoQ2],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('bonos')
+        .select('*')
+        .in('periodo', [periodoQ1, periodoQ2]);
+      if (error) throw error;
+      return data as Bono[];
+    },
+  });
+
   // Cierres de caja con diferencia (para trackear errores por cajero)
   const { data: cierresCaja } = useQuery({
     queryKey: ['cierres_caja_errores', fechaDesdeMes, fechaHastaMes],
@@ -396,10 +416,12 @@ export function SueldosTab() {
     adelantosEmp: Adelanto[];
     sancionesEmp: Sancion[];
     descuentosEmp: Descuento[];
+    bonosEmp: Bono[];
     erroresCajaEmp: CierreCajaError[];
     adelantosMonto: number;
     sancionesMonto: number;
     descuentosMonto: number;
+    bonosMonto: number;
     total: number;
     pagado: boolean;
     medioPago: MedioPagoSueldo | null;
@@ -461,9 +483,14 @@ export function SueldosTab() {
         descuentos?.filter(
           (d) => d.empleado_id === emp.id && periodosRelevantes.includes(d.periodo),
         ) ?? [];
+      const bonosEmp =
+        bonos?.filter(
+          (b) => b.empleado_id === emp.id && periodosRelevantes.includes(b.periodo),
+        ) ?? [];
       const adelantosMonto = adelantosEmp.reduce((s, a) => s + Number(a.monto), 0);
       const sancionesMonto = sancionesEmp.reduce((s, a) => s + Number(a.monto), 0);
       const descuentosMonto = descuentosEmp.reduce((s, d) => s + Number(d.monto), 0);
+      const bonosMonto = bonosEmp.reduce((s, b) => s + Number(b.monto), 0);
 
       // Errores de caja: vincular por cajero_nombre → empleado (nombre + apellido)
       const erroresCajaEmp = (cierresCaja ?? []).filter((c) => {
@@ -480,7 +507,12 @@ export function SueldosTab() {
       // del Q1 se muestran informativamente y se descontarán del total en Q2.
       const total = esMensualEnQ1
         ? 0
-        : base - deduccionPresentismo - adelantosMonto - sancionesMonto - descuentosMonto;
+        : base -
+          deduccionPresentismo -
+          adelantosMonto -
+          sancionesMonto -
+          descuentosMonto +
+          bonosMonto;
 
       // ── Calcular stats de asistencia ──
       const rangoPresentismo =
@@ -551,10 +583,12 @@ export function SueldosTab() {
         adelantosEmp,
         sancionesEmp,
         descuentosEmp,
+        bonosEmp,
         erroresCajaEmp,
         adelantosMonto,
         sancionesMonto,
         descuentosMonto,
+        bonosMonto,
         total,
         pagado: !!liquidacion?.pagado,
         medioPago: (liquidacion?.medio_pago ?? null) as MedioPagoSueldo | null,
@@ -569,6 +603,7 @@ export function SueldosTab() {
     adelantos,
     sanciones,
     descuentos,
+    bonos,
     cierresCaja,
     quincena,
     periodoActual,
@@ -586,6 +621,7 @@ export function SueldosTab() {
     const totalAdelantos = filas.reduce((s, f) => s + f.adelantosMonto, 0);
     const totalSanciones = filas.reduce((s, f) => s + f.sancionesMonto, 0);
     const totalDescuentos = filas.reduce((s, f) => s + f.descuentosMonto, 0);
+    const totalBonos = filas.reduce((s, f) => s + f.bonosMonto, 0);
     const pagados = filasAPagar.filter((f) => f.pagado).length;
     const totalEmpleados = filasAPagar.length;
     const pagadoEfectivo = filasAPagar
@@ -599,6 +635,7 @@ export function SueldosTab() {
       totalAdelantos,
       totalSanciones,
       totalDescuentos,
+      totalBonos,
       pagados,
       totalEmpleados,
       pagadoEfectivo,
@@ -718,7 +755,7 @@ export function SueldosTab() {
       </div>
 
       {/* ── KPIs ──────────────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-7">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
         <KpiMini label="Total a pagar" value={formatARS(kpis.totalAPagar)} color="green" />
         <KpiMini
           label="Pagados"
@@ -727,6 +764,7 @@ export function SueldosTab() {
         />
         <KpiMini label="Efectivo" value={formatARS(kpis.pagadoEfectivo)} color="green" />
         <KpiMini label="Transferencia" value={formatARS(kpis.pagadoTransferencia)} color="blue" />
+        <KpiMini label="Bonos" value={formatARS(kpis.totalBonos)} color="green" />
         <KpiMini label="Adelantos" value={formatARS(kpis.totalAdelantos)} color="gray" />
         <KpiMini label="Sanciones" value={formatARS(kpis.totalSanciones)} color="red" />
         <KpiMini label="Descuentos" value={formatARS(kpis.totalDescuentos)} color="amber" />
@@ -756,6 +794,12 @@ export function SueldosTab() {
                 >
                   Descuentos
                 </th>
+                <th
+                  className="px-2 py-2 text-right font-semibold"
+                  title="Horas extra, bonos extraordinarios, premios, reintegros"
+                >
+                  Bonos
+                </th>
                 <th className="px-2 py-2 text-right font-semibold">Total</th>
                 <th className="px-2 py-2 text-center font-semibold">Pago</th>
               </tr>
@@ -763,7 +807,7 @@ export function SueldosTab() {
             <tbody className="divide-y divide-gray-100">
               {filas.length === 0 && (
                 <tr>
-                  <td colSpan={10} className="px-4 py-8 text-center text-xs text-gray-400">
+                  <td colSpan={11} className="px-4 py-8 text-center text-xs text-gray-400">
                     {empleados ? 'Sin empleados para mostrar' : 'Cargando...'}
                   </td>
                 </tr>
@@ -804,6 +848,9 @@ export function SueldosTab() {
                     }
                     onAbrirDescuentos={() =>
                       setPanel({ tipo: 'descuentos', empleadoId: fila.empleado.id })
+                    }
+                    onAbrirBonos={() =>
+                      setPanel({ tipo: 'bonos', empleadoId: fila.empleado.id })
                     }
                     onAbrirErroresCaja={() =>
                       setPanel({ tipo: 'errores_caja', empleadoId: fila.empleado.id })
@@ -847,6 +894,14 @@ export function SueldosTab() {
           onClose={() => setPanel(null)}
         />
       )}
+      {panel && panelData && panel.tipo === 'bonos' && (
+        <PanelBonos
+          empleado={panelData.fila.empleado}
+          periodo={panelData.periodo}
+          bonos={panelData.fila.bonosEmp}
+          onClose={() => setPanel(null)}
+        />
+      )}
       {panel && panelData && panel.tipo === 'errores_caja' && (
         <PanelErroresCaja
           empleado={panelData.fila.empleado}
@@ -870,6 +925,7 @@ function FilaEmpleado({
   onAbrirAdelantos,
   onAbrirSanciones,
   onAbrirDescuentos,
+  onAbrirBonos,
   onAbrirErroresCaja,
 }: {
   fila: {
@@ -884,6 +940,7 @@ function FilaEmpleado({
     adelantosMonto: number;
     sancionesMonto: number;
     descuentosMonto: number;
+    bonosMonto: number;
     erroresCajaEmp: CierreCajaError[];
     total: number;
     pagado: boolean;
@@ -905,6 +962,7 @@ function FilaEmpleado({
   onAbrirAdelantos: () => void;
   onAbrirSanciones: () => void;
   onAbrirDescuentos: () => void;
+  onAbrirBonos: () => void;
   onAbrirErroresCaja: () => void;
 }) {
   const {
@@ -918,6 +976,7 @@ function FilaEmpleado({
     adelantosMonto,
     sancionesMonto,
     descuentosMonto,
+    bonosMonto,
     erroresCajaEmp,
     total,
     medioPago,
@@ -1074,6 +1133,18 @@ function FilaEmpleado({
           {descuentosMonto > 0 ? formatARS(descuentosMonto) : '+ agregar'}
         </button>
       </td>
+      <td className="px-2 py-2 text-right">
+        <button
+          onClick={onAbrirBonos}
+          className={cn(
+            'text-xs tabular-nums hover:underline',
+            bonosMonto > 0 ? 'font-medium text-emerald-700' : 'text-gray-400',
+          )}
+          title="Horas extra, bonos, premios, reintegros"
+        >
+          {bonosMonto > 0 ? `+${formatARS(bonosMonto)}` : '+ agregar'}
+        </button>
+      </td>
       <td className="px-2 py-2 text-right font-semibold tabular-nums text-gray-900">
         {esMensualEnQ1 ? <span className="font-normal text-gray-400">—</span> : formatARS(total)}
       </td>
@@ -1128,7 +1199,7 @@ function FilaAsistencia({
 
   return (
     <tr className="bg-blue-50/40">
-      <td colSpan={10} className="px-4 py-2.5">
+      <td colSpan={11} className="px-4 py-2.5">
         <div className="flex flex-wrap items-start gap-4 text-xs">
           {/* Resumen general */}
           <div className="flex items-center gap-3">

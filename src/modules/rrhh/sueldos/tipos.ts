@@ -49,6 +49,18 @@ export interface Descuento {
   created_at: string;
 }
 
+// Bonos eventuales que SE SUMAN al sueldo: horas extra, premios, reintegros.
+// Espejo positivo de Sancion / Descuento.
+export interface Bono {
+  id: string;
+  empleado_id: string;
+  periodo: string;
+  fecha: string;
+  monto: number;
+  motivo: string;
+  created_at: string;
+}
+
 export interface ImpuestoMensual {
   id: string;
   periodo: string; // 'YYYY-MM'
