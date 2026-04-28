@@ -776,7 +776,7 @@ function FormRelleno({
       </div>
 
       <div className="space-y-3 rounded-lg border border-gray-200 bg-white p-4">
-        {hayPlan && (
+        {hayPlan ? (
           <div className="flex items-center justify-between rounded border border-rodziny-200 bg-rodziny-50 px-2.5 py-1.5 text-[11px]">
             <span className="font-medium text-rodziny-800">
               📋 {verTodas ? 'Catálogo completo' : `Plan de hoy · ${recetaIdsPlan?.size ?? 0} receta${(recetaIdsPlan?.size ?? 0) === 1 ? '' : 's'}`}
@@ -787,6 +787,10 @@ function FormRelleno({
             >
               {verTodas ? 'Volver al plan' : '¿No está? Ver todas'}
             </button>
+          </div>
+        ) : (
+          <div className="rounded border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[11px] font-medium text-amber-800">
+            ⚠️ Sin plan cargado para hoy · mostrando catálogo completo
           </div>
         )}
         <div>
@@ -2126,7 +2130,7 @@ function FormGenerico({
             </p>
           </div>
         )}
-        {hayPlan && (
+        {hayPlan ? (
           <div className="flex items-center justify-between rounded border border-rodziny-200 bg-rodziny-50 px-2.5 py-1.5 text-[11px]">
             <span className="font-medium text-rodziny-800">
               📋 {verTodas ? 'Catálogo completo' : `Plan de hoy · ${recetaIdsPlan?.size ?? 0} receta${(recetaIdsPlan?.size ?? 0) === 1 ? '' : 's'}`}
@@ -2138,6 +2142,12 @@ function FormGenerico({
               {verTodas ? 'Volver al plan' : '¿No está? Ver todas'}
             </button>
           </div>
+        ) : (
+          recetas.length > 0 && (
+            <div className="rounded border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[11px] font-medium text-amber-800">
+              ⚠️ Sin plan cargado para hoy · mostrando catálogo completo
+            </div>
+          )
         )}
         {recetasVisibles.length > 0 && (
           <div>
