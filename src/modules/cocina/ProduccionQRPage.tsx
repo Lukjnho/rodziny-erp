@@ -561,6 +561,7 @@ export function ProduccionQRPage() {
         <FormMerma
           local={local}
           productos={productos ?? []}
+          recetas={recetas ?? []}
           onGuardado={onGuardado}
           onVolver={() => setVista('inicio')}
         />
@@ -2283,59 +2284,121 @@ function FormGenerico({
 
 const TIPO_LABEL_MERMA: Record<string, string> = {
   pasta: 'Pastas',
+  panificado: 'Panificados',
   salsa: 'Salsas',
   postre: 'Postres',
-  panificado: 'Panificados',
+  pasteleria: 'Pastelería',
+  panaderia: 'Panadería',
   relleno: 'Rellenos',
   masa: 'Masas',
 };
 
-// Unidad de la cantidad de merma según el tipo del producto
+// Orden estable de los grupos en el dropdown
+const TIPO_ORDEN_MERMA = [
+  'pasta',
+  'panificado',
+  'salsa',
+  'postre',
+  'pasteleria',
+  'panaderia',
+  'relleno',
+  'masa',
+];
+
+// Unidad de la cantidad de merma según el tipo
 function unidadMermaPorTipo(tipo: string): string {
   if (tipo === 'salsa') return 'kg';
   if (tipo === 'pasta' || tipo === 'relleno' || tipo === 'masa') return 'porciones';
-  return 'unidades'; // postre, panificado y resto
+  return 'unidades'; // postre, panificado, pasteleria, panaderia
+}
+
+interface ItemMerma {
+  key: string; // valor del select: "p:<uuid>" o "r:<uuid>"
+  kind: 'producto' | 'receta';
+  id: string;
+  nombre: string;
+  tipo: string;
 }
 
 function FormMerma({
   local,
   productos,
+  recetas,
   onGuardado,
   onVolver,
 }: {
   local: 'vedia' | 'saavedra';
   productos: Producto[];
+  recetas: Receta[];
   onGuardado: (msg: string) => void;
   onVolver: () => void;
 }) {
-  const productosLocal = useMemo(
-    () => productos.filter((p) => p.local === local),
-    [productos, local],
-  );
-
-  const productosPorTipo = useMemo(() => {
-    const m = new Map<string, Producto[]>();
-    for (const p of productosLocal) {
-      const arr = m.get(p.tipo) ?? [];
-      arr.push(p);
-      m.set(p.tipo, arr);
+  // Combinar productos del catálogo con recetas que no tienen producto en cocina_productos.
+  // Productos: pastas (ambos locales) + panificados (Saavedra). Vienen de cocina_productos.
+  // Recetas: salsas, postres, pastelería, panadería, rellenos, masas. Vienen de cocina_recetas.
+  // Filtramos por local en ambos casos.
+  const items = useMemo<ItemMerma[]>(() => {
+    const list: ItemMerma[] = [];
+    for (const p of productos) {
+      if (p.local !== local) continue;
+      list.push({
+        key: `p:${p.id}`,
+        kind: 'producto',
+        id: p.id,
+        nombre: p.nombre,
+        tipo: p.tipo,
+      });
     }
-    return m;
-  }, [productosLocal]);
+    for (const r of recetas) {
+      if (r.local !== local) continue;
+      // Recetas estructurales que no representan un item vendible/consumible en sí mismo
+      if (r.tipo === 'subreceta' || r.tipo === 'otro') continue;
+      // Si ya está cubierto como producto del catálogo (mismo nombre + tipo), no duplicar
+      if (
+        productos.some(
+          (p) =>
+            p.local === local &&
+            p.tipo === r.tipo &&
+            p.nombre.toLowerCase().trim() === r.nombre.toLowerCase().trim(),
+        )
+      ) {
+        continue;
+      }
+      list.push({
+        key: `r:${r.id}`,
+        kind: 'receta',
+        id: r.id,
+        nombre: r.nombre,
+        tipo: r.tipo,
+      });
+    }
+    return list;
+  }, [productos, recetas, local]);
 
-  const [productoId, setProductoId] = useState('');
+  const itemsPorTipo = useMemo(() => {
+    const m = new Map<string, ItemMerma[]>();
+    for (const it of items) {
+      const arr = m.get(it.tipo) ?? [];
+      arr.push(it);
+      m.set(it.tipo, arr);
+    }
+    for (const [, arr] of m) arr.sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
+    return m;
+  }, [items]);
+
+  const [seleccion, setSeleccion] = useState('');
   const [cantidad, setCantidad] = useState('');
   const [motivo, setMotivo] = useState('');
   const [responsable, setResponsable] = useState('');
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState('');
 
-  const productoSel = productosLocal.find((p) => p.id === productoId);
-  const unidad = productoSel ? unidadMermaPorTipo(productoSel.tipo) : 'porciones';
+  const itemSel = items.find((it) => it.key === seleccion);
+  const unidad = itemSel ? unidadMermaPorTipo(itemSel.tipo) : 'porciones';
 
   async function guardar() {
     setError('');
-    if (!productoId) {
+    if (!itemSel) {
       setError('Seleccioná un producto');
       return;
     }
@@ -2353,22 +2416,34 @@ function FormMerma({
       return;
     }
     setGuardando(true);
-    const { error: errIns } = await supabase.from('cocina_merma').insert({
-      producto_id: productoId,
+    const payload: {
+      fecha: string;
+      porciones: number;
+      motivo: string;
+      responsable: string;
+      local: string;
+      producto_id: string | null;
+      receta_id: string | null;
+    } = {
       fecha: new Date().toISOString().split('T')[0],
       porciones: cant,
       motivo: motivo.trim(),
       responsable: responsable.trim(),
       local,
-    });
+      producto_id: itemSel.kind === 'producto' ? itemSel.id : null,
+      receta_id: itemSel.kind === 'receta' ? itemSel.id : null,
+    };
+    const { error: errIns } = await supabase.from('cocina_merma').insert(payload);
     if (errIns) {
       setError(errIns.message);
       setGuardando(false);
       return;
     }
     setGuardando(false);
-    onGuardado(`Merma registrada: ${cant} ${unidad} de ${productoSel?.nombre ?? 'producto'}`);
+    onGuardado(`Merma registrada: ${cant} ${unidad} de ${itemSel.nombre}`);
   }
+
+  const tiposPresentes = TIPO_ORDEN_MERMA.filter((t) => itemsPorTipo.has(t));
 
   return (
     <div className="space-y-3">
@@ -2382,16 +2457,16 @@ function FormMerma({
       <div>
         <label className="mb-1 block text-xs font-medium text-gray-700">Producto</label>
         <select
-          value={productoId}
-          onChange={(e) => setProductoId(e.target.value)}
+          value={seleccion}
+          onChange={(e) => setSeleccion(e.target.value)}
           className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
         >
           <option value="">— Seleccionar —</option>
-          {[...productosPorTipo.entries()].map(([tipo, items]) => (
+          {tiposPresentes.map((tipo) => (
             <optgroup key={tipo} label={TIPO_LABEL_MERMA[tipo] ?? tipo}>
-              {items.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.nombre}
+              {(itemsPorTipo.get(tipo) ?? []).map((it) => (
+                <option key={it.key} value={it.key}>
+                  {it.nombre}
                 </option>
               ))}
             </optgroup>
