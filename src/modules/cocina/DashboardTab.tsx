@@ -556,6 +556,7 @@ interface FudoData {
 }
 
 interface ProductoDB {
+  id: string;
   nombre: string;
   local: string;
   tipo: string;
@@ -584,12 +585,14 @@ export type FilaDashboard = ProductoCocina & {
   // Lotes registrados en QR (solo aplica a tipo === 'pasta').
   enCamaraPorciones: number;
   enColaPorciones: number;
-  stockEsFallback: boolean; // true si stockCantidad es null y usamos cámara como aproximación
+  enMostradorPorciones: number; // traspasos hoy − ventas hoy − merma hoy
+  stockEsFallback: boolean; // true si stockCantidad es null y usamos cámara/mostrador como aproximación
 };
 
 // Shape crudo devuelto por Supabase para la query de cocina_productos con receta
 // embebida. Supabase no infiere bien estos joins, por eso lo declaramos.
 type ProductoDBRow = {
+  id: string;
   nombre: string;
   local: string;
   tipo: string;
@@ -656,12 +659,13 @@ export function DashboardTab() {
       const { data, error } = await supabase
         .from('cocina_productos')
         .select(
-          'nombre, local, tipo, receta_id, minimo_produccion, receta:cocina_recetas(nombre, rendimiento_porciones, rendimiento_kg)',
+          'id, nombre, local, tipo, receta_id, minimo_produccion, receta:cocina_recetas(nombre, rendimiento_porciones, rendimiento_kg)',
         )
         .eq('local', local)
         .eq('activo', true);
       if (error) throw error;
       const filas: ProductoDB[] = (data as unknown as ProductoDBRow[]).map((r) => ({
+        id: r.id,
         nombre: r.nombre,
         local: r.local,
         tipo: r.tipo,
@@ -739,6 +743,64 @@ export function DashboardTab() {
     },
     refetchInterval: 60_000,
     refetchIntervalInBackground: false,
+  });
+
+  // ── Query: traspasos de HOY (cámara → mostrador) ──
+  // Se usan para estimar lo que hay en el freezer del mostrador hoy:
+  // mostrador = traspasos_hoy − ventas_fudo_hoy − merma_hoy
+  const { data: traspasosHoy } = useQuery({
+    queryKey: ['cocina_traspasos_hoy', local, hoy],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('cocina_traspasos')
+        .select('producto_id, porciones')
+        .eq('local', local)
+        .eq('fecha', hoy);
+      if (error) throw error;
+      const m = new Map<string, number>();
+      for (const r of (data ?? []) as Array<{ producto_id: string; porciones: number | null }>) {
+        m.set(r.producto_id, (m.get(r.producto_id) ?? 0) + (Number(r.porciones) || 0));
+      }
+      return m;
+    },
+    refetchInterval: 60_000,
+  });
+
+  // ── Query: merma de HOY agregada por producto (para descontar del mostrador) ──
+  const { data: mermaHoyPorProducto } = useQuery({
+    queryKey: ['cocina_merma_hoy_por_producto', local, hoy],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('cocina_merma')
+        .select('producto_id, porciones')
+        .eq('local', local)
+        .eq('fecha', hoy);
+      if (error) throw error;
+      const m = new Map<string, number>();
+      for (const r of (data ?? []) as Array<{
+        producto_id: string | null;
+        porciones: number | null;
+      }>) {
+        if (!r.producto_id) continue;
+        m.set(r.producto_id, (m.get(r.producto_id) ?? 0) + (Number(r.porciones) || 0));
+      }
+      return m;
+    },
+    refetchInterval: 60_000,
+  });
+
+  // ── Query: ventas Fudo SOLO de HOY (para descontar del mostrador) ──
+  const { data: fudoHoy } = useQuery({
+    queryKey: ['fudo-consumo-hoy', local, hoy],
+    queryFn: async () => {
+      const { data, error } = await supabase.functions.invoke('fudo-productos', {
+        body: { local, fechaDesde: hoy, fechaHasta: hoy },
+      });
+      if (error || !data?.ok) return null;
+      return data.data as FudoData;
+    },
+    staleTime: 2 * 60 * 1000,
+    refetchInterval: 5 * 60 * 1000,
   });
 
   // ── Query: último conteo de stock por producto ──
@@ -838,6 +900,27 @@ export function DashboardTab() {
       const enCamaraPorciones = stockDB?.porcionesVendibles ?? 0;
       const enColaPorciones = stockDB?.porcionesFresco ?? 0;
 
+      // Stock estimado en el freezer del mostrador hoy.
+      // Mismo cálculo que el StockTab: traspasos_hoy − ventas_fudo_hoy − merma_hoy.
+      // Para no-pastas o si no encontramos el id del producto, queda en 0.
+      const prodDBPreview = productosDB?.get(normNombre(prod.nombre));
+      let enMostradorPorciones = 0;
+      if (prod.tipo === 'pasta' && prodDBPreview) {
+        const traspHoy = traspasosHoy?.get(prodDBPreview.id) ?? 0;
+        const mermaH = mermaHoyPorProducto?.get(prodDBPreview.id) ?? 0;
+        let vendidosHoy = 0;
+        if (fudoHoy?.ranking) {
+          const nombres = prod.fudoNombres ?? [prod.nombre];
+          for (const n of nombres) {
+            const f = fudoHoy.ranking.find(
+              (r) => r.nombre.toLowerCase() === n.toLowerCase(),
+            );
+            if (f) vendidosHoy += f.cantidad;
+          }
+        }
+        enMostradorPorciones = Math.max(0, traspHoy - vendidosHoy - mermaH);
+      }
+
       // Ventas diarias promedio desde Fudo
       const nombres = prod.fudoNombres ?? [prod.nombre];
       let ventasTotal = 0;
@@ -871,10 +954,10 @@ export function DashboardTab() {
         } else {
           porcionesStock = Math.ceil(stockCantidad * prod.porcionesporunidad);
         }
-      } else if (prod.tipo === 'pasta' && enCamaraPorciones > 0) {
-        // Sin conteo manual: usamos las porciones en cámara como aproximación
+      } else if (prod.tipo === 'pasta' && enCamaraPorciones + enMostradorPorciones > 0) {
+        // Sin conteo manual: usamos cámara + mostrador estimado como aproximación
         // para no decir "sin datos" cuando la DB ya sabe que hay stock.
-        porcionesStock = enCamaraPorciones;
+        porcionesStock = enCamaraPorciones + enMostradorPorciones;
         stockEsFallback = true;
       }
 
@@ -961,6 +1044,7 @@ export function DashboardTab() {
         rendPorciones,
         enCamaraPorciones,
         enColaPorciones,
+        enMostradorPorciones,
         stockEsFallback,
       };
     });
@@ -972,6 +1056,9 @@ export function DashboardTab() {
     ventanaDias,
     productosDB,
     stockPastasDB,
+    traspasosHoy,
+    mermaHoyPorProducto,
+    fudoHoy,
     local,
   ]);
 
@@ -1436,7 +1523,13 @@ function CategoriaAccordion({
                           <span className="font-medium text-gray-700">
                             ~{f.porcionesStock} porc.
                           </span>
-                          <div className="text-[10px] text-gray-400">cámara (auto)</div>
+                          <div className="text-[10px] text-gray-400">
+                            {f.enCamaraPorciones > 0 && f.enMostradorPorciones > 0
+                              ? `${f.enCamaraPorciones} cámara · ${f.enMostradorPorciones} mostrador`
+                              : f.enMostradorPorciones > 0
+                                ? `${f.enMostradorPorciones} en mostrador`
+                                : 'cámara (auto)'}
+                          </div>
                           {f.enColaPorciones > 0 && (
                             <div className="text-[10px] text-blue-600">
                               + {f.enColaPorciones} porc. en cola
