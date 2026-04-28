@@ -1,22 +1,49 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Sidebar } from '@/components/layout/Sidebar';
-import { FinanzasPage } from '@/modules/finanzas/FinanzasPage';
-import { ComprasPage } from '@/modules/compras/ComprasPage';
-import { DepositoPage } from '@/modules/compras/DepositoPage';
-import { RecepcionPage } from '@/modules/compras/RecepcionPage';
-import { RRHHPage } from '@/modules/rrhh/RRHHPage';
-import { FicharPage } from '@/modules/rrhh/FicharPage';
 import { LoginPage } from '@/modules/auth/LoginPage';
-import { UsuariosPage } from '@/modules/usuarios/UsuariosPage';
-import { CocinaPage } from '@/modules/cocina/CocinaPage';
-import { ProduccionQRPage } from '@/modules/cocina/ProduccionQRPage';
-import { MostradorPage } from '@/modules/cocina/MostradorPage';
-import { AlmacenPage } from '@/modules/almacen/AlmacenPage';
-import { DashboardPage } from '@/modules/dashboard/DashboardPage';
 import { PageContainer } from '@/components/layout/PageContainer';
 import { AuthProvider, useAuth, type Modulo } from '@/lib/auth';
-import { type ReactNode } from 'react';
+import { lazy, Suspense, type ReactNode } from 'react';
+
+// Lazy chunks por módulo: evitan que el bundle inicial cargue todo el ERP
+// cuando el usuario solo entra al QR de Cocina o a Fichar desde el celular.
+const FinanzasPage = lazy(() =>
+  import('@/modules/finanzas/FinanzasPage').then((m) => ({ default: m.FinanzasPage })),
+);
+const ComprasPage = lazy(() =>
+  import('@/modules/compras/ComprasPage').then((m) => ({ default: m.ComprasPage })),
+);
+const DepositoPage = lazy(() =>
+  import('@/modules/compras/DepositoPage').then((m) => ({ default: m.DepositoPage })),
+);
+const RecepcionPage = lazy(() =>
+  import('@/modules/compras/RecepcionPage').then((m) => ({ default: m.RecepcionPage })),
+);
+const RRHHPage = lazy(() =>
+  import('@/modules/rrhh/RRHHPage').then((m) => ({ default: m.RRHHPage })),
+);
+const FicharPage = lazy(() =>
+  import('@/modules/rrhh/FicharPage').then((m) => ({ default: m.FicharPage })),
+);
+const UsuariosPage = lazy(() =>
+  import('@/modules/usuarios/UsuariosPage').then((m) => ({ default: m.UsuariosPage })),
+);
+const CocinaPage = lazy(() =>
+  import('@/modules/cocina/CocinaPage').then((m) => ({ default: m.CocinaPage })),
+);
+const ProduccionQRPage = lazy(() =>
+  import('@/modules/cocina/ProduccionQRPage').then((m) => ({ default: m.ProduccionQRPage })),
+);
+const MostradorPage = lazy(() =>
+  import('@/modules/cocina/MostradorPage').then((m) => ({ default: m.MostradorPage })),
+);
+const AlmacenPage = lazy(() =>
+  import('@/modules/almacen/AlmacenPage').then((m) => ({ default: m.AlmacenPage })),
+);
+const DashboardPage = lazy(() =>
+  import('@/modules/dashboard/DashboardPage').then((m) => ({ default: m.DashboardPage })),
+);
 
 const qc = new QueryClient({ defaultOptions: { queries: { staleTime: 1000 * 60 * 2 } } });
 
@@ -52,8 +79,6 @@ function Ruta({ modulo, children }: { modulo: Modulo; children: ReactNode }) {
   return tienePermiso(modulo) ? <>{children}</> : <SinAcceso />;
 }
 
-// Modulos que viven dentro del tab Finanzas — el acceso a /finanzas se
-// concede si el usuario tiene permiso a cualquiera de estos.
 const MODULOS_FINANZAS: Modulo[] = ['finanzas', 'ventas', 'edr', 'gastos', 'amortizaciones'];
 
 function RutaFinanzas({ children }: { children: ReactNode }) {
@@ -93,7 +118,6 @@ function AppInterna() {
     );
   }
 
-  // Primera ruta con acceso para redirigir el '/' cuando Dashboard no esté habilitado
   const tieneAlgunFinanzas = MODULOS_FINANZAS.some((m) => tienePermiso(m));
   const primeraRutaPermitida = tienePermiso('dashboard')
     ? '/'
@@ -115,74 +139,75 @@ function AppInterna() {
     <div className="flex min-h-screen">
       <Sidebar />
       <div className="flex-1">
-        <Routes>
-          <Route
-            path="/"
-            element={
-              tienePermiso('dashboard') ? (
-                <DashboardPage />
-              ) : primeraRutaPermitida && primeraRutaPermitida !== '/' ? (
-                <Navigate to={primeraRutaPermitida} replace />
-              ) : (
-                <SinAcceso />
-              )
-            }
-          />
-          <Route
-            path="/finanzas"
-            element={
-              <RutaFinanzas>
-                <FinanzasPage />
-              </RutaFinanzas>
-            }
-          />
-          {/* Rutas legacy: ahora viven como tabs adentro de /finanzas */}
-          <Route path="/ventas" element={<Navigate to="/finanzas" replace />} />
-          <Route path="/edr" element={<Navigate to="/finanzas" replace />} />
-          <Route path="/gastos" element={<Navigate to="/finanzas" replace />} />
-          <Route path="/amortizaciones" element={<Navigate to="/finanzas" replace />} />
-          <Route
-            path="/rrhh"
-            element={
-              <Ruta modulo="rrhh">
-                <RRHHPage />
-              </Ruta>
-            }
-          />
-          <Route
-            path="/compras"
-            element={
-              <Ruta modulo="compras">
-                <ComprasPage />
-              </Ruta>
-            }
-          />
-          <Route
-            path="/cocina"
-            element={
-              <Ruta modulo="cocina">
-                <CocinaPage />
-              </Ruta>
-            }
-          />
-          <Route
-            path="/almacen"
-            element={
-              <Ruta modulo="almacen">
-                <AlmacenPage />
-              </Ruta>
-            }
-          />
-          <Route
-            path="/usuarios"
-            element={
-              <Ruta modulo="usuarios">
-                <UsuariosPage />
-              </Ruta>
-            }
-          />
-          <Route path="*" element={<Navigate to={primeraRutaPermitida || '/'} replace />} />
-        </Routes>
+        <Suspense fallback={<PantallaCargando />}>
+          <Routes>
+            <Route
+              path="/"
+              element={
+                tienePermiso('dashboard') ? (
+                  <DashboardPage />
+                ) : primeraRutaPermitida && primeraRutaPermitida !== '/' ? (
+                  <Navigate to={primeraRutaPermitida} replace />
+                ) : (
+                  <SinAcceso />
+                )
+              }
+            />
+            <Route
+              path="/finanzas"
+              element={
+                <RutaFinanzas>
+                  <FinanzasPage />
+                </RutaFinanzas>
+              }
+            />
+            <Route path="/ventas" element={<Navigate to="/finanzas" replace />} />
+            <Route path="/edr" element={<Navigate to="/finanzas" replace />} />
+            <Route path="/gastos" element={<Navigate to="/finanzas" replace />} />
+            <Route path="/amortizaciones" element={<Navigate to="/finanzas" replace />} />
+            <Route
+              path="/rrhh"
+              element={
+                <Ruta modulo="rrhh">
+                  <RRHHPage />
+                </Ruta>
+              }
+            />
+            <Route
+              path="/compras"
+              element={
+                <Ruta modulo="compras">
+                  <ComprasPage />
+                </Ruta>
+              }
+            />
+            <Route
+              path="/cocina"
+              element={
+                <Ruta modulo="cocina">
+                  <CocinaPage />
+                </Ruta>
+              }
+            />
+            <Route
+              path="/almacen"
+              element={
+                <Ruta modulo="almacen">
+                  <AlmacenPage />
+                </Ruta>
+              }
+            />
+            <Route
+              path="/usuarios"
+              element={
+                <Ruta modulo="usuarios">
+                  <UsuariosPage />
+                </Ruta>
+              }
+            />
+            <Route path="*" element={<Navigate to={primeraRutaPermitida || '/'} replace />} />
+          </Routes>
+        </Suspense>
       </div>
     </div>
   );
@@ -193,17 +218,19 @@ export default function App() {
     <QueryClientProvider client={qc}>
       <AuthProvider>
         <BrowserRouter>
-          <Routes>
-            {/* Rutas públicas sin auth (mobile PWAs) */}
-            <Route path="/deposito" element={<DepositoPage />} />
-            <Route path="/recepcion" element={<RecepcionPage />} />
-            <Route path="/fichar" element={<FicharPage />} />
-            <Route path="/produccion" element={<ProduccionQRPage />} />
-            <Route path="/mostrador" element={<MostradorPage />} />
+          <Suspense fallback={<PantallaCargando />}>
+            <Routes>
+              {/* Rutas públicas sin auth (mobile PWAs) */}
+              <Route path="/deposito" element={<DepositoPage />} />
+              <Route path="/recepcion" element={<RecepcionPage />} />
+              <Route path="/fichar" element={<FicharPage />} />
+              <Route path="/produccion" element={<ProduccionQRPage />} />
+              <Route path="/mostrador" element={<MostradorPage />} />
 
-            {/* Resto del ERP protegido */}
-            <Route path="*" element={<AppInterna />} />
-          </Routes>
+              {/* Resto del ERP protegido */}
+              <Route path="*" element={<AppInterna />} />
+            </Routes>
+          </Suspense>
         </BrowserRouter>
       </AuthProvider>
     </QueryClientProvider>
