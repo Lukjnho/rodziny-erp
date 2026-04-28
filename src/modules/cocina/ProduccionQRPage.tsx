@@ -87,6 +87,7 @@ type Vista =
   | 'pasteleria'
   | 'panaderia'
   | 'prueba'
+  | 'merma'
   | 'exito';
 
 type CategoriaGenerica = 'salsa' | 'postre' | 'pasteleria' | 'panaderia' | 'prueba';
@@ -556,6 +557,15 @@ export function ProduccionQRPage() {
         />
       )}
 
+      {vista === 'merma' && (
+        <FormMerma
+          local={local}
+          productos={productos ?? []}
+          onGuardado={onGuardado}
+          onVolver={() => setVista('inicio')}
+        />
+      )}
+
       {vista === 'exito' && <Exito mensaje={mensajeExito} onOtro={() => setVista('inicio')} />}
     </Pantalla>
   );
@@ -665,6 +675,15 @@ function Inicio({
           Cerrar Masa
         </button>
       )}
+
+      <div className="pt-2">
+        <button
+          onClick={() => onIr('merma')}
+          className="w-full rounded-lg border-2 border-red-300 bg-red-50 py-3 text-sm font-semibold text-red-700 transition-transform active:scale-[0.98]"
+        >
+          Registrar Merma
+        </button>
+      </div>
 
       <p className="mt-6 text-center text-[10px] text-gray-400">
         Rodziny ERP · Carga de producción
@@ -2256,6 +2275,175 @@ function FormGenerico({
           {guardando ? 'Guardando...' : 'Guardar'}
         </button>
       </div>
+    </div>
+  );
+}
+
+// ── Formulario Merma ────────────────────────────────────────────────────────────
+
+const TIPO_LABEL_MERMA: Record<string, string> = {
+  pasta: 'Pastas',
+  salsa: 'Salsas',
+  postre: 'Postres',
+  panificado: 'Panificados',
+  relleno: 'Rellenos',
+  masa: 'Masas',
+};
+
+// Unidad de la cantidad de merma según el tipo del producto
+function unidadMermaPorTipo(tipo: string): string {
+  if (tipo === 'salsa') return 'kg';
+  if (tipo === 'pasta' || tipo === 'relleno' || tipo === 'masa') return 'porciones';
+  return 'unidades'; // postre, panificado y resto
+}
+
+function FormMerma({
+  local,
+  productos,
+  onGuardado,
+  onVolver,
+}: {
+  local: 'vedia' | 'saavedra';
+  productos: Producto[];
+  onGuardado: (msg: string) => void;
+  onVolver: () => void;
+}) {
+  const productosLocal = useMemo(
+    () => productos.filter((p) => p.local === local),
+    [productos, local],
+  );
+
+  const productosPorTipo = useMemo(() => {
+    const m = new Map<string, Producto[]>();
+    for (const p of productosLocal) {
+      const arr = m.get(p.tipo) ?? [];
+      arr.push(p);
+      m.set(p.tipo, arr);
+    }
+    return m;
+  }, [productosLocal]);
+
+  const [productoId, setProductoId] = useState('');
+  const [cantidad, setCantidad] = useState('');
+  const [motivo, setMotivo] = useState('');
+  const [responsable, setResponsable] = useState('');
+  const [guardando, setGuardando] = useState(false);
+  const [error, setError] = useState('');
+
+  const productoSel = productosLocal.find((p) => p.id === productoId);
+  const unidad = productoSel ? unidadMermaPorTipo(productoSel.tipo) : 'porciones';
+
+  async function guardar() {
+    setError('');
+    if (!productoId) {
+      setError('Seleccioná un producto');
+      return;
+    }
+    const cant = Number(cantidad.replace(',', '.'));
+    if (!cantidad || isNaN(cant) || cant <= 0) {
+      setError('Indicá una cantidad válida');
+      return;
+    }
+    if (!motivo.trim()) {
+      setError('Indicá el motivo de la merma');
+      return;
+    }
+    if (!responsable.trim()) {
+      setError('Indicá el responsable');
+      return;
+    }
+    setGuardando(true);
+    const { error: errIns } = await supabase.from('cocina_merma').insert({
+      producto_id: productoId,
+      fecha: new Date().toISOString().split('T')[0],
+      porciones: cant,
+      motivo: motivo.trim(),
+      responsable: responsable.trim(),
+      local,
+    });
+    if (errIns) {
+      setError(errIns.message);
+      setGuardando(false);
+      return;
+    }
+    setGuardando(false);
+    onGuardado(`Merma registrada: ${cant} ${unidad} de ${productoSel?.nombre ?? 'producto'}`);
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-bold text-gray-800">Registrar Merma</h2>
+        <button onClick={onVolver} className="text-xs text-gray-500 underline">
+          Volver
+        </button>
+      </div>
+
+      <div>
+        <label className="mb-1 block text-xs font-medium text-gray-700">Producto</label>
+        <select
+          value={productoId}
+          onChange={(e) => setProductoId(e.target.value)}
+          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+        >
+          <option value="">— Seleccionar —</option>
+          {[...productosPorTipo.entries()].map(([tipo, items]) => (
+            <optgroup key={tipo} label={TIPO_LABEL_MERMA[tipo] ?? tipo}>
+              {items.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.nombre}
+                </option>
+              ))}
+            </optgroup>
+          ))}
+        </select>
+      </div>
+
+      <div>
+        <label className="mb-1 block text-xs font-medium text-gray-700">
+          Cantidad ({unidad})
+        </label>
+        <input
+          type="text"
+          inputMode="decimal"
+          value={cantidad}
+          onChange={(e) => setCantidad(e.target.value)}
+          placeholder={unidad === 'kg' ? 'Ej: 1,5' : 'Ej: 10'}
+          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+        />
+      </div>
+
+      <div>
+        <label className="mb-1 block text-xs font-medium text-gray-700">Motivo</label>
+        <textarea
+          value={motivo}
+          onChange={(e) => setMotivo(e.target.value)}
+          rows={2}
+          placeholder="Ej: vencido, se cayó, mal armado…"
+          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+        />
+      </div>
+
+      <div>
+        <label className="mb-1 block text-xs font-medium text-gray-700">Responsable</label>
+        <input
+          type="text"
+          value={responsable}
+          onChange={(e) => setResponsable(e.target.value)}
+          placeholder="Nombre"
+          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+        />
+      </div>
+
+      {error && <div className="rounded bg-red-50 px-3 py-2 text-xs text-red-700">{error}</div>}
+
+      <button
+        onClick={guardar}
+        disabled={guardando}
+        className="w-full rounded-lg bg-red-600 py-3 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50"
+      >
+        {guardando ? 'Guardando...' : 'Registrar Merma'}
+      </button>
     </div>
   );
 }
