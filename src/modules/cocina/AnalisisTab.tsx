@@ -1,8 +1,9 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
 import { LocalSelector } from '@/components/ui/LocalSelector';
+import { useAuth } from '@/lib/auth';
 
 // ── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -110,7 +111,12 @@ function fmtFecha(s: string): string {
 // ── Componente ───────────────────────────────────────────────────────────────
 
 export function AnalisisTab() {
-  const [local, setLocal] = useState<'vedia' | 'saavedra'>('vedia');
+  const { perfil } = useAuth();
+  const localRestringido = perfil?.local_restringido ?? null;
+  const [local, setLocal] = useState<'vedia' | 'saavedra'>(localRestringido ?? 'vedia');
+  useEffect(() => {
+    if (localRestringido && local !== localRestringido) setLocal(localRestringido);
+  }, [localRestringido, local]);
   const [ventanaDias, setVentanaDias] = useState<7 | 30 | 90>(30);
   const desde = useMemo(() => restarDias(ventanaDias), [ventanaDias]);
 
@@ -410,7 +416,9 @@ export function AnalisisTab() {
     <div className="space-y-6">
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-4">
-        <LocalSelector value={local} onChange={(v) => setLocal(v as 'vedia' | 'saavedra')} />
+        {!localRestringido && (
+          <LocalSelector value={local} onChange={(v) => setLocal(v as 'vedia' | 'saavedra')} />
+        )}
         <div className="flex items-center gap-1 rounded-lg border border-gray-200 bg-white p-0.5">
           <span className="px-2 text-[10px] text-gray-500">Período:</span>
           {([7, 30, 90] as const).map((n) => (

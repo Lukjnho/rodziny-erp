@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { KPICard } from '@/components/ui/KPICard';
 import { cn, formatARS } from '@/lib/utils';
+import { useAuth } from '@/lib/auth';
 import { useCostosRecetas, type CostoReceta } from './hooks/useCostosRecetas';
 
 interface Ingrediente {
@@ -75,9 +76,14 @@ const UNIDADES = ['g', 'kg', 'ml', 'lt', 'unid', 'cdta', 'cda'] as const;
 
 export function RecetasTab() {
   const qc = useQueryClient();
+  const { perfil } = useAuth();
+  const localRestringido = perfil?.local_restringido ?? null;
   const [busqueda, setBusqueda] = useState('');
   const [filtroTipo, setFiltroTipo] = useState<string>('todos');
-  const [filtroLocal, setFiltroLocal] = useState<string>('todos');
+  const [filtroLocal, setFiltroLocal] = useState<string>(localRestringido ?? 'todos');
+  useEffect(() => {
+    if (localRestringido && filtroLocal !== localRestringido) setFiltroLocal(localRestringido);
+  }, [localRestringido, filtroLocal]);
   const [filtroActivo, setFiltroActivo] = useState<'activas' | 'inactivas' | 'todas'>('activas');
   const [filtroAdvertencia, setFiltroAdvertencia] = useState<'todas' | 'con_adv' | 'sin_adv'>(
     'todas',
@@ -281,7 +287,7 @@ export function RecetasTab() {
           loading={isLoading}
           onClick={() => {
             setFiltroTipo('todos');
-            setFiltroLocal('todos');
+            if (!localRestringido) setFiltroLocal('todos');
             setFiltroActivo('todas');
             setFiltroAdvertencia('todas');
             setFiltroCosteo('todos');
@@ -360,15 +366,17 @@ export function RecetasTab() {
             </option>
           ))}
         </select>
-        <select
-          value={filtroLocal}
-          onChange={(e) => setFiltroLocal(e.target.value)}
-          className="rounded border border-gray-300 px-2 py-1.5 text-sm"
-        >
-          <option value="todos">Todos los locales</option>
-          <option value="vedia">Vedia</option>
-          <option value="saavedra">Saavedra</option>
-        </select>
+        {!localRestringido && (
+          <select
+            value={filtroLocal}
+            onChange={(e) => setFiltroLocal(e.target.value)}
+            className="rounded border border-gray-300 px-2 py-1.5 text-sm"
+          >
+            <option value="todos">Todos los locales</option>
+            <option value="vedia">Vedia</option>
+            <option value="saavedra">Saavedra</option>
+          </select>
+        )}
         <select
           value={filtroActivo}
           onChange={(e) => setFiltroActivo(e.target.value as typeof filtroActivo)}
@@ -523,13 +531,15 @@ export function RecetasTab() {
                         >
                           Editar
                         </button>
-                        <button
-                          onClick={() => setDuplicando(r)}
-                          className="text-xs text-purple-600 hover:text-purple-800"
-                          title="Crear copia para otro local"
-                        >
-                          Duplicar
-                        </button>
+                        {!localRestringido && (
+                          <button
+                            onClick={() => setDuplicando(r)}
+                            className="text-xs text-purple-600 hover:text-purple-800"
+                            title="Crear copia para otro local"
+                          >
+                            Duplicar
+                          </button>
+                        )}
                         <button
                           onClick={() => toggleActivo.mutate({ id: r.id, activo: !r.activo })}
                           className={cn(
@@ -579,6 +589,7 @@ export function RecetasTab() {
           receta={editando}
           ingredientes={editando ? (ingredientesPorReceta.get(editando.id) ?? []) : []}
           todasLasRecetas={recetas ?? []}
+          localRestringido={localRestringido}
           onClose={() => setModalAbierto(false)}
           onSaved={() => {
             qc.invalidateQueries({ queryKey: ['cocina-recetas'] });
@@ -892,12 +903,14 @@ function ModalReceta({
   receta,
   ingredientes: ingredientesExistentes,
   todasLasRecetas,
+  localRestringido,
   onClose,
   onSaved,
 }: {
   receta: Receta | null;
   ingredientes: Ingrediente[];
   todasLasRecetas: Receta[];
+  localRestringido: 'vedia' | 'saavedra' | null;
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -906,7 +919,7 @@ function ModalReceta({
   const [rendKg, setRendKg] = useState(receta?.rendimiento_kg ?? '');
   const [rendUnidad, setRendUnidad] = useState<RendUnidad>(receta?.rendimiento_unidad ?? 'kg');
   const [rendPorciones, setRendPorciones] = useState(receta?.rendimiento_porciones ?? '');
-  const [local, setLocal] = useState<string>(receta?.local ?? 'vedia');
+  const [local, setLocal] = useState<string>(receta?.local ?? localRestringido ?? 'vedia');
   const [gramosPorcion, setGramosPorcion] = useState<string>(
     receta?.gramos_por_porcion != null ? String(receta.gramos_por_porcion) : '',
   );
@@ -1176,17 +1189,19 @@ function ModalReceta({
                     ))}
                   </select>
                 </div>
-                <div>
-                  <label className="mb-1 block text-xs text-gray-500">Local</label>
-                  <select
-                    value={local}
-                    onChange={(e) => setLocal(e.target.value)}
-                    className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
-                  >
-                    <option value="vedia">Vedia</option>
-                    <option value="saavedra">Saavedra</option>
-                  </select>
-                </div>
+                {!localRestringido && (
+                  <div>
+                    <label className="mb-1 block text-xs text-gray-500">Local</label>
+                    <select
+                      value={local}
+                      onChange={(e) => setLocal(e.target.value)}
+                      className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
+                    >
+                      <option value="vedia">Vedia</option>
+                      <option value="saavedra">Saavedra</option>
+                    </select>
+                  </div>
+                )}
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>

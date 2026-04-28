@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { KPICard } from '@/components/ui/KPICard';
+import { useAuth } from '@/lib/auth';
 
 interface Producto {
   id: string;
@@ -56,8 +57,13 @@ function hoy() {
 
 export function TraspasosTab() {
   const qc = useQueryClient();
+  const { perfil } = useAuth();
+  const localRestringido = perfil?.local_restringido ?? null;
   const [fecha, setFecha] = useState(hoy());
-  const [filtroLocal, setFiltroLocal] = useState<FiltroLocal>('todos');
+  const [filtroLocal, setFiltroLocal] = useState<FiltroLocal>(localRestringido ?? 'todos');
+  useEffect(() => {
+    if (localRestringido && filtroLocal !== localRestringido) setFiltroLocal(localRestringido);
+  }, [localRestringido, filtroLocal]);
   const [modalTraspaso, setModalTraspaso] = useState(false);
   const [modalMerma, setModalMerma] = useState(false);
   const [seccionMerma, setSeccionMerma] = useState(false);
@@ -243,15 +249,17 @@ export function TraspasosTab() {
             Hoy
           </button>
         )}
-        <select
-          value={filtroLocal}
-          onChange={(e) => setFiltroLocal(e.target.value as FiltroLocal)}
-          className="ml-auto rounded border border-gray-300 px-2 py-1.5 text-sm"
-        >
-          <option value="todos">Todos los locales</option>
-          <option value="vedia">Vedia</option>
-          <option value="saavedra">Saavedra</option>
-        </select>
+        {!localRestringido && (
+          <select
+            value={filtroLocal}
+            onChange={(e) => setFiltroLocal(e.target.value as FiltroLocal)}
+            className="ml-auto rounded border border-gray-300 px-2 py-1.5 text-sm"
+          >
+            <option value="todos">Todos los locales</option>
+            <option value="vedia">Vedia</option>
+            <option value="saavedra">Saavedra</option>
+          </select>
+        )}
       </div>
 
       {/* KPIs — los de merma abren la sección colapsada */}
@@ -426,6 +434,7 @@ export function TraspasosTab() {
           fecha={fecha}
           productos={productos ?? []}
           stockDisponible={stockDisponible}
+          localRestringido={localRestringido}
           onClose={() => setModalTraspaso(false)}
           onSaved={() => {
             qc.invalidateQueries({ queryKey: ['cocina-traspasos', fecha] });
@@ -441,6 +450,7 @@ export function TraspasosTab() {
         <ModalMerma
           fecha={fecha}
           productos={productos ?? []}
+          localRestringido={localRestringido}
           onClose={() => setModalMerma(false)}
           onSaved={() => {
             qc.invalidateQueries({ queryKey: ['cocina-merma', fecha] });
@@ -461,16 +471,18 @@ function ModalTraspaso({
   fecha,
   productos,
   stockDisponible,
+  localRestringido,
   onClose,
   onSaved,
 }: {
   fecha: string;
   productos: Producto[];
   stockDisponible: StockMap;
+  localRestringido: 'vedia' | 'saavedra' | null;
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [local, setLocal] = useState<'vedia' | 'saavedra'>('vedia');
+  const [local, setLocal] = useState<'vedia' | 'saavedra'>(localRestringido ?? 'vedia');
   const [productoId, setProductoId] = useState('');
   const [porciones, setPorciones] = useState('');
   const [hora, setHora] = useState(
@@ -548,17 +560,19 @@ function ModalTraspaso({
       >
         <h3 className="mb-4 text-lg font-bold text-gray-800">Nuevo traspaso</h3>
         <div className="space-y-3">
-          <div>
-            <label className="mb-1 block text-xs text-gray-500">Local</label>
-            <select
-              value={local}
-              onChange={(e) => setLocal(e.target.value as 'vedia' | 'saavedra')}
-              className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
-            >
-              <option value="vedia">Vedia</option>
-              <option value="saavedra">Saavedra</option>
-            </select>
-          </div>
+          {!localRestringido && (
+            <div>
+              <label className="mb-1 block text-xs text-gray-500">Local</label>
+              <select
+                value={local}
+                onChange={(e) => setLocal(e.target.value as 'vedia' | 'saavedra')}
+                className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
+              >
+                <option value="vedia">Vedia</option>
+                <option value="saavedra">Saavedra</option>
+              </select>
+            </div>
+          )}
           <div>
             <div className="mb-1 flex items-baseline justify-between">
               <label className="block text-xs text-gray-500">Producto</label>
@@ -655,11 +669,13 @@ function ModalTraspaso({
 function ModalMerma({
   fecha,
   productos,
+  localRestringido,
   onClose,
   onSaved,
 }: {
   fecha: string;
   productos: Producto[];
+  localRestringido: 'vedia' | 'saavedra' | null;
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -667,7 +683,7 @@ function ModalMerma({
   const [porciones, setPorciones] = useState('');
   const [motivo, setMotivo] = useState<'rotura' | 'vencido' | 'otro'>('rotura');
   const [responsable, setResponsable] = useState('');
-  const [local, setLocal] = useState<'vedia' | 'saavedra'>('vedia');
+  const [local, setLocal] = useState<'vedia' | 'saavedra'>(localRestringido ?? 'vedia');
   const [notas, setNotas] = useState('');
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState('');
@@ -756,17 +772,19 @@ function ModalMerma({
                 className="w-full rounded border border-gray-300 px-3 py-1.5 text-sm"
               />
             </div>
-            <div>
-              <label className="mb-1 block text-xs text-gray-500">Local</label>
-              <select
-                value={local}
-                onChange={(e) => setLocal(e.target.value as 'vedia' | 'saavedra')}
-                className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
-              >
-                <option value="vedia">Vedia</option>
-                <option value="saavedra">Saavedra</option>
-              </select>
-            </div>
+            {!localRestringido && (
+              <div>
+                <label className="mb-1 block text-xs text-gray-500">Local</label>
+                <select
+                  value={local}
+                  onChange={(e) => setLocal(e.target.value as 'vedia' | 'saavedra')}
+                  className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
+                >
+                  <option value="vedia">Vedia</option>
+                  <option value="saavedra">Saavedra</option>
+                </select>
+              </div>
+            )}
           </div>
           <div>
             <label className="mb-1 block text-xs text-gray-500">Notas</label>

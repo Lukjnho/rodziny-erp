@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { KPICard } from '@/components/ui/KPICard';
@@ -6,6 +6,7 @@ import { StockProduccionSection } from './components/StockProduccionSection';
 import { PlanProduccionEditor } from './components/PlanProduccionEditor';
 import { PlanSemanal } from './components/PlanSemanal';
 import { cn } from '@/lib/utils';
+import { useAuth } from '@/lib/auth';
 
 // Badge que muestra si un lote tiene ingredientes reales guardados y un popover con el detalle
 function IngredientesRealesBadge({ ingredientes }: { ingredientes: IngredienteRealRow[] | null }) {
@@ -246,9 +247,14 @@ function formatDDMM(fecha: string) {
 // ── Componente principal ──────────────────────────────────────────────────────
 
 export function ProduccionTab() {
+  const { perfil } = useAuth();
+  const localRestringido = perfil?.local_restringido ?? null;
   const qc = useQueryClient();
   const [fecha, setFecha] = useState(hoy());
-  const [filtroLocal, setFiltroLocal] = useState<FiltroLocal>('todos');
+  const [filtroLocal, setFiltroLocal] = useState<FiltroLocal>(localRestringido ?? 'todos');
+  useEffect(() => {
+    if (localRestringido && filtroLocal !== localRestringido) setFiltroLocal(localRestringido);
+  }, [localRestringido, filtroLocal]);
   const [filtroPastaEstado, setFiltroPastaEstado] = useState<'todos' | 'fresco' | 'camara'>(
     'todos',
   );
@@ -598,15 +604,17 @@ export function ProduccionTab() {
             Hoy
           </button>
         )}
-        <select
-          value={filtroLocal}
-          onChange={(e) => setFiltroLocal(e.target.value as FiltroLocal)}
-          className="ml-auto rounded border border-gray-300 px-2 py-1.5 text-sm"
-        >
-          <option value="todos">Todos los locales</option>
-          <option value="vedia">Vedia</option>
-          <option value="saavedra">Saavedra</option>
-        </select>
+        {!localRestringido && (
+          <select
+            value={filtroLocal}
+            onChange={(e) => setFiltroLocal(e.target.value as FiltroLocal)}
+            className="ml-auto rounded border border-gray-300 px-2 py-1.5 text-sm"
+          >
+            <option value="todos">Todos los locales</option>
+            <option value="vedia">Vedia</option>
+            <option value="saavedra">Saavedra</option>
+          </select>
+        )}
       </div>
 
       {/* ── Sección: Plan semanal ─────────────────────────────────────────────

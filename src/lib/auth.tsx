@@ -31,6 +31,9 @@ export interface Perfil {
   puede_ver_usuarios: boolean;
   puede_ver_cocina: boolean;
   puede_ver_almacen: boolean;
+  // Si está seteado, el usuario solo ve datos de ese local en módulos
+  // multilocal (Cocina, etc.). NULL = sin restricción.
+  local_restringido: 'vedia' | 'saavedra' | null;
 }
 
 interface AuthContextValue {

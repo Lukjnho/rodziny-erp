@@ -1,8 +1,9 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
 import { LocalSelector } from '@/components/ui/LocalSelector';
+import { useAuth } from '@/lib/auth';
 import { ProximasEfemeridesCard } from './components/ProximasEfemeridesCard';
 
 // ── Productos que el chef controla ──────────────────────────────────────────
@@ -632,7 +633,12 @@ const DIAS_SEMANA = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
 // ── Componente ──────────────────────────────────────────────────────────────
 export function DashboardTab() {
   const qc = useQueryClient();
-  const [local, setLocal] = useState<'vedia' | 'saavedra'>('vedia');
+  const { perfil } = useAuth();
+  const localRestringido = perfil?.local_restringido ?? null;
+  const [local, setLocal] = useState<'vedia' | 'saavedra'>(localRestringido ?? 'vedia');
+  useEffect(() => {
+    if (localRestringido && local !== localRestringido) setLocal(localRestringido);
+  }, [localRestringido, local]);
   const [ventanaDias, setVentanaDias] = useState<1 | 3 | 7>(3);
   // Fechas calculadas una sola vez al montar el componente (evita el warning de
   // react-hooks/purity de React 19 por llamar Date.now() en render) y estabiliza
@@ -1190,7 +1196,9 @@ export function DashboardTab() {
     <div className="space-y-4">
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-4">
-        <LocalSelector value={local} onChange={(v) => setLocal(v as 'vedia' | 'saavedra')} />
+        {!localRestringido && (
+          <LocalSelector value={local} onChange={(v) => setLocal(v as 'vedia' | 'saavedra')} />
+        )}
         <button
           onClick={() => setPizarronAbierto(true)}
           className="rounded-lg bg-gray-800 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-gray-700"

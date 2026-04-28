@@ -1,8 +1,9 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { KPICard } from '@/components/ui/KPICard';
 import { cn } from '@/lib/utils';
+import { useAuth } from '@/lib/auth';
 import { PRODUCTOS_COCINA, normNombre } from './DashboardTab';
 import { StockProduccionSection } from './components/StockProduccionSection';
 
@@ -93,7 +94,12 @@ function ventasFudoDelProducto(producto: Producto, ranking: FudoRankingItem[] | 
 }
 
 export function StockTab() {
-  const [filtroLocal, setFiltroLocal] = useState<FiltroLocal>('todos');
+  const { perfil } = useAuth();
+  const localRestringido = perfil?.local_restringido ?? null;
+  const [filtroLocal, setFiltroLocal] = useState<FiltroLocal>(localRestringido ?? 'todos');
+  useEffect(() => {
+    if (localRestringido && filtroLocal !== localRestringido) setFiltroLocal(localRestringido);
+  }, [localRestringido, filtroLocal]);
   const [filtroEstado, setFiltroEstado] = useState<'todos' | 'bajo' | 'sin_stock' | 'con_fresco'>(
     'todos',
   );
@@ -307,7 +313,7 @@ export function StockTab() {
           loading={isLoading}
           onClick={() => {
             setFiltroEstado('todos');
-            setFiltroLocal('todos');
+            if (!localRestringido) setFiltroLocal('todos');
           }}
         />
         <KPICard
@@ -354,15 +360,17 @@ export function StockTab() {
 
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-2 rounded-lg border border-surface-border bg-white p-3">
-        <select
-          value={filtroLocal}
-          onChange={(e) => setFiltroLocal(e.target.value as FiltroLocal)}
-          className="rounded border border-gray-300 px-2 py-1.5 text-sm"
-        >
-          <option value="todos">Todos los locales</option>
-          <option value="vedia">Vedia</option>
-          <option value="saavedra">Saavedra</option>
-        </select>
+        {!localRestringido && (
+          <select
+            value={filtroLocal}
+            onChange={(e) => setFiltroLocal(e.target.value as FiltroLocal)}
+            className="rounded border border-gray-300 px-2 py-1.5 text-sm"
+          >
+            <option value="todos">Todos los locales</option>
+            <option value="vedia">Vedia</option>
+            <option value="saavedra">Saavedra</option>
+          </select>
+        )}
         <span className="ml-auto text-xs text-gray-400">
           En cámara (depósito) = histórico − traspasos − merma · En mostrador = traspasos hoy −
           ventas Fudo − merma hoy · Pastas en produ = frescas sin porcionar
