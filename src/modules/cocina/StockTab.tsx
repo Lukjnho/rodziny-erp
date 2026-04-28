@@ -16,6 +16,7 @@ interface Producto {
   minimo_produccion: number | null;
   local: string;
   activo: boolean;
+  fudo_nombres: string[] | null;
 }
 interface LotePasta {
   producto_id: string;
@@ -82,8 +83,15 @@ function normFudoNombre(s: string) {
 
 function ventasFudoDelProducto(producto: Producto, ranking: FudoRankingItem[] | undefined) {
   if (!ranking || ranking.length === 0) return 0;
-  const cfg = PRODUCTO_POR_NOMBRE.get(normNombre(producto.nombre));
-  const nombres = cfg?.fudoNombres ?? [producto.nombre];
+  // Prioridad: fudo_nombres del producto en DB (configurable desde el editor)
+  // > mapa hardcodeado PRODUCTOS_COCINA (legacy) > nombre del producto literal.
+  let nombres: string[];
+  if (producto.fudo_nombres && producto.fudo_nombres.length > 0) {
+    nombres = producto.fudo_nombres;
+  } else {
+    const cfg = PRODUCTO_POR_NOMBRE.get(normNombre(producto.nombre));
+    nombres = cfg?.fudoNombres ?? [producto.nombre];
+  }
   let total = 0;
   for (const n of nombres) {
     const objetivo = normFudoNombre(n);

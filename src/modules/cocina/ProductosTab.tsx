@@ -16,6 +16,7 @@ interface Producto {
   activo: boolean;
   receta_id: string | null;
   precio_venta: number | null;
+  fudo_nombres: string[] | null;
   created_at: string;
 }
 
@@ -381,6 +382,9 @@ function ModalProducto({
   const [minimo, setMinimo] = useState(producto?.minimo_produccion ?? 100);
   const [local, setLocal] = useState(producto?.local ?? 'vedia');
   const [recetaId, setRecetaId] = useState<string>(producto?.receta_id ?? '');
+  const [fudoNombres, setFudoNombres] = useState<string>(
+    (producto?.fudo_nombres ?? []).join('\n'),
+  );
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState('');
 
@@ -427,6 +431,10 @@ function ModalProducto({
       minimo_produccion: minimo,
       local,
       receta_id: recetaId || null,
+      fudo_nombres: fudoNombres
+        .split('\n')
+        .map((s) => s.trim())
+        .filter(Boolean),
     };
     const { error: err } = producto
       ? await supabase.from('cocina_productos').update(row).eq('id', producto.id)
@@ -574,6 +582,22 @@ function ModalProducto({
             )}
             <p className="text-[10px] italic text-gray-400">
               Para cargar precio de venta y margen, ir a <strong>Finanzas → Costeo</strong>.
+            </p>
+          </div>
+
+          <div className="mt-3 space-y-1 border-t border-gray-200 pt-3">
+            <label className="block text-xs text-gray-500">
+              Nombres en Fudo <span className="text-gray-400">(uno por línea)</span>
+            </label>
+            <textarea
+              value={fudoNombres}
+              onChange={(e) => setFudoNombres(e.target.value)}
+              rows={3}
+              className="w-full rounded border border-gray-300 px-2 py-1.5 font-mono text-xs"
+              placeholder={'Sorrentino Jamón, Queso y Cebollas\nSorrentino Jamón, Cebollas y Quesos VIANDA'}
+            />
+            <p className="text-[10px] italic text-gray-400">
+              Cómo aparece este producto en el reporte de Fudo. Si está vacío, no se descuenta del stock por venta. Copialo tal cual aparece en Fudo (con tildes y mayúsculas).
             </p>
           </div>
         </div>
