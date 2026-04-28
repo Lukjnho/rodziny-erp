@@ -2,12 +2,25 @@ import { useState, useEffect, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
+import { PRODUCTOS_COCINA, normNombre } from '../DashboardTab';
 
 interface Receta {
   id: string;
   nombre: string;
   tipo: string;
   local: string | null;
+}
+
+interface Sugerencia {
+  key: string;
+  productoNombre: string;
+  recetaId: string;
+  recetaNombre: string;
+  tipoPlan: TipoItem;
+  cantidadRecetas: number;
+  porcionesFaltantes: number;
+  diasRestantes: number | null;
+  urgencia: 'critico' | 'bajo';
 }
 
 type TipoItem = 'relleno' | 'masa' | 'salsa' | 'postre' | 'pasteleria' | 'panaderia';
@@ -101,6 +114,103 @@ export function PlanProduccionEditor({
     },
   });
 
+  // ── Datos para sugerencias (mismo cálculo que el dashboard, simplificado) ──
+  const hace14 = useMemo(
+    () => new Date(Date.now() - 14 * 86400000).toISOString().split('T')[0],
+    [],
+  );
+  const hoyStr = useMemo(() => new Date().toISOString().split('T')[0], []);
+
+  // Catálogo de productos con receta vinculada
+  type ProductoBD = {
+    nombre: string;
+    tipo: string;
+    receta_id: string | null;
+    minimo_produccion: number | null;
+    receta: {
+      id: string;
+      nombre: string;
+      tipo: string | null;
+      rendimiento_porciones: number | null;
+      rendimiento_kg: number | null;
+    } | null;
+  };
+
+  const { data: productosBD } = useQuery({
+    queryKey: ['cocina-productos-sugerencias-plan', local],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('cocina_productos')
+        .select(
+          'nombre, tipo, receta_id, minimo_produccion, receta:cocina_recetas(id, nombre, tipo, rendimiento_porciones, rendimiento_kg)',
+        )
+        .eq('local', local)
+        .eq('activo', true);
+      if (error) throw error;
+      const m = new Map<string, ProductoBD>();
+      for (const r of (data ?? []) as unknown as ProductoBD[]) m.set(normNombre(r.nombre), r);
+      return m;
+    },
+  });
+
+  // Stock vendible de pastas (cámara − traspasos − merma)
+  const { data: stockPastas } = useQuery({
+    queryKey: ['cocina-stock-pastas-sugerencias-plan', local],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('v_cocina_stock_pastas')
+        .select('nombre, porciones_camara, porciones_traspasadas, porciones_merma')
+        .eq('local', local);
+      if (error) throw error;
+      const m = new Map<string, number>();
+      for (const r of (data ?? []) as Array<{
+        nombre: string;
+        porciones_camara: number | null;
+        porciones_traspasadas: number | null;
+        porciones_merma: number | null;
+      }>) {
+        const camara = Number(r.porciones_camara) || 0;
+        const traspasos = Number(r.porciones_traspasadas) || 0;
+        const merma = Number(r.porciones_merma) || 0;
+        m.set(normNombre(r.nombre), Math.max(0, camara - traspasos - merma));
+      }
+      return m;
+    },
+  });
+
+  // Último conteo manual de stock por producto (para salsas/postres)
+  const { data: conteos } = useQuery({
+    queryKey: ['cocina-conteo-stock-sugerencias-plan', local],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('cocina_conteo_stock')
+        .select('producto, cantidad, fecha')
+        .eq('local', local)
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      const m = new Map<string, { cantidad: number; fecha: string }>();
+      for (const r of (data ?? []) as Array<{ producto: string; cantidad: number; fecha: string }>) {
+        if (!m.has(r.producto)) m.set(r.producto, { cantidad: r.cantidad, fecha: r.fecha });
+      }
+      return m;
+    },
+  });
+
+  // Ventas Fudo últimos 14 días (promedio diario por producto)
+  type FudoRanking = { nombre: string; cantidad: number };
+  type FudoResp = { ranking: FudoRanking[]; dias: number };
+  const { data: fudoData } = useQuery({
+    queryKey: ['cocina-fudo-sugerencias-plan', local, hace14, hoyStr],
+    queryFn: async () => {
+      const { data, error } = await supabase.functions.invoke('fudo-productos', {
+        body: { local, fechaDesde: hace14, fechaHasta: hoyStr },
+      });
+      if (error || !data?.ok) return null;
+      return data.data as FudoResp;
+    },
+    staleTime: 10 * 60 * 1000,
+  });
+
   // Estado local: map fecha -> items
   const [items, setItems] = useState<Record<string, PlanItem[]>>({});
 
@@ -138,6 +248,134 @@ export function PlanProduccionEditor({
     }
     setItems(porFecha);
   }, [itemsExistentes, fechas]);
+
+  // ── Sugerencias derivadas (estilo dashboard pero simplificado) ──
+  const PISO_PORCIONES_PASTA = 100;
+  const tiposPlan = useMemo(() => new Set(tipos.map((t) => t.tipo)), [tipos]);
+
+  const sugerencias = useMemo<Sugerencia[]>(() => {
+    if (!productosBD || !fudoData) return [];
+
+    const out: Sugerencia[] = [];
+    // Recorremos el catálogo del dashboard (los productos que el chef controla)
+    const productosLocal = PRODUCTOS_COCINA.filter((p) => !p.local || p.local === local);
+
+    for (const prod of productosLocal) {
+      const prodDB = productosBD.get(normNombre(prod.nombre));
+      if (!prodDB?.receta) continue;
+      const receta = prodDB.receta;
+      const tipoReceta = (receta.tipo ?? '') as TipoItem;
+      // Solo sugerimos para tipos que el plan acepta (masas no se planifican)
+      if (!tiposPlan.has(tipoReceta)) continue;
+
+      // Stock actual en porciones
+      let porcionesStock = 0;
+      let stockConocido = false;
+      if (prod.tipo === 'pasta') {
+        const v = stockPastas?.get(normNombre(prod.nombre)) ?? 0;
+        if (v > 0) {
+          porcionesStock = v;
+          stockConocido = true;
+        }
+      }
+      const conteo = conteos?.get(prod.nombre);
+      if (conteo) {
+        if (prod.tipo === 'salsa') {
+          porcionesStock = Math.ceil((conteo.cantidad * 1000) / prod.gramosporcion);
+        } else if (prod.tipo === 'postre') {
+          porcionesStock = Math.ceil(conteo.cantidad * prod.porcionesporunidad);
+        } else {
+          porcionesStock = Math.ceil(conteo.cantidad);
+        }
+        stockConocido = true;
+      }
+      if (!stockConocido) continue;
+
+      // Demanda diaria promedio (Fudo)
+      const nombres = prod.fudoNombres ?? [prod.nombre];
+      let ventasTotal = 0;
+      for (const n of nombres) {
+        const f = fudoData.ranking.find((r) => r.nombre.toLowerCase() === n.toLowerCase());
+        if (f) ventasTotal += f.cantidad;
+      }
+      const ventasDiarias = fudoData.dias > 0 ? ventasTotal / fudoData.dias : 0;
+      if (ventasDiarias <= 0) continue;
+
+      // Objetivo de cobertura
+      const minimoBD = prodDB.minimo_produccion ?? null;
+      let porcionesObjetivo = ventasDiarias * prod.diasObjetivo;
+      if (prod.tipo === 'pasta') {
+        const piso = minimoBD ?? PISO_PORCIONES_PASTA;
+        porcionesObjetivo = Math.max(porcionesObjetivo, piso);
+      } else if (minimoBD != null && minimoBD > 0) {
+        porcionesObjetivo = Math.max(porcionesObjetivo, minimoBD);
+      }
+
+      const porcionesFaltantes = Math.max(0, porcionesObjetivo - porcionesStock);
+      if (porcionesFaltantes <= 0) continue;
+
+      const rendPorciones = receta.rendimiento_porciones ?? null;
+      let cantidadRecetas = 0;
+      if (rendPorciones && rendPorciones > 0) {
+        cantidadRecetas = Math.ceil(porcionesFaltantes / rendPorciones);
+      } else if (receta.rendimiento_kg && prod.tipo === 'salsa' && prod.gramosporcion > 0) {
+        const kgFaltantes = (porcionesFaltantes * prod.gramosporcion) / 1000;
+        cantidadRecetas = Math.ceil(kgFaltantes / receta.rendimiento_kg);
+      } else {
+        // Sin rendimiento configurado → no podemos sugerir cantidad de recetas
+        continue;
+      }
+
+      const diasRestantes = ventasDiarias > 0 ? porcionesStock / ventasDiarias : null;
+      const urgencia: Sugerencia['urgencia'] =
+        diasRestantes !== null && diasRestantes < 1 ? 'critico' : 'bajo';
+
+      out.push({
+        key: `${prod.nombre}::${receta.id}`,
+        productoNombre: prod.nombre,
+        recetaId: receta.id,
+        recetaNombre: receta.nombre,
+        tipoPlan: tipoReceta,
+        cantidadRecetas,
+        porcionesFaltantes: Math.ceil(porcionesFaltantes),
+        diasRestantes: diasRestantes !== null ? Math.round(diasRestantes * 10) / 10 : null,
+        urgencia,
+      });
+    }
+    // Críticos primero, después por porciones faltantes desc
+    out.sort((a, b) => {
+      if (a.urgencia !== b.urgencia) return a.urgencia === 'critico' ? -1 : 1;
+      return b.porcionesFaltantes - a.porcionesFaltantes;
+    });
+    return out;
+  }, [productosBD, stockPastas, conteos, fudoData, local, tiposPlan]);
+
+  // Sugerencias ya cargadas en el día activo (para marcar el chip como "ya en plan")
+  const recetasYaEnDia = useMemo(() => {
+    const set = new Set<string>();
+    for (const it of items[fechaActiva] ?? []) {
+      if (it.receta_id) set.add(it.receta_id);
+    }
+    return set;
+  }, [items, fechaActiva]);
+
+  function agregarSugerencia(s: Sugerencia) {
+    setItems((prev) => ({
+      ...prev,
+      [fechaActiva]: [
+        ...(prev[fechaActiva] ?? []),
+        {
+          id: nuevoId(),
+          tipo: s.tipoPlan,
+          receta_id: s.recetaId,
+          texto_libre: null,
+          cantidad_recetas: s.cantidadRecetas,
+          turno: s.tipoPlan === 'salsa' || s.tipoPlan === 'postre' ? 'tarde' : 'mañana',
+          notas: `Sugerido: cubre ${s.porcionesFaltantes} porc.`,
+        },
+      ],
+    }));
+  }
 
   function agregarItem(fecha: string, tipo: TipoItem) {
     setItems((prev) => ({
@@ -270,6 +508,58 @@ export function PlanProduccionEditor({
 
         {/* Body: secciones por tipo */}
         <div className="flex-1 overflow-y-auto p-6">
+          {/* Banner de sugerencias del dashboard */}
+          {sugerencias.length > 0 && (
+            <div className="border-rodziny-200 mb-5 rounded-lg border bg-rodziny-50 p-3">
+              <div className="mb-1 flex items-center justify-between">
+                <h3 className="text-xs font-bold uppercase tracking-wide text-rodziny-800">
+                  Sugerencias para hoy
+                </h3>
+                <span className="text-[10px] text-rodziny-600">
+                  Basado en ventas Fudo (14d) y stock actual · clickeá para sumar al plan
+                </span>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {sugerencias.map((s) => {
+                  const yaEnPlan = recetasYaEnDia.has(s.recetaId);
+                  return (
+                    <button
+                      key={s.key}
+                      onClick={() => agregarSugerencia(s)}
+                      disabled={yaEnPlan}
+                      title={
+                        yaEnPlan
+                          ? 'Ya cargado en este día'
+                          : `Hacer ${s.cantidadRecetas} receta${s.cantidadRecetas !== 1 ? 's' : ''} de ${s.recetaNombre} para cubrir ${s.porcionesFaltantes} porciones de ${s.productoNombre}`
+                      }
+                      className={cn(
+                        'inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition',
+                        yaEnPlan
+                          ? 'cursor-not-allowed bg-gray-100 text-gray-400 ring-1 ring-gray-200'
+                          : s.urgencia === 'critico'
+                            ? 'bg-red-100 text-red-800 ring-1 ring-red-300 hover:bg-red-200'
+                            : 'bg-amber-100 text-amber-800 ring-1 ring-amber-300 hover:bg-amber-200',
+                      )}
+                    >
+                      {yaEnPlan ? (
+                        <span className="text-[10px]">✓</span>
+                      ) : (
+                        <span className="text-[10px] font-bold">+</span>
+                      )}
+                      <span className="font-bold">
+                        {s.cantidadRecetas}× {s.recetaNombre}
+                      </span>
+                      <span className="text-[10px] opacity-80">
+                        ({s.productoNombre}
+                        {s.diasRestantes !== null ? ` · ${s.diasRestantes}d` : ''})
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {tipos.map(({ tipo, label, emoji }) => {
             const itemsTipo = itemsDelDia.filter((it) => it.tipo === tipo);
             const recetasTipo = (recetas ?? []).filter((r) => r.tipo === tipo);
