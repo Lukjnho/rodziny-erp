@@ -176,7 +176,11 @@ export function RecetasTab() {
   ]);
 
   const kpis = useMemo(() => {
-    const all = recetas ?? [];
+    let all = recetas ?? [];
+    // Si el filtro de local está restringido (perfil con local_restringido o el
+    // admin eligió un local), los KPIs deben reflejar solo ese subset.
+    if (filtroLocal === 'vedia') all = all.filter((r) => r.local === 'vedia');
+    else if (filtroLocal === 'saavedra') all = all.filter((r) => r.local === 'saavedra');
     let conCosto = 0;
     let sinCosto = 0;
     let conAdv = 0;
@@ -196,7 +200,7 @@ export function RecetasTab() {
       sinCosto,
       conAdv,
     };
-  }, [recetas, costos, ingredientesPorReceta]);
+  }, [recetas, filtroLocal, costos, ingredientesPorReceta]);
 
   const eliminar = useMutation({
     mutationFn: async (id: string) => {
