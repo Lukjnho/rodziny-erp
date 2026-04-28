@@ -721,6 +721,26 @@ export function DashboardTab() {
     refetchOnWindowFocus: true,
   });
 
+  // ── Query: merma registrada hoy desde el QR ──
+  const { data: mermaHoy } = useQuery({
+    queryKey: ['cocina_merma_hoy', local, hoy],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('cocina_merma')
+        .select('porciones')
+        .eq('local', local)
+        .eq('fecha', hoy);
+      if (error) throw error;
+      const total = (data ?? []).reduce(
+        (s: number, r: { porciones: number | null }) => s + (Number(r.porciones) || 0),
+        0,
+      );
+      return { total, eventos: data?.length ?? 0 };
+    },
+    refetchInterval: 60_000,
+    refetchIntervalInBackground: false,
+  });
+
   // ── Query: último conteo de stock por producto ──
   const { data: conteos } = useQuery({
     queryKey: ['cocina_conteo_stock', local],
@@ -1120,7 +1140,7 @@ export function DashboardTab() {
       </div>
 
       {/* ── KPIs RESUMEN ── */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
         <div className="rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-center">
           <div className="text-2xl font-bold text-green-700">{countOk}</div>
           <div className="text-[10px] font-medium uppercase text-green-600">OK</div>
@@ -1136,6 +1156,36 @@ export function DashboardTab() {
         <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 text-center">
           <div className="text-2xl font-bold text-gray-500">{countSinDatos}</div>
           <div className="text-[10px] font-medium uppercase text-gray-400">Sin contar</div>
+        </div>
+        <div
+          className={cn(
+            'rounded-lg border px-4 py-3 text-center',
+            mermaHoy && mermaHoy.total > 0
+              ? 'border-orange-200 bg-orange-50'
+              : 'border-gray-200 bg-gray-50',
+          )}
+          title={
+            mermaHoy && mermaHoy.eventos > 0
+              ? `${mermaHoy.eventos} carga${mermaHoy.eventos !== 1 ? 's' : ''} desde el QR`
+              : 'Sin merma registrada hoy'
+          }
+        >
+          <div
+            className={cn(
+              'text-2xl font-bold',
+              mermaHoy && mermaHoy.total > 0 ? 'text-orange-700' : 'text-gray-400',
+            )}
+          >
+            {mermaHoy ? Math.round(mermaHoy.total * 10) / 10 : 0}
+          </div>
+          <div
+            className={cn(
+              'text-[10px] font-medium uppercase',
+              mermaHoy && mermaHoy.total > 0 ? 'text-orange-600' : 'text-gray-400',
+            )}
+          >
+            Merma hoy {mermaHoy && mermaHoy.eventos > 0 ? `· ${mermaHoy.eventos}` : ''}
+          </div>
         </div>
       </div>
 

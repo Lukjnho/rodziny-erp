@@ -67,6 +67,32 @@ interface MermaAgg {
   motivosTop: { motivo: string; count: number }[];
 }
 
+interface MermaQR {
+  id: string;
+  producto_id: string | null;
+  receta_id: string | null;
+  fecha: string;
+  porciones: number | null;
+  motivo: string | null;
+  local: string | null;
+}
+
+interface MermaQRAgg {
+  key: string;
+  nombre: string;
+  tipo: string;
+  porciones: number;
+  eventos: number;
+  motivosTop: { motivo: string; count: number }[];
+  ultimaFecha: string;
+}
+
+interface ProductoRef {
+  id: string;
+  nombre: string;
+  tipo: string | null;
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 function restarDias(d: number): string {
@@ -143,6 +169,35 @@ export function AnalisisTab() {
         .gte('fecha', desde);
       if (error) throw error;
       return data as LoteProduccion[];
+    },
+  });
+
+  // ── Productos del catálogo (para resolver nombre desde producto_id en merma QR) ──
+  const { data: productos } = useQuery({
+    queryKey: ['cocina-productos-analisis', local],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('cocina_productos')
+        .select('id, nombre, tipo')
+        .eq('local', local);
+      if (error) throw error;
+      const m = new Map<string, ProductoRef>();
+      for (const p of data as ProductoRef[]) m.set(p.id, p);
+      return m;
+    },
+  });
+
+  // ── Merma del QR (botón "Registrar Merma") ──
+  const { data: mermaQR } = useQuery({
+    queryKey: ['cocina-analisis-merma-qr', local, desde],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('cocina_merma')
+        .select('id, producto_id, receta_id, fecha, porciones, motivo, local')
+        .eq('local', local)
+        .gte('fecha', desde);
+      if (error) throw error;
+      return data as MermaQR[];
     },
   });
 
@@ -282,6 +337,74 @@ export function AnalisisTab() {
     out.sort((a, b) => b.pctMerma - a.pctMerma);
     return out;
   }, [lotesProduccion, recetas]);
+
+  // ── Agregado: merma del QR (post-producción) ──
+  const mermaQRAgg = useMemo<MermaQRAgg[]>(() => {
+    if (!mermaQR || !recetas) return [];
+    const agg = new Map<
+      string,
+      {
+        nombre: string;
+        tipo: string;
+        porciones: number;
+        eventos: number;
+        motivos: Map<string, number>;
+        ultimaFecha: string;
+      }
+    >();
+    for (const m of mermaQR) {
+      let nombre = '(sin nombre)';
+      let tipo = '—';
+      if (m.receta_id) {
+        const r = recetas.get(m.receta_id);
+        if (r) {
+          nombre = r.nombre;
+          tipo = r.tipo ?? '—';
+        }
+      } else if (m.producto_id) {
+        const p = productos?.get(m.producto_id);
+        if (p) {
+          nombre = p.nombre;
+          tipo = p.tipo ?? '—';
+        }
+      }
+      const key = nombre.toLowerCase();
+      if (!agg.has(key)) {
+        agg.set(key, {
+          nombre,
+          tipo,
+          porciones: 0,
+          eventos: 0,
+          motivos: new Map(),
+          ultimaFecha: m.fecha,
+        });
+      }
+      const e = agg.get(key)!;
+      e.porciones += m.porciones ?? 0;
+      e.eventos += 1;
+      const motivo = (m.motivo ?? 'Sin motivo').trim() || 'Sin motivo';
+      e.motivos.set(motivo, (e.motivos.get(motivo) ?? 0) + 1);
+      if (m.fecha > e.ultimaFecha) e.ultimaFecha = m.fecha;
+    }
+    const out: MermaQRAgg[] = [];
+    for (const [key, v] of agg) {
+      const motivosTop = [...v.motivos.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 3)
+        .map(([motivo, count]) => ({ motivo, count }));
+      out.push({
+        key,
+        nombre: v.nombre,
+        tipo: v.tipo,
+        porciones: v.porciones,
+        eventos: v.eventos,
+        motivosTop,
+        ultimaFecha: v.ultimaFecha,
+      });
+    }
+    out.sort((a, b) => b.porciones - a.porciones);
+    return out;
+  }, [mermaQR, recetas, productos]);
 
   return (
     <div className="space-y-6">
@@ -444,6 +567,70 @@ export function AnalisisTab() {
                     </tr>
                   );
                 })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      {/* ── MERMA POST-PRODUCCIÓN (QR) ── */}
+      <section className="overflow-hidden rounded-lg border border-surface-border bg-white">
+        <header className="flex items-center justify-between border-b border-gray-100 px-4 py-3">
+          <div>
+            <h3 className="text-sm font-semibold text-gray-800">
+              Merma post-producción (botón QR)
+            </h3>
+            <p className="text-[11px] text-gray-500">
+              Descartes registrados desde el QR (rotura, vencimiento, exceso) en los últimos{' '}
+              {ventanaDias} días. Independiente de la merma de lotes.
+            </p>
+          </div>
+          <span className="text-[10px] text-gray-400">
+            {mermaQRAgg.length} ítem{mermaQRAgg.length !== 1 ? 's' : ''}
+          </span>
+        </header>
+        {mermaQRAgg.length === 0 ? (
+          <div className="px-4 py-6 text-center text-sm text-gray-500">
+            Sin merma cargada por QR en este período.
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="border-b border-gray-200 bg-gray-50">
+                <tr className="text-[10px] uppercase text-gray-500">
+                  <th className="px-4 py-2.5 text-left">Producto / Receta</th>
+                  <th className="px-4 py-2.5 text-left">Tipo</th>
+                  <th className="px-4 py-2.5 text-right">Porciones</th>
+                  <th className="px-4 py-2.5 text-right">Eventos</th>
+                  <th className="px-4 py-2.5 text-left">Motivos top</th>
+                  <th className="px-4 py-2.5 text-right">Último</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {mermaQRAgg.map((m) => (
+                  <tr key={m.key} className="hover:bg-gray-50">
+                    <td className="px-4 py-3 font-medium text-gray-900">{m.nombre}</td>
+                    <td className="px-4 py-3 text-xs capitalize text-gray-500">{m.tipo}</td>
+                    <td className="px-4 py-3 text-right font-medium text-gray-700">
+                      {fmtNum(m.porciones, 1)}
+                    </td>
+                    <td className="px-4 py-3 text-right text-gray-500">{m.eventos}</td>
+                    <td className="px-4 py-3 text-[11px] text-gray-600">
+                      {m.motivosTop.length === 0 ? (
+                        <span className="text-gray-400">—</span>
+                      ) : (
+                        m.motivosTop.map((t, i) => (
+                          <span key={i} className="mr-2 inline-block">
+                            {t.motivo} <span className="text-gray-400">×{t.count}</span>
+                          </span>
+                        ))
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-right text-[10px] text-gray-400">
+                      {fmtFecha(m.ultimaFecha)}
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
