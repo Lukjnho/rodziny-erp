@@ -36,15 +36,6 @@ export const PRODUCTOS_COCINA: ProductoCocina[] = [
     diasObjetivo: 3,
   },
   {
-    nombre: 'Ragú de Roast Beef',
-    categoria: 'Salsas',
-    tipo: 'salsa',
-    gramosporcion: 200,
-    porcionesporunidad: 1,
-    unidadstock: 'kg',
-    diasObjetivo: 3,
-  },
-  {
     nombre: 'Parisienne',
     categoria: 'Salsas',
     tipo: 'salsa',
