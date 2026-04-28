@@ -97,7 +97,7 @@ export const PRODUCTOS_COCINA: ProductoCocina[] = [
   // PASTAS — Vedia (salón + vianda + congelada se suman)
   // ════════════════════════════════════════════════════════════════
   {
-    nombre: 'Sorrentino J&Q',
+    nombre: 'Sorrentinos de Jamón y queso',
     fudoNombres: [
       'Sorrentino Jamón, Queso y Cebollas',
       'Sorrentino Jamón, Cebollas y Quesos VIANDA',
@@ -123,7 +123,7 @@ export const PRODUCTOS_COCINA: ProductoCocina[] = [
     local: 'vedia',
   },
   {
-    nombre: 'Ravioli espinaca y quesos',
+    nombre: 'Ravioli de Espinaca y quesos',
     fudoNombres: [
       'Ravioli de espinaca y quesos',
       'Ravioli de espinaca y quesos VIANDA',
@@ -148,7 +148,7 @@ export const PRODUCTOS_COCINA: ProductoCocina[] = [
     diasObjetivo: 3,
   },
   {
-    nombre: 'Scapinocc Vacio',
+    nombre: 'Scarpinocc de Vacío de Cerdo',
     fudoNombres: [
       'Scapinocc Vacio de cerdo, cerveza y barbacoa',
       'Scapinocc Vacio de cerdo, cerveza y barbacoa VIANDA',
@@ -162,7 +162,7 @@ export const PRODUCTOS_COCINA: ProductoCocina[] = [
     local: 'vedia',
   },
   {
-    nombre: 'Cappelletti pollo',
+    nombre: 'Capeletti de Pollo, puerro y quesos',
     fudoNombres: ['Cappelletti de pollo y puerro', 'Cappelletti de pollo y puerro VIANDA'],
     categoria: 'Pastas',
     tipo: 'pasta',
@@ -184,7 +184,7 @@ export const PRODUCTOS_COCINA: ProductoCocina[] = [
     local: 'vedia',
   },
   {
-    nombre: 'Tagliatelles mix',
+    nombre: 'Tagliatelles mixtos',
     fudoNombres: ['Tagliatelles mix', 'Tagliatelles Mixtos VIANDA', 'Tagliatelles mix CONGELADA'],
     categoria: 'Pastas',
     tipo: 'pasta',
