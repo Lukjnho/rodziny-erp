@@ -10,7 +10,15 @@ interface PastaRow {
   stockCamara: number;
 }
 
-export function TrasladoPastasForm({ local }: { local: 'vedia' | 'saavedra' }) {
+export function TrasladoPastasForm({
+  local,
+  onVolver,
+  onGuardado,
+}: {
+  local: 'vedia' | 'saavedra';
+  onVolver?: () => void;
+  onGuardado?: (mensaje: string) => void;
+}) {
   const [busqueda, setBusqueda] = useState('');
   const [seleccionado, setSeleccionado] = useState<PastaRow | null>(null);
   const [porciones, setPorciones] = useState('');
@@ -144,9 +152,15 @@ export function TrasladoPastasForm({ local }: { local: 'vedia' | 'saavedra' }) {
       if (error) throw error;
     },
     onSuccess: () => {
-      setExito(true);
       qc.invalidateQueries({ queryKey: ['qr-traslado-traspasos'] });
       qc.invalidateQueries({ queryKey: ['compras-pastas-traspasos'] });
+      qc.invalidateQueries({ queryKey: ['cocina_stock_pastas'] });
+      qc.invalidateQueries({ queryKey: ['cocina-traspasos-hoy-qr'] });
+      if (onGuardado && seleccionado) {
+        onGuardado(`Traslado registrado · ${porciones} porc. de ${seleccionado.nombre}`);
+        return;
+      }
+      setExito(true);
       setTimeout(() => {
         setExito(false);
         setSeleccionado(null);
@@ -286,6 +300,14 @@ export function TrasladoPastasForm({ local }: { local: 'vedia' | 'saavedra' }) {
 
   return (
     <div className="mx-auto max-w-md space-y-3 p-4">
+      {onVolver && (
+        <button
+          onClick={onVolver}
+          className="text-sm font-medium text-gray-500 hover:text-gray-700"
+        >
+          ← Volver
+        </button>
+      )}
       <div className="mb-2 text-center">
         <h2 className="text-lg font-bold text-gray-900">Traslado de pastas</h2>
         <p className="text-xs text-gray-500">Cámara de congelado → Freezer del mostrador</p>

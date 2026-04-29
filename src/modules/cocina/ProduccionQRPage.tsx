@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabaseAnon as supabase } from '@/lib/supabaseAnon';
 import { cn } from '@/lib/utils';
 import { IngredientesGrilla, type IngredienteReal } from './components/IngredientesGrilla';
+import { TrasladoPastasForm } from '@/modules/compras/components/TrasladoPastasForm';
 
 // ── Tipos ──────────────────────────────────────────────────────────────────────
 
@@ -89,6 +90,7 @@ type Vista =
   | 'prueba'
   | 'merma'
   | 'cierre'
+  | 'traslado'
   | 'exito';
 
 type CategoriaGenerica = 'salsa' | 'postre' | 'pasteleria' | 'panaderia' | 'prueba';
@@ -613,6 +615,14 @@ export function ProduccionQRPage() {
         />
       )}
 
+      {vista === 'traslado' && (
+        <TrasladoPastasForm
+          local={local}
+          onGuardado={(msg) => onGuardado(msg)}
+          onVolver={() => setVista('inicio')}
+        />
+      )}
+
       {vista === 'exito' && <Exito mensaje={mensajeExito} onOtro={() => setVista('inicio')} />}
     </Pantalla>
   );
@@ -722,6 +732,15 @@ function Inicio({
           Cerrar Masa
         </button>
       )}
+
+      <div className="pt-2">
+        <button
+          onClick={() => onIr('traslado')}
+          className="w-full rounded-lg border-2 border-blue-700 bg-blue-600 py-3 text-sm font-semibold text-white transition-transform active:scale-[0.98]"
+        >
+          🚚 Trasladar a mostrador
+        </button>
+      </div>
 
       <div className="pt-2">
         <button
