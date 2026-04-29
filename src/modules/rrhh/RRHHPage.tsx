@@ -21,7 +21,7 @@ type Tab =
   | 'vacaciones'
   | 'aguinaldo';
 type FiltroLocal = 'todos' | 'vedia' | 'saavedra' | 'ambos';
-type FiltroEstado = 'todos' | 'prueba' | 'efectivo' | 'suspendido' | 'baja';
+type FiltroEstado = 'activos' | 'todos' | 'prueba' | 'efectivo' | 'suspendido' | 'baja';
 
 export interface Empleado {
   id: string;
@@ -333,7 +333,7 @@ function Placeholder({ titulo, descripcion }: { titulo: string; descripcion: str
 function LegajosTab() {
   const qc = useQueryClient();
   const [filtroLocal, setFiltroLocal] = useState<FiltroLocal>('todos');
-  const [filtroEstado, setFiltroEstado] = useState<FiltroEstado>('todos');
+  const [filtroEstado, setFiltroEstado] = useState<FiltroEstado>('activos');
   const [busqueda, setBusqueda] = useState('');
   const [modalAbierto, setModalAbierto] = useState(false);
   const [empleadoEdit, setEmpleadoEdit] = useState<Empleado | null>(null);
@@ -358,7 +358,8 @@ function LegajosTab() {
     else if (filtroLocal === 'saavedra')
       lista = lista.filter((e) => e.local === 'saavedra' || e.local === 'ambos');
     else if (filtroLocal === 'ambos') lista = lista.filter((e) => e.local === 'ambos');
-    if (filtroEstado !== 'todos') lista = lista.filter((e) => e.estado_laboral === filtroEstado);
+    if (filtroEstado === 'activos') lista = lista.filter((e) => e.estado_laboral !== 'baja');
+    else if (filtroEstado !== 'todos') lista = lista.filter((e) => e.estado_laboral === filtroEstado);
     if (busqueda.trim()) {
       const q = busqueda
         .toLowerCase()
@@ -509,6 +510,7 @@ function LegajosTab() {
           onChange={(e) => setFiltroEstado(e.target.value as FiltroEstado)}
           className="rounded-md border border-gray-300 px-3 py-1.5 text-sm"
         >
+          <option value="activos">Activos (sin bajas)</option>
           <option value="todos">Todos los estados</option>
           <option value="prueba">En prueba</option>
           <option value="efectivo">Efectivos</option>
