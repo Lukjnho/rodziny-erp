@@ -5,6 +5,7 @@ import { supabaseAnon as supabase } from '@/lib/supabaseAnon';
 import { cn } from '@/lib/utils';
 import { IngredientesGrilla, type IngredienteReal } from './components/IngredientesGrilla';
 import { TrasladoPastasForm } from '@/modules/compras/components/TrasladoPastasForm';
+import { useCierresFaltantes } from './hooks/useCierresFaltantes';
 
 // ── Tipos ──────────────────────────────────────────────────────────────────────
 
@@ -89,7 +90,6 @@ type Vista =
   | 'panaderia'
   | 'prueba'
   | 'merma'
-  | 'cierre'
   | 'traslado'
   | 'exito';
 
@@ -427,40 +427,6 @@ export function ProduccionQRPage() {
     [productos, local],
   );
 
-  // Traspasos y merma de HOY por producto, agregados — para el cierre de mostrador.
-  // Los pulleamos siempre (queries livianas, 1 día) así no aparece flash al abrir el form.
-  const { data: traspasosHoy } = useQuery({
-    queryKey: ['cocina-traspasos-hoy-qr', local, hoy()],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('cocina_traspasos')
-        .select('producto_id, porciones')
-        .eq('local', local)
-        .eq('fecha', hoy());
-      if (error) throw error;
-      const m = new Map<string, number>();
-      for (const t of data ?? [])
-        m.set(t.producto_id, (m.get(t.producto_id) ?? 0) + Number(t.porciones));
-      return m;
-    },
-  });
-
-  const { data: mermaHoy } = useQuery({
-    queryKey: ['cocina-merma-hoy-qr', local, hoy()],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('cocina_merma')
-        .select('producto_id, porciones')
-        .eq('local', local)
-        .eq('fecha', hoy());
-      if (error) throw error;
-      const m = new Map<string, number>();
-      for (const r of data ?? [])
-        m.set(r.producto_id, (m.get(r.producto_id) ?? 0) + Number(r.porciones));
-      return m;
-    },
-  });
-
   function onGuardado(msg: string) {
     setMensajeExito(msg);
     setVista('exito');
@@ -604,17 +570,6 @@ export function ProduccionQRPage() {
         />
       )}
 
-      {vista === 'cierre' && (
-        <FormCierreMostrador
-          local={local}
-          pastas={productosPasta}
-          traspasosHoy={traspasosHoy ?? new Map()}
-          mermaHoy={mermaHoy ?? new Map()}
-          onGuardado={onGuardado}
-          onVolver={() => setVista('inicio')}
-        />
-      )}
-
       {vista === 'traslado' && (
         <TrasladoPastasForm
           local={local}
@@ -649,6 +604,7 @@ function Inicio({
     day: 'numeric',
     month: 'long',
   });
+  const { faltantes: cierresFaltantes } = useCierresFaltantes(local, supabase);
 
   const botones: { vista: Vista; label: string; color: string }[] = [
     { vista: 'relleno', label: 'Cargar Relleno', color: 'bg-green-600 hover:bg-green-700' },
@@ -691,6 +647,23 @@ function Inicio({
 
   return (
     <div className="mt-2 space-y-3">
+      {cierresFaltantes.length > 0 && (
+        <div className="rounded-lg border-2 border-red-400 bg-red-50 p-3">
+          <p className="text-sm font-bold text-red-800">⚠️ Falta cierre de turno</p>
+          <ul className="mt-1 ml-1 text-xs text-red-700">
+            {cierresFaltantes.map((c, i) => (
+              <li key={i}>· {c.label}</li>
+            ))}
+          </ul>
+          <a
+            href={`/mostrador?local=${local}`}
+            className="mt-2 block w-full rounded bg-red-600 py-2 text-center text-sm font-semibold text-white hover:bg-red-700"
+          >
+            Ir al cierre →
+          </a>
+        </div>
+      )}
+
       <div className="rounded-lg border border-gray-200 bg-white p-4 text-center">
         <p className="text-xs capitalize text-gray-500">{fechaLabel}</p>
         <p className="mt-1 text-sm text-gray-600">
@@ -743,12 +716,12 @@ function Inicio({
       </div>
 
       <div className="pt-2">
-        <button
-          onClick={() => onIr('cierre')}
-          className="w-full rounded-lg border-2 border-gray-700 bg-gray-800 py-3 text-sm font-semibold text-white transition-transform active:scale-[0.98]"
+        <a
+          href={`/mostrador?local=${local}`}
+          className="block w-full rounded-lg border-2 border-gray-700 bg-gray-800 py-3 text-center text-sm font-semibold text-white transition-transform active:scale-[0.98]"
         >
-          Cierre Mostrador
-        </button>
+          🧾 Cierre de turno
+        </a>
       </div>
 
       <div className="pt-2">
@@ -2607,174 +2580,3 @@ function FormMerma({
   );
 }
 
-// ── Formulario Cierre de Mostrador ─────────────────────────────────────────────
-// Conteo físico de pastas en el freezer del mostrador al cierre del servicio.
-// Muestra traspasos − merma del día como referencia. La diferencia con el
-// conteo real del chef equivale aproximadamente a las ventas (no incluye Fudo
-// porque la edge function requiere JWT y el QR es público).
-
-function FormCierreMostrador({
-  local,
-  pastas,
-  traspasosHoy,
-  mermaHoy,
-  onGuardado,
-  onVolver,
-}: {
-  local: string;
-  pastas: Producto[];
-  traspasosHoy: Map<string, number>;
-  mermaHoy: Map<string, number>;
-  onGuardado: (msg: string) => void;
-  onVolver: () => void;
-}) {
-  const [conteos, setConteos] = useState<Record<string, string>>({});
-  const [responsable, setResponsable] = useState('');
-  const [notas, setNotas] = useState('');
-  const [guardando, setGuardando] = useState(false);
-  const [error, setError] = useState('');
-
-  const filas = useMemo(() => {
-    return pastas.map((p) => {
-      const tras = Math.round(traspasosHoy.get(p.id) ?? 0);
-      const mer = Math.round(mermaHoy.get(p.id) ?? 0);
-      const referencia = Math.max(0, tras - mer);
-      const realStr = conteos[p.id] ?? '';
-      const real = realStr === '' ? null : Number(realStr);
-      const diff = real != null && Number.isFinite(real) ? real - referencia : null;
-      return { producto: p, traspasado: tras, merma: mer, referencia, real, diff };
-    });
-  }, [pastas, traspasosHoy, mermaHoy, conteos]);
-
-  async function guardar() {
-    const validas = filas.filter((f) => f.real != null && Number.isFinite(f.real!));
-    if (validas.length === 0) {
-      setError('Cargá al menos un conteo');
-      return;
-    }
-    setGuardando(true);
-    setError('');
-
-    const rows = validas.map((f) => ({
-      fecha: hoy(),
-      producto_id: f.producto.id,
-      local,
-      porciones_real: f.real!,
-      traspasado_hoy: f.traspasado,
-      merma_hoy: f.merma,
-      responsable: responsable.trim() || null,
-      notas: notas.trim() || null,
-    }));
-
-    const { error: err } = await supabase.from('cocina_conteo_mostrador').insert(rows);
-    if (err) {
-      setError(err.message);
-      setGuardando(false);
-      return;
-    }
-    onGuardado(`Cierre cargado · ${validas.length} pasta${validas.length > 1 ? 's' : ''}`);
-  }
-
-  return (
-    <div className="mt-2 space-y-3">
-      <div className="flex items-center justify-between">
-        <h2 className="text-base font-semibold text-gray-900">Cierre Mostrador</h2>
-        <button onClick={onVolver} className="text-xs text-gray-500 underline">
-          Volver
-        </button>
-      </div>
-
-      <div className="rounded border border-blue-200 bg-blue-50 px-3 py-2 text-[11px] text-blue-900">
-        Contá las porciones que quedan en el freezer del mostrador al cerrar el servicio. La columna <strong>Sistema</strong> muestra <em>Traspasado hoy − Merma hoy</em>; la diferencia con el conteo real corresponde a lo vendido en el día.
-      </div>
-
-      <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
-        <table className="w-full text-xs">
-          <thead className="bg-gray-50 text-[10px] uppercase text-gray-500">
-            <tr>
-              <th className="px-2 py-1.5 text-left">Pasta</th>
-              <th className="px-1 py-1.5 text-center">Sistema</th>
-              <th className="px-1 py-1.5 text-center">Real</th>
-              <th className="px-1 py-1.5 text-center">Δ</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-100">
-            {filas.length === 0 ? (
-              <tr>
-                <td colSpan={4} className="px-3 py-4 text-center text-gray-400">
-                  No hay pastas activas para {local}.
-                </td>
-              </tr>
-            ) : (
-              filas.map((f) => (
-                <tr key={f.producto.id}>
-                  <td className="px-2 py-2">
-                    <div className="font-medium text-gray-900">{f.producto.nombre}</div>
-                    <div className="text-[10px] text-gray-400">
-                      Tras {f.traspasado} · Mer {f.merma}
-                    </div>
-                  </td>
-                  <td className="px-1 py-2 text-center font-mono text-gray-700">{f.referencia}</td>
-                  <td className="px-1 py-2 text-center">
-                    <input
-                      type="number"
-                      inputMode="numeric"
-                      min={0}
-                      value={conteos[f.producto.id] ?? ''}
-                      onChange={(e) =>
-                        setConteos((c) => ({ ...c, [f.producto.id]: e.target.value }))
-                      }
-                      className="w-14 rounded border border-gray-300 px-1 py-1 text-center font-mono text-sm"
-                    />
-                  </td>
-                  <td className="px-1 py-2 text-center font-mono">
-                    {f.diff == null ? (
-                      <span className="text-gray-300">—</span>
-                    ) : f.diff === 0 ? (
-                      <span className="text-emerald-700">0</span>
-                    ) : f.diff > 0 ? (
-                      <span className="text-amber-600">+{f.diff}</span>
-                    ) : (
-                      <span className="text-blue-700">{f.diff}</span>
-                    )}
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
-
-      <div className="space-y-2 rounded-lg border border-gray-200 bg-white p-3">
-        <div>
-          <label className="mb-1 block text-xs font-medium text-gray-700">Responsable</label>
-          <input
-            value={responsable}
-            onChange={(e) => setResponsable(e.target.value)}
-            className="w-full rounded border border-gray-300 px-3 py-1.5 text-sm"
-            placeholder="Quién contó"
-          />
-        </div>
-        <div>
-          <label className="mb-1 block text-xs font-medium text-gray-700">Notas (opcional)</label>
-          <input
-            value={notas}
-            onChange={(e) => setNotas(e.target.value)}
-            className="w-full rounded border border-gray-300 px-3 py-1.5 text-sm"
-            placeholder="Cualquier observación"
-          />
-        </div>
-      </div>
-
-      {error && <p className="text-xs text-red-600">{error}</p>}
-
-      <button
-        onClick={guardar}
-        disabled={guardando}
-        className="w-full rounded-lg bg-gray-800 py-3 text-sm font-semibold text-white hover:bg-gray-900 disabled:opacity-50"
-      >
-        {guardando ? 'Guardando...' : 'Guardar conteo'}
-      </button>
-    </div>
-  );
-}

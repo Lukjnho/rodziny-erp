@@ -8,11 +8,13 @@ import { TraspasosTab } from './TraspasosTab';
 import { RecetasTab } from './RecetasTab';
 import { AnalisisTab } from './AnalisisTab';
 import { CalendarioTab } from './CalendarioTab';
+import { CierresTab } from './CierresTab';
 
 type Tab =
   | 'dashboard'
   | 'produccion'
   | 'stock'
+  | 'cierres'
   | 'traspasos'
   | 'recetas'
   | 'analisis'
@@ -44,6 +46,15 @@ const ayudaPorTab: Record<Tab, { titulo: string; pasos: string[] }> = {
       'El stock en cámara se calcula como: producción en cámara − traspasos históricos − merma.',
       'El stock en mostrador se calcula como: traspasos de hoy − ventas Fudo de hoy − merma de hoy. Solo Vedia tiene ventas automáticas desde Fudo.',
       'Los productos bajo mínimo aparecen en amarillo, sin stock en rojo.',
+    ],
+  },
+  cierres: {
+    titulo: 'Cierres de turno',
+    pasos: [
+      'Cada turno termina con un cierre obligatorio: pastas (mediodía y noche), salsas (fin de día) y postres (fin de día).',
+      'El mostrador carga el cierre desde el QR /mostrador?local=vedia con la cantidad real que quedó.',
+      'Lo mostrado acá es solo lectura para el chef: estado del día (✓ o ✗), historial y responsable de cada cierre.',
+      'Si falta un cierre, el dashboard avisa con un banner rojo.',
     ],
   },
   traspasos: {
@@ -99,6 +110,9 @@ export function CocinaPage() {
         <TabButton activo={tab === 'stock'} onClick={() => setTab('stock')}>
           Stock
         </TabButton>
+        <TabButton activo={tab === 'cierres'} onClick={() => setTab('cierres')}>
+          Cierres
+        </TabButton>
         <TabButton activo={tab === 'traspasos'} onClick={() => setTab('traspasos')}>
           Traspasos
         </TabButton>
@@ -123,6 +137,7 @@ export function CocinaPage() {
       {tab === 'dashboard' && <DashboardTab />}
       {tab === 'produccion' && <ProduccionTab />}
       {tab === 'stock' && <StockTab />}
+      {tab === 'cierres' && <CierresTab />}
       {tab === 'traspasos' && <TraspasosTab />}
       {tab === 'recetas' && <RecetasTab />}
       {tab === 'analisis' && <AnalisisTab />}

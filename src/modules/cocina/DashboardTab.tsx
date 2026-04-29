@@ -5,6 +5,7 @@ import { cn } from '@/lib/utils';
 import { LocalSelector } from '@/components/ui/LocalSelector';
 import { useAuth } from '@/lib/auth';
 import { ProximasEfemeridesCard } from './components/ProximasEfemeridesCard';
+import { useCierresFaltantes } from './hooks/useCierresFaltantes';
 
 // ── Productos que el chef controla ──────────────────────────────────────────
 // tipo determina unidad de medida y cálculo de porciones
@@ -649,6 +650,8 @@ export function DashboardTab() {
   );
   const dowManana = useMemo(() => new Date(Date.now() + 86400000).getDay(), []);
 
+  const { faltantes: cierresFaltantes } = useCierresFaltantes(local);
+
   // ── Query: productos BD con receta vinculada (para saber rendimiento y mínimos) ──
   const { data: productosDB } = useQuery({
     queryKey: ['cocina_productos_dashboard', local],
@@ -1185,6 +1188,28 @@ export function DashboardTab() {
 
   return (
     <div className="space-y-4">
+      {cierresFaltantes.length > 0 && (
+        <div className="rounded-lg border-2 border-red-300 bg-red-50 px-4 py-3">
+          <div className="flex items-start gap-3">
+            <span className="text-xl">⚠️</span>
+            <div className="flex-1">
+              <p className="text-sm font-semibold text-red-800">
+                {cierresFaltantes.length === 1
+                  ? 'Falta un cierre de turno'
+                  : `Faltan ${cierresFaltantes.length} cierres de turno`}
+              </p>
+              <p className="mt-0.5 text-xs text-red-700">
+                {cierresFaltantes.map((c) => c.label).join(' · ')}
+              </p>
+              <p className="mt-1 text-[11px] text-red-600">
+                Sin cierre, el stock del mostrador queda desactualizado. Pedile al equipo del
+                mostrador que cargue desde el QR <span className="font-mono">/mostrador?local={local}</span>.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-4">
         {!localRestringido && (

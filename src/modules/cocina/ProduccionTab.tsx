@@ -5,6 +5,7 @@ import { KPICard } from '@/components/ui/KPICard';
 import { StockProduccionSection } from './components/StockProduccionSection';
 import { PlanProduccionEditor } from './components/PlanProduccionEditor';
 import { PlanSemanal } from './components/PlanSemanal';
+import { EditarLoteModal } from './components/EditarLoteModal';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
 
@@ -264,6 +265,11 @@ export function ProduccionTab() {
   const [modalCerrarMasa, setModalCerrarMasa] = useState<LoteMasa | null>(null);
   const [modalPorcionar, setModalPorcionar] = useState<LotePasta | null>(null);
   const [editorPlanLocal, setEditorPlanLocal] = useState<'vedia' | 'saavedra' | null>(null);
+  const [modalEditarLote, setModalEditarLote] = useState<{
+    id: string;
+    tabla: 'cocina_lotes_relleno' | 'cocina_lotes_masa' | 'cocina_lotes_produccion';
+    nombre: string;
+  } | null>(null);
 
   // Catálogos
   const { data: productos } = useQuery({
@@ -719,6 +725,14 @@ export function ProduccionTab() {
                         </button>
                       )}
                       <button
+                        onClick={() =>
+                          setModalEditarLote({ id: l.id, tabla: l.tabla, nombre: l.nombre })
+                        }
+                        className="text-xs text-rodziny-600 hover:text-rodziny-800"
+                      >
+                        Editar
+                      </button>
+                      <button
                         onClick={() => {
                           if (!window.confirm('¿Eliminar este lote?')) return;
                           if (l.tabla === 'cocina_lotes_relleno') eliminarRelleno.mutate(l.id);
@@ -996,6 +1010,14 @@ export function ProduccionTab() {
         <PlanProduccionEditor
           local={editorPlanLocal}
           onClose={() => setEditorPlanLocal(null)}
+        />
+      )}
+      {modalEditarLote && (
+        <EditarLoteModal
+          id={modalEditarLote.id}
+          tabla={modalEditarLote.tabla}
+          nombre={modalEditarLote.nombre}
+          onClose={() => setModalEditarLote(null)}
         />
       )}
     </div>
