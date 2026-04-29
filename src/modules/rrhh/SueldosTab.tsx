@@ -505,14 +505,15 @@ export function SueldosTab() {
 
       // Mensual en Q1: no cobra ni descuenta nada en esta quincena. Los adelantos/sanciones
       // del Q1 se muestran informativamente y se descontarán del total en Q2.
-      const total = esMensualEnQ1
-        ? 0
-        : base -
-          deduccionPresentismo -
-          adelantosMonto -
-          sancionesMonto -
-          descuentosMonto +
-          bonosMonto;
+      // Redondeo a múltiplo de 100 más cercano para que termine en 00 (más práctico para pagar en cash).
+      const totalCrudo =
+        base -
+        deduccionPresentismo -
+        adelantosMonto -
+        sancionesMonto -
+        descuentosMonto +
+        bonosMonto;
+      const total = esMensualEnQ1 ? 0 : Math.round(totalCrudo / 100) * 100;
 
       // ── Calcular stats de asistencia ──
       const rangoPresentismo =
