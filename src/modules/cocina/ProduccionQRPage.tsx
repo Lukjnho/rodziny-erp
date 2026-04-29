@@ -33,6 +33,15 @@ const RECETA_UNIDAD_LABEL: Record<'kg' | 'l' | 'unidad', string> = {
 function unidadReceta(r: { rendimiento_unidad: 'kg' | 'l' | 'unidad' | null }): string {
   return RECETA_UNIDAD_LABEL[r.rendimiento_unidad ?? 'kg'];
 }
+
+// Parse decimal aceptando coma o punto como separador. Devuelve 0 si vacío/inválido.
+// Necesario porque type="text" + pattern permite ambos separadores y los teclados de
+// algunos Android en español sólo muestran ",".
+function parseDecimal(v: string | number | null | undefined): number {
+  if (v == null || v === '') return 0;
+  const n = parseFloat(String(v).replace(',', '.'));
+  return isNaN(n) ? 0 : n;
+}
 interface LoteRelleno {
   id: string;
   receta_id: string;
@@ -787,7 +796,7 @@ function FormRelleno({
       setError('Seleccioná una receta');
       return;
     }
-    if (!pesoKg || Number(pesoKg) <= 0) {
+    if (!pesoKg || parseDecimal(pesoKg) <= 0) {
       setError('Indicá el peso total');
       return;
     }
@@ -798,7 +807,7 @@ function FormRelleno({
       receta_id: recetaId,
       fecha: hoy(),
       cantidad_recetas: Number(cantRecetas) || 1,
-      peso_total_kg: Number(pesoKg),
+      peso_total_kg: parseDecimal(pesoKg),
       responsable: responsable.trim() || null,
       local,
       notas: notas.trim() || null,
@@ -873,9 +882,9 @@ function FormRelleno({
           <div>
             <label className="mb-1 block text-xs font-medium text-gray-700">Peso total (kg)</label>
             <input
-              type="number"
+              type="text"
               inputMode="decimal"
-              step="0.1"
+              pattern="[0-9]*[.,]?[0-9]*"
               value={pesoKg}
               onChange={(e) => setPesoKg(e.target.value)}
               className="w-full rounded border border-gray-300 px-3 py-2.5 text-sm"
@@ -1044,8 +1053,8 @@ function FormPasta({
       setHuevoGramos('');
       return;
     }
-    const kg = parseFloat(rellenoKg.replace(',', '.'));
-    if (!Number.isFinite(kg) || kg <= 0) {
+    const kg = parseDecimal(rellenoKg);
+    if (kg <= 0) {
       setSemolinGramos('');
       setHuevoGramos('');
       return;
@@ -1079,8 +1088,8 @@ function FormPasta({
       fecha: hoy(),
       codigo_lote: codigoLote,
       receta_masa_id: lotesMasa.find((m) => m.id === loteMasaId)?.receta_id ?? null,
-      masa_kg: masaKg ? Number(masaKg) : null,
-      relleno_kg: rellenoKg ? Number(rellenoKg) : null,
+      masa_kg: masaKg ? parseDecimal(masaKg) : null,
+      relleno_kg: rellenoKg ? parseDecimal(rellenoKg) : null,
       muzzarella_gramos: esConMuzzarella && muzzarellaGramos ? Number(muzzarellaGramos) : null,
       semolin_gramos: requiereSemolinHuevo && semolinGramos ? Number(semolinGramos) : null,
       huevo_gramos: requiereSemolinHuevo && huevoGramos ? Number(huevoGramos) : null,
@@ -1230,9 +1239,9 @@ function FormPasta({
               <div>
                 <label className="mb-1 block text-xs font-medium text-gray-700">Masa (kg)</label>
                 <input
-                  type="number"
+                  type="text"
                   inputMode="decimal"
-                  step="0.1"
+                  pattern="[0-9]*[.,]?[0-9]*"
                   value={masaKg}
                   onChange={(e) => setMasaKg(e.target.value)}
                   className="w-full rounded border border-gray-300 px-3 py-2.5 text-sm"
@@ -1240,7 +1249,7 @@ function FormPasta({
                 {(() => {
                   const m = lotesMasa.find((x) => x.id === loteMasaId);
                   const disp = m?.disponible_kg ?? null;
-                  const v = parseFloat(masaKg.replace(',', '.')) || 0;
+                  const v = parseDecimal(masaKg);
                   if (disp != null && v > disp + 0.01) {
                     return (
                       <p className="mt-1 text-[10px] text-amber-600">
@@ -1256,9 +1265,9 @@ function FormPasta({
                   Relleno (kg)
                 </label>
                 <input
-                  type="number"
+                  type="text"
                   inputMode="decimal"
-                  step="0.1"
+                  pattern="[0-9]*[.,]?[0-9]*"
                   value={rellenoKg}
                   onChange={(e) => setRellenoKg(e.target.value)}
                   className="w-full rounded border border-gray-300 px-3 py-2.5 text-sm"
@@ -1267,7 +1276,7 @@ function FormPasta({
                 {(() => {
                   const r = lotesRelleno.find((x) => x.id === loteRellenoId);
                   const disp = r?.disponible_kg ?? null;
-                  const v = parseFloat(rellenoKg.replace(',', '.')) || 0;
+                  const v = parseDecimal(rellenoKg);
                   if (disp != null && v > disp + 0.01) {
                     return (
                       <p className="mt-1 text-[10px] text-amber-600">
@@ -1290,9 +1299,9 @@ function FormPasta({
               Puré a usar (kg)
             </label>
             <input
-              type="number"
+              type="text"
               inputMode="decimal"
-              step="0.1"
+              pattern="[0-9]*[.,]?[0-9]*"
               value={rellenoKg}
               onChange={(e) => setRellenoKg(e.target.value)}
               className="w-full rounded border border-gray-300 px-3 py-2.5 text-sm"
@@ -1304,7 +1313,7 @@ function FormPasta({
             />
             {(() => {
               const disp = rellenoSel?.disponible_kg ?? null;
-              const v = parseFloat(rellenoKg.replace(',', '.')) || 0;
+              const v = parseDecimal(rellenoKg);
               if (disp != null && v > disp + 0.01) {
                 return (
                   <p className="mt-1 text-[10px] text-amber-600">
@@ -1325,8 +1334,8 @@ function FormPasta({
         )}
 
         {requiereSemolinHuevo && (() => {
-          const pureKg = parseFloat(rellenoKg.replace(',', '.'));
-          const tienePure = Number.isFinite(pureKg) && pureKg > 0;
+          const pureKg = parseDecimal(rellenoKg);
+          const tienePure = pureKg > 0;
           const semolinSug =
             tienePure && ratioSemolinPorKg ? Math.round(pureKg * ratioSemolinPorKg) : null;
           const huevoSug =
@@ -1750,7 +1759,7 @@ function FormMasa({
       setError('Seleccioná una receta');
       return;
     }
-    if (!kgProducidos || Number(kgProducidos) <= 0) {
+    if (!kgProducidos || parseDecimal(kgProducidos) <= 0) {
       setError('Indicá los kg producidos');
       return;
     }
@@ -1760,7 +1769,7 @@ function FormMasa({
     const { error: err } = await supabase.from('cocina_lotes_masa').insert({
       receta_id: recetaId,
       fecha: hoy(),
-      kg_producidos: Number(kgProducidos),
+      kg_producidos: parseDecimal(kgProducidos),
       responsable: responsable.trim() || null,
       local,
       notas: notas.trim() || null,
@@ -1817,9 +1826,9 @@ function FormMasa({
           <div>
             <label className="mb-1 block text-xs font-medium text-gray-700">Kg producidos</label>
             <input
-              type="number"
+              type="text"
               inputMode="decimal"
-              step="0.1"
+              pattern="[0-9]*[.,]?[0-9]*"
               value={kgProducidos}
               onChange={(e) => setKgProducidos(e.target.value)}
               className="w-full rounded border border-gray-300 px-3 py-2.5 text-sm"
@@ -1892,18 +1901,18 @@ function FormCerrarMasa({
       setError('Seleccioná una masa');
       return;
     }
-    if (kgSobrante === '' || Number(kgSobrante) < 0) {
+    if (kgSobrante === '' || parseDecimal(kgSobrante) < 0) {
       setError('Indicá el kg sobrante (0 si no queda)');
       return;
     }
-    if (Number(kgSobrante) > 0 && !destinoSobrante) {
+    if (parseDecimal(kgSobrante) > 0 && !destinoSobrante) {
       setError('Indicá el destino del sobrante');
       return;
     }
     setGuardando(true);
     setError('');
 
-    const sobrante = Number(kgSobrante);
+    const sobrante = parseDecimal(kgSobrante);
     const { error: err } = await supabase
       .from('cocina_lotes_masa')
       .update({
@@ -1973,10 +1982,9 @@ function FormCerrarMasa({
         <div>
           <label className="mb-1 block text-xs font-medium text-gray-700">Kg sobrante</label>
           <input
-            type="number"
+            type="text"
             inputMode="decimal"
-            step="0.1"
-            min={0}
+            pattern="[0-9]*[.,]?[0-9]*"
             value={kgSobrante}
             onChange={(e) => setKgSobrante(e.target.value)}
             className="w-full rounded border border-gray-300 px-3 py-2.5 text-sm"
@@ -1984,7 +1992,7 @@ function FormCerrarMasa({
           />
         </div>
 
-        {Number(kgSobrante) > 0 && (
+        {parseDecimal(kgSobrante) > 0 && (
           <div>
             <label className="mb-1 block text-xs font-medium text-gray-700">
               Destino del sobrante
@@ -2124,7 +2132,7 @@ function FormGenerico({
       setError('Seleccioná una receta o escribí el nombre');
       return;
     }
-    if (!cantidad || Number(cantidad) <= 0) {
+    if (!cantidad || parseDecimal(cantidad) <= 0) {
       setError('Indicá la cantidad producida');
       return;
     }
@@ -2137,9 +2145,9 @@ function FormGenerico({
       categoria,
       receta_id: recetaId || null,
       nombre_libre: permitirLibre && !recetaId ? nombreLibre.trim() : null,
-      cantidad_producida: Number(cantidad),
+      cantidad_producida: parseDecimal(cantidad),
       unidad,
-      merma_cantidad: merma ? Number(merma) : null,
+      merma_cantidad: merma ? parseDecimal(merma) : null,
       merma_motivo: mermaMotivo.trim() || null,
       responsable: responsable.trim() || null,
       notas: notas.trim() || null,
@@ -2236,10 +2244,9 @@ function FormGenerico({
           <div>
             <label className="mb-1 block text-xs font-medium text-gray-700">Cantidad</label>
             <input
-              type="number"
+              type="text"
               inputMode="decimal"
-              step="0.1"
-              min={0}
+              pattern="[0-9]*[.,]?[0-9]*"
               value={cantidad}
               onChange={(e) => setCantidad(e.target.value)}
               className="w-full rounded border border-gray-300 px-3 py-2.5 text-sm"
@@ -2265,10 +2272,9 @@ function FormGenerico({
           <div>
             <label className="mb-1 block text-xs font-medium text-gray-700">Merma (opcional)</label>
             <input
-              type="number"
+              type="text"
               inputMode="decimal"
-              step="0.1"
-              min={0}
+              pattern="[0-9]*[.,]?[0-9]*"
               value={merma}
               onChange={(e) => setMerma(e.target.value)}
               placeholder={`0 ${unidad}`}
@@ -2459,8 +2465,8 @@ function FormMerma({
       setError('Seleccioná un producto');
       return;
     }
-    const cant = Number(cantidad.replace(',', '.'));
-    if (!cantidad || isNaN(cant) || cant <= 0) {
+    const cant = parseDecimal(cantidad);
+    if (!cantidad || cant <= 0) {
       setError('Indicá una cantidad válida');
       return;
     }
