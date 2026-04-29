@@ -2,7 +2,11 @@ import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 
-type Tabla = 'cocina_lotes_relleno' | 'cocina_lotes_masa' | 'cocina_lotes_produccion';
+type Tabla =
+  | 'cocina_lotes_relleno'
+  | 'cocina_lotes_masa'
+  | 'cocina_lotes_produccion'
+  | 'cocina_lotes_pasta';
 
 interface Props {
   id: string;
@@ -27,7 +31,28 @@ interface LoteProduccion {
   categoria: string | null;
   notas: string | null;
 }
-type LoteCualquiera = LoteRelleno | LoteMasa | LoteProduccion;
+interface LotePasta {
+  masa_kg: number | null;
+  relleno_kg: number | null;
+  porciones: number | null;
+  cantidad_cajones: number | null;
+  merma_porcionado: number | null;
+  sobrante_gramos: number | null;
+  responsable: string | null;
+  notas: string | null;
+}
+type LoteCualquiera = LoteRelleno | LoteMasa | LoteProduccion | LotePasta;
+
+function parseDecimal(v: string | null | undefined): number | null {
+  if (v == null || v === '') return null;
+  const n = parseFloat(String(v).replace(',', '.'));
+  return isNaN(n) ? null : n;
+}
+function parseEntero(v: string | null | undefined): number | null {
+  if (v == null || v === '') return null;
+  const n = parseInt(String(v).replace(',', '.'), 10);
+  return isNaN(n) ? null : n;
+}
 
 export function EditarLoteModal({ id, tabla, nombre, onClose }: Props) {
   const qc = useQueryClient();
@@ -59,12 +84,24 @@ export function EditarLoteModal({ id, tabla, nombre, onClose }: Props) {
         kg_sobrante: m.kg_sobrante != null ? String(m.kg_sobrante) : '',
         notas: m.notas ?? '',
       });
-    } else {
+    } else if (tabla === 'cocina_lotes_produccion') {
       const p = lote as LoteProduccion;
       setValores({
         cantidad_producida: p.cantidad_producida != null ? String(p.cantidad_producida) : '',
         unidad: p.unidad ?? '',
         notas: p.notas ?? '',
+      });
+    } else {
+      const pa = lote as LotePasta;
+      setValores({
+        masa_kg: pa.masa_kg != null ? String(pa.masa_kg) : '',
+        relleno_kg: pa.relleno_kg != null ? String(pa.relleno_kg) : '',
+        porciones: pa.porciones != null ? String(pa.porciones) : '',
+        cantidad_cajones: pa.cantidad_cajones != null ? String(pa.cantidad_cajones) : '',
+        merma_porcionado: pa.merma_porcionado != null ? String(pa.merma_porcionado) : '',
+        sobrante_gramos: pa.sobrante_gramos != null ? String(pa.sobrante_gramos) : '',
+        responsable: pa.responsable ?? '',
+        notas: pa.notas ?? '',
       });
     }
   }, [lote, tabla]);
@@ -74,30 +111,31 @@ export function EditarLoteModal({ id, tabla, nombre, onClose }: Props) {
       let payload: Record<string, unknown>;
       if (tabla === 'cocina_lotes_relleno') {
         payload = {
-          cantidad_recetas: valores.cantidad_recetas
-            ? Number(valores.cantidad_recetas)
-            : null,
-          peso_total_kg: valores.peso_total_kg
-            ? Number(valores.peso_total_kg.replace(',', '.'))
-            : null,
+          cantidad_recetas: parseEntero(valores.cantidad_recetas),
+          peso_total_kg: parseDecimal(valores.peso_total_kg),
           notas: valores.notas?.trim() || null,
         };
       } else if (tabla === 'cocina_lotes_masa') {
         payload = {
-          kg_producidos: valores.kg_producidos
-            ? Number(valores.kg_producidos.replace(',', '.'))
-            : null,
-          kg_sobrante: valores.kg_sobrante
-            ? Number(valores.kg_sobrante.replace(',', '.'))
-            : null,
+          kg_producidos: parseDecimal(valores.kg_producidos),
+          kg_sobrante: parseDecimal(valores.kg_sobrante),
+          notas: valores.notas?.trim() || null,
+        };
+      } else if (tabla === 'cocina_lotes_produccion') {
+        payload = {
+          cantidad_producida: parseDecimal(valores.cantidad_producida),
+          unidad: valores.unidad?.trim() || null,
           notas: valores.notas?.trim() || null,
         };
       } else {
         payload = {
-          cantidad_producida: valores.cantidad_producida
-            ? Number(valores.cantidad_producida.replace(',', '.'))
-            : null,
-          unidad: valores.unidad?.trim() || null,
+          masa_kg: parseDecimal(valores.masa_kg),
+          relleno_kg: parseDecimal(valores.relleno_kg),
+          porciones: parseEntero(valores.porciones),
+          cantidad_cajones: parseEntero(valores.cantidad_cajones),
+          merma_porcionado: parseEntero(valores.merma_porcionado) ?? 0,
+          sobrante_gramos: parseDecimal(valores.sobrante_gramos),
+          responsable: valores.responsable?.trim() || null,
           notas: valores.notas?.trim() || null,
         };
       }
@@ -108,6 +146,7 @@ export function EditarLoteModal({ id, tabla, nombre, onClose }: Props) {
       qc.invalidateQueries({ queryKey: ['cocina-lotes-relleno'] });
       qc.invalidateQueries({ queryKey: ['cocina-lotes-masa'] });
       qc.invalidateQueries({ queryKey: ['cocina-lotes-produccion'] });
+      qc.invalidateQueries({ queryKey: ['cocina-lotes-pasta'] });
       qc.invalidateQueries({ queryKey: ['cocina_stock_pastas'] });
       qc.invalidateQueries({ queryKey: ['cocina-stock-produccion'] });
       onClose();
@@ -141,19 +180,17 @@ export function EditarLoteModal({ id, tabla, nombre, onClose }: Props) {
           <div className="space-y-3">
             {tabla === 'cocina_lotes_relleno' && (
               <>
-                <CampoNumero
+                <CampoEntero
                   label="Cantidad de recetas"
                   value={valores.cantidad_recetas ?? ''}
                   onChange={(v) =>
                     setValores((prev) => ({ ...prev, cantidad_recetas: v }))
                   }
-                  step="1"
                 />
                 <CampoNumero
                   label="Peso total (kg)"
                   value={valores.peso_total_kg ?? ''}
                   onChange={(v) => setValores((prev) => ({ ...prev, peso_total_kg: v }))}
-                  step="0.01"
                 />
               </>
             )}
@@ -164,13 +201,11 @@ export function EditarLoteModal({ id, tabla, nombre, onClose }: Props) {
                   label="Kg producidos"
                   value={valores.kg_producidos ?? ''}
                   onChange={(v) => setValores((prev) => ({ ...prev, kg_producidos: v }))}
-                  step="0.01"
                 />
                 <CampoNumero
                   label="Kg sobrante (deja vacío si está abierta)"
                   value={valores.kg_sobrante ?? ''}
                   onChange={(v) => setValores((prev) => ({ ...prev, kg_sobrante: v }))}
-                  step="0.01"
                 />
               </>
             )}
@@ -183,7 +218,6 @@ export function EditarLoteModal({ id, tabla, nombre, onClose }: Props) {
                   onChange={(v) =>
                     setValores((prev) => ({ ...prev, cantidad_producida: v }))
                   }
-                  step="0.01"
                 />
                 <div>
                   <label className="mb-1 block text-xs font-medium text-gray-600">Unidad</label>
@@ -200,6 +234,64 @@ export function EditarLoteModal({ id, tabla, nombre, onClose }: Props) {
                     <option value="porciones">porciones</option>
                     <option value="litros">litros</option>
                   </select>
+                </div>
+              </>
+            )}
+
+            {tabla === 'cocina_lotes_pasta' && (
+              <>
+                <div className="grid grid-cols-2 gap-2">
+                  <CampoNumero
+                    label="Masa (kg)"
+                    value={valores.masa_kg ?? ''}
+                    onChange={(v) => setValores((prev) => ({ ...prev, masa_kg: v }))}
+                  />
+                  <CampoNumero
+                    label="Relleno (kg)"
+                    value={valores.relleno_kg ?? ''}
+                    onChange={(v) => setValores((prev) => ({ ...prev, relleno_kg: v }))}
+                  />
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  <CampoEntero
+                    label="Porciones"
+                    value={valores.porciones ?? ''}
+                    onChange={(v) => setValores((prev) => ({ ...prev, porciones: v }))}
+                  />
+                  <CampoEntero
+                    label="Bandejas"
+                    value={valores.cantidad_cajones ?? ''}
+                    onChange={(v) =>
+                      setValores((prev) => ({ ...prev, cantidad_cajones: v }))
+                    }
+                  />
+                  <CampoEntero
+                    label="Merma porc."
+                    value={valores.merma_porcionado ?? ''}
+                    onChange={(v) =>
+                      setValores((prev) => ({ ...prev, merma_porcionado: v }))
+                    }
+                  />
+                </div>
+                <CampoNumero
+                  label="Sobrante (gramos)"
+                  value={valores.sobrante_gramos ?? ''}
+                  onChange={(v) =>
+                    setValores((prev) => ({ ...prev, sobrante_gramos: v }))
+                  }
+                />
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-gray-600">
+                    Responsable
+                  </label>
+                  <input
+                    type="text"
+                    value={valores.responsable ?? ''}
+                    onChange={(e) =>
+                      setValores((prev) => ({ ...prev, responsable: e.target.value }))
+                    }
+                    className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                  />
                 </div>
               </>
             )}
@@ -242,23 +334,44 @@ function CampoNumero({
   label,
   value,
   onChange,
-  step,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
-  step?: string;
 }) {
   return (
     <div>
       <label className="mb-1 block text-xs font-medium text-gray-600">{label}</label>
       <input
-        type="number"
+        type="text"
         inputMode="decimal"
-        step={step ?? '0.01'}
-        min="0"
+        pattern="[0-9]*[.,]?[0-9]*"
         value={value}
         onChange={(e) => onChange(e.target.value)}
+        className="w-full rounded border border-gray-300 px-3 py-2 text-sm tabular-nums"
+      />
+    </div>
+  );
+}
+
+function CampoEntero({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <div>
+      <label className="mb-1 block text-xs font-medium text-gray-600">{label}</label>
+      <input
+        type="text"
+        inputMode="numeric"
+        pattern="[0-9]*"
+        value={value}
+        onChange={(e) => onChange(e.target.value.replace(/[^0-9]/g, ''))}
         className="w-full rounded border border-gray-300 px-3 py-2 text-sm tabular-nums"
       />
     </div>

@@ -267,7 +267,11 @@ export function ProduccionTab() {
   const [editorPlanLocal, setEditorPlanLocal] = useState<'vedia' | 'saavedra' | null>(null);
   const [modalEditarLote, setModalEditarLote] = useState<{
     id: string;
-    tabla: 'cocina_lotes_relleno' | 'cocina_lotes_masa' | 'cocina_lotes_produccion';
+    tabla:
+      | 'cocina_lotes_relleno'
+      | 'cocina_lotes_masa'
+      | 'cocina_lotes_produccion'
+      | 'cocina_lotes_pasta';
     nombre: string;
   } | null>(null);
 
@@ -955,6 +959,19 @@ export function ProduccionTab() {
                           Corregir
                         </button>
                       )}
+                      <button
+                        onClick={() =>
+                          setModalEditarLote({
+                            id: l.id,
+                            tabla: 'cocina_lotes_pasta',
+                            nombre: `${l.producto?.nombre ?? 'Pasta'} · ${l.codigo_lote}`,
+                          })
+                        }
+                        className="text-xs text-rodziny-600 hover:text-rodziny-800"
+                        title="Editar kg, porciones, merma, etc."
+                      >
+                        Editar
+                      </button>
                       <button
                         onClick={() => {
                           if (window.confirm('¿Eliminar este lote de pasta?'))
