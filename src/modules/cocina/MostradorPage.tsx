@@ -288,14 +288,23 @@ function CierrePastas({ local }: { local: Local }) {
     },
   });
 
-  // Solo mostrar pastas con movimiento (traslado del día, cierre actual, o cierre inicial > 0)
+  // Mostrar TODAS las pastas activas del local. El cierre se controla sobre todas
+  // (puede haber stock previo aunque no haya traslado del día). Las que tienen
+  // movimiento (entrega del día o inicial > 0) se ordenan primero.
   const visibles = useMemo(() => {
     if (!pastas) return [];
-    const ids = new Set<string>();
-    (traspasosHoy ?? []).forEach((t) => ids.add(t.producto_id));
-    (cierreActual ?? []).forEach((c) => ids.add(c.producto_id));
-    (cierreInicial ?? []).filter((c) => c.cantidad_real > 0).forEach((c) => ids.add(c.producto_id));
-    return pastas.filter((p) => ids.has(p.id));
+    const conMovimiento = new Set<string>();
+    (traspasosHoy ?? []).forEach((t) => conMovimiento.add(t.producto_id));
+    (cierreActual ?? []).forEach((c) => conMovimiento.add(c.producto_id));
+    (cierreInicial ?? [])
+      .filter((c) => c.cantidad_real > 0)
+      .forEach((c) => conMovimiento.add(c.producto_id));
+    return [...pastas].sort((a, b) => {
+      const am = conMovimiento.has(a.id) ? 0 : 1;
+      const bm = conMovimiento.has(b.id) ? 0 : 1;
+      if (am !== bm) return am - bm;
+      return a.nombre.localeCompare(b.nombre);
+    });
   }, [pastas, traspasosHoy, cierreActual, cierreInicial]);
 
   if (loadingPastas) {
@@ -341,11 +350,10 @@ function CierrePastas({ local }: { local: Local }) {
         <div className="rounded-lg border border-dashed border-gray-300 bg-white p-6 text-center">
           <p className="text-2xl">📦</p>
           <p className="mt-2 text-sm font-medium text-gray-700">
-            Sin movimiento de pastas en este turno
+            No hay pastas cargadas
           </p>
           <p className="mt-1 text-xs text-gray-500">
-            Pedí al depósito que registre el traslado de los cajones desde el QR. Las pastas
-            aparecen acá automáticamente.
+            Cargalas en Cocina → Productos con tipo "pasta" para que aparezcan acá.
           </p>
         </div>
       ) : (
@@ -628,10 +636,9 @@ function CierreSimple({
             <p className="text-sm font-medium text-gray-800">{p.nombre}</p>
             <div className="mt-2 flex items-center gap-2">
               <input
-                type="number"
-                inputMode="decimal"
-                step="0.01"
-                min="0"
+                type={unidad === 'kg' ? 'text' : 'number'}
+                inputMode={unidad === 'kg' ? 'decimal' : 'numeric'}
+                pattern={unidad === 'kg' ? '[0-9]*[.,]?[0-9]*' : undefined}
                 value={valores[p.id] ?? ''}
                 onChange={(e) => setValores((prev) => ({ ...prev, [p.id]: e.target.value }))}
                 placeholder={unidad === 'kg' ? '1,5' : '8'}
