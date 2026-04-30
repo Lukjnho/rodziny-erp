@@ -524,14 +524,13 @@ const ORDEN_CATEGORIAS = [
   'Salados',
 ];
 
-interface ConteoStock {
-  id: string;
-  producto: string;
-  fecha: string;
-  cantidad: number; // kg para salsas, unidades para postres
-  local: string;
-  responsable: string | null;
-  created_at: string;
+// Stock derivado de cocina_lotes_produccion (fuente única para salsas, postres, etc.).
+// Se obtiene sumando los lotes activos por receta y aplicando override manual si existe.
+interface StockPorReceta {
+  cantidad: number; // suma de lotes activos en su unidad (kg / unid / lt)
+  unidad: 'kg' | 'unid' | 'lt';
+  fecha: string; // fecha del lote más reciente (yyyy-mm-dd)
+  recetaId: string | null;
 }
 
 interface FudoProductoRanking {
@@ -807,22 +806,75 @@ export function DashboardTab() {
     refetchInterval: 5 * 60 * 1000,
   });
 
-  // ── Query: último conteo de stock por producto ──
-  const { data: conteos } = useQuery({
-    queryKey: ['cocina_conteo_stock', local],
+  // ── Query: stock de salsas/postres derivado de cocina_lotes_produccion ──
+  // Agrupa lotes activos por receta y aplica override manual si está pesada la batea.
+  // Reemplaza al viejo cocina_conteo_stock — fuente única con StockProduccionSection.
+  const { data: stockSalsasPostres } = useQuery({
+    queryKey: ['cocina_stock_salsas_postres', local],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from('cocina_conteo_stock')
-        .select('*')
+        .from('cocina_lotes_produccion')
+        .select(
+          'id, fecha, categoria, receta_id, nombre_libre, cantidad_producida, unidad, merma_cantidad, cantidad_restante_manual, created_at, receta:cocina_recetas(id, nombre)',
+        )
         .eq('local', local)
-        .order('created_at', { ascending: false });
+        .eq('en_stock', true);
       if (error) throw error;
-      // Agrupar: quedarse con el más reciente por producto
-      const porProducto = new Map<string, ConteoStock>();
-      for (const c of data as ConteoStock[]) {
-        if (!porProducto.has(c.producto)) porProducto.set(c.producto, c);
+
+      const porNombre = new Map<string, StockPorReceta>();
+      type Row = {
+        id: string;
+        fecha: string;
+        categoria: string;
+        receta_id: string | null;
+        nombre_libre: string | null;
+        cantidad_producida: number;
+        unidad: 'kg' | 'unid' | 'lt';
+        merma_cantidad: number | null;
+        cantidad_restante_manual: number | null;
+        created_at: string;
+        receta?: { id: string; nombre: string } | null;
+      };
+      for (const r of (data ?? []) as unknown as Row[]) {
+        const nombre = r.receta?.nombre ?? r.nombre_libre ?? '';
+        if (!nombre) continue;
+        const restante =
+          r.cantidad_restante_manual != null
+            ? Number(r.cantidad_restante_manual)
+            : Math.max(0, Number(r.cantidad_producida) - Number(r.merma_cantidad ?? 0));
+        const key = normNombre(nombre);
+        const prev = porNombre.get(key);
+        if (!prev) {
+          porNombre.set(key, {
+            cantidad: restante,
+            unidad: r.unidad,
+            fecha: r.fecha,
+            recetaId: r.receta_id,
+          });
+        } else {
+          prev.cantidad += restante;
+          if (r.fecha > prev.fecha) prev.fecha = r.fecha;
+        }
       }
-      return porProducto;
+      return porNombre;
+    },
+  });
+
+  // Recetas del local para hacer match al cargar/editar stock desde el Dashboard.
+  // Se usa también para construir el receta_id cuando se inserta un lote nuevo.
+  const { data: recetasLocal } = useQuery({
+    queryKey: ['cocina_recetas_dashboard', local],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('cocina_recetas')
+        .select('id, nombre, tipo, local')
+        .or(`local.eq.${local},local.eq.ambos`);
+      if (error) throw error;
+      const m = new Map<string, { id: string; nombre: string; tipo: string }>();
+      for (const r of (data ?? []) as Array<{ id: string; nombre: string; tipo: string }>) {
+        m.set(normNombre(r.nombre), r);
+      }
+      return m;
     },
   });
 
@@ -855,19 +907,63 @@ export function DashboardTab() {
     staleTime: 30 * 60 * 1000,
   });
 
-  // ── Mutation: guardar conteo de stock ──
+  // ── Mutation: actualizar stock de una salsa/postre ──
+  // Estrategia simple: apaga lotes activos previos + crea uno nuevo con el total real.
+  // Así Dashboard y "Salsas, postres y otras producciones" del tab Stock consumen
+  // siempre la misma fuente: cocina_lotes_produccion.
   const guardarConteo = useMutation({
-    mutationFn: async (payload: { producto: string; cantidad: number }) => {
-      const { error } = await supabase.from('cocina_conteo_stock').insert({
-        producto: payload.producto,
-        cantidad: payload.cantidad,
+    mutationFn: async (payload: {
+      producto: string;
+      cantidad: number;
+      tipo: 'salsa' | 'postre' | 'pasta';
+      unidadStock: string;
+    }) => {
+      if (payload.tipo === 'pasta') {
+        throw new Error(
+          'Las pastas se ajustan desde el tab Stock (botón en cámara/mostrador), no desde acá.',
+        );
+      }
+
+      // Mapear unidad
+      const unidad: 'kg' | 'unid' | 'lt' =
+        payload.unidadStock === 'kg' ? 'kg' : payload.unidadStock === 'lt' ? 'lt' : 'unid';
+      const categoria = payload.tipo; // 'salsa' o 'postre'
+
+      // Match por nombre normalizado con cocina_recetas (puede no existir)
+      const receta = recetasLocal?.get(normNombre(payload.producto)) ?? null;
+
+      // 1) Apagar lotes activos previos para esta receta (o nombre_libre) + local
+      let qDel = supabase
+        .from('cocina_lotes_produccion')
+        .update({ en_stock: false })
+        .eq('local', local)
+        .eq('en_stock', true);
+      if (receta) {
+        qDel = qDel.eq('receta_id', receta.id);
+      } else {
+        qDel = qDel.eq('nombre_libre', payload.producto).is('receta_id', null);
+      }
+      const { error: errDel } = await qDel;
+      if (errDel) throw errDel;
+
+      // 2) Insertar lote nuevo con la cantidad real
+      const { error: errIns } = await supabase.from('cocina_lotes_produccion').insert({
         fecha: hoy,
         local,
-        responsable: 'Chef',
+        categoria,
+        receta_id: receta?.id ?? null,
+        nombre_libre: receta ? null : payload.producto,
+        cantidad_producida: payload.cantidad,
+        unidad,
+        en_stock: true,
       });
-      if (error) throw error;
+      if (errIns) throw errIns;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['cocina_conteo_stock'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['cocina_stock_salsas_postres'] });
+      qc.invalidateQueries({ queryKey: ['stock-produccion-lotes'] });
+    },
+    onError: (e: Error) => window.alert(`Error al guardar stock: ${e.message}`),
   });
 
   // ── Factor por día de semana (mañana importa más que promedio) ──
@@ -892,10 +988,12 @@ export function DashboardTab() {
     const productosLocal = PRODUCTOS_COCINA.filter((p) => !p.local || p.local === local);
 
     return productosLocal.map((prod) => {
-      // Stock actual (último conteo)
-      const conteo = conteos?.get(prod.nombre);
-      const stockCantidad = conteo?.cantidad ?? null;
-      const stockFecha = conteo?.fecha ?? null;
+      // Stock actual: para salsas/postres viene de cocina_lotes_produccion (lotes activos).
+      // Las pastas no usan este map (se calculan abajo desde la vista).
+      const stockReg = stockSalsasPostres?.get(normNombre(prod.nombre)) ?? null;
+      const stockCantidad =
+        prod.tipo !== 'pasta' && stockReg ? Math.round(stockReg.cantidad * 100) / 100 : null;
+      const stockFecha = stockReg?.fecha ?? null;
 
       // Stock derivado de lotes registrados en QR (solo pastas).
       // Vendibles = porciones en cámara − traspasos − merma. En cola = freezer producción.
@@ -1054,7 +1152,7 @@ export function DashboardTab() {
       };
     });
   }, [
-    conteos,
+    stockSalsasPostres,
     fudoData,
     fudoReciente,
     factorManana,
@@ -1094,7 +1192,22 @@ export function DashboardTab() {
   function guardar(producto: string) {
     const n = parseFloat(valorEdit.replace(',', '.'));
     if (!isNaN(n) && n >= 0) {
-      guardarConteo.mutate({ producto, cantidad: n });
+      const fila = filas.find((f) => f.nombre === producto);
+      if (!fila) {
+        setEditando(null);
+        return;
+      }
+      if (fila.tipo === 'pasta') {
+        window.alert('Las pastas se ajustan desde el tab Stock (cámara/mostrador).');
+        setEditando(null);
+        return;
+      }
+      guardarConteo.mutate({
+        producto,
+        cantidad: n,
+        tipo: fila.tipo,
+        unidadStock: fila.unidadstock,
+      });
     }
     setEditando(null);
     setValorEdit('');

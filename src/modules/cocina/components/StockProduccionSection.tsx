@@ -189,7 +189,11 @@ export function StockProduccionSection({
         .eq('id', id);
       if (error) throw error;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['stock-produccion-lotes'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['stock-produccion-lotes'] });
+      // El Dashboard también deriva su stock de salsas/postres de la misma tabla
+      qc.invalidateQueries({ queryKey: ['cocina_stock_salsas_postres'] });
+    },
   });
 
   const agotar = useMutation({
@@ -203,6 +207,7 @@ export function StockProduccionSection({
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['stock-produccion-lotes'] });
       qc.invalidateQueries({ queryKey: ['cocina-lotes-produccion'] });
+      qc.invalidateQueries({ queryKey: ['cocina_stock_salsas_postres'] });
     },
   });
 
