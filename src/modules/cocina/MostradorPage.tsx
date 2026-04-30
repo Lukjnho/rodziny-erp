@@ -233,15 +233,6 @@ function CierrePastas({ local }: { local: Local }) {
     }));
   }
 
-  function mermaDe(f: FilaPasta): number | null {
-    if (f.real.trim() === '') return null;
-    const ini = Number(f.inicial) || 0;
-    const ent = Number(f.entrega) || 0;
-    const vend = Number(f.vendido) || 0;
-    const real = Number(f.real) || 0;
-    return ini + ent - vend - real;
-  }
-
   const guardar = useMutation({
     mutationFn: async () => {
       if (!responsable.trim()) throw new Error('Cargá tu nombre antes de guardar');
@@ -363,96 +354,56 @@ function CierrePastas({ local }: { local: Local }) {
         </div>
       ) : (
         <>
-          <div className="overflow-hidden rounded-lg border border-surface-border bg-white">
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead className="bg-gray-50">
-                  <tr className="border-b border-gray-200 text-left">
-                    <th className="sticky left-0 z-10 bg-gray-50 px-2 py-2 text-[10px] font-semibold uppercase text-gray-600">
-                      Pasta
-                    </th>
-                    <th className="px-1 py-2 text-center text-[10px] font-semibold uppercase text-gray-600">
-                      Inicial
-                    </th>
-                    <th className="px-1 py-2 text-center text-[10px] font-semibold uppercase text-gray-600">
-                      Entrega
-                    </th>
-                    <th className="px-1 py-2 text-center text-[10px] font-semibold uppercase text-gray-600">
-                      Vendido
-                    </th>
-                    <th className="px-1 py-2 text-center text-[10px] font-semibold uppercase text-rodziny-700">
-                      Real *
-                    </th>
-                    <th className="px-1 py-2 text-center text-[10px] font-semibold uppercase text-gray-600">
-                      Merma
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {visibles.map((p) => {
-                    const f = filas[p.id] ?? { inicial: '', entrega: '', vendido: '', real: '' };
-                    const merma = mermaDe(f);
-                    return (
-                      <tr key={p.id} className="border-b border-gray-100 hover:bg-gray-50">
-                        <td className="sticky left-0 z-10 bg-white px-2 py-1.5">
-                          <p className="truncate text-[12px] font-medium text-gray-800">
-                            {p.nombre}
-                          </p>
-                        </td>
-                        <td className="px-1 py-1.5">
-                          <CeldaNum
-                            value={f.inicial}
-                            onChange={(v) => setCampo(p.id, 'inicial', v)}
-                          />
-                        </td>
-                        <td className="px-1 py-1.5">
-                          <CeldaNum
-                            value={f.entrega}
-                            onChange={(v) => setCampo(p.id, 'entrega', v)}
-                          />
-                        </td>
-                        <td className="px-1 py-1.5">
-                          <CeldaNum
-                            value={f.vendido}
-                            onChange={(v) => setCampo(p.id, 'vendido', v)}
-                          />
-                        </td>
-                        <td className="px-1 py-1.5">
-                          <CeldaNum
-                            value={f.real}
-                            onChange={(v) => setCampo(p.id, 'real', v)}
-                            destacado
-                          />
-                        </td>
-                        <td className="px-1 py-1.5 text-center">
-                          {merma != null ? (
-                            <span
-                              className={cn(
-                                'inline-block min-w-[36px] rounded px-1.5 py-0.5 text-[12px] font-bold tabular-nums',
-                                merma > 0 && 'bg-amber-100 text-amber-800',
-                                merma < 0 && 'bg-red-100 text-red-700',
-                                merma === 0 && 'bg-green-100 text-green-700',
-                              )}
-                            >
-                              {merma}
-                            </span>
-                          ) : (
-                            <span className="text-gray-300">—</span>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+          <div className="rounded-lg border border-gray-200 bg-white">
+            {visibles.map((p, idx) => {
+              const f = filas[p.id] ?? { inicial: '', entrega: '', vendido: '', real: '' };
+              const ini = Number(f.inicial) || 0;
+              const ent = Number(f.entrega) || 0;
+              return (
+                <div
+                  key={p.id}
+                  className={cn('p-3', idx < visibles.length - 1 && 'border-b border-gray-100')}
+                >
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-medium text-gray-800">{p.nombre}</p>
+                    {(ini > 0 || ent > 0) && (
+                      <p className="text-[10px] text-gray-500">
+                        {ini > 0 && (
+                          <>
+                            inicio: <span className="font-medium text-gray-700">{ini}</span>
+                          </>
+                        )}
+                        {ini > 0 && ent > 0 && ' · '}
+                        {ent > 0 && (
+                          <>
+                            entrega: <span className="font-medium text-gray-700">{ent}</span>
+                          </>
+                        )}
+                      </p>
+                    )}
+                  </div>
+                  <div className="mt-2 flex items-center gap-2">
+                    <input
+                      type="number"
+                      inputMode="numeric"
+                      step="1"
+                      min="0"
+                      value={f.real}
+                      onChange={(e) => setCampo(p.id, 'real', e.target.value)}
+                      placeholder="0"
+                      className="w-full rounded border-2 border-gray-300 px-3 py-2 text-right text-base font-medium tabular-nums focus:border-rodziny-500 focus:outline-none"
+                    />
+                    <span className="text-xs text-gray-500">porc.</span>
+                  </div>
+                </div>
+              );
+            })}
           </div>
 
           <div className="flex flex-wrap gap-3 px-2 text-[10px] text-gray-500">
             <span>
-              Inicial = stock al inicio del turno (auto del cierre anterior). Entrega = traspasos
-              del depósito (auto). Vendido = lo que cobraron en mostrador. Real = lo que queda
-              físico.
+              Cargá el stock real (físico) que queda al cierre del turno. Esto define el stock
+              inicial del mostrador para el próximo turno.
             </span>
           </div>
 
@@ -691,29 +642,3 @@ function CierreSimple({
   );
 }
 
-function CeldaNum({
-  value,
-  onChange,
-  destacado,
-}: {
-  value: string;
-  onChange: (v: string) => void;
-  destacado?: boolean;
-}) {
-  return (
-    <input
-      type="number"
-      inputMode="numeric"
-      min="0"
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      className={cn(
-        'w-full rounded border px-2 py-1.5 text-center text-sm tabular-nums focus:outline-none',
-        destacado
-          ? 'border-rodziny-300 bg-rodziny-50 font-semibold focus:border-rodziny-500'
-          : 'border-gray-300 focus:border-rodziny-400',
-      )}
-      placeholder="—"
-    />
-  );
-}
