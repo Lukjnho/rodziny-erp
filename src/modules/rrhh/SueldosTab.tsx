@@ -119,6 +119,16 @@ export function SueldosTab() {
   const [panel, setPanel] = useState<PanelEstado>(null);
   const [expandido, setExpandido] = useState<string | null>(null); // empleado_id expandido
 
+  // Modal de pago mixto (efectivo + transferencia)
+  const [mixtoModal, setMixtoModal] = useState<{
+    empleadoId: string;
+    empleadoNombre: string;
+    local: string;
+    total: number;
+    montoEf: string; // input string (formato "250000")
+    montoTr: string;
+  } | null>(null);
+
   const periodoActual = useMemo(
     () => periodoQuincena(year, month, quincena),
     [year, month, quincena],
@@ -191,6 +201,26 @@ export function SueldosTab() {
         .in('periodo', [periodoQ1, periodoQ2]);
       if (error) throw error;
       return data as Liquidacion[];
+    },
+  });
+
+  // Filas reales en pagos_sueldos del periodo. Cuando una liquidación es mixta,
+  // hay 2 filas (una por medio): el split queda definido acá.
+  const { data: pagosSueldosPeriodo } = useQuery({
+    queryKey: ['pagos_sueldos_periodo', periodoQ1, periodoQ2],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('pagos_sueldos')
+        .select('id, empleado_id, periodo, monto, medio_pago')
+        .in('periodo', [periodoQ1, periodoQ2]);
+      if (error) throw error;
+      return (data ?? []) as {
+        id: string;
+        empleado_id: string;
+        periodo: string;
+        monto: number;
+        medio_pago: 'efectivo' | 'transferencia';
+      }[];
     },
   });
 
@@ -279,13 +309,17 @@ export function SueldosTab() {
     onError: (e: Error) => window.alert(`Error: ${e.message}`),
   });
 
-  // Mutación específica para cambio de pago: actualiza liquidación + sincroniza pagos_sueldos
+  // Mutación de pago: actualiza liquidación + reescribe filas de pagos_sueldos.
+  // Estrategia delete+insert (la unique (empleado, periodo) ya no existe en pagos_sueldos
+  // para permitir 2 filas en pagos mixtos: una efectivo + una transferencia).
   const cambiarPago = useMutation({
     mutationFn: async (payload: {
       empleado_id: string;
       periodo: string;
       medio: MedioPagoSueldo | null;
-      monto: number;
+      monto: number; // total de la liquidación (para 'efectivo' / 'transferencia')
+      montoEfectivo?: number; // solo si medio = 'mixto'
+      montoTransferencia?: number; // solo si medio = 'mixto'
       local: string;
       empleado_nombre: string;
     }) => {
@@ -302,34 +336,43 @@ export function SueldosTab() {
       );
       if (errLiq) throw errLiq;
 
-      // 2) Sincronizar pagos_sueldos
-      if (payload.medio !== null) {
-        // Upsert: crear o actualizar el pago
-        const { error: errPago } = await supabase.from('pagos_sueldos').upsert(
-          {
-            empleado_id: payload.empleado_id,
-            periodo: payload.periodo,
-            fecha_pago: hoyYmd,
-            monto: payload.monto,
-            medio_pago: payload.medio,
-            local: payload.local,
-            empleado_nombre: payload.empleado_nombre,
-            updated_at: new Date().toISOString(),
-          },
-          { onConflict: 'empleado_id,periodo' },
-        );
-        if (errPago) throw errPago;
+      // 2) Borrar filas previas de pagos_sueldos para este (empleado, periodo)
+      const { error: errDel } = await supabase
+        .from('pagos_sueldos')
+        .delete()
+        .eq('empleado_id', payload.empleado_id)
+        .eq('periodo', payload.periodo);
+      if (errDel) throw errDel;
+
+      if (payload.medio === null) return; // desmarcar pago: solo borra
+
+      const baseRow = {
+        empleado_id: payload.empleado_id,
+        periodo: payload.periodo,
+        fecha_pago: hoyYmd,
+        local: payload.local,
+        empleado_nombre: payload.empleado_nombre,
+        updated_at: new Date().toISOString(),
+      };
+
+      let rows: Array<typeof baseRow & { monto: number; medio_pago: 'efectivo' | 'transferencia' }>;
+      if (payload.medio === 'mixto') {
+        const ef = payload.montoEfectivo ?? 0;
+        const tr = payload.montoTransferencia ?? 0;
+        if (ef <= 0 && tr <= 0) throw new Error('Mixto requiere al menos un monto > 0');
+        rows = [];
+        if (ef > 0) rows.push({ ...baseRow, monto: ef, medio_pago: 'efectivo' });
+        if (tr > 0) rows.push({ ...baseRow, monto: tr, medio_pago: 'transferencia' });
       } else {
-        // Desmarcar pago: eliminar de pagos_sueldos
-        await supabase
-          .from('pagos_sueldos')
-          .delete()
-          .eq('empleado_id', payload.empleado_id)
-          .eq('periodo', payload.periodo);
+        rows = [{ ...baseRow, monto: payload.monto, medio_pago: payload.medio }];
       }
+
+      const { error: errIns } = await supabase.from('pagos_sueldos').insert(rows);
+      if (errIns) throw errIns;
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['liquidaciones'] });
+      qc.invalidateQueries({ queryKey: ['pagos_sueldos_periodo'] });
       qc.invalidateQueries({ queryKey: ['fc_pagos_sueldos'] });
     },
     onError: (e: Error) => window.alert(`Error al registrar pago: ${e.message}`),
@@ -425,6 +468,10 @@ export function SueldosTab() {
     total: number;
     pagado: boolean;
     medioPago: MedioPagoSueldo | null;
+    // Montos efectivamente registrados en pagos_sueldos para el periodo actual.
+    // Si la liquidación es 'mixto' aparecen los 2; si es pura aparece uno solo; si está sin pagar son 0.
+    montoEfectivoPagado: number;
+    montoTransferenciaPagado: number;
     asistencia: AsistenciaStats;
   };
 
@@ -571,6 +618,17 @@ export function SueldosTab() {
         detalleFaltas,
       };
 
+      // Split real desde pagos_sueldos del periodoActual
+      const pagosEmp = (pagosSueldosPeriodo ?? []).filter(
+        (p) => p.empleado_id === emp.id && p.periodo === periodoActual,
+      );
+      const montoEfectivoPagado = pagosEmp
+        .filter((p) => p.medio_pago === 'efectivo')
+        .reduce((s, p) => s + Number(p.monto), 0);
+      const montoTransferenciaPagado = pagosEmp
+        .filter((p) => p.medio_pago === 'transferencia')
+        .reduce((s, p) => s + Number(p.monto), 0);
+
       return {
         empleado: emp,
         modalidad,
@@ -593,6 +651,8 @@ export function SueldosTab() {
         total,
         pagado: !!liquidacion?.pagado,
         medioPago: (liquidacion?.medio_pago ?? null) as MedioPagoSueldo | null,
+        montoEfectivoPagado,
+        montoTransferenciaPagado,
         asistencia,
       };
     });
@@ -601,6 +661,7 @@ export function SueldosTab() {
     fichadas,
     cronograma,
     liquidaciones,
+    pagosSueldosPeriodo,
     adelantos,
     sanciones,
     descuentos,
@@ -625,12 +686,9 @@ export function SueldosTab() {
     const totalBonos = filas.reduce((s, f) => s + f.bonosMonto, 0);
     const pagados = filasAPagar.filter((f) => f.pagado).length;
     const totalEmpleados = filasAPagar.length;
-    const pagadoEfectivo = filasAPagar
-      .filter((f) => f.pagado && f.medioPago === 'efectivo')
-      .reduce((s, f) => s + f.total, 0);
-    const pagadoTransferencia = filasAPagar
-      .filter((f) => f.pagado && f.medioPago === 'transferencia')
-      .reduce((s, f) => s + f.total, 0);
+    // Sumar desde montos reales en pagos_sueldos para respetar splits mixtos
+    const pagadoEfectivo = filasAPagar.reduce((s, f) => s + f.montoEfectivoPagado, 0);
+    const pagadoTransferencia = filasAPagar.reduce((s, f) => s + f.montoTransferenciaPagado, 0);
     return {
       totalAPagar,
       totalAdelantos,
@@ -646,39 +704,58 @@ export function SueldosTab() {
 
   // ── Sync pagos_sueldos cuando cambia el monto de un empleado ya pagado ──
   // (ej: se togglea presentismo, se agrega adelanto, etc. después de marcar pagado)
+  // Solo aplica a pagos puros (efectivo/transferencia). Para 'mixto' la división
+  // entre medios es manual, así que NO se auto-sincroniza: si el total cambia,
+  // Lucas reabre el modal Mixto para reajustar el split.
   const syncRef = useRef(false);
   useEffect(() => {
     if (!filas.length || syncRef.current) return;
     const pagadosConCambio = filas.filter(
-      (f) => f.pagado && f.medioPago && f.total > 0 && !f.esMensualEnQ1,
+      (f) =>
+        f.pagado &&
+        (f.medioPago === 'efectivo' || f.medioPago === 'transferencia') &&
+        f.total > 0 &&
+        !f.esMensualEnQ1,
     );
     if (!pagadosConCambio.length) return;
+
+    // Solo re-escribir si el monto registrado difiere del total actual (evita writes innecesarios).
+    const aSync = pagadosConCambio.filter((f) => {
+      const registrado = f.montoEfectivoPagado + f.montoTransferenciaPagado;
+      return Math.abs(registrado - f.total) > 0;
+    });
+    if (!aSync.length) return;
 
     // Debounce: solo sincronizar una vez por ciclo de render
     syncRef.current = true;
     const timeout = setTimeout(async () => {
-      for (const fila of pagadosConCambio) {
-        await supabase.from('pagos_sueldos').upsert(
-          {
-            empleado_id: fila.empleado.id,
-            periodo: periodoActual,
-            fecha_pago: fila.liquidacion?.fecha_pago ?? hoyYmd,
-            monto: fila.total,
-            medio_pago: fila.medioPago!,
-            local: fila.empleado.local,
-            empleado_nombre: `${fila.empleado.apellido}, ${fila.empleado.nombre}`,
-            updated_at: new Date().toISOString(),
-          },
-          { onConflict: 'empleado_id,periodo' },
-        );
+      for (const fila of aSync) {
+        // delete + insert (la unique ya no existe, así que upsert onConflict no aplica)
+        await supabase
+          .from('pagos_sueldos')
+          .delete()
+          .eq('empleado_id', fila.empleado.id)
+          .eq('periodo', periodoActual);
+        await supabase.from('pagos_sueldos').insert({
+          empleado_id: fila.empleado.id,
+          periodo: periodoActual,
+          fecha_pago: fila.liquidacion?.fecha_pago ?? hoyYmd,
+          monto: fila.total,
+          medio_pago: fila.medioPago as 'efectivo' | 'transferencia',
+          local: fila.empleado.local,
+          empleado_nombre: `${fila.empleado.apellido}, ${fila.empleado.nombre}`,
+          updated_at: new Date().toISOString(),
+        });
       }
+      qc.invalidateQueries({ queryKey: ['pagos_sueldos_periodo'] });
+      qc.invalidateQueries({ queryKey: ['fc_pagos_sueldos'] });
       syncRef.current = false;
     }, 2000); // esperar 2s para no bombardear en cada re-render
     return () => {
       clearTimeout(timeout);
       syncRef.current = false;
     };
-  }, [filas, periodoActual, hoyYmd]);
+  }, [filas, periodoActual, hoyYmd, qc]);
 
   // ── Navegación ───────────────────────────────────────────────────────────
   function navegarQuincena(delta: number) {
@@ -828,7 +905,27 @@ export function SueldosTab() {
                         patch: { cobra_presentismo: nuevo },
                       })
                     }
-                    onCambiarPago={(medio) =>
+                    onCambiarPago={(medio) => {
+                      if (medio === 'mixto') {
+                        // Abrir modal con sugerencia 50/50 (redondeado a múltiplos de 100)
+                        const mitad = Math.round(fila.total / 2 / 100) * 100;
+                        const otra = fila.total - mitad;
+                        setMixtoModal({
+                          empleadoId: fila.empleado.id,
+                          empleadoNombre: `${fila.empleado.apellido}, ${fila.empleado.nombre}`,
+                          local: fila.empleado.local,
+                          total: fila.total,
+                          montoEf:
+                            fila.montoEfectivoPagado > 0
+                              ? String(fila.montoEfectivoPagado)
+                              : String(mitad),
+                          montoTr:
+                            fila.montoTransferenciaPagado > 0
+                              ? String(fila.montoTransferenciaPagado)
+                              : String(otra),
+                        });
+                        return;
+                      }
                       cambiarPago.mutate({
                         empleado_id: fila.empleado.id,
                         periodo: periodoActual,
@@ -836,8 +933,26 @@ export function SueldosTab() {
                         monto: fila.total,
                         local: fila.empleado.local,
                         empleado_nombre: `${fila.empleado.apellido}, ${fila.empleado.nombre}`,
-                      })
-                    }
+                      });
+                    }}
+                    onAbrirMixto={() => {
+                      const mitad = Math.round(fila.total / 2 / 100) * 100;
+                      const otra = fila.total - mitad;
+                      setMixtoModal({
+                        empleadoId: fila.empleado.id,
+                        empleadoNombre: `${fila.empleado.apellido}, ${fila.empleado.nombre}`,
+                        local: fila.empleado.local,
+                        total: fila.total,
+                        montoEf:
+                          fila.montoEfectivoPagado > 0
+                            ? String(fila.montoEfectivoPagado)
+                            : String(mitad),
+                        montoTr:
+                          fila.montoTransferenciaPagado > 0
+                            ? String(fila.montoTransferenciaPagado)
+                            : String(otra),
+                      });
+                    }}
                     onCambiarModalidad={(nuevo) =>
                       updateModalidad.mutate({ id: fila.empleado.id, modalidad: nuevo })
                     }
@@ -911,6 +1026,178 @@ export function SueldosTab() {
           onClose={() => setPanel(null)}
         />
       )}
+
+      {/* ── Modal de pago mixto (efectivo + transferencia) ───────────────── */}
+      {mixtoModal && (
+        <ModalPagoMixto
+          state={mixtoModal}
+          guardando={cambiarPago.isPending}
+          onChange={(patch) => setMixtoModal((s) => (s ? { ...s, ...patch } : s))}
+          onCancel={() => setMixtoModal(null)}
+          onConfirmar={async () => {
+            const ef = parseInt(mixtoModal.montoEf, 10) || 0;
+            const tr = parseInt(mixtoModal.montoTr, 10) || 0;
+            const suma = ef + tr;
+            // Tolerancia ±1 peso por redondeos
+            if (Math.abs(suma - mixtoModal.total) > 1) {
+              window.alert(
+                `Los montos no suman el total.\nEfectivo: ${formatARS(ef)}\nTransferencia: ${formatARS(tr)}\nSuma: ${formatARS(suma)}\nTotal esperado: ${formatARS(mixtoModal.total)}`,
+              );
+              return;
+            }
+            if (ef < 0 || tr < 0) {
+              window.alert('Los montos no pueden ser negativos.');
+              return;
+            }
+            if (ef === 0 && tr === 0) {
+              window.alert('Al menos uno de los dos montos debe ser mayor a 0.');
+              return;
+            }
+            await cambiarPago.mutateAsync({
+              empleado_id: mixtoModal.empleadoId,
+              periodo: periodoActual,
+              medio: 'mixto',
+              monto: mixtoModal.total,
+              montoEfectivo: ef,
+              montoTransferencia: tr,
+              local: mixtoModal.local,
+              empleado_nombre: mixtoModal.empleadoNombre,
+            });
+            setMixtoModal(null);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── Modal de pago mixto ────────────────────────────────────────────────────
+function ModalPagoMixto({
+  state,
+  guardando,
+  onChange,
+  onCancel,
+  onConfirmar,
+}: {
+  state: {
+    empleadoNombre: string;
+    total: number;
+    montoEf: string;
+    montoTr: string;
+  };
+  guardando: boolean;
+  onChange: (patch: Partial<{ montoEf: string; montoTr: string }>) => void;
+  onCancel: () => void;
+  onConfirmar: () => void;
+}) {
+  const ef = parseInt(state.montoEf, 10) || 0;
+  const tr = parseInt(state.montoTr, 10) || 0;
+  const suma = ef + tr;
+  const diferencia = suma - state.total;
+  const okSuma = Math.abs(diferencia) <= 1;
+
+  // Auto-completar el otro lado: si el user escribe efectivo, transferencia = total - efectivo
+  function setEfectivo(v: string) {
+    const limpio = v.replace(/\D/g, '');
+    const n = parseInt(limpio, 10) || 0;
+    onChange({ montoEf: limpio, montoTr: String(Math.max(0, state.total - n)) });
+  }
+  function setTransferencia(v: string) {
+    const limpio = v.replace(/\D/g, '');
+    const n = parseInt(limpio, 10) || 0;
+    onChange({ montoTr: limpio, montoEf: String(Math.max(0, state.total - n)) });
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      onClick={onCancel}
+    >
+      <div
+        className="w-full max-w-md rounded-lg bg-white p-5 shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-4">
+          <h3 className="text-base font-semibold text-gray-900">Pago mixto</h3>
+          <p className="mt-0.5 text-xs text-gray-500">
+            {state.empleadoNombre} · Total a pagar:{' '}
+            <span className="font-medium text-gray-900">{formatARS(state.total)}</span>
+          </p>
+        </div>
+
+        <div className="space-y-3">
+          <div>
+            <label className="mb-1 block text-xs font-medium text-gray-700">
+              Monto en efectivo
+            </label>
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-gray-500">$</span>
+              <input
+                type="text"
+                inputMode="numeric"
+                value={state.montoEf}
+                onChange={(e) => setEfectivo(e.target.value)}
+                className="flex-1 rounded border border-green-300 bg-green-50 px-2 py-1.5 text-right text-sm tabular-nums text-green-800 focus:border-green-500 focus:outline-none"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-xs font-medium text-gray-700">
+              Monto por transferencia
+            </label>
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-gray-500">$</span>
+              <input
+                type="text"
+                inputMode="numeric"
+                value={state.montoTr}
+                onChange={(e) => setTransferencia(e.target.value)}
+                className="flex-1 rounded border border-blue-300 bg-blue-50 px-2 py-1.5 text-right text-sm tabular-nums text-blue-800 focus:border-blue-500 focus:outline-none"
+              />
+            </div>
+          </div>
+
+          <div
+            className={cn(
+              'rounded border p-2 text-xs',
+              okSuma
+                ? 'border-green-200 bg-green-50 text-green-700'
+                : 'border-red-200 bg-red-50 text-red-700',
+            )}
+          >
+            <div className="flex justify-between">
+              <span>Suma:</span>
+              <span className="font-medium tabular-nums">{formatARS(suma)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span>Diferencia:</span>
+              <span className="font-medium tabular-nums">
+                {diferencia === 0
+                  ? '— OK'
+                  : `${diferencia > 0 ? '+' : ''}${formatARS(diferencia)}`}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            onClick={onCancel}
+            disabled={guardando}
+            className="rounded border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+          >
+            Cancelar
+          </button>
+          <button
+            onClick={onConfirmar}
+            disabled={!okSuma || guardando || (ef === 0 && tr === 0)}
+            className="rounded bg-rodziny-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-rodziny-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {guardando ? 'Guardando...' : 'Confirmar pago'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -922,6 +1209,7 @@ function FilaEmpleado({
   onToggleExpand,
   onTogglePresentismo,
   onCambiarPago,
+  onAbrirMixto,
   onCambiarModalidad,
   onAbrirAdelantos,
   onAbrirSanciones,
@@ -946,6 +1234,8 @@ function FilaEmpleado({
     total: number;
     pagado: boolean;
     medioPago: MedioPagoSueldo | null;
+    montoEfectivoPagado: number;
+    montoTransferenciaPagado: number;
     asistencia: {
       diasLaborales: number;
       completos: number;
@@ -959,6 +1249,7 @@ function FilaEmpleado({
   onToggleExpand: () => void;
   onTogglePresentismo: (v: boolean) => void;
   onCambiarPago: (v: MedioPagoSueldo | null) => void;
+  onAbrirMixto: () => void;
   onCambiarModalidad: (v: 'quincenal' | 'mensual') => void;
   onAbrirAdelantos: () => void;
   onAbrirSanciones: () => void;
@@ -981,6 +1272,8 @@ function FilaEmpleado({
     erroresCajaEmp,
     total,
     medioPago,
+    montoEfectivoPagado,
+    montoTransferenciaPagado,
     asistencia,
   } = fila;
   const tieneProblemas = asistencia.ausencias > 0 || asistencia.tardanzasGraves > 0;
@@ -1153,25 +1446,42 @@ function FilaEmpleado({
         {esMensualEnQ1 ? (
           <span className="text-xs text-gray-300">—</span>
         ) : (
-          <select
-            value={medioPago ?? ''}
-            onChange={(e) => {
-              const v = e.target.value;
-              onCambiarPago(v === '' ? null : (v as MedioPagoSueldo));
-            }}
-            className={cn(
-              'cursor-pointer rounded border px-1.5 py-0.5 text-[11px]',
-              medioPago === 'efectivo' && 'border-green-300 bg-green-50 font-medium text-green-800',
-              medioPago === 'transferencia' &&
-                'border-blue-300 bg-blue-50 font-medium text-blue-800',
-              !medioPago && 'border-gray-300 bg-white text-gray-500',
+          <div className="flex flex-col items-center gap-0.5">
+            <select
+              value={medioPago ?? ''}
+              onChange={(e) => {
+                const v = e.target.value;
+                onCambiarPago(v === '' ? null : (v as MedioPagoSueldo));
+              }}
+              className={cn(
+                'cursor-pointer rounded border px-1.5 py-0.5 text-[11px]',
+                medioPago === 'efectivo' &&
+                  'border-green-300 bg-green-50 font-medium text-green-800',
+                medioPago === 'transferencia' &&
+                  'border-blue-300 bg-blue-50 font-medium text-blue-800',
+                medioPago === 'mixto' &&
+                  'border-purple-300 bg-purple-50 font-medium text-purple-800',
+                !medioPago && 'border-gray-300 bg-white text-gray-500',
+              )}
+              title={medioPago ? `Pagado por ${medioPago}` : 'Sin pagar'}
+            >
+              <option value="">— sin pagar</option>
+              <option value="efectivo">Efectivo</option>
+              <option value="transferencia">Transferencia</option>
+              <option value="mixto">Mixto (ef + tr)</option>
+            </select>
+            {medioPago === 'mixto' && (
+              <button
+                onClick={onAbrirMixto}
+                className="text-[9px] text-purple-700 underline-offset-2 hover:underline"
+                title="Editar split"
+              >
+                <span className="text-green-700">{formatARS(montoEfectivoPagado)}</span>
+                <span className="text-gray-400"> + </span>
+                <span className="text-blue-700">{formatARS(montoTransferenciaPagado)}</span>
+              </button>
             )}
-            title={medioPago ? `Pagado por ${medioPago}` : 'Sin pagar'}
-          >
-            <option value="">— sin pagar</option>
-            <option value="efectivo">Efectivo</option>
-            <option value="transferencia">Transferencia</option>
-          </select>
+          </div>
         )}
       </td>
     </tr>

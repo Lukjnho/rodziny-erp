@@ -1,7 +1,10 @@
 // Tipos compartidos del subsistema Sueldos
 import type { Quincena } from '../utils';
 
-export type MedioPagoSueldo = 'efectivo' | 'transferencia';
+// 'mixto' = la liquidación se pagó dividida (parte efectivo + parte transferencia).
+// En pagos_sueldos cada fila sigue siendo de un solo medio puro: si la liquidación
+// es mixta hay 2 filas (una efectivo, una transferencia) compartiendo (empleado, periodo).
+export type MedioPagoSueldo = 'efectivo' | 'transferencia' | 'mixto';
 
 export interface Liquidacion {
   id: string;
