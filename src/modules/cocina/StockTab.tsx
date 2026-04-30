@@ -71,9 +71,11 @@ interface StockRow {
   fresco: number;
   traspasado: number;
   vendidoHoy: number;
-  mostrador: number;
+  mostrador: number; // clamp >= 0 para mostrar
+  mostradorRaw: number; // valor real (puede ser negativo si las ventas exceden traspasos+ajustes)
   merma: number;
-  stock: number; // cámara — incluye ajustes acumulados
+  stock: number; // cámara — incluye ajustes acumulados (clamp para mostrar)
+  stockRaw: number; // sin clamp
   ajusteCamara: number;
   ajusteMostrador: number;
 }
@@ -138,7 +140,8 @@ export function StockTab() {
     producto: Producto;
     local: string;
     ubicacion: 'camara' | 'mostrador';
-    actual: number;
+    actual: number; // valor "raw" sin clamp (usado para calcular el delta correcto)
+    actualMostrado: number; // valor con clamp >= 0 (usado en el display del modal)
     real: string;
     motivo: string;
     guardando: boolean;
@@ -472,6 +475,7 @@ export function StockTab() {
         // Si no hay cierre, fallback al cálculo viejo (traspasos_hoy − ventas_hoy − merma_hoy + ajustes_hoy).
         const cierre = cierresPorProducto?.get(`${prod.id}|${loc}`) ?? null;
         let mostrador: number;
+        let mostradorRaw: number;
         if (cierre) {
           // Eventos posteriores al cierre (created_at > cierre.created_at)
           const traspasosPost = (traspasos ?? [])
@@ -504,10 +508,9 @@ export function StockTab() {
             ventasPost = ventasFudoDelProducto(prod, fudoDesdeCierre?.ranking);
           }
 
-          mostrador = Math.max(
-            0,
-            Number(cierre.cantidad_real) + traspasosPost - ventasPost - mermaPost + ajustesPost,
-          );
+          mostradorRaw =
+            Number(cierre.cantidad_real) + traspasosPost - ventasPost - mermaPost + ajustesPost;
+          mostrador = Math.max(0, mostradorRaw);
         } else {
           // Sin cierre todavía: lógica anterior (solo "hoy")
           const traspasadoHoy = traspasosHoy
@@ -516,10 +519,12 @@ export function StockTab() {
           const mermaDelDia = mermasHoy
             .filter((m) => m.producto_id === prod.id && m.local === loc)
             .reduce((s, m) => s + m.porciones, 0);
-          mostrador = Math.max(0, traspasadoHoy - vendidoHoy - mermaDelDia + ajusteMostrador);
+          mostradorRaw = traspasadoHoy - vendidoHoy - mermaDelDia + ajusteMostrador;
+          mostrador = Math.max(0, mostradorRaw);
         }
 
-        const stock = producido - traspasado - mermaTotal + ajusteCamara;
+        const stockRaw = producido - traspasado - mermaTotal + ajusteCamara;
+        const stock = stockRaw; // sin clamp: si es negativo se ve como "sin-stock" en el render
 
         rows.push({
           producto: prod,
@@ -529,8 +534,10 @@ export function StockTab() {
           traspasado,
           vendidoHoy,
           mostrador,
+          mostradorRaw,
           merma: mermaTotal,
           stock,
+          stockRaw,
           ajusteCamara,
           ajusteMostrador,
         });
@@ -724,8 +731,11 @@ export function StockTab() {
                           producto: r.producto,
                           local: r.local,
                           ubicacion: 'camara',
-                          actual: r.stock,
-                          real: String(r.stock),
+                          // Pasamos el valor "raw" (sin clamp) para que el delta sea correcto
+                          // aunque la cuenta interna esté en negativos por ventas/traspasos.
+                          actual: r.stockRaw,
+                          actualMostrado: Math.max(0, r.stock),
+                          real: String(Math.max(0, r.stock)),
                           motivo: '',
                           guardando: false,
                         })
@@ -755,8 +765,12 @@ export function StockTab() {
                           producto: r.producto,
                           local: r.local,
                           ubicacion: 'mostrador',
-                          actual: r.mostrador,
-                          real: String(r.mostrador),
+                          // Pasamos el valor "raw" (sin clamp) para que el delta cuadre
+                          // con lo que el usuario contó físicamente, aunque las ventas
+                          // ya hayan llevado la cuenta interna a negativo.
+                          actual: r.mostradorRaw,
+                          actualMostrado: Math.max(0, r.mostrador),
+                          real: String(Math.max(0, r.mostrador)),
                           motivo: '',
                           guardando: false,
                         })
@@ -901,7 +915,8 @@ function ModalAjusteStock({
     producto: Producto;
     local: string;
     ubicacion: 'camara' | 'mostrador';
-    actual: number;
+    actual: number; // raw, sin clamp (para calcular delta)
+    actualMostrado: number; // clamp (para display)
     real: string;
     motivo: string;
     guardando: boolean;
@@ -913,6 +928,7 @@ function ModalAjusteStock({
   const realNum = parseFloat(state.real.replace(',', '.'));
   const deltaPreview = !isNaN(realNum) ? Math.round((realNum - state.actual) * 100) / 100 : null;
   const ubicacionLabel = state.ubicacion === 'camara' ? 'Cámara (depósito)' : 'Mostrador';
+  const hayDeudaOculta = state.actual < state.actualMostrado;
 
   return (
     <div
@@ -936,8 +952,17 @@ function ModalAjusteStock({
           <div className="rounded border border-gray-200 bg-gray-50 p-2 text-xs">
             <div className="flex justify-between">
               <span className="text-gray-600">Stock calculado actual:</span>
-              <span className="font-medium tabular-nums text-gray-900">{state.actual}</span>
+              <span className="font-medium tabular-nums text-gray-900">
+                {state.actualMostrado}
+              </span>
             </div>
+            {hayDeudaOculta && (
+              <div className="mt-1 text-[10px] text-amber-700">
+                ⓘ Hay {Math.abs(state.actual - state.actualMostrado)} unidades de ventas/traspasos
+                que ya descontaron de esta cuenta. El ajuste se calcula contra el valor real
+                interno para que el resultado quede como vos contás.
+              </div>
+            )}
           </div>
 
           <div>
