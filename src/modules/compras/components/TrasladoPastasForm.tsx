@@ -82,23 +82,30 @@ export function TrasladoPastasForm({
 
   const rows = useMemo<PastaRow[]>(() => {
     if (!productos) return [];
-    return productos.map((p) => {
-      const enCamara = (lotes ?? [])
-        .filter((l) => l.producto_id === p.id)
-        .reduce((s, l) => s + (l.porciones ?? 0), 0);
-      const traspasado = (traspasos ?? [])
-        .filter((t) => t.producto_id === p.id)
-        .reduce((s, t) => s + t.porciones, 0);
-      const merma = (mermas ?? [])
-        .filter((m) => m.producto_id === p.id)
-        .reduce((s, m) => s + m.porciones, 0);
-      return {
-        id: p.id,
-        nombre: p.nombre,
-        codigo: p.codigo,
-        stockCamara: enCamara - traspasado - merma,
-      };
-    });
+    // Solo mostramos pastas con stock disponible en cámara_congelado (las que terminaron
+    // el ciclo: relleno → masa → armado → porcionado → cámara). Las que están en
+    // freezer_produccion (frescas sin porcionar) no aparecen porque todavía no son
+    // trasladables; tampoco las que tienen stock 0 (no hay nada que mover).
+    return productos
+      .map((p) => {
+        const enCamara = (lotes ?? [])
+          .filter((l) => l.producto_id === p.id)
+          .reduce((s, l) => s + (l.porciones ?? 0), 0);
+        const traspasado = (traspasos ?? [])
+          .filter((t) => t.producto_id === p.id)
+          .reduce((s, t) => s + t.porciones, 0);
+        const merma = (mermas ?? [])
+          .filter((m) => m.producto_id === p.id)
+          .reduce((s, m) => s + m.porciones, 0);
+        return {
+          id: p.id,
+          nombre: p.nombre,
+          codigo: p.codigo,
+          stockCamara: enCamara - traspasado - merma,
+        };
+      })
+      .filter((r) => r.stockCamara > 0)
+      .sort((a, b) => b.stockCamara - a.stockCamara); // las que más hay, primero
   }, [productos, lotes, traspasos, mermas]);
 
   const filtradas = useMemo(() => {
@@ -325,41 +332,27 @@ export function TrasladoPastasForm({
       <div className="max-h-[60vh] space-y-1 overflow-y-auto">
         {filtradas.length === 0 ? (
           <p className="py-8 text-center text-sm text-gray-400">
-            {busqueda ? 'No se encontró la pasta' : 'No hay pastas cargadas'}
+            {busqueda
+              ? 'No se encontró la pasta'
+              : 'No hay pastas con stock en cámara para trasladar'}
           </p>
         ) : (
-          filtradas.map((r) => {
-            const sin = r.stockCamara <= 0;
-            return (
-              <button
-                key={r.id}
-                onClick={() => !sin && setSeleccionado(r)}
-                disabled={sin}
-                className={cn(
-                  'flex w-full items-center justify-between rounded-lg border border-gray-200 bg-white px-4 py-3 text-left transition-colors',
-                  sin
-                    ? 'cursor-not-allowed opacity-50'
-                    : 'hover:bg-gray-50 active:bg-gray-100',
-                )}
-              >
-                <div>
-                  <p className="text-sm font-medium text-gray-900">{r.nombre}</p>
-                  <p className="font-mono text-[11px] text-gray-500">{r.codigo}</p>
-                </div>
-                <div className="text-right">
-                  <p
-                    className={cn(
-                      'text-sm font-semibold',
-                      sin ? 'text-red-600' : 'text-gray-700',
-                    )}
-                  >
-                    {r.stockCamara} porc.
-                  </p>
-                  <p className="text-[10px] text-gray-400">en cámara</p>
-                </div>
-              </button>
-            );
-          })
+          filtradas.map((r) => (
+            <button
+              key={r.id}
+              onClick={() => setSeleccionado(r)}
+              className="flex w-full items-center justify-between rounded-lg border border-gray-200 bg-white px-4 py-3 text-left transition-colors hover:bg-gray-50 active:bg-gray-100"
+            >
+              <div>
+                <p className="text-sm font-medium text-gray-900">{r.nombre}</p>
+                <p className="font-mono text-[11px] text-gray-500">{r.codigo}</p>
+              </div>
+              <div className="text-right">
+                <p className="text-sm font-semibold text-gray-700">{r.stockCamara} porc.</p>
+                <p className="text-[10px] text-gray-400">en cámara</p>
+              </div>
+            </button>
+          ))
         )}
       </div>
     </div>
