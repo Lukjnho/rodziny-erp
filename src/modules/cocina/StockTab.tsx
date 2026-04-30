@@ -133,6 +133,14 @@ export function StockTab() {
     guardando: boolean;
   } | null>(null);
 
+  // Modal de reset masivo (solo Lucas)
+  const [resetModal, setResetModal] = useState<{
+    paso: 'confirmar' | 'reseteando' | 'listo';
+    pastasReseteadas: number;
+    lotesReseteados: number;
+  } | null>(null);
+  const esLucas = perfil?.nombre === 'lukjnho';
+
   const { data: productos } = useQuery({
     queryKey: ['cocina-productos'],
     queryFn: async () => {
@@ -240,6 +248,91 @@ export function StockTab() {
       qc.invalidateQueries({ queryKey: ['cocina_stock_pastas'] });
     },
     onError: (e: Error) => window.alert(`Error al guardar ajuste: ${e.message}`),
+  });
+
+  // Reset masivo de stock (solo para Lucas, hardcoded a Vedia).
+  // Para pastas: ajustes negativos en cocina_ajustes_stock por la cantidad actual
+  //   en cámara y mostrador (preserva historial de lotes y traspasos).
+  // Para salsas/postres: marca todos los lotes activos como en_stock=false.
+  const resetearStockVedia = useMutation({
+    mutationFn: async () => {
+      const filasVedia = stockRows.filter((r) => r.local === 'vedia');
+      const ajustesAInsertar: Array<{
+        producto_id: string;
+        local: string;
+        ubicacion: 'camara' | 'mostrador';
+        delta: number;
+        motivo: string;
+        responsable: string | null;
+      }> = [];
+
+      for (const r of filasVedia) {
+        if (r.stock > 0) {
+          ajustesAInsertar.push({
+            producto_id: r.producto.id,
+            local: 'vedia',
+            ubicacion: 'camara',
+            delta: -r.stock,
+            motivo: 'Reset stock fin de servicio',
+            responsable: perfil?.nombre ?? null,
+          });
+        }
+        if (r.mostrador > 0) {
+          ajustesAInsertar.push({
+            producto_id: r.producto.id,
+            local: 'vedia',
+            ubicacion: 'mostrador',
+            delta: -r.mostrador,
+            motivo: 'Reset stock fin de servicio',
+            responsable: perfil?.nombre ?? null,
+          });
+        }
+      }
+
+      let pastasReseteadas = 0;
+      if (ajustesAInsertar.length > 0) {
+        const { error: errAj } = await supabase
+          .from('cocina_ajustes_stock')
+          .insert(ajustesAInsertar);
+        if (errAj) throw errAj;
+        pastasReseteadas = ajustesAInsertar.length;
+      }
+
+      // Salsas, postres y demás producciones: apagar lotes activos
+      const { data: lotesActivos, error: errSelect } = await supabase
+        .from('cocina_lotes_produccion')
+        .select('id')
+        .eq('local', 'vedia')
+        .eq('en_stock', true);
+      if (errSelect) throw errSelect;
+
+      const cantLotes = lotesActivos?.length ?? 0;
+      if (cantLotes > 0) {
+        const { error: errUpd } = await supabase
+          .from('cocina_lotes_produccion')
+          .update({ en_stock: false })
+          .eq('local', 'vedia')
+          .eq('en_stock', true);
+        if (errUpd) throw errUpd;
+      }
+
+      return { pastasReseteadas, lotesReseteados: cantLotes };
+    },
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: ['cocina-ajustes-stock'] });
+      qc.invalidateQueries({ queryKey: ['cocina_stock_pastas'] });
+      qc.invalidateQueries({ queryKey: ['stock-produccion-lotes'] });
+      qc.invalidateQueries({ queryKey: ['cocina_stock_salsas_postres'] });
+      setResetModal({
+        paso: 'listo',
+        pastasReseteadas: res.pastasReseteadas,
+        lotesReseteados: res.lotesReseteados,
+      });
+    },
+    onError: (e: Error) => {
+      window.alert(`Error al resetear stock: ${e.message}`);
+      setResetModal(null);
+    },
   });
 
   // Ventas Fudo del día — solo Vedia tiene API habilitada (fudoApi.ts: Saavedra pendiente)
@@ -457,6 +550,17 @@ export function StockTab() {
             <option value="saavedra">Saavedra</option>
           </select>
         )}
+        {esLucas && (
+          <button
+            onClick={() =>
+              setResetModal({ paso: 'confirmar', pastasReseteadas: 0, lotesReseteados: 0 })
+            }
+            className="rounded border border-red-300 bg-red-50 px-2.5 py-1 text-xs font-medium text-red-700 hover:bg-red-100"
+            title="Pone en 0 el stock de pastas, salsas y postres de Vedia (uso fin de servicio)"
+          >
+            ↺ Resetear stock Vedia
+          </button>
+        )}
         <span className="ml-auto text-xs text-gray-400">
           En cámara (depósito) = histórico − traspasos − merma · En mostrador = traspasos hoy −
           ventas Fudo − merma hoy · Pastas en produ = frescas sin porcionar
@@ -618,6 +722,27 @@ export function StockTab() {
         <StockProduccionSection filtroLocal={filtroLocal} />
       </div>
 
+      {/* ── Modal de reset masivo (solo Lucas) ──────────────────────────── */}
+      {resetModal && esLucas && (
+        <ModalResetStock
+          state={resetModal}
+          resumen={(() => {
+            const filasVedia = stockRows.filter((r) => r.local === 'vedia');
+            const totalCamara = filasVedia.reduce((s, r) => s + Math.max(0, r.stock), 0);
+            const totalMostrador = filasVedia.reduce((s, r) => s + r.mostrador, 0);
+            const productosConStock = filasVedia.filter(
+              (r) => r.stock > 0 || r.mostrador > 0,
+            ).length;
+            return { totalCamara, totalMostrador, productosConStock };
+          })()}
+          onCancel={() => setResetModal(null)}
+          onConfirmar={async () => {
+            setResetModal((s) => (s ? { ...s, paso: 'reseteando' } : s));
+            await resetearStockVedia.mutateAsync();
+          }}
+        />
+      )}
+
       {/* ── Modal de ajuste de stock ─────────────────────────────────────── */}
       {ajusteModal && (
         <ModalAjusteStock
@@ -769,6 +894,129 @@ function ModalAjusteStock({
             {state.guardando ? 'Guardando...' : 'Guardar ajuste'}
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Modal de reset masivo de stock (solo Lucas) ────────────────────────────
+function ModalResetStock({
+  state,
+  resumen,
+  onCancel,
+  onConfirmar,
+}: {
+  state: { paso: 'confirmar' | 'reseteando' | 'listo'; pastasReseteadas: number; lotesReseteados: number };
+  resumen: { totalCamara: number; totalMostrador: number; productosConStock: number };
+  onCancel: () => void;
+  onConfirmar: () => void;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      onClick={state.paso === 'confirmar' ? onCancel : undefined}
+    >
+      <div
+        className="w-full max-w-md rounded-lg bg-white p-5 shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {state.paso === 'confirmar' && (
+          <>
+            <div className="mb-4 flex items-start gap-3">
+              <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-red-100 text-xl">
+                ⚠
+              </div>
+              <div>
+                <h3 className="text-base font-semibold text-gray-900">
+                  Resetear stock de Vedia a 0
+                </h3>
+                <p className="mt-0.5 text-xs text-gray-500">
+                  Pensado para usar al cierre del servicio antes de cargar el conteo del día.
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-2 rounded border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+              <p className="font-medium">Esto va a:</p>
+              <ul className="list-disc space-y-0.5 pl-5">
+                <li>
+                  Poner en 0 el stock de pastas en cámara (
+                  <span className="font-semibold">{resumen.totalCamara}</span> porc.) y mostrador (
+                  <span className="font-semibold">{resumen.totalMostrador}</span> porc.) vía
+                  ajustes negativos.
+                </li>
+                <li>
+                  Apagar todos los lotes activos de salsas / postres / pastelería / panadería
+                  (quedan en histórico).
+                </li>
+                <li>
+                  <strong>No</strong> borra historial: lotes, traspasos, mermas, ventas Fudo
+                  siguen tal cual.
+                </li>
+              </ul>
+            </div>
+
+            <p className="mt-4 text-xs text-gray-600">
+              Productos afectados: <strong>{resumen.productosConStock}</strong> pastas con stock.
+            </p>
+
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                onClick={onCancel}
+                className="rounded border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={onConfirmar}
+                className="rounded bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-700"
+              >
+                Sí, resetear todo a 0
+              </button>
+            </div>
+          </>
+        )}
+
+        {state.paso === 'reseteando' && (
+          <div className="py-6 text-center">
+            <div className="mb-3 text-3xl">⏳</div>
+            <p className="text-sm font-medium text-gray-700">Reseteando stock...</p>
+          </div>
+        )}
+
+        {state.paso === 'listo' && (
+          <>
+            <div className="mb-4 flex items-start gap-3">
+              <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-green-100 text-xl">
+                ✓
+              </div>
+              <div>
+                <h3 className="text-base font-semibold text-gray-900">Stock reseteado</h3>
+                <p className="mt-0.5 text-xs text-gray-500">
+                  Listo para cargar el conteo del día.
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-1 rounded border border-green-200 bg-green-50 p-3 text-xs text-green-900">
+              <p>
+                <strong>{state.pastasReseteadas}</strong> ajustes de pastas registrados.
+              </p>
+              <p>
+                <strong>{state.lotesReseteados}</strong> lotes de salsas/postres apagados.
+              </p>
+            </div>
+
+            <div className="mt-5 flex justify-end">
+              <button
+                onClick={onCancel}
+                className="rounded bg-rodziny-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-rodziny-700"
+              >
+                Cerrar
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
