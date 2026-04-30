@@ -483,6 +483,21 @@ export function ComprasPage() {
   >('todos');
   const [filtroProveedor, setFiltroProveedor] = useState('');
 
+  // Vista agrupada por proveedor: selección de gastos para pago bulk
+  const [seleccionados, setSeleccionados] = useState<Set<string>>(new Set());
+  const [proveedoresExpandidos, setProveedoresExpandidos] = useState<Set<string>>(new Set());
+
+  // Modal de pago bulk
+  const [bulkPagoOpen, setBulkPagoOpen] = useState(false);
+  const [bulkFecha, setBulkFecha] = useState(() => new Date().toISOString().split('T')[0]);
+  const [bulkMedio, setBulkMedio] = useState<MedioPago>('efectivo');
+  const [bulkReferencia, setBulkReferencia] = useState('');
+  const [bulkNotas, setBulkNotas] = useState('');
+  const [bulkComprobante, setBulkComprobante] = useState<File | null>(null);
+  const [bulkFactura, setBulkFactura] = useState<File | null>(null);
+  const [bulkGuardando, setBulkGuardando] = useState(false);
+  const [bulkError, setBulkError] = useState<string | null>(null);
+
   // Mes seleccionado para el resumen (default: mes actual)
   const [mesPagos, setMesPagos] = useState(() => {
     const d = new Date();
@@ -578,6 +593,217 @@ export function ComprasPage() {
       totalPagado: pagados.reduce((s, g) => s + g.importe_total, 0),
     };
   }, [gastosPagos, filtroProveedor, vistaResumenProv, mesPagos]);
+
+  // Agrupación de PENDIENTES por proveedor para vista bulk
+  const pendientesPorProveedor = useMemo(() => {
+    const hoy = new Date().toISOString().split('T')[0];
+    const en7dias = new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0];
+    let lista = (gastosPagos ?? []).filter((g) => g.estado_pago?.toLowerCase() !== 'pagado');
+
+    if (filtroPagos === 'vencidos') {
+      lista = lista.filter((g) => g.fecha_vencimiento && g.fecha_vencimiento < hoy);
+    } else if (filtroPagos === 'semana') {
+      lista = lista.filter(
+        (g) =>
+          g.fecha_vencimiento && g.fecha_vencimiento >= hoy && g.fecha_vencimiento <= en7dias,
+      );
+    }
+
+    if (filtroProveedor) {
+      const fp = filtroProveedor
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[̀-ͯ]/g, '');
+      lista = lista.filter((g) =>
+        g.proveedor
+          ?.toLowerCase()
+          .normalize('NFD')
+          .replace(/[̀-ͯ]/g, '')
+          .includes(fp),
+      );
+    }
+
+    const grupos = new Map<string, GastoPago[]>();
+    for (const g of lista) {
+      const key = g.proveedor || '(Sin proveedor)';
+      if (!grupos.has(key)) grupos.set(key, []);
+      grupos.get(key)!.push(g);
+    }
+
+    return [...grupos.entries()]
+      .map(([proveedor, gastos]) => {
+        const total = gastos.reduce((s, g) => s + g.importe_total, 0);
+        const venc = gastos.filter(
+          (g) => g.fecha_vencimiento && g.fecha_vencimiento < hoy,
+        );
+        const totalVencido = venc.reduce((s, g) => s + g.importe_total, 0);
+        const proxVenc =
+          gastos
+            .map((g) => g.fecha_vencimiento)
+            .filter((f): f is string => !!f)
+            .sort()[0] ?? null;
+        const sortedGastos = [...gastos].sort((a, b) => {
+          const fa = a.fecha_vencimiento ?? '9999-99-99';
+          const fb = b.fecha_vencimiento ?? '9999-99-99';
+          return fa.localeCompare(fb);
+        });
+        return {
+          proveedor,
+          gastos: sortedGastos,
+          total,
+          cantPendientes: gastos.length,
+          cantVencidos: venc.length,
+          totalVencido,
+          proxVenc,
+        };
+      })
+      .sort((a, b) => {
+        if (a.totalVencido !== b.totalVencido) return b.totalVencido - a.totalVencido;
+        return b.total - a.total;
+      });
+  }, [gastosPagos, filtroPagos, filtroProveedor]);
+
+  // Selección bulk: cálculos derivados
+  const seleccionInfo = useMemo(() => {
+    if (seleccionados.size === 0)
+      return { gastos: [] as GastoPago[], total: 0, proveedores: [] as string[] };
+    const gastos = (gastosPagos ?? []).filter((g) => seleccionados.has(g.id));
+    const total = gastos.reduce((s, g) => s + g.importe_total, 0);
+    const proveedores = [...new Set(gastos.map((g) => g.proveedor || '(Sin proveedor)'))];
+    return { gastos, total, proveedores };
+  }, [seleccionados, gastosPagos]);
+
+  function toggleSeleccion(id: string) {
+    setSeleccionados((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+  function toggleProveedorExpandido(prov: string) {
+    setProveedoresExpandidos((prev) => {
+      const next = new Set(prev);
+      if (next.has(prov)) next.delete(prov);
+      else next.add(prov);
+      return next;
+    });
+  }
+  function toggleSeleccionarTodosProveedor(prov: string, gastos: GastoPago[]) {
+    const ids = gastos.map((g) => g.id);
+    const todosSeleccionados = ids.every((id) => seleccionados.has(id));
+    setSeleccionados((prev) => {
+      const next = new Set(prev);
+      if (todosSeleccionados) ids.forEach((id) => next.delete(id));
+      else ids.forEach((id) => next.add(id));
+      return next;
+    });
+    if (!proveedoresExpandidos.has(prov))
+      toggleProveedorExpandido(prov);
+  }
+
+  function abrirBulkPago() {
+    if (seleccionInfo.gastos.length === 0) return;
+    setBulkFecha(new Date().toISOString().split('T')[0]);
+    setBulkMedio('efectivo');
+    setBulkReferencia('');
+    setBulkNotas('');
+    setBulkComprobante(null);
+    setBulkFactura(null);
+    setBulkError(null);
+    setBulkPagoOpen(true);
+  }
+
+  function cerrarBulkPago() {
+    setBulkPagoOpen(false);
+    setBulkComprobante(null);
+    setBulkFactura(null);
+    setBulkReferencia('');
+    setBulkNotas('');
+    setBulkError(null);
+  }
+
+  async function confirmarBulkPago() {
+    if (seleccionInfo.gastos.length === 0) return;
+    setBulkError(null);
+    setBulkGuardando(true);
+    try {
+      const carpeta = `${local}/${bulkFecha.substring(0, 7)}`;
+
+      // Subir comprobante de pago una sola vez
+      let pathComprobantePago: string | null = null;
+      if (bulkComprobante) {
+        const ext = bulkComprobante.name.split('.').pop()?.toLowerCase() || 'pdf';
+        const path = `${carpeta}/pago_bulk_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
+        const { error } = await supabase.storage
+          .from('gastos-comprobantes')
+          .upload(path, bulkComprobante, {
+            contentType: bulkComprobante.type || 'application/octet-stream',
+          });
+        if (error) throw error;
+        pathComprobantePago = path;
+      }
+
+      // Subir factura una sola vez (si la hay)
+      let pathFactura: string | null = null;
+      if (bulkFactura) {
+        const ext = bulkFactura.name.split('.').pop()?.toLowerCase() || 'pdf';
+        const path = `${carpeta}/factura_bulk_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
+        const { error } = await supabase.storage
+          .from('gastos-comprobantes')
+          .upload(path, bulkFactura, {
+            contentType: bulkFactura.type || 'application/octet-stream',
+          });
+        if (error) throw error;
+        pathFactura = path;
+      }
+
+      // Insertar 1 fila en pagos_gastos por cada gasto seleccionado
+      const filasPago = seleccionInfo.gastos.map((g) => ({
+        gasto_id: g.id,
+        fecha_pago: bulkFecha,
+        monto: g.importe_total,
+        descuento: 0,
+        medio_pago: bulkMedio,
+        referencia: bulkReferencia.trim() || null,
+        notas: bulkNotas.trim() || null,
+        comprobante_pago_path: pathComprobantePago,
+      }));
+      const { error: errIns } = await supabase.from('pagos_gastos').insert(filasPago);
+      if (errIns) throw errIns;
+
+      // Marcar todos los gastos como Pagado y, si subimos factura, asignarla a los que no la tenían
+      const idsTodos = seleccionInfo.gastos.map((g) => g.id);
+      const { error: errUpd1 } = await supabase
+        .from('gastos')
+        .update({ estado_pago: 'Pagado', fecha_vencimiento: bulkFecha })
+        .in('id', idsTodos);
+      if (errUpd1) throw errUpd1;
+
+      if (pathFactura) {
+        const idsSinFactura = seleccionInfo.gastos
+          .filter((g) => !g.factura_path)
+          .map((g) => g.id);
+        if (idsSinFactura.length > 0) {
+          const { error: errUpd2 } = await supabase
+            .from('gastos')
+            .update({ factura_path: pathFactura })
+            .in('id', idsSinFactura);
+          if (errUpd2) throw errUpd2;
+        }
+      }
+
+      setSeleccionados(new Set());
+      cerrarBulkPago();
+      qc.invalidateQueries({ queryKey: ['gastos_pagos'] });
+      qc.invalidateQueries({ queryKey: ['pagos_gastos_compras'] });
+      qc.invalidateQueries({ queryKey: ['pagos_gastos'] });
+    } catch (e) {
+      setBulkError((e as Error).message ?? 'Error al guardar el pago');
+    } finally {
+      setBulkGuardando(false);
+    }
+  }
 
   const pagosKpis = useMemo(() => {
     const hoy = new Date().toISOString().split('T')[0];
@@ -2292,7 +2518,8 @@ export function ComprasPage() {
             </div>
           )}
 
-          {/* Tabla de pagos */}
+          {/* Vista de pagos: agrupada por proveedor (pendientes) o tabla flat (pagados) */}
+          {filtroPagos === 'pagados' ? (
           <div className="overflow-hidden rounded-lg border border-surface-border bg-white">
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -2328,9 +2555,7 @@ export function ComprasPage() {
                   {pagosFiltrados.length === 0 ? (
                     <tr>
                       <td colSpan={8} className="px-4 py-8 text-center text-gray-400">
-                        {filtroPagos === 'todos'
-                          ? 'No hay gastos cargados'
-                          : 'No hay pagos en esta categoría'}
+                        No hay pagos registrados
                       </td>
                     </tr>
                   ) : (
@@ -2457,6 +2682,227 @@ export function ComprasPage() {
               </table>
             </div>
           </div>
+          ) : pendientesPorProveedor.length === 0 ? (
+            <div className="rounded-lg border border-surface-border bg-white p-8 text-center text-sm text-gray-400">
+              {filtroPagos === 'vencidos'
+                ? 'Sin gastos vencidos 🎉'
+                : filtroPagos === 'semana'
+                  ? 'Sin vencimientos en los próximos 7 días'
+                  : filtroProveedor
+                    ? `Sin gastos pendientes para "${filtroProveedor}"`
+                    : 'Sin gastos pendientes de pago'}
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {pendientesPorProveedor.map((grupo) => {
+                const expandido = proveedoresExpandidos.has(grupo.proveedor);
+                const idsGrupo = grupo.gastos.map((g) => g.id);
+                const todosTildados = idsGrupo.every((id) => seleccionados.has(id));
+                const algunoTildado = idsGrupo.some((id) => seleccionados.has(id));
+                return (
+                  <div
+                    key={grupo.proveedor}
+                    className={cn(
+                      'overflow-hidden rounded-lg border bg-white transition-colors',
+                      grupo.cantVencidos > 0 ? 'border-red-200' : 'border-surface-border',
+                    )}
+                  >
+                    <div className="flex items-center gap-3 px-4 py-3">
+                      <input
+                        type="checkbox"
+                        checked={todosTildados}
+                        ref={(el) => {
+                          if (el) el.indeterminate = !todosTildados && algunoTildado;
+                        }}
+                        onChange={() =>
+                          toggleSeleccionarTodosProveedor(grupo.proveedor, grupo.gastos)
+                        }
+                        className="h-4 w-4 cursor-pointer accent-rodziny-500"
+                        title="Tildar/destildar todos del proveedor"
+                      />
+                      <button
+                        onClick={() => toggleProveedorExpandido(grupo.proveedor)}
+                        className="flex flex-1 items-center justify-between gap-3 text-left"
+                      >
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-gray-400">{expandido ? '▼' : '▶'}</span>
+                          <span className="font-medium text-gray-900">{grupo.proveedor}</span>
+                          <span className="rounded bg-gray-100 px-1.5 py-0.5 text-xs text-gray-600">
+                            {grupo.cantPendientes} pago
+                            {grupo.cantPendientes !== 1 ? 's' : ''}
+                          </span>
+                          {grupo.cantVencidos > 0 && (
+                            <span className="rounded bg-red-100 px-1.5 py-0.5 text-xs font-medium text-red-700">
+                              {grupo.cantVencidos} vencido
+                              {grupo.cantVencidos !== 1 ? 's' : ''}
+                            </span>
+                          )}
+                          {grupo.proxVenc && (
+                            <span className="text-xs text-gray-500">
+                              Próx. vto:{' '}
+                              {new Date(
+                                grupo.proxVenc + 'T12:00:00',
+                              ).toLocaleDateString('es-AR', {
+                                day: '2-digit',
+                                month: 'short',
+                              })}
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-right">
+                          <p className="text-[10px] text-gray-500">Saldo total</p>
+                          <p
+                            className={cn(
+                              'text-base font-bold',
+                              grupo.cantVencidos > 0 ? 'text-red-600' : 'text-gray-900',
+                            )}
+                          >
+                            {formatARS(grupo.total)}
+                          </p>
+                        </div>
+                      </button>
+                    </div>
+
+                    {expandido && (
+                      <div className="border-t border-gray-100 bg-gray-50/50">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="border-b border-gray-100 text-xs text-gray-500">
+                              <th className="w-10 px-4 py-1.5"></th>
+                              <th className="px-3 py-1.5 text-left font-medium">
+                                Vencimiento
+                              </th>
+                              <th className="px-3 py-1.5 text-left font-medium">Categoría</th>
+                              <th className="px-3 py-1.5 text-right font-medium">Importe</th>
+                              <th className="px-3 py-1.5 text-center font-medium">Estado</th>
+                              <th className="w-28 px-3 py-1.5 text-center font-medium">
+                                Pagar solo
+                              </th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {grupo.gastos.map((g) => {
+                              const hoy = new Date().toISOString().split('T')[0];
+                              const en7dias = new Date(Date.now() + 7 * 86400000)
+                                .toISOString()
+                                .split('T')[0];
+                              const vencido =
+                                g.fecha_vencimiento && g.fecha_vencimiento < hoy;
+                              const proxSemana =
+                                !vencido &&
+                                g.fecha_vencimiento &&
+                                g.fecha_vencimiento <= en7dias;
+                              const tildado = seleccionados.has(g.id);
+                              return (
+                                <tr
+                                  key={g.id}
+                                  className={cn(
+                                    'border-b border-gray-100 last:border-0',
+                                    tildado ? 'bg-rodziny-50/60' : 'hover:bg-white',
+                                  )}
+                                >
+                                  <td className="px-4 py-1.5">
+                                    <input
+                                      type="checkbox"
+                                      checked={tildado}
+                                      onChange={() => toggleSeleccion(g.id)}
+                                      className="h-4 w-4 cursor-pointer accent-rodziny-500"
+                                    />
+                                  </td>
+                                  <td className="px-3 py-1.5">
+                                    {g.fecha_vencimiento ? (
+                                      <span
+                                        className={cn(
+                                          vencido
+                                            ? 'font-medium text-red-600'
+                                            : proxSemana
+                                              ? 'text-orange-600'
+                                              : 'text-gray-700',
+                                        )}
+                                      >
+                                        {new Date(
+                                          g.fecha_vencimiento + 'T12:00:00',
+                                        ).toLocaleDateString('es-AR', {
+                                          day: '2-digit',
+                                          month: 'short',
+                                        })}
+                                      </span>
+                                    ) : (
+                                      <span className="text-xs text-gray-400">Sin fecha</span>
+                                    )}
+                                  </td>
+                                  <td className="px-3 py-1.5 text-xs text-gray-600">
+                                    {g.subcategoria || g.categoria}
+                                  </td>
+                                  <td className="px-3 py-1.5 text-right font-medium text-gray-900">
+                                    {formatARS(g.importe_total)}
+                                  </td>
+                                  <td className="px-3 py-1.5 text-center">
+                                    {vencido ? (
+                                      <span className="inline-block rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-medium text-red-700">
+                                        Vencido
+                                      </span>
+                                    ) : proxSemana ? (
+                                      <span className="inline-block rounded bg-orange-100 px-1.5 py-0.5 text-[10px] font-medium text-orange-700">
+                                        Próximo
+                                      </span>
+                                    ) : (
+                                      <span className="inline-block rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-medium text-blue-700">
+                                        A pagar
+                                      </span>
+                                    )}
+                                  </td>
+                                  <td className="px-3 py-1.5 text-center">
+                                    <button
+                                      onClick={() => abrirModalPagoCompra(g)}
+                                      className="rounded border border-green-300 px-2 py-0.5 text-xs text-green-700 transition-colors hover:bg-green-50"
+                                    >
+                                      Pagar
+                                    </button>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {seleccionInfo.gastos.length > 0 && (
+            <div className="sticky bottom-4 z-10 mt-4 flex justify-center">
+              <div className="flex items-center gap-3 rounded-full border border-rodziny-200 bg-white px-4 py-2 shadow-lg">
+                <span className="text-sm text-gray-600">
+                  {seleccionInfo.gastos.length} pago
+                  {seleccionInfo.gastos.length !== 1 ? 's' : ''} ·{' '}
+                  <span className="font-bold text-gray-900">
+                    {formatARS(seleccionInfo.total)}
+                  </span>
+                  {seleccionInfo.proveedores.length > 1 && (
+                    <span className="ml-1 text-xs text-orange-600">
+                      ⚠ {seleccionInfo.proveedores.length} proveedores distintos
+                    </span>
+                  )}
+                </span>
+                <button
+                  onClick={() => setSeleccionados(new Set())}
+                  className="text-xs text-gray-500 hover:text-gray-700"
+                >
+                  Limpiar
+                </button>
+                <button
+                  onClick={abrirBulkPago}
+                  className="rounded-full bg-green-600 px-4 py-1.5 text-sm font-semibold text-white shadow hover:bg-green-700"
+                >
+                  Pagar selección
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -2645,6 +3091,155 @@ export function ComprasPage() {
             </div>
           );
         })()}
+
+      {/* Modal de pago BULK (varios gastos juntos) */}
+      {bulkPagoOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/40 p-4">
+          <div className="my-4 w-full max-w-md space-y-3 rounded-xl bg-white p-6 shadow-xl">
+            <div>
+              <h3 className="text-sm font-semibold text-gray-800">
+                Pagar {seleccionInfo.gastos.length} gasto
+                {seleccionInfo.gastos.length !== 1 ? 's' : ''} juntos
+              </h3>
+              <p className="mt-0.5 text-xs text-gray-500">
+                {seleccionInfo.proveedores.length === 1
+                  ? seleccionInfo.proveedores[0]
+                  : `${seleccionInfo.proveedores.length} proveedores`}{' '}
+                — Total{' '}
+                <span className="font-semibold text-gray-800">
+                  {formatARS(seleccionInfo.total)}
+                </span>
+              </p>
+            </div>
+
+            {/* Detalle de gastos a pagar */}
+            <div className="max-h-32 overflow-y-auto rounded-md border border-gray-200 bg-gray-50 px-2 py-1.5 text-[11px] text-gray-600">
+              {seleccionInfo.gastos.map((g) => (
+                <div key={g.id} className="flex items-center justify-between gap-2 py-0.5">
+                  <span className="truncate">
+                    {g.fecha_vencimiento
+                      ? new Date(g.fecha_vencimiento + 'T12:00:00').toLocaleDateString(
+                          'es-AR',
+                          { day: '2-digit', month: 'short' },
+                        )
+                      : '—'}{' '}
+                    · {g.proveedor || 'Sin prov.'} · {g.subcategoria || g.categoria}
+                  </span>
+                  <span className="shrink-0 font-medium">{formatARS(g.importe_total)}</span>
+                </div>
+              ))}
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-600">
+                  Fecha de pago
+                </label>
+                <input
+                  type="date"
+                  value={bulkFecha}
+                  onChange={(e) => setBulkFecha(e.target.value)}
+                  className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-600">
+                  Medio de pago
+                </label>
+                <select
+                  value={bulkMedio}
+                  onChange={(e) => setBulkMedio(e.target.value as MedioPago)}
+                  className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm"
+                >
+                  {Object.entries(MEDIO_PAGO_LABEL).map(([k, v]) => (
+                    <option key={k} value={k}>
+                      {v}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div>
+              <label className="mb-1 block text-xs font-medium text-gray-600">
+                Referencia <span className="text-gray-400">(opcional)</span>
+              </label>
+              <input
+                type="text"
+                value={bulkReferencia}
+                onChange={(e) => setBulkReferencia(e.target.value)}
+                placeholder="Nº transferencia, cheque, etc."
+                className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm"
+              />
+            </div>
+
+            <div>
+              <label className="mb-1 block text-xs font-medium text-gray-600">
+                Comprobante de pago{' '}
+                <span className="text-gray-400">(transferencia / voucher único)</span>
+              </label>
+              <input
+                type="file"
+                accept="image/*,application/pdf"
+                onChange={(e) => setBulkComprobante(e.target.files?.[0] ?? null)}
+                className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-xs file:mr-2 file:rounded file:border-0 file:bg-rodziny-50 file:px-2 file:py-1 file:text-rodziny-700"
+              />
+            </div>
+
+            <div>
+              <label className="mb-1 block text-xs font-medium text-gray-600">
+                Factura del proveedor{' '}
+                <span className="text-gray-400">
+                  (opcional, se asigna a los gastos sin factura)
+                </span>
+              </label>
+              <input
+                type="file"
+                accept="image/*,application/pdf"
+                onChange={(e) => setBulkFactura(e.target.files?.[0] ?? null)}
+                className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-xs file:mr-2 file:rounded file:border-0 file:bg-rodziny-50 file:px-2 file:py-1 file:text-rodziny-700"
+              />
+            </div>
+
+            <div>
+              <label className="mb-1 block text-xs font-medium text-gray-600">
+                Notas <span className="text-gray-400">(opcional)</span>
+              </label>
+              <textarea
+                value={bulkNotas}
+                onChange={(e) => setBulkNotas(e.target.value)}
+                rows={2}
+                className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm"
+              />
+            </div>
+
+            {bulkError && (
+              <div className="rounded bg-red-50 px-3 py-2 text-xs text-red-700">
+                {bulkError}
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                onClick={cerrarBulkPago}
+                disabled={bulkGuardando}
+                className="rounded-md border border-gray-300 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={confirmarBulkPago}
+                disabled={bulkGuardando}
+                className="rounded-md bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-50"
+              >
+                {bulkGuardando
+                  ? 'Guardando...'
+                  : `Confirmar pago · ${formatARS(seleccionInfo.total)}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </PageContainer>
   );
 }
