@@ -28,17 +28,28 @@ interface Traspaso {
   producto_id: string;
   porciones: number;
   local: string;
+  created_at: string;
 }
 interface Merma {
   producto_id: string;
   porciones: number;
   local: string;
+  created_at: string;
 }
 interface AjusteStock {
   producto_id: string;
   local: string;
   ubicacion: 'camara' | 'mostrador';
   delta: number;
+  created_at: string;
+}
+interface CierreDia {
+  producto_id: string;
+  local: string;
+  fecha: string; // YYYY-MM-DD
+  turno: 'mediodia' | 'noche';
+  cantidad_real: number;
+  created_at: string;
 }
 interface FudoRankingItem {
   nombre: string;
@@ -170,7 +181,7 @@ export function StockTab() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cocina_traspasos')
-        .select('producto_id, porciones, local');
+        .select('producto_id, porciones, local, created_at');
       if (error) throw error;
       return data as Traspaso[];
     },
@@ -193,7 +204,7 @@ export function StockTab() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cocina_merma')
-        .select('producto_id, porciones, local');
+        .select('producto_id, porciones, local, created_at');
       if (error) throw error;
       return data as Merma[];
     },
@@ -217,9 +228,31 @@ export function StockTab() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cocina_ajustes_stock')
-        .select('producto_id, local, ubicacion, delta');
+        .select('producto_id, local, ubicacion, delta, created_at');
       if (error) throw error;
       return (data ?? []) as AjusteStock[];
+    },
+  });
+
+  // Último cierre de mostrador por producto (tipo='pasta'). Define el "stock inicial"
+  // del próximo turno: cuando el equipo confirma físicamente lo que quedó al cerrar,
+  // ese valor se usa como base y los eventos posteriores se aplican encima.
+  const { data: cierresPorProducto } = useQuery({
+    queryKey: ['cocina-cierres-pastas'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('cocina_cierre_dia')
+        .select('producto_id, local, fecha, turno, cantidad_real, created_at')
+        .eq('tipo', 'pasta')
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      // Quedarse con el más reciente por (producto_id, local)
+      const m = new Map<string, CierreDia>();
+      for (const c of (data ?? []) as CierreDia[]) {
+        const key = `${c.producto_id}|${c.local}`;
+        if (!m.has(key)) m.set(key, c);
+      }
+      return m;
     },
   });
 
@@ -323,6 +356,7 @@ export function StockTab() {
       qc.invalidateQueries({ queryKey: ['cocina_stock_pastas'] });
       qc.invalidateQueries({ queryKey: ['stock-produccion-lotes'] });
       qc.invalidateQueries({ queryKey: ['cocina_stock_salsas_postres'] });
+      qc.invalidateQueries({ queryKey: ['dashboard-ajustes-mostrador'] });
       setResetModal({
         paso: 'listo',
         pastasReseteadas: res.pastasReseteadas,
@@ -347,6 +381,40 @@ export function StockTab() {
       return data.data as FudoData;
     },
     staleTime: 2 * 60 * 1000, // refrescar cada 2 min
+  });
+
+  // Fecha desde la cual necesitamos ventas Fudo para descontar del mostrador.
+  // Es la fecha MÁS ANTIGUA entre los últimos cierres de Vedia + 1 día.
+  // Si todos los cierres son de hoy o no hay cierres, alcanza con "hoy".
+  const fudoDesdeFecha = useMemo(() => {
+    if (!cierresPorProducto || cierresPorProducto.size === 0) return hoy;
+    let masAntigua: string | null = null;
+    for (const c of cierresPorProducto.values()) {
+      if (c.local !== 'vedia') continue;
+      if (c.fecha < hoy) {
+        if (!masAntigua || c.fecha < masAntigua) masAntigua = c.fecha;
+      }
+    }
+    if (!masAntigua) return hoy;
+    // Día siguiente al cierre más antiguo
+    const d = new Date(masAntigua + 'T12:00:00');
+    d.setDate(d.getDate() + 1);
+    return d.toISOString().slice(0, 10);
+  }, [cierresPorProducto, hoy]);
+
+  // Ventas Fudo desde el último cierre relevante (para aplicar al mostrador acumulado).
+  // Si fudoDesdeFecha == hoy, este query devuelve lo mismo que fudoVedia.
+  const { data: fudoDesdeCierre } = useQuery({
+    queryKey: ['cocina-stock-fudo-desde-cierre', 'vedia', fudoDesdeFecha, hoy],
+    queryFn: async () => {
+      const { data, error } = await supabase.functions.invoke('fudo-productos', {
+        body: { local: 'vedia', fechaDesde: fudoDesdeFecha, fechaHasta: hoy },
+      });
+      if (error) return null;
+      if (!data?.ok) return null;
+      return data.data as FudoData;
+    },
+    staleTime: 2 * 60 * 1000,
   });
 
   const isLoading =
@@ -384,15 +452,7 @@ export function StockTab() {
           .filter((m) => m.producto_id === prod.id && m.local === loc)
           .reduce((s, m) => s + m.porciones, 0);
 
-        // Stock del día en el freezer del mostrador (aproximado hasta Fase 2 con conteo físico):
-        //   traspasos_hoy − ventas_fudo_hoy − merma_hoy
-        // Asume que el mostrador arranca vacío cada día. Solo Vedia tiene ventas de Fudo hoy.
-        const traspasadoHoy = traspasosHoy
-          .filter((t) => t.producto_id === prod.id && t.local === loc)
-          .reduce((s, t) => s + t.porciones, 0);
-        const mermaDelDia = mermasHoy
-          .filter((m) => m.producto_id === prod.id && m.local === loc)
-          .reduce((s, m) => s + m.porciones, 0);
+        // Vendido hoy (para la columna "Vendido hoy" — no necesariamente lo mismo que se descuenta del mostrador)
         const vendidoHoy =
           loc === 'vedia' ? ventasFudoDelProducto(prod, fudoVedia?.ranking) : 0;
 
@@ -408,10 +468,56 @@ export function StockTab() {
           )
           .reduce((s, a) => s + Number(a.delta), 0);
 
-        const mostrador = Math.max(
-          0,
-          traspasadoHoy - vendidoHoy - mermaDelDia + ajusteMostrador,
-        );
+        // Stock mostrador: usa el último cierre como punto de partida si existe.
+        // Si no hay cierre, fallback al cálculo viejo (traspasos_hoy − ventas_hoy − merma_hoy + ajustes_hoy).
+        const cierre = cierresPorProducto?.get(`${prod.id}|${loc}`) ?? null;
+        let mostrador: number;
+        if (cierre) {
+          // Eventos posteriores al cierre (created_at > cierre.created_at)
+          const traspasosPost = (traspasos ?? [])
+            .filter(
+              (t) =>
+                t.producto_id === prod.id && t.local === loc && t.created_at > cierre.created_at,
+            )
+            .reduce((s, t) => s + t.porciones, 0);
+          const mermaPost = (mermas ?? [])
+            .filter(
+              (m) =>
+                m.producto_id === prod.id && m.local === loc && m.created_at > cierre.created_at,
+            )
+            .reduce((s, m) => s + m.porciones, 0);
+          const ajustesPost = (ajustes ?? [])
+            .filter(
+              (a) =>
+                a.producto_id === prod.id &&
+                a.local === loc &&
+                a.ubicacion === 'mostrador' &&
+                a.created_at > cierre.created_at,
+            )
+            .reduce((s, a) => s + Number(a.delta), 0);
+
+          // Ventas Fudo: si el cierre fue HOY, asumimos que es lo más reciente y no
+          // descontamos ventas posteriores (Fudo no devuelve timestamp por venta para
+          // filtrar por hora exacta del cierre).
+          let ventasPost = 0;
+          if (loc === 'vedia' && cierre.fecha < hoy) {
+            ventasPost = ventasFudoDelProducto(prod, fudoDesdeCierre?.ranking);
+          }
+
+          mostrador = Math.max(
+            0,
+            Number(cierre.cantidad_real) + traspasosPost - ventasPost - mermaPost + ajustesPost,
+          );
+        } else {
+          // Sin cierre todavía: lógica anterior (solo "hoy")
+          const traspasadoHoy = traspasosHoy
+            .filter((t) => t.producto_id === prod.id && t.local === loc)
+            .reduce((s, t) => s + t.porciones, 0);
+          const mermaDelDia = mermasHoy
+            .filter((m) => m.producto_id === prod.id && m.local === loc)
+            .reduce((s, m) => s + m.porciones, 0);
+          mostrador = Math.max(0, traspasadoHoy - vendidoHoy - mermaDelDia + ajusteMostrador);
+        }
 
         const stock = producido - traspasado - mermaTotal + ajusteCamara;
 
@@ -440,6 +546,9 @@ export function StockTab() {
     traspasosHoy,
     mermasHoy,
     fudoVedia,
+    fudoDesdeCierre,
+    cierresPorProducto,
+    hoy,
     ajustes,
     filtroLocal,
   ]);

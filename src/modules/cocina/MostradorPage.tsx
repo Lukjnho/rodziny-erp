@@ -280,6 +280,11 @@ function CierrePastas({ local }: { local: Local }) {
       qc.invalidateQueries({ queryKey: ['mostrador-cierre-actual'] });
       qc.invalidateQueries({ queryKey: ['cocina-cierre-dia'] });
       qc.invalidateQueries({ queryKey: ['cocina-cierre-faltantes'] });
+      // El cierre define el stock inicial del próximo turno → refrescar stock en
+      // tab Stock (cocina-cierres-pastas) y Dashboard (dashboard-cierres-pastas).
+      qc.invalidateQueries({ queryKey: ['cocina-cierres-pastas'] });
+      qc.invalidateQueries({ queryKey: ['dashboard-cierres-pastas'] });
+      qc.invalidateQueries({ queryKey: ['cocina_stock_pastas'] });
       setTimeout(() => setMensaje(null), 2500);
     },
     onError: (e) => {
