@@ -520,14 +520,19 @@ function CierreSimple({
       }
 
       // Salsas/postres se identifican por receta_id (no por producto_id)
-      const payload = conDatos.map(([recetaId, valor]) => ({
+      const cierres = conDatos.map(([recetaId, valor]) => ({
+        recetaId,
+        cantidad: Number(valor.replace(',', '.')),
+      }));
+
+      const payload = cierres.map(({ recetaId, cantidad }) => ({
         fecha,
         local,
         producto_id: null as null,
         receta_id: recetaId,
         tipo,
         turno: null as null,
-        cantidad_real: Number(valor.replace(',', '.')),
+        cantidad_real: cantidad,
         unidad,
         responsable: responsable.trim(),
         notas: notas[recetaId]?.trim() || null,
@@ -535,12 +540,45 @@ function CierreSimple({
 
       const { error } = await supabase.from('cocina_cierre_dia').insert(payload);
       if (error) throw error;
+
+      // Sincronizar con cocina_lotes_produccion para que el stock visible cuadre
+      // con lo que se cerró: apaga los lotes activos previos de la receta + local,
+      // y crea uno nuevo con la cantidad real del cierre. Así Dashboard/Stock
+      // arrancan el día siguiente con exactamente lo que se contó al cerrar.
+      const unidadLote: 'kg' | 'unid' | 'lt' = unidad === 'kg' ? 'kg' : 'unid';
+      for (const { recetaId, cantidad } of cierres) {
+        const { error: errOff } = await supabase
+          .from('cocina_lotes_produccion')
+          .update({ en_stock: false })
+          .eq('local', local)
+          .eq('receta_id', recetaId)
+          .eq('en_stock', true);
+        if (errOff) throw errOff;
+
+        if (cantidad > 0) {
+          const { error: errIns } = await supabase.from('cocina_lotes_produccion').insert({
+            fecha,
+            local,
+            categoria: tipo,
+            receta_id: recetaId,
+            nombre_libre: null,
+            cantidad_producida: cantidad,
+            unidad: unidadLote,
+            en_stock: true,
+          });
+          if (errIns) throw errIns;
+        }
+      }
     },
     onSuccess: () => {
-      setMensaje('✅ Cierre guardado.');
+      setMensaje('✅ Cierre guardado. Stock actualizado.');
       qc.invalidateQueries({ queryKey: ['mostrador-simple-cierre'] });
       qc.invalidateQueries({ queryKey: ['cocina-cierre-dia'] });
       qc.invalidateQueries({ queryKey: ['cocina-cierre-faltantes'] });
+      // El cierre ahora también define el stock actual (no solo histórico) →
+      // refrescar Dashboard y tab Stock para que muestren la cantidad cerrada.
+      qc.invalidateQueries({ queryKey: ['stock-produccion-lotes'] });
+      qc.invalidateQueries({ queryKey: ['cocina_stock_salsas_postres'] });
       setTimeout(() => setMensaje(null), 2500);
     },
     onError: (e) => {
