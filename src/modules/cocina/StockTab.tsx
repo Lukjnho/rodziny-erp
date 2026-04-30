@@ -234,7 +234,11 @@ export function StockTab() {
       });
       if (error) throw error;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['cocina-ajustes-stock'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['cocina-ajustes-stock'] });
+      // El Dashboard usa la vista v_cocina_stock_pastas que ya incluye los ajustes
+      qc.invalidateQueries({ queryKey: ['cocina_stock_pastas'] });
+    },
     onError: (e: Error) => window.alert(`Error al guardar ajuste: ${e.message}`),
   });
 

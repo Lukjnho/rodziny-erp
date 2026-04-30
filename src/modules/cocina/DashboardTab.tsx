@@ -605,7 +605,8 @@ interface StockPastaDB {
   porcionesFresco: number;
   porcionesTraspasadas: number;
   porcionesMerma: number;
-  porcionesVendibles: number; // camara - traspasos - merma
+  porcionesAjusteMostrador: number; // ajuste manual acumulado de mostrador
+  porcionesVendibles: number; // camara - traspasos - merma  (camara ya incluye ajuste de cámara)
 }
 
 // Normaliza nombres para matchear entre PRODUCTOS_COCINA y la tabla cocina_productos.
@@ -692,7 +693,7 @@ export function DashboardTab() {
       const { data, error } = await supabase
         .from('v_cocina_stock_pastas')
         .select(
-          'nombre, porciones_camara, porciones_fresco, porciones_traspasadas, porciones_merma',
+          'nombre, porciones_camara, porciones_fresco, porciones_traspasadas, porciones_merma, porciones_ajuste_mostrador',
         )
         .eq('local', local);
       if (error) throw error;
@@ -703,16 +704,19 @@ export function DashboardTab() {
         porciones_fresco: number | null;
         porciones_traspasadas: number | null;
         porciones_merma: number | null;
+        porciones_ajuste_mostrador: number | null;
       }>) {
-        const camara = Number(r.porciones_camara) || 0;
+        const camara = Number(r.porciones_camara) || 0; // ya incluye ajuste de cámara
         const fresco = Number(r.porciones_fresco) || 0;
         const traspasos = Number(r.porciones_traspasadas) || 0;
         const merma = Number(r.porciones_merma) || 0;
+        const ajusteMostrador = Number(r.porciones_ajuste_mostrador) || 0;
         m.set(normNombre(r.nombre), {
           porcionesCamara: camara,
           porcionesFresco: fresco,
           porcionesTraspasadas: traspasos,
           porcionesMerma: merma,
+          porcionesAjusteMostrador: ajusteMostrador,
           porcionesVendibles: Math.max(0, camara - traspasos - merma),
         });
       }
@@ -901,7 +905,7 @@ export function DashboardTab() {
       const enColaPorciones = stockDB?.porcionesFresco ?? 0;
 
       // Stock estimado en el freezer del mostrador hoy.
-      // Mismo cálculo que el StockTab: traspasos_hoy − ventas_fudo_hoy − merma_hoy.
+      // Mismo cálculo que el StockTab: traspasos_hoy − ventas_fudo_hoy − merma_hoy + ajuste_mostrador.
       // Para no-pastas o si no encontramos el id del producto, queda en 0.
       const prodDBPreview = productosDB?.get(normNombre(prod.nombre));
       let enMostradorPorciones = 0;
@@ -918,7 +922,8 @@ export function DashboardTab() {
             if (f) vendidosHoy += f.cantidad;
           }
         }
-        enMostradorPorciones = Math.max(0, traspHoy - vendidosHoy - mermaH);
+        const ajusteMostrador = stockDB?.porcionesAjusteMostrador ?? 0;
+        enMostradorPorciones = Math.max(0, traspHoy - vendidosHoy - mermaH + ajusteMostrador);
       }
 
       // Ventas diarias promedio desde Fudo
