@@ -495,18 +495,20 @@ function CierreSimple({
   const [notas, setNotas] = useState<Record<string, string>>({});
   const [mensaje, setMensaje] = useState<string | null>(null);
 
+  // Salsas y postres viven en cocina_recetas (no en cocina_productos como las pastas).
+  // Listamos todas las recetas activas del tipo para que el cierre funcione "como las pastas".
   const { data: productos, isLoading } = useQuery({
-    queryKey: ['mostrador-simple-productos', local, tipo],
+    queryKey: ['mostrador-simple-recetas', local, tipo],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from('cocina_productos')
-        .select('id, nombre, codigo')
+        .from('cocina_recetas')
+        .select('id, nombre, tipo, local')
         .eq('tipo', tipo)
         .eq('activo', true)
-        .eq('local', local)
+        .or(`local.eq.${local},local.eq.ambos`)
         .order('nombre');
       if (error) throw error;
-      return data as Producto[];
+      return (data ?? []).map((r) => ({ id: r.id, nombre: r.nombre, codigo: '' })) as Producto[];
     },
   });
 
@@ -515,7 +517,7 @@ function CierreSimple({
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cocina_cierre_dia')
-        .select('id, producto_id, cantidad_real, notas, responsable')
+        .select('id, receta_id, producto_id, cantidad_real, notas, responsable')
         .eq('local', local)
         .eq('fecha', fecha)
         .eq('tipo', tipo)
@@ -523,7 +525,8 @@ function CierreSimple({
       if (error) throw error;
       return data as Array<{
         id: string;
-        producto_id: string;
+        receta_id: string | null;
+        producto_id: string | null;
         cantidad_real: number;
         notas: string | null;
         responsable: string | null;
@@ -536,7 +539,10 @@ function CierreSimple({
     const v: Record<string, string> = {};
     const n: Record<string, string> = {};
     for (const p of productos) {
-      const previo = cierreActual?.find((c) => c.producto_id === p.id);
+      // Match por receta_id (nuevo) con fallback a producto_id (legacy)
+      const previo = cierreActual?.find(
+        (c) => c.receta_id === p.id || c.producto_id === p.id,
+      );
       v[p.id] = previo ? String(previo.cantidad_real) : '';
       n[p.id] = previo?.notas ?? '';
     }
@@ -562,16 +568,18 @@ function CierreSimple({
         if (errDel) throw errDel;
       }
 
-      const payload = conDatos.map(([productoId, valor]) => ({
+      // Salsas/postres se identifican por receta_id (no por producto_id)
+      const payload = conDatos.map(([recetaId, valor]) => ({
         fecha,
         local,
-        producto_id: productoId,
+        producto_id: null as null,
+        receta_id: recetaId,
         tipo,
         turno: null as null,
         cantidad_real: Number(valor.replace(',', '.')),
         unidad,
         responsable: responsable.trim(),
-        notas: notas[productoId]?.trim() || null,
+        notas: notas[recetaId]?.trim() || null,
       }));
 
       const { error } = await supabase.from('cocina_cierre_dia').insert(payload);
@@ -600,10 +608,10 @@ function CierreSimple({
         <div className="rounded-lg border border-dashed border-gray-300 bg-white p-6 text-center">
           <p className="text-2xl">{tipo === 'salsa' ? '🥫' : '🍰'}</p>
           <p className="mt-2 text-sm font-medium text-gray-700">
-            No hay {tipo === 'salsa' ? 'salsas' : 'postres'} cargados
+            No hay {tipo === 'salsa' ? 'salsas' : 'postres'} cargadas
           </p>
           <p className="mt-1 text-xs text-gray-500">
-            Cargalos primero desde el ERP en Cocina → Productos → "Nuevo producto" con tipo "
+            Cargalas primero desde el ERP en Cocina → Recetas → "Nueva receta" con tipo "
             {tipo}".
           </p>
         </div>

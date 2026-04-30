@@ -11,7 +11,8 @@ interface CierreRow {
   id: string;
   fecha: string;
   local: Local;
-  producto_id: string;
+  producto_id: string | null;
+  receta_id: string | null;
   tipo: Tipo;
   turno: Turno | null;
   cantidad_real: number;
@@ -29,6 +30,12 @@ interface ProductoMin {
   nombre: string;
   codigo: string;
   tipo: Tipo;
+}
+
+interface RecetaMin {
+  id: string;
+  nombre: string;
+  tipo: string;
 }
 
 function hoyISO(): string {
@@ -216,7 +223,17 @@ function DetalleDia({ local, fecha }: { local: Local; fecha: string }) {
   });
 
   const productoIds = useMemo(
-    () => Array.from(new Set((cierres ?? []).map((c) => c.producto_id))),
+    () =>
+      Array.from(
+        new Set((cierres ?? []).map((c) => c.producto_id).filter((x): x is string => !!x)),
+      ),
+    [cierres],
+  );
+  const recetaIds = useMemo(
+    () =>
+      Array.from(
+        new Set((cierres ?? []).map((c) => c.receta_id).filter((x): x is string => !!x)),
+      ),
     [cierres],
   );
 
@@ -233,11 +250,30 @@ function DetalleDia({ local, fecha }: { local: Local; fecha: string }) {
     },
   });
 
+  const { data: recetas } = useQuery({
+    queryKey: ['cocina-cierre-recetas', recetaIds.join(',')],
+    enabled: recetaIds.length > 0,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('cocina_recetas')
+        .select('id, nombre, tipo')
+        .in('id', recetaIds);
+      if (error) throw error;
+      return (data ?? []) as RecetaMin[];
+    },
+  });
+
   const productosMap = useMemo(() => {
     const m = new Map<string, ProductoMin>();
     (productos ?? []).forEach((p) => m.set(p.id, p));
     return m;
   }, [productos]);
+
+  const recetasMap = useMemo(() => {
+    const m = new Map<string, RecetaMin>();
+    (recetas ?? []).forEach((r) => m.set(r.id, r));
+    return m;
+  }, [recetas]);
 
   const filtradas = useMemo(
     () =>
@@ -293,7 +329,10 @@ function DetalleDia({ local, fecha }: { local: Local; fecha: string }) {
             </thead>
             <tbody>
               {filtradas.map((c) => {
-                const prod = productosMap.get(c.producto_id);
+                const prod = c.producto_id ? productosMap.get(c.producto_id) : null;
+                const rec = c.receta_id ? recetasMap.get(c.receta_id) : null;
+                const nombre = prod?.nombre ?? rec?.nombre ?? '—';
+                const codigo = prod?.codigo ?? '';
                 const hora = new Date(c.created_at).toLocaleTimeString('es-AR', {
                   hour: '2-digit',
                   minute: '2-digit',
@@ -302,8 +341,8 @@ function DetalleDia({ local, fecha }: { local: Local; fecha: string }) {
                   <tr key={c.id} className="border-t border-gray-100 hover:bg-gray-50">
                     <td className="px-4 py-2 font-mono text-xs text-gray-500">{hora}</td>
                     <td className="px-4 py-2">
-                      <p className="font-medium text-gray-800">{prod?.nombre ?? '—'}</p>
-                      <p className="font-mono text-[10px] text-gray-400">{prod?.codigo}</p>
+                      <p className="font-medium text-gray-800">{nombre}</p>
+                      {codigo && <p className="font-mono text-[10px] text-gray-400">{codigo}</p>}
                     </td>
                     <td className="px-4 py-2 text-gray-600">{c.tipo}</td>
                     <td className="px-4 py-2 text-gray-600">{c.turno ?? '—'}</td>
