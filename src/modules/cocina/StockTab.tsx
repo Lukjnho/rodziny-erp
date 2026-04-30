@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { KPICard } from '@/components/ui/KPICard';
 import { cn } from '@/lib/utils';
@@ -34,6 +34,12 @@ interface Merma {
   porciones: number;
   local: string;
 }
+interface AjusteStock {
+  producto_id: string;
+  local: string;
+  ubicacion: 'camara' | 'mostrador';
+  delta: number;
+}
 interface FudoRankingItem {
   nombre: string;
   cantidad: number;
@@ -56,7 +62,9 @@ interface StockRow {
   vendidoHoy: number;
   mostrador: number;
   merma: number;
-  stock: number;
+  stock: number; // cámara — incluye ajustes acumulados
+  ajusteCamara: number;
+  ajusteMostrador: number;
 }
 
 // Fecha de hoy en zona horaria de Argentina (UTC-3, sin horario de verano).
@@ -103,6 +111,7 @@ function ventasFudoDelProducto(producto: Producto, ranking: FudoRankingItem[] | 
 
 export function StockTab() {
   const { perfil } = useAuth();
+  const qc = useQueryClient();
   const localRestringido = perfil?.local_restringido ?? null;
   const [filtroLocal, setFiltroLocal] = useState<FiltroLocal>(localRestringido ?? 'todos');
   useEffect(() => {
@@ -112,6 +121,17 @@ export function StockTab() {
     'todos',
   );
   const hoy = HOY();
+
+  // Modal de ajuste de stock
+  const [ajusteModal, setAjusteModal] = useState<{
+    producto: Producto;
+    local: string;
+    ubicacion: 'camara' | 'mostrador';
+    actual: number;
+    real: string;
+    motivo: string;
+    guardando: boolean;
+  } | null>(null);
 
   const { data: productos } = useQuery({
     queryKey: ['cocina-productos'],
@@ -183,6 +203,41 @@ export function StockTab() {
     },
   });
 
+  // Ajustes manuales de stock (deltas acumulados por producto + ubicación)
+  const { data: ajustes } = useQuery({
+    queryKey: ['cocina-ajustes-stock'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('cocina_ajustes_stock')
+        .select('producto_id, local, ubicacion, delta');
+      if (error) throw error;
+      return (data ?? []) as AjusteStock[];
+    },
+  });
+
+  const guardarAjuste = useMutation({
+    mutationFn: async (payload: {
+      producto_id: string;
+      local: string;
+      ubicacion: 'camara' | 'mostrador';
+      delta: number;
+      motivo: string | null;
+      responsable: string | null;
+    }) => {
+      const { error } = await supabase.from('cocina_ajustes_stock').insert({
+        producto_id: payload.producto_id,
+        local: payload.local,
+        ubicacion: payload.ubicacion,
+        delta: payload.delta,
+        motivo: payload.motivo,
+        responsable: payload.responsable,
+      });
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['cocina-ajustes-stock'] }),
+    onError: (e: Error) => window.alert(`Error al guardar ajuste: ${e.message}`),
+  });
+
   // Ventas Fudo del día — solo Vedia tiene API habilitada (fudoApi.ts: Saavedra pendiente)
   const { data: fudoVedia } = useQuery({
     queryKey: ['cocina-stock-fudo', 'vedia', hoy],
@@ -243,9 +298,25 @@ export function StockTab() {
           .reduce((s, m) => s + m.porciones, 0);
         const vendidoHoy =
           loc === 'vedia' ? ventasFudoDelProducto(prod, fudoVedia?.ranking) : 0;
-        const mostrador = Math.max(0, traspasadoHoy - vendidoHoy - mermaDelDia);
 
-        const stock = producido - traspasado - mermaTotal;
+        // Ajustes manuales acumulados por ubicación
+        const ajusteCamara = (ajustes ?? [])
+          .filter(
+            (a) => a.producto_id === prod.id && a.local === loc && a.ubicacion === 'camara',
+          )
+          .reduce((s, a) => s + Number(a.delta), 0);
+        const ajusteMostrador = (ajustes ?? [])
+          .filter(
+            (a) => a.producto_id === prod.id && a.local === loc && a.ubicacion === 'mostrador',
+          )
+          .reduce((s, a) => s + Number(a.delta), 0);
+
+        const mostrador = Math.max(
+          0,
+          traspasadoHoy - vendidoHoy - mermaDelDia + ajusteMostrador,
+        );
+
+        const stock = producido - traspasado - mermaTotal + ajusteCamara;
 
         rows.push({
           producto: prod,
@@ -257,6 +328,8 @@ export function StockTab() {
           mostrador,
           merma: mermaTotal,
           stock,
+          ajusteCamara,
+          ajusteMostrador,
         });
       }
     }
@@ -270,6 +343,7 @@ export function StockTab() {
     traspasosHoy,
     mermasHoy,
     fudoVedia,
+    ajustes,
     filtroLocal,
   ]);
 
@@ -426,12 +500,70 @@ export function StockTab() {
                       '—'
                     )}
                   </td>
-                  <td className="px-4 py-2 text-right font-semibold">{r.stock}</td>
+                  <td className="px-4 py-2 text-right font-semibold">
+                    <button
+                      onClick={() =>
+                        setAjusteModal({
+                          producto: r.producto,
+                          local: r.local,
+                          ubicacion: 'camara',
+                          actual: r.stock,
+                          real: String(r.stock),
+                          motivo: '',
+                          guardando: false,
+                        })
+                      }
+                      className="group inline-flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-rodziny-50"
+                      title="Ajustar stock de cámara (conteo físico)"
+                    >
+                      <span>{r.stock}</span>
+                      <span className="text-[10px] text-gray-400 opacity-0 transition-opacity group-hover:opacity-100">
+                        ✎
+                      </span>
+                    </button>
+                    {r.ajusteCamara !== 0 && (
+                      <div
+                        className="text-[9px] text-purple-600"
+                        title="Ajuste manual acumulado"
+                      >
+                        ({r.ajusteCamara > 0 ? '+' : ''}
+                        {r.ajusteCamara} aj.)
+                      </div>
+                    )}
+                  </td>
                   <td className="px-4 py-2 text-right">
-                    {r.mostrador > 0 ? (
-                      <span className="font-medium text-green-700">{r.mostrador}</span>
-                    ) : (
-                      '—'
+                    <button
+                      onClick={() =>
+                        setAjusteModal({
+                          producto: r.producto,
+                          local: r.local,
+                          ubicacion: 'mostrador',
+                          actual: r.mostrador,
+                          real: String(r.mostrador),
+                          motivo: '',
+                          guardando: false,
+                        })
+                      }
+                      className="group inline-flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-rodziny-50"
+                      title="Ajustar stock de mostrador (conteo físico)"
+                    >
+                      {r.mostrador > 0 ? (
+                        <span className="font-medium text-green-700">{r.mostrador}</span>
+                      ) : (
+                        <span className="text-gray-400">—</span>
+                      )}
+                      <span className="text-[10px] text-gray-400 opacity-0 transition-opacity group-hover:opacity-100">
+                        ✎
+                      </span>
+                    </button>
+                    {r.ajusteMostrador !== 0 && (
+                      <div
+                        className="text-[9px] text-purple-600"
+                        title="Ajuste manual acumulado"
+                      >
+                        ({r.ajusteMostrador > 0 ? '+' : ''}
+                        {r.ajusteMostrador} aj.)
+                      </div>
                     )}
                   </td>
                   <td className="px-4 py-2 text-right text-gray-500">
@@ -480,6 +612,159 @@ export function StockTab() {
           Salsas, postres y otras producciones
         </h3>
         <StockProduccionSection filtroLocal={filtroLocal} />
+      </div>
+
+      {/* ── Modal de ajuste de stock ─────────────────────────────────────── */}
+      {ajusteModal && (
+        <ModalAjusteStock
+          state={ajusteModal}
+          onChange={(patch) => setAjusteModal((s) => (s ? { ...s, ...patch } : s))}
+          onCancel={() => setAjusteModal(null)}
+          onConfirmar={async () => {
+            const real = parseFloat(ajusteModal.real.replace(',', '.'));
+            if (isNaN(real) || real < 0) {
+              window.alert('Ingresá un número válido (>= 0).');
+              return;
+            }
+            const delta = Math.round((real - ajusteModal.actual) * 100) / 100;
+            if (delta === 0) {
+              window.alert('El valor real coincide con el calculado. Nada que ajustar.');
+              return;
+            }
+            setAjusteModal((s) => (s ? { ...s, guardando: true } : s));
+            try {
+              await guardarAjuste.mutateAsync({
+                producto_id: ajusteModal.producto.id,
+                local: ajusteModal.local,
+                ubicacion: ajusteModal.ubicacion,
+                delta,
+                motivo: ajusteModal.motivo.trim() || null,
+                responsable: perfil?.nombre ?? null,
+              });
+              setAjusteModal(null);
+            } catch {
+              setAjusteModal((s) => (s ? { ...s, guardando: false } : s));
+            }
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── Modal de ajuste manual de stock ────────────────────────────────────────
+function ModalAjusteStock({
+  state,
+  onChange,
+  onCancel,
+  onConfirmar,
+}: {
+  state: {
+    producto: Producto;
+    local: string;
+    ubicacion: 'camara' | 'mostrador';
+    actual: number;
+    real: string;
+    motivo: string;
+    guardando: boolean;
+  };
+  onChange: (patch: Partial<{ real: string; motivo: string }>) => void;
+  onCancel: () => void;
+  onConfirmar: () => void;
+}) {
+  const realNum = parseFloat(state.real.replace(',', '.'));
+  const deltaPreview = !isNaN(realNum) ? Math.round((realNum - state.actual) * 100) / 100 : null;
+  const ubicacionLabel = state.ubicacion === 'camara' ? 'Cámara (depósito)' : 'Mostrador';
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      onClick={onCancel}
+    >
+      <div
+        className="w-full max-w-md rounded-lg bg-white p-5 shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-4">
+          <h3 className="text-base font-semibold text-gray-900">Ajustar stock</h3>
+          <p className="mt-0.5 text-xs text-gray-500">
+            <span className="font-medium text-gray-800">{state.producto.nombre}</span>{' '}
+            <span className="capitalize">· {state.local}</span> ·{' '}
+            <span className="font-medium">{ubicacionLabel}</span>
+          </p>
+        </div>
+
+        <div className="space-y-3">
+          <div className="rounded border border-gray-200 bg-gray-50 p-2 text-xs">
+            <div className="flex justify-between">
+              <span className="text-gray-600">Stock calculado actual:</span>
+              <span className="font-medium tabular-nums text-gray-900">{state.actual}</span>
+            </div>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-xs font-medium text-gray-700">
+              Stock real contado
+            </label>
+            <input
+              type="text"
+              inputMode="decimal"
+              value={state.real}
+              onChange={(e) => onChange({ real: e.target.value })}
+              placeholder="0"
+              className="w-full rounded border border-gray-300 px-2 py-1.5 text-right text-base tabular-nums focus:border-rodziny-500 focus:outline-none"
+              autoFocus
+            />
+          </div>
+
+          {deltaPreview !== null && deltaPreview !== 0 && (
+            <div
+              className={cn(
+                'rounded border p-2 text-xs',
+                deltaPreview > 0
+                  ? 'border-green-200 bg-green-50 text-green-700'
+                  : 'border-red-200 bg-red-50 text-red-700',
+              )}
+            >
+              Se va a registrar un ajuste de{' '}
+              <span className="font-semibold">
+                {deltaPreview > 0 ? '+' : ''}
+                {deltaPreview}
+              </span>{' '}
+              {deltaPreview > 0 ? 'unidades sumadas' : 'unidades restadas'}.
+            </div>
+          )}
+
+          <div>
+            <label className="mb-1 block text-xs font-medium text-gray-700">
+              Motivo (opcional)
+            </label>
+            <input
+              type="text"
+              value={state.motivo}
+              onChange={(e) => onChange({ motivo: e.target.value })}
+              placeholder="ej: conteo físico semanal"
+              className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm focus:border-rodziny-500 focus:outline-none"
+            />
+          </div>
+        </div>
+
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            onClick={onCancel}
+            disabled={state.guardando}
+            className="rounded border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+          >
+            Cancelar
+          </button>
+          <button
+            onClick={onConfirmar}
+            disabled={state.guardando || deltaPreview === 0 || deltaPreview === null}
+            className="rounded bg-rodziny-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-rodziny-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {state.guardando ? 'Guardando...' : 'Guardar ajuste'}
+          </button>
+        </div>
       </div>
     </div>
   );
