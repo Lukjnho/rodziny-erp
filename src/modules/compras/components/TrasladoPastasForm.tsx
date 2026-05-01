@@ -80,6 +80,23 @@ export function TrasladoPastasForm({
     },
   });
 
+  // Ajustes manuales acumulados de cámara: si Lucas reajustó el stock al conteo
+  // físico (ej: −150 para reflejar que en la cámara hay 46 y no 196 históricos),
+  // el traslado debe respetar esa corrección. Sin esto se mostraría stock
+  // fantasma que ya no existe físicamente.
+  const { data: ajustesCamara } = useQuery({
+    queryKey: ['qr-traslado-ajustes-camara', local],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('cocina_ajustes_stock')
+        .select('producto_id, delta')
+        .eq('local', local)
+        .eq('ubicacion', 'camara');
+      if (error) throw error;
+      return data as Array<{ producto_id: string; delta: number }>;
+    },
+  });
+
   const rows = useMemo<PastaRow[]>(() => {
     if (!productos) return [];
     // Solo mostramos pastas con stock disponible en cámara_congelado (las que terminaron
@@ -97,16 +114,19 @@ export function TrasladoPastasForm({
         const merma = (mermas ?? [])
           .filter((m) => m.producto_id === p.id)
           .reduce((s, m) => s + m.porciones, 0);
+        const ajuste = (ajustesCamara ?? [])
+          .filter((a) => a.producto_id === p.id)
+          .reduce((s, a) => s + Number(a.delta), 0);
         return {
           id: p.id,
           nombre: p.nombre,
           codigo: p.codigo,
-          stockCamara: enCamara - traspasado - merma,
+          stockCamara: enCamara - traspasado - merma + ajuste,
         };
       })
       .filter((r) => r.stockCamara > 0)
       .sort((a, b) => b.stockCamara - a.stockCamara); // las que más hay, primero
-  }, [productos, lotes, traspasos, mermas]);
+  }, [productos, lotes, traspasos, mermas, ajustesCamara]);
 
   const filtradas = useMemo(() => {
     if (!busqueda.trim()) return rows;

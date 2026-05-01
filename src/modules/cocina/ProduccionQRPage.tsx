@@ -97,12 +97,11 @@ type Vista =
   | 'postre'
   | 'pasteleria'
   | 'panaderia'
-  | 'prueba'
   | 'merma'
   | 'traslado'
   | 'exito';
 
-type CategoriaGenerica = 'salsa' | 'postre' | 'pasteleria' | 'panaderia' | 'prueba';
+type CategoriaGenerica = 'salsa' | 'postre' | 'pasteleria' | 'panaderia';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -557,18 +556,6 @@ export function ProduccionQRPage() {
         />
       )}
 
-      {vista === 'prueba' && (
-        <FormGenerico
-          local={local}
-          categoria="prueba"
-          recetas={recetasLocal}
-          permitirLibre
-          permitirLitros
-          onGuardado={onGuardado}
-          onVolver={() => setVista('inicio')}
-        />
-      )}
-
       {vista === 'merma' && (
         <FormMerma
           local={local}
@@ -635,11 +622,6 @@ function Inicio({
       vista: 'postre',
       label: 'Cargar Postre',
       color: 'bg-pink-500 hover:bg-pink-600',
-    });
-    botones.push({
-      vista: 'prueba',
-      label: 'Cargar Prueba',
-      color: 'bg-purple-500 hover:bg-purple-600',
     });
   } else {
     botones.push({
@@ -2047,14 +2029,13 @@ function Exito({ mensaje, onOtro }: { mensaje: string; onOtro: () => void }) {
   );
 }
 
-// ── FormGenerico (salsa/postre/pasteleria/panaderia/prueba) ────────────────────
+// ── FormGenerico (salsa/postre/pasteleria/panaderia) ───────────────────────────
 
 const CATEGORIA_LABEL: Record<CategoriaGenerica, string> = {
   salsa: 'Salsa',
   postre: 'Postre',
   pasteleria: 'Pastelería',
   panaderia: 'Panadería',
-  prueba: 'Prueba',
 };
 
 function unidadesDisponibles(
@@ -2065,7 +2046,7 @@ function unidadesDisponibles(
     { value: 'kg', label: 'kg' },
     { value: 'unid', label: 'unid' },
   ];
-  if (permitirLitros || categoria === 'salsa' || categoria === 'prueba') {
+  if (permitirLitros || categoria === 'salsa') {
     base.push({ value: 'lt', label: 'lt' });
   }
   return base;
@@ -2226,7 +2207,7 @@ function FormGenerico({
         {permitirLibre && (
           <div>
             <label className="mb-1 block text-xs font-medium text-gray-700">
-              {recetaId ? 'O escribí un nombre libre (opcional)' : 'Nombre de la prueba'}
+              {recetaId ? 'O escribí un nombre libre (opcional)' : 'Nombre'}
             </label>
             <input
               value={nombreLibre}
