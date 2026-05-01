@@ -1,9 +1,10 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
 
 type TipoPlan = 'relleno' | 'masa' | 'salsa' | 'postre' | 'pasteleria' | 'panaderia';
+type EstadoItem = 'pendiente' | 'en_produccion' | 'en_bandejas' | 'ciclo_completo' | 'fuera';
 
 interface PlanItem {
   id: string;
@@ -105,21 +106,67 @@ function hoy(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-interface ItemRender {
-  key: string;
-  tipo: TipoPlan;
-  nombre: string;
+// Normaliza un nombre para matching: minúsculas y sin acentos.
+function normNombre(s: string): string {
+  return s
+    .toLowerCase()
+    .trim()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '');
+}
+
+// Nivel de estado para "el más avanzado". 'fuera' lo tratamos como ortogonal:
+// no escala con el progreso del plan, así que cuando hay items planificados
+// ignoramos los fuera para calcular el estado.
+function nivelEstado(e: EstadoItem): number {
+  switch (e) {
+    case 'ciclo_completo':
+      return 4;
+    case 'en_bandejas':
+      return 3;
+    case 'en_produccion':
+      return 2;
+    case 'pendiente':
+      return 1;
+    case 'fuera':
+      return 0;
+  }
+}
+
+interface ItemPlanDetalle {
+  origen: 'plan' | 'fuera';
   cantidad: number | null;
-  estado: 'pendiente' | 'en_produccion' | 'en_bandejas' | 'ciclo_completo' | 'fuera';
+  estado: EstadoItem;
   turno?: 'mañana' | 'tarde' | null;
 }
 
-interface PastaRender {
+interface ItemAgrupado {
+  key: string;
+  tipo: TipoPlan;
+  nombre: string;
+  totalCantidad: number; // suma de cantidad_recetas (planificados + fuera)
+  cuentaPlan: number; // cuántos items del plan
+  hechosPlan: number; // cuántos del plan están en ciclo_completo
+  cuentaFuera: number;
+  estado: EstadoItem; // el más avanzado del grupo
+  detalle: ItemPlanDetalle[];
+}
+
+interface LotePastaDetalle {
+  porciones: number | null;
+  bandejas: number | null;
+  ubicacion: 'freezer_produccion' | 'camara_congelado';
+}
+
+interface PastaAgrupada {
   key: string;
   nombre: string;
-  ubicacion: 'freezer_produccion' | 'camara_congelado';
-  porciones: number | null;
-  cantidad_cajones: number | null;
+  cantidadLotes: number;
+  totalPorciones: number;
+  totalBandejas: number;
+  enCamaraPorc: number;
+  enFreezerPorc: number;
+  detalle: LotePastaDetalle[];
 }
 
 export function PlanSemanal({
@@ -134,6 +181,18 @@ export function PlanSemanal({
   const fechas = useMemo(() => fechasSemana(fechaActiva), [fechaActiva]);
   const desde = fechas[0];
   const hasta = fechas[6];
+
+  // Set de keys expandidas: una key por card (item agrupado o pasta agrupada).
+  // Click toggle. Las cards arrancan colapsadas.
+  const [expandidas, setExpandidas] = useState<Set<string>>(new Set());
+  function toggleExpandida(key: string) {
+    setExpandidas((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
 
   const { data: items, isLoading: cargandoPlan } = useQuery({
     queryKey: ['plan-semanal-pizarron', local, desde, hasta],
@@ -216,41 +275,71 @@ export function PlanSemanal({
     return set;
   }, [items]);
 
-  // Para cada fecha, armar la lista combinada de items del plan + fuera-de-plan + pastas.
-  const itemsPorFecha = useMemo(() => {
-    const map = new Map<string, ItemRender[]>();
+  // Para cada fecha, agrupar items por (tipo, nombreNormalizado).
+  // Los items planificados y los fuera-de-plan del mismo nombre se unen en una sola card,
+  // con el desglose disponible al expandir.
+  const itemsAgrupadosPorFecha = useMemo(() => {
+    const map = new Map<string, ItemAgrupado[]>();
     for (const f of fechas) map.set(f, []);
 
-    for (const it of items ?? []) {
-      const arr = map.get(it.fecha_objetivo);
-      if (!arr) continue;
-      const nombre = it.receta?.nombre ?? it.texto_libre ?? '(sin receta)';
-      arr.push({
-        key: `plan-${it.id}`,
-        tipo: it.tipo,
-        nombre,
-        cantidad: it.cantidad_recetas,
-        estado: it.estado === 'cancelado' ? 'pendiente' : it.estado,
-        turno: it.turno,
-      });
+    // Función que devuelve o crea el grupo para (fecha, tipo, nombre).
+    function getGrupo(fecha: string, tipo: TipoPlan, nombre: string): ItemAgrupado | null {
+      const arr = map.get(fecha);
+      if (!arr) return null;
+      const key = `${tipo}::${normNombre(nombre)}`;
+      let g = arr.find((it) => it.key === key);
+      if (!g) {
+        g = {
+          key,
+          tipo,
+          nombre,
+          totalCantidad: 0,
+          cuentaPlan: 0,
+          hechosPlan: 0,
+          cuentaFuera: 0,
+          estado: 'pendiente',
+          detalle: [],
+        };
+        arr.push(g);
+      }
+      return g;
     }
 
-    const pushFuera = (
+    // 1) Items del plan
+    for (const it of items ?? []) {
+      const nombre = it.receta?.nombre ?? it.texto_libre ?? '(sin receta)';
+      const g = getGrupo(it.fecha_objetivo, it.tipo, nombre);
+      if (!g) continue;
+      const estado: EstadoItem = it.estado === 'cancelado' ? 'pendiente' : it.estado;
+      g.totalCantidad += Number(it.cantidad_recetas ?? 0);
+      g.cuentaPlan += 1;
+      if (estado === 'ciclo_completo') g.hechosPlan += 1;
+      g.detalle.push({
+        origen: 'plan',
+        cantidad: it.cantidad_recetas,
+        estado,
+        turno: it.turno,
+      });
+      if (nivelEstado(estado) > nivelEstado(g.estado)) g.estado = estado;
+    }
+
+    // 2) Lotes "fuera del plan": los que no están vinculados a un PlanItem.
+    function pushFuera(
       tipo: TipoPlan,
       lote: { id: string; fecha: string; receta?: { nombre: string } | null; cantidad?: number | null },
       tabla: string,
-    ) => {
+    ) {
       if (lotesEnPlan.has(`${tabla}:${lote.id}`)) return;
-      const arr = map.get(lote.fecha);
-      if (!arr) return;
-      arr.push({
-        key: `fuera-${tabla}-${lote.id}`,
-        tipo,
-        nombre: lote.receta?.nombre ?? '(sin receta)',
-        cantidad: lote.cantidad ?? null,
-        estado: 'fuera',
-      });
-    };
+      const nombre = lote.receta?.nombre ?? '(sin receta)';
+      const g = getGrupo(lote.fecha, tipo, nombre);
+      if (!g) return;
+      g.totalCantidad += Number(lote.cantidad ?? 0);
+      g.cuentaFuera += 1;
+      g.detalle.push({ origen: 'fuera', cantidad: lote.cantidad ?? null, estado: 'fuera' });
+      // Solo subimos a 'fuera' si no había nada del plan más avanzado:
+      // 'fuera' tiene nivel 0 así que cualquier estado de plan le gana.
+      if (g.cuentaPlan === 0 && g.estado === 'pendiente') g.estado = 'fuera';
+    }
 
     for (const l of lotesRelleno ?? []) {
       pushFuera('relleno', { ...l, cantidad: l.cantidad_recetas ?? null }, 'cocina_lotes_relleno');
@@ -267,19 +356,41 @@ export function PlanSemanal({
     return map;
   }, [items, lotesRelleno, lotesMasa, lotesProduccion, lotesEnPlan, fechas]);
 
-  // Pastas armadas por día (todas, sin tag fuera-de-plan).
-  const pastasPorFecha = useMemo(() => {
-    const map = new Map<string, PastaRender[]>();
+  // Agrupar pastas armadas por nombre. Un mismo producto puede tener varios lotes
+  // (distintas tandas del día); los unimos en una card y dejamos el desglose
+  // al expandir.
+  const pastasAgrupadasPorFecha = useMemo(() => {
+    const map = new Map<string, PastaAgrupada[]>();
     for (const f of fechas) map.set(f, []);
     for (const p of lotesPasta ?? []) {
       const arr = map.get(p.fecha);
       if (!arr) continue;
-      arr.push({
-        key: `pasta-${p.id}`,
-        nombre: p.producto?.nombre ?? 'Pasta',
-        ubicacion: p.ubicacion,
+      const nombre = p.producto?.nombre ?? 'Pasta';
+      const key = `pasta::${normNombre(nombre)}`;
+      let g = arr.find((x) => x.key === key);
+      if (!g) {
+        g = {
+          key,
+          nombre,
+          cantidadLotes: 0,
+          totalPorciones: 0,
+          totalBandejas: 0,
+          enCamaraPorc: 0,
+          enFreezerPorc: 0,
+          detalle: [],
+        };
+        arr.push(g);
+      }
+      const porc = Number(p.porciones ?? 0);
+      g.cantidadLotes += 1;
+      g.totalPorciones += porc;
+      g.totalBandejas += Number(p.cantidad_cajones ?? 0);
+      if (p.ubicacion === 'camara_congelado') g.enCamaraPorc += porc;
+      else g.enFreezerPorc += porc;
+      g.detalle.push({
         porciones: p.porciones,
-        cantidad_cajones: p.cantidad_cajones,
+        bandejas: p.cantidad_cajones,
+        ubicacion: p.ubicacion,
       });
     }
     return map;
@@ -339,18 +450,18 @@ export function PlanSemanal({
       ) : (
         <div className="grid grid-cols-1 gap-2 p-3 md:grid-cols-2 xl:grid-cols-7">
           {fechas.map((fecha) => {
-            const its = itemsPorFecha.get(fecha) ?? [];
-            const pastas = pastasPorFecha.get(fecha) ?? [];
+            const grupos = itemsAgrupadosPorFecha.get(fecha) ?? [];
+            const pastas = pastasAgrupadasPorFecha.get(fecha) ?? [];
             const esHoy = fecha === fechaHoy;
             const esFechaActiva = fecha === fechaActiva;
-            const vacio = its.length === 0 && pastas.length === 0;
+            const vacio = grupos.length === 0 && pastas.length === 0;
 
-            // Agrupar items por tipo para mostrar más ordenado
-            const porTipo = new Map<TipoPlan, ItemRender[]>();
-            for (const it of its) {
-              const arr = porTipo.get(it.tipo) ?? [];
-              arr.push(it);
-              porTipo.set(it.tipo, arr);
+            // Agrupar grupos por tipo para mostrar más ordenado
+            const porTipo = new Map<TipoPlan, ItemAgrupado[]>();
+            for (const g of grupos) {
+              const arr = porTipo.get(g.tipo) ?? [];
+              arr.push(g);
+              porTipo.set(g.tipo, arr);
             }
 
             return (
@@ -389,54 +500,13 @@ export function PlanSemanal({
                           {TIPO_EMOJI[tipo]} {TIPO_LABEL[tipo]}
                         </div>
                         <div className="space-y-0.5">
-                          {lista.map((it) => (
-                            <div
-                              key={it.key}
-                              className={cn(
-                                'rounded border-l-2 bg-white px-1.5 py-1 text-[11px]',
-                                it.estado === 'ciclo_completo' && 'border-green-400',
-                                it.estado === 'en_bandejas' && 'border-blue-400',
-                                it.estado === 'en_produccion' && 'border-amber-400',
-                                it.estado === 'pendiente' && 'border-gray-200',
-                                it.estado === 'fuera' && 'border-purple-400',
-                              )}
-                            >
-                              <div className="flex items-start justify-between gap-1">
-                                <span
-                                  className={cn(
-                                    'flex-1 truncate',
-                                    it.estado === 'ciclo_completo' && 'text-gray-500 line-through',
-                                  )}
-                                  title={it.nombre}
-                                >
-                                  {it.nombre}
-                                  {it.cantidad != null && (
-                                    <span className="ml-1 text-gray-400">×{it.cantidad}</span>
-                                  )}
-                                </span>
-                                {it.turno && (
-                                  <span className="text-[9px] text-gray-400">
-                                    {it.turno === 'mañana' ? '🌅' : '🌇'}
-                                  </span>
-                                )}
-                              </div>
-                              <div
-                                className={cn(
-                                  'mt-0.5 text-[9px] font-semibold uppercase',
-                                  it.estado === 'ciclo_completo' && 'text-green-700',
-                                  it.estado === 'en_bandejas' && 'text-blue-700',
-                                  it.estado === 'en_produccion' && 'text-amber-700',
-                                  it.estado === 'pendiente' && 'text-gray-500',
-                                  it.estado === 'fuera' && 'text-purple-700',
-                                )}
-                              >
-                                {it.estado === 'ciclo_completo' && '✅ Ciclo completo'}
-                                {it.estado === 'en_bandejas' && '🧊 En bandejas'}
-                                {it.estado === 'en_produccion' && '🥣 En producción'}
-                                {it.estado === 'pendiente' && '⏳ A terminar'}
-                                {it.estado === 'fuera' && '🆕 Fuera del plan'}
-                              </div>
-                            </div>
+                          {lista.map((g) => (
+                            <ItemAgrupadoCard
+                              key={g.key}
+                              grupo={g}
+                              expandido={expandidas.has(g.key)}
+                              onToggle={() => toggleExpandida(g.key)}
+                            />
                           ))}
                         </div>
                       </div>
@@ -448,37 +518,14 @@ export function PlanSemanal({
                           🍜 Pastas armadas
                         </div>
                         <div className="space-y-0.5">
-                          {pastas.map((p) => {
-                            const enCamara = p.ubicacion === 'camara_congelado';
-                            return (
-                              <div
-                                key={p.key}
-                                className={cn(
-                                  'rounded border-l-2 bg-white px-1.5 py-1 text-[11px]',
-                                  enCamara ? 'border-emerald-400' : 'border-blue-300',
-                                )}
-                              >
-                                <div className="truncate" title={p.nombre}>
-                                  {p.nombre}
-                                  {p.cantidad_cajones && (
-                                    <span className="ml-1 text-gray-400">
-                                      ×{p.cantidad_cajones} band.
-                                    </span>
-                                  )}
-                                </div>
-                                <div
-                                  className={cn(
-                                    'mt-0.5 text-[9px] font-semibold uppercase',
-                                    enCamara ? 'text-emerald-700' : 'text-blue-700',
-                                  )}
-                                >
-                                  {enCamara
-                                    ? `✅ En cámara${p.porciones ? ` · ${p.porciones} porc.` : ''}`
-                                    : '🧊 En freezer'}
-                                </div>
-                              </div>
-                            );
-                          })}
+                          {pastas.map((g) => (
+                            <PastaAgrupadaCard
+                              key={g.key}
+                              grupo={g}
+                              expandido={expandidas.has(g.key)}
+                              onToggle={() => toggleExpandida(g.key)}
+                            />
+                          ))}
                         </div>
                       </div>
                     )}
@@ -490,5 +537,187 @@ export function PlanSemanal({
         </div>
       )}
     </div>
+  );
+}
+
+// ── Card: item planificado agrupado ───────────────────────────────────────────
+
+function ItemAgrupadoCard({
+  grupo,
+  expandido,
+  onToggle,
+}: {
+  grupo: ItemAgrupado;
+  expandido: boolean;
+  onToggle: () => void;
+}) {
+  const cantidadLabel = grupo.totalCantidad > 0 ? grupo.totalCantidad : null;
+  const colapsadoTachado = grupo.estado === 'ciclo_completo';
+
+  return (
+    <button
+      onClick={onToggle}
+      className={cn(
+        'block w-full rounded border-l-2 bg-white px-1.5 py-1 text-left text-[11px] transition-colors hover:bg-gray-50',
+        grupo.estado === 'ciclo_completo' && 'border-green-400',
+        grupo.estado === 'en_bandejas' && 'border-blue-400',
+        grupo.estado === 'en_produccion' && 'border-amber-400',
+        grupo.estado === 'pendiente' && 'border-gray-200',
+        grupo.estado === 'fuera' && 'border-purple-400',
+      )}
+    >
+      <div className="flex items-start justify-between gap-1">
+        <span
+          className={cn('flex-1 truncate', colapsadoTachado && 'text-gray-500 line-through')}
+          title={grupo.nombre}
+        >
+          {grupo.nombre}
+          {cantidadLabel != null && (
+            <span className="ml-1 text-gray-400">×{cantidadLabel}</span>
+          )}
+        </span>
+        <span className="text-[9px] text-gray-300">{expandido ? '▾' : '▸'}</span>
+      </div>
+      <div
+        className={cn(
+          'mt-0.5 text-[9px] font-semibold uppercase',
+          grupo.estado === 'ciclo_completo' && 'text-green-700',
+          grupo.estado === 'en_bandejas' && 'text-blue-700',
+          grupo.estado === 'en_produccion' && 'text-amber-700',
+          grupo.estado === 'pendiente' && 'text-gray-500',
+          grupo.estado === 'fuera' && 'text-purple-700',
+        )}
+      >
+        {grupo.estado === 'ciclo_completo' && '✅ Ciclo completo'}
+        {grupo.estado === 'en_bandejas' && '🧊 En bandejas'}
+        {grupo.estado === 'en_produccion' && '🥣 En producción'}
+        {grupo.estado === 'pendiente' && '⏳ A terminar'}
+        {grupo.estado === 'fuera' && '🆕 Fuera del plan'}
+        {grupo.cuentaPlan > 1 && (
+          <span className="ml-1 text-[9px] font-normal normal-case text-gray-400">
+            · {grupo.hechosPlan}/{grupo.cuentaPlan}
+          </span>
+        )}
+        {grupo.cuentaPlan > 0 && grupo.cuentaFuera > 0 && (
+          <span className="ml-1 text-[9px] font-normal normal-case text-purple-600">
+            +{grupo.cuentaFuera} extra
+          </span>
+        )}
+      </div>
+
+      {expandido && (
+        <div className="mt-1 space-y-0.5 border-t border-gray-100 pt-1">
+          {grupo.detalle.map((d, i) => (
+            <div key={i} className="flex items-center justify-between text-[10px] text-gray-600">
+              <span className="truncate">
+                {d.origen === 'fuera' ? '🆕 ' : ''}
+                {d.cantidad != null && <span className="text-gray-400">×{d.cantidad} </span>}
+                <span
+                  className={cn(
+                    'font-medium',
+                    d.estado === 'ciclo_completo' && 'text-green-700',
+                    d.estado === 'en_bandejas' && 'text-blue-700',
+                    d.estado === 'en_produccion' && 'text-amber-700',
+                    d.estado === 'pendiente' && 'text-gray-500',
+                    d.estado === 'fuera' && 'text-purple-700',
+                  )}
+                >
+                  {d.estado === 'ciclo_completo' && 'completo'}
+                  {d.estado === 'en_bandejas' && 'en bandejas'}
+                  {d.estado === 'en_produccion' && 'en producción'}
+                  {d.estado === 'pendiente' && 'pendiente'}
+                  {d.estado === 'fuera' && 'fuera del plan'}
+                </span>
+              </span>
+              {d.turno && (
+                <span className="ml-1 text-[9px] text-gray-400">
+                  {d.turno === 'mañana' ? '🌅' : '🌇'}
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </button>
+  );
+}
+
+// ── Card: pasta armada agrupada ───────────────────────────────────────────────
+
+function PastaAgrupadaCard({
+  grupo,
+  expandido,
+  onToggle,
+}: {
+  grupo: PastaAgrupada;
+  expandido: boolean;
+  onToggle: () => void;
+}) {
+  const todoEnCamara = grupo.enFreezerPorc === 0 && grupo.enCamaraPorc > 0;
+  const todoEnFreezer = grupo.enCamaraPorc === 0 && grupo.enFreezerPorc > 0;
+  const mixto = grupo.enCamaraPorc > 0 && grupo.enFreezerPorc > 0;
+
+  return (
+    <button
+      onClick={onToggle}
+      className={cn(
+        'block w-full rounded border-l-2 bg-white px-1.5 py-1 text-left text-[11px] transition-colors hover:bg-gray-50',
+        todoEnCamara && 'border-emerald-400',
+        todoEnFreezer && 'border-blue-300',
+        mixto && 'border-emerald-300',
+      )}
+    >
+      <div className="flex items-start justify-between gap-1">
+        <span className="flex-1 truncate" title={grupo.nombre}>
+          {grupo.nombre}
+          {grupo.totalBandejas > 0 && (
+            <span className="ml-1 text-gray-400">×{grupo.totalBandejas} band.</span>
+          )}
+        </span>
+        <span className="text-[9px] text-gray-300">{expandido ? '▾' : '▸'}</span>
+      </div>
+      <div
+        className={cn(
+          'mt-0.5 text-[9px] font-semibold uppercase',
+          todoEnCamara && 'text-emerald-700',
+          todoEnFreezer && 'text-blue-700',
+          mixto && 'text-emerald-700',
+        )}
+      >
+        {todoEnCamara && `✅ En cámara · ${grupo.totalPorciones} porc.`}
+        {todoEnFreezer && `🧊 En freezer · ${grupo.totalPorciones} porc.`}
+        {mixto && (
+          <>
+            🧊 {grupo.enFreezerPorc} fresc. · ✅ {grupo.enCamaraPorc} cám.
+          </>
+        )}
+        {grupo.cantidadLotes > 1 && (
+          <span className="ml-1 text-[9px] font-normal normal-case text-gray-400">
+            · {grupo.cantidadLotes} lotes
+          </span>
+        )}
+      </div>
+
+      {expandido && (
+        <div className="mt-1 space-y-0.5 border-t border-gray-100 pt-1">
+          {grupo.detalle.map((d, i) => (
+            <div key={i} className="flex items-center justify-between text-[10px] text-gray-600">
+              <span>
+                {d.bandejas != null && <span className="text-gray-400">×{d.bandejas} band. </span>}
+                <span className="font-medium">{d.porciones ?? 0} porc.</span>
+              </span>
+              <span
+                className={cn(
+                  'text-[9px] font-medium',
+                  d.ubicacion === 'camara_congelado' ? 'text-emerald-700' : 'text-blue-700',
+                )}
+              >
+                {d.ubicacion === 'camara_congelado' ? 'cámara' : 'freezer'}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </button>
   );
 }
