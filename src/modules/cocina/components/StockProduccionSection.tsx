@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { cn } from '@/lib/utils';
 
 interface LoteStock {
   id: string;
@@ -211,6 +212,23 @@ export function StockProduccionSection({
     },
   });
 
+  // Estado de cards expandidas: se persiste sólo en memoria.
+  const [expandidas, setExpandidas] = useState<Set<string>>(new Set());
+  function toggleExpandida(key: string) {
+    setExpandidas((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  // Recetas sin productos Fudo asociados — para el banner único arriba.
+  const sinFudo = useMemo(
+    () => grupos.filter((g) => g.fudoNombres.length === 0).map((g) => g.nombre),
+    [grupos],
+  );
+
   if (filtroLocal === 'todos') {
     return (
       <div>
@@ -243,155 +261,186 @@ export function StockProduccionSection({
         </div>
       )}
 
-      <div className="space-y-3">
-        {grupos.map((g) => (
-          <div
-            key={g.key}
-            className="overflow-hidden rounded-lg border border-surface-border bg-white"
-          >
-            <div className="flex flex-wrap items-center gap-3 border-b border-gray-100 bg-gray-50 px-4 py-2.5">
-              <span
-                className={
-                  'rounded-full px-2 py-0.5 text-[10px] font-medium ' +
-                  (CAT_COLOR[g.tipo] ?? 'bg-gray-100 text-gray-600')
-                }
+      {sinFudo.length > 0 && (
+        <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-700">
+          <p className="font-semibold">
+            {sinFudo.length} receta{sinFudo.length > 1 ? 's' : ''} sin productos Fudo asociados
+          </p>
+          <p className="mt-0.5 text-amber-600">
+            Sin proyección automática de consumo: {sinFudo.join(' · ')}. Configurá productos en
+            Recetas → Editar → General para que se descuenten al vender.
+          </p>
+        </div>
+      )}
+
+      <div className="space-y-1.5">
+        {grupos.map((g) => {
+          const expandido = expandidas.has(g.key);
+          const semaforo =
+            g.totalRestante <= 0
+              ? 'text-red-600'
+              : g.totalRestante < g.totalProducido * 0.2
+                ? 'text-amber-600'
+                : 'text-green-700';
+          const sinFudoCard = g.fudoNombres.length === 0;
+
+          return (
+            <div
+              key={g.key}
+              className="overflow-hidden rounded-lg border border-surface-border bg-white"
+            >
+              {/* Header colapsado: clickeable para expandir */}
+              <button
+                onClick={() => toggleExpandida(g.key)}
+                className="flex w-full flex-wrap items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-gray-50"
               >
-                {CAT_LABEL[g.tipo] ?? g.tipo}
-              </span>
-              <span className="text-sm font-semibold text-gray-800">{g.nombre}</span>
-              <span className="text-[11px] text-gray-500">
-                {g.batches.length} batch{g.batches.length > 1 ? 'es' : ''} · Total producido:{' '}
-                {g.totalProducido.toFixed(2)} {g.unidadBatch}
-              </span>
-              <span className="ml-auto text-xs">
-                <span className="text-gray-500">Disponible estimado: </span>
                 <span
                   className={
-                    'font-bold ' +
-                    (g.totalRestante <= 0
-                      ? 'text-red-600'
-                      : g.totalRestante < g.totalProducido * 0.2
-                        ? 'text-amber-600'
-                        : 'text-green-700')
+                    'rounded-full px-2 py-0.5 text-[10px] font-medium ' +
+                    (CAT_COLOR[g.tipo] ?? 'bg-gray-100 text-gray-600')
                   }
                 >
-                  {g.totalRestante.toFixed(2)} {g.unidadBatch}
+                  {CAT_LABEL[g.tipo] ?? g.tipo}
                 </span>
-              </span>
+                <span className="text-sm font-semibold text-gray-800">{g.nombre}</span>
+                <span className="text-[11px] text-gray-500">
+                  {g.batches.length} batch{g.batches.length > 1 ? 'es' : ''}
+                </span>
+                {sinFudoCard && (
+                  <span className="rounded bg-amber-100 px-1.5 py-0 text-[9px] font-semibold text-amber-700">
+                    sin Fudo
+                  </span>
+                )}
+                <span className="ml-auto flex items-center gap-2 text-xs">
+                  <span className={cn('font-bold', semaforo)}>
+                    {g.totalRestante.toFixed(2)} {g.unidadBatch}
+                  </span>
+                  <span className="text-[10px] text-gray-300">{expandido ? '▾' : '▸'}</span>
+                </span>
+              </button>
+
+              {/* Detalle expandido */}
+              {expandido && (
+                <div className="border-t border-gray-100">
+                  {sinFudoCard ? (
+                    <p className="bg-amber-50 px-4 py-2 text-[11px] text-amber-700">
+                      No hay productos Fudo asociados — proyección manual. Configurá productos en
+                      Recetas → Editar → General.
+                    </p>
+                  ) : (
+                    <p className="border-b border-gray-50 px-4 py-1.5 text-[11px] text-gray-500">
+                      <span
+                        className={
+                          'mr-1.5 inline-block rounded px-1.5 py-0 text-[9px] font-semibold ' +
+                          (g.fuenteMatch === 'manual'
+                            ? 'bg-blue-100 text-blue-700'
+                            : 'bg-green-100 text-green-700')
+                        }
+                      >
+                        {g.fuenteMatch === 'manual' ? 'MANUAL' : 'AUTO'}
+                      </span>
+                      Ventas Fudo asociadas:{' '}
+                      <strong className="text-gray-700">{g.ventasAsociadas} porciones</strong>
+                      {g.gramosPorcion &&
+                        ` × ${g.gramosPorcion}g = ${g.consumoTotalEnUnidad.toFixed(2)} ${g.unidadBatch}`}
+                      · Productos: {g.fudoNombres.join(', ')}
+                    </p>
+                  )}
+
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="bg-gray-50/50 text-[10px] uppercase text-gray-500">
+                        <th className="px-4 py-1.5 text-left">Fecha</th>
+                        <th className="px-4 py-1.5 text-right">Producido</th>
+                        <th className="px-4 py-1.5 text-right">Consumido (FIFO)</th>
+                        <th className="px-4 py-1.5 text-right">Restante calc.</th>
+                        <th className="px-4 py-1.5 text-right">Restante real</th>
+                        <th className="px-4 py-1.5 text-left">Local</th>
+                        <th className="px-4 py-1.5 text-center">Acciones</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {g.batches.map((b) => {
+                        const fechaLabel = new Date(b.created_at).toLocaleString('es-AR', {
+                          day: '2-digit',
+                          month: 'short',
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        });
+                        const esManual = b.cantidad_restante_manual != null;
+                        const agotadoVirt = b.restanteReal <= 0.001;
+                        return (
+                          <tr
+                            key={b.id}
+                            className={
+                              'border-t border-gray-50 ' + (agotadoVirt ? 'bg-red-50/30' : '')
+                            }
+                          >
+                            <td className="px-4 py-1.5 text-gray-600">{fechaLabel}</td>
+                            <td className="px-4 py-1.5 text-right tabular-nums">
+                              {b.cantidad_producida} {b.unidad}
+                            </td>
+                            <td className="px-4 py-1.5 text-right tabular-nums text-gray-600">
+                              {b.consumidoFifo.toFixed(2)}
+                            </td>
+                            <td className="px-4 py-1.5 text-right tabular-nums text-gray-600">
+                              {b.restanteCalc.toFixed(2)}
+                            </td>
+                            <td className="px-4 py-1.5 text-right tabular-nums">
+                              <span className={esManual ? 'font-semibold text-blue-700' : ''}>
+                                {b.restanteReal.toFixed(2)} {b.unidad}
+                              </span>
+                              {esManual && (
+                                <span className="ml-1 text-[9px] text-blue-500">manual</span>
+                              )}
+                            </td>
+                            <td className="px-4 py-1.5 capitalize text-gray-600">{b.local}</td>
+                            <td className="px-4 py-1.5 text-center">
+                              <div className="inline-flex gap-1.5">
+                                <button
+                                  onClick={() => {
+                                    const raw = window.prompt(
+                                      `Pesaste la batea de "${g.nombre}"?\nCantidad real restante (en ${b.unidad}):\n\nDejá vacío para volver al cálculo FIFO.`,
+                                      esManual ? String(b.cantidad_restante_manual) : '',
+                                    );
+                                    if (raw === null) return;
+                                    if (raw.trim() === '') {
+                                      editarRestante.mutate({ id: b.id, valor: null });
+                                    } else {
+                                      const n = Number(raw.replace(',', '.'));
+                                      if (!Number.isNaN(n) && n >= 0)
+                                        editarRestante.mutate({ id: b.id, valor: n });
+                                    }
+                                  }}
+                                  className="text-blue-600 hover:text-blue-800"
+                                >
+                                  Editar restante
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    if (
+                                      window.confirm(
+                                        `¿Agotar este batch de "${g.nombre}"? (sale del stock)`,
+                                      )
+                                    )
+                                      agotar.mutate(b.id);
+                                  }}
+                                  className="text-red-500 hover:text-red-700"
+                                >
+                                  Agotar
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
-
-            {g.fudoNombres.length === 0 ? (
-              <p className="bg-amber-50 px-4 py-2 text-[11px] text-amber-700">
-                No se encontraron productos Fudo para "{g.nombre}" — no hay proyección automática.
-                Configurá productos manualmente en Recetas → Editar → General.
-              </p>
-            ) : (
-              <p className="border-b border-gray-50 px-4 py-1.5 text-[11px] text-gray-500">
-                <span
-                  className={
-                    'mr-1.5 inline-block rounded px-1.5 py-0 text-[9px] font-semibold ' +
-                    (g.fuenteMatch === 'manual'
-                      ? 'bg-blue-100 text-blue-700'
-                      : 'bg-green-100 text-green-700')
-                  }
-                >
-                  {g.fuenteMatch === 'manual' ? 'MANUAL' : 'AUTO'}
-                </span>
-                Ventas Fudo asociadas:{' '}
-                <strong className="text-gray-700">{g.ventasAsociadas} porciones</strong>
-                {g.gramosPorcion &&
-                  ` × ${g.gramosPorcion}g = ${g.consumoTotalEnUnidad.toFixed(2)} ${g.unidadBatch}`}
-                · Productos: {g.fudoNombres.join(', ')}
-              </p>
-            )}
-
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="bg-gray-50/50 text-[10px] uppercase text-gray-500">
-                  <th className="px-4 py-1.5 text-left">Fecha</th>
-                  <th className="px-4 py-1.5 text-right">Producido</th>
-                  <th className="px-4 py-1.5 text-right">Consumido (FIFO)</th>
-                  <th className="px-4 py-1.5 text-right">Restante calc.</th>
-                  <th className="px-4 py-1.5 text-right">Restante real</th>
-                  <th className="px-4 py-1.5 text-left">Local</th>
-                  <th className="px-4 py-1.5 text-center">Acciones</th>
-                </tr>
-              </thead>
-              <tbody>
-                {g.batches.map((b) => {
-                  const fechaLabel = new Date(b.created_at).toLocaleString('es-AR', {
-                    day: '2-digit',
-                    month: 'short',
-                    hour: '2-digit',
-                    minute: '2-digit',
-                  });
-                  const esManual = b.cantidad_restante_manual != null;
-                  const agotadoVirt = b.restanteReal <= 0.001;
-                  return (
-                    <tr
-                      key={b.id}
-                      className={'border-t border-gray-50 ' + (agotadoVirt ? 'bg-red-50/30' : '')}
-                    >
-                      <td className="px-4 py-1.5 text-gray-600">{fechaLabel}</td>
-                      <td className="px-4 py-1.5 text-right tabular-nums">
-                        {b.cantidad_producida} {b.unidad}
-                      </td>
-                      <td className="px-4 py-1.5 text-right tabular-nums text-gray-600">
-                        {b.consumidoFifo.toFixed(2)}
-                      </td>
-                      <td className="px-4 py-1.5 text-right tabular-nums text-gray-600">
-                        {b.restanteCalc.toFixed(2)}
-                      </td>
-                      <td className="px-4 py-1.5 text-right tabular-nums">
-                        <span className={esManual ? 'font-semibold text-blue-700' : ''}>
-                          {b.restanteReal.toFixed(2)} {b.unidad}
-                        </span>
-                        {esManual && <span className="ml-1 text-[9px] text-blue-500">manual</span>}
-                      </td>
-                      <td className="px-4 py-1.5 capitalize text-gray-600">{b.local}</td>
-                      <td className="px-4 py-1.5 text-center">
-                        <div className="inline-flex gap-1.5">
-                          <button
-                            onClick={() => {
-                              const raw = window.prompt(
-                                `Pesaste la batea de "${g.nombre}"?\nCantidad real restante (en ${b.unidad}):\n\nDejá vacío para volver al cálculo FIFO.`,
-                                esManual ? String(b.cantidad_restante_manual) : '',
-                              );
-                              if (raw === null) return;
-                              if (raw.trim() === '') {
-                                editarRestante.mutate({ id: b.id, valor: null });
-                              } else {
-                                const n = Number(raw.replace(',', '.'));
-                                if (!Number.isNaN(n) && n >= 0)
-                                  editarRestante.mutate({ id: b.id, valor: n });
-                              }
-                            }}
-                            className="text-blue-600 hover:text-blue-800"
-                          >
-                            Editar restante
-                          </button>
-                          <button
-                            onClick={() => {
-                              if (
-                                window.confirm(
-                                  `¿Agotar este batch de "${g.nombre}"? (sale del stock)`,
-                                )
-                              )
-                                agotar.mutate(b.id);
-                            }}
-                            className="text-red-500 hover:text-red-700"
-                          >
-                            Agotar
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
