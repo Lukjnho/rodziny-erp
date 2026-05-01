@@ -21,6 +21,7 @@ interface Producto {
 interface LotePasta {
   producto_id: string;
   porciones: number | null;
+  cantidad_cajones: number | null;
   local: string;
   ubicacion: 'freezer_produccion' | 'camara_congelado';
 }
@@ -68,7 +69,8 @@ interface StockRow {
   producto: Producto;
   local: string;
   producido: number;
-  fresco: number;
+  fresco: number; // porciones en freezer_produccion (sirve para histórico ya porcionado)
+  frescoBandejas: number; // bandejas en cola para porcionar (cantidad_cajones)
   traspasado: number;
   vendidoHoy: number;
   mostrador: number; // clamp >= 0 para mostrar
@@ -173,7 +175,7 @@ export function StockTab() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cocina_lotes_pasta')
-        .select('producto_id, porciones, local, ubicacion');
+        .select('producto_id, porciones, cantidad_cajones, local, ubicacion');
       if (error) throw error;
       return data as LotePasta[];
     },
@@ -442,12 +444,15 @@ export function StockTab() {
               l.producto_id === prod.id && l.local === loc && l.ubicacion === 'camara_congelado',
           )
           .reduce((s, l) => s + (l.porciones ?? 0), 0);
-        const fresco = lotesPasta
-          .filter(
-            (l) =>
-              l.producto_id === prod.id && l.local === loc && l.ubicacion === 'freezer_produccion',
-          )
-          .reduce((s, l) => s + (l.porciones ?? 0), 0);
+        // Lotes en freezer de producción = bandejas armadas, todavía sin porcionar.
+        // Las porciones quedan en null hasta el paso "Porcionar pasta" del QR, así que
+        // lo que tiene valor en esta etapa son las bandejas (cantidad_cajones).
+        const lotesFresco = lotesPasta.filter(
+          (l) =>
+            l.producto_id === prod.id && l.local === loc && l.ubicacion === 'freezer_produccion',
+        );
+        const fresco = lotesFresco.reduce((s, l) => s + (l.porciones ?? 0), 0);
+        const frescoBandejas = lotesFresco.reduce((s, l) => s + (l.cantidad_cajones ?? 0), 0);
         const traspasado = traspasos
           .filter((t) => t.producto_id === prod.id && t.local === loc)
           .reduce((s, t) => s + t.porciones, 0);
@@ -531,6 +536,7 @@ export function StockTab() {
           local: loc,
           producido,
           fresco,
+          frescoBandejas,
           traspasado,
           vendidoHoy,
           mostrador,
@@ -567,8 +573,10 @@ export function StockTab() {
     ).length;
     const sinStock = stockRows.filter((r) => r.stock <= 0).length;
     const totalPorciones = stockRows.reduce((s, r) => s + Math.max(0, r.stock), 0);
-    const totalFrescos = stockRows.reduce((s, r) => s + r.fresco, 0);
-    const conFresco = stockRows.filter((r) => r.fresco > 0).length;
+    // El KPI "Pastas en produ" muestra bandejas (cola para porcionar). Las porciones
+    // recién se asignan al porcionar, así que sumar porciones acá daría 0 en este flujo.
+    const totalFrescos = stockRows.reduce((s, r) => s + r.frescoBandejas, 0);
+    const conFresco = stockRows.filter((r) => r.frescoBandejas > 0 || r.fresco > 0).length;
     const totalMostrador = stockRows.reduce((s, r) => s + r.mostrador, 0);
     const conMostrador = stockRows.filter((r) => r.mostrador > 0).length;
     return {
@@ -593,7 +601,8 @@ export function StockTab() {
       );
     }
     if (filtroEstado === 'sin_stock') return stockRows.filter((r) => r.stock <= 0);
-    if (filtroEstado === 'con_fresco') return stockRows.filter((r) => r.fresco > 0);
+    if (filtroEstado === 'con_fresco')
+      return stockRows.filter((r) => r.frescoBandejas > 0 || r.fresco > 0);
     return stockRows;
   }, [stockRows, filtroEstado]);
 
@@ -718,8 +727,17 @@ export function StockTab() {
                   <td className="px-4 py-2 font-mono text-xs">{r.producto.codigo}</td>
                   <td className="px-4 py-2 capitalize">{r.local}</td>
                   <td className="px-4 py-2 text-right">
-                    {r.fresco > 0 ? (
-                      <span className="font-medium text-blue-600">{r.fresco}</span>
+                    {r.frescoBandejas > 0 || r.fresco > 0 ? (
+                      <div className="flex flex-col items-end leading-tight">
+                        {r.frescoBandejas > 0 && (
+                          <span className="font-medium text-blue-600">
+                            {r.frescoBandejas} band.
+                          </span>
+                        )}
+                        {r.fresco > 0 && (
+                          <span className="text-[10px] text-gray-400">{r.fresco} porc.</span>
+                        )}
+                      </div>
                     ) : (
                       '—'
                     )}
