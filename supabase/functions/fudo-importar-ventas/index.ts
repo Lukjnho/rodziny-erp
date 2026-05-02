@@ -170,10 +170,12 @@ Deno.serve(async (req) => {
       sale: JsonApiResource
       payments: JsonApiResource[]
       discounts: JsonApiResource[]
+      items: JsonApiResource[]
     }
     const tickets: TicketAcum[] = []
     const paymentsMap = new Map<string, JsonApiResource>()
     const discountsMap = new Map<string, JsonApiResource>()
+    const itemsMap = new Map<string, JsonApiResource>()
     const ventaIds = new Set<string>()
 
     let pag = ultimaPagina
@@ -183,7 +185,7 @@ Deno.serve(async (req) => {
       const res = await fudoGet(token, 'sales', {
         'page[size]': String(PAGE_SIZE),
         'page[number]': String(pag),
-        include: 'payments,cashRegister,discounts',
+        include: 'payments,cashRegister,discounts,items',
       })
 
       if (res.data.length === 0) {
@@ -191,11 +193,12 @@ Deno.serve(async (req) => {
         continue
       }
 
-      // Indexar payments y discounts del included
+      // Indexar payments, discounts e items del included
       if (res.included) {
         for (const r of res.included as JsonApiResource[]) {
           if (r.type === 'Payment') paymentsMap.set(r.id, r)
           else if (r.type === 'Discount') discountsMap.set(r.id, r)
+          else if (r.type === 'Item') itemsMap.set(r.id, r)
         }
       }
 
@@ -229,7 +232,16 @@ Deno.serve(async (req) => {
           }
         }
 
-        tickets.push({ sale, payments: ticketPayments, discounts: ticketDiscounts })
+        const itemRels = sale.relationships?.items?.data
+        const ticketItems: JsonApiResource[] = []
+        if (Array.isArray(itemRels)) {
+          for (const rel of itemRels) {
+            const it = itemsMap.get(rel.id)
+            if (it && !it.attributes.canceled) ticketItems.push(it)
+          }
+        }
+
+        tickets.push({ sale, payments: ticketPayments, discounts: ticketDiscounts, items: ticketItems })
       }
 
       pag--
@@ -282,7 +294,7 @@ Deno.serve(async (req) => {
     // Acumulador de descuentos por periodo (cortesía = 100% off, otros = el resto)
     const descPorMes: Record<string, { cortesias_monto: number; cortesias_cant: number; otros_descuentos: number }> = {}
 
-    for (const { sale, payments, discounts } of tickets) {
+    for (const { sale, payments, discounts, items } of tickets) {
       const closedAt = sale.attributes.closedAt as string
       const { fecha, hora } = fechaHoraArg(closedAt)
       const periodo = fecha.substring(0, 7)
@@ -367,17 +379,26 @@ Deno.serve(async (req) => {
         periodo,
       })
 
-      // Acumular descuentos del ticket en el periodo
+      // Acumular descuentos del ticket en el periodo.
+      // Fudo guarda el discount con percentage pero amount=0 cuando es % sobre la venta,
+      // así que el monto real lo calculamos como (subtotal de items) - (total post-descuento).
+      // Si el ticket tiene algún discount al 100% → cortesía completa; sino → otros descuentos.
       if (discounts.length > 0) {
-        if (!descPorMes[periodo]) descPorMes[periodo] = { cortesias_monto: 0, cortesias_cant: 0, otros_descuentos: 0 }
-        for (const d of discounts) {
-          const monto = Number(d.attributes.amount ?? 0)
-          const pct = d.attributes.percentage as number | null
-          if (pct === 100) {
-            descPorMes[periodo].cortesias_monto += monto
+        let subtotal = 0
+        for (const it of items) {
+          const price = Number(it.attributes.price ?? 0)
+          const qty = Number(it.attributes.quantity ?? 0)
+          subtotal += price * qty
+        }
+        const descuentoVenta = subtotal - total
+        if (descuentoVenta > 0.01) {
+          if (!descPorMes[periodo]) descPorMes[periodo] = { cortesias_monto: 0, cortesias_cant: 0, otros_descuentos: 0 }
+          const tieneCortesia = discounts.some((d) => Number(d.attributes.percentage) === 100)
+          if (tieneCortesia) {
+            descPorMes[periodo].cortesias_monto += descuentoVenta
             descPorMes[periodo].cortesias_cant += 1
           } else {
-            descPorMes[periodo].otros_descuentos += monto
+            descPorMes[periodo].otros_descuentos += descuentoVenta
           }
         }
       }
