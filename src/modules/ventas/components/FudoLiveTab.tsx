@@ -143,6 +143,9 @@ export function FudoLiveTab() {
   const [ordenRanking, setOrdenRanking] = useState<OrdenRanking>('facturacion');
   const [catFiltro, setCatFiltro] = useState<string>('todas');
   const [limite, setLimite] = useState(20);
+  // 'año' = año en curso (cantidad de meses según mes actual), o un nro fijo (6, 12)
+  const [vistaTendencia, setVistaTendencia] = useState<'año' | 6 | 12>('año');
+  const mesesVista = vistaTendencia === 'año' ? ahora.getMonth() + 1 : vistaTendencia;
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['fudo-productos', local, fechaDesde, fechaHasta],
@@ -172,18 +175,18 @@ export function FudoLiveTab() {
     staleTime: 5 * 60 * 1000,
   });
 
-  // Tendencia mensual (12 meses) — sólo depende del local
+  // Tendencia mensual — depende del local y de la cantidad de meses solicitada
   const { data: dataMensual, isLoading: loadingMensual } = useQuery({
-    queryKey: ['fudo-mensuales', local],
+    queryKey: ['fudo-mensuales', local, mesesVista],
     queryFn: async () => {
       const { data: resp, error: err } = await supabase.functions.invoke('fudo-mensuales', {
-        body: { local, meses: 12 },
+        body: { local, meses: mesesVista },
       });
       if (err) throw new Error(`Edge Function: ${err.message}`);
       if (!resp?.ok) throw new Error(resp?.error ?? 'Error desconocido');
       return resp.data as { local: string; meses: MesData[] };
     },
-    staleTime: 30 * 60 * 1000, // 30 min — los meses anteriores no cambian seguido
+    staleTime: 30 * 60 * 1000,
   });
 
   // Deltas vs período anterior
@@ -820,19 +823,44 @@ export function FudoLiveTab() {
             </div>
           )}
 
-          {/* ── TENDENCIA 12 MESES ── */}
+          {/* ── TENDENCIA ── */}
           {seccion === 'tendencia' && (
             <div className="space-y-4">
               <div className="rounded-lg border border-surface-border bg-white p-5">
-                <div className="mb-4 flex items-center justify-between">
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
                   <h3 className="text-sm font-semibold text-gray-700">
-                    Venta mensual — últimos 12 meses
+                    Venta mensual —{' '}
+                    {vistaTendencia === 'año'
+                      ? `año ${ahora.getFullYear()}`
+                      : `últimos ${vistaTendencia} meses`}
                   </h3>
-                  {loadingMensual && (
-                    <span className="animate-pulse text-xs text-gray-400">
-                      Cargando histórico...
-                    </span>
-                  )}
+                  <div className="flex items-center gap-2">
+                    <div className="flex overflow-hidden rounded-md border border-gray-300">
+                      {(
+                        [
+                          ['año', 'Año en curso'],
+                          [6, '6 meses'],
+                          [12, '12 meses'],
+                        ] as ['año' | 6 | 12, string][]
+                      ).map(([v, label]) => (
+                        <button
+                          key={String(v)}
+                          onClick={() => setVistaTendencia(v)}
+                          className={cn(
+                            'px-3 py-1 text-xs font-medium transition-colors',
+                            vistaTendencia === v
+                              ? 'bg-rodziny-800 text-white'
+                              : 'bg-white text-gray-600 hover:bg-gray-50',
+                          )}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                    {loadingMensual && (
+                      <span className="animate-pulse text-xs text-gray-400">Cargando...</span>
+                    )}
+                  </div>
                 </div>
                 {tendenciaData.length > 0 && (
                   <ResponsiveContainer width="100%" height={300}>
