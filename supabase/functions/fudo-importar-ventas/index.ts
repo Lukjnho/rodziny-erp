@@ -125,18 +125,31 @@ Deno.serve(async (req) => {
     const inicioUTC = `${anio}-01-01T03:00:00Z`
     const finUTC = `${Number(anio) + 1}-01-01T02:59:59Z`
 
-    // Cargar paymentMethods (catalogo) — para resolver el nombre del medio
-    const pmRes = await fudoGet(token, 'payment-methods')
+    // Cargar paymentMethods (catalogo) — para resolver el nombre del medio.
+    // Si el endpoint no existe o cambia de formato, seguimos con map vacío.
     const pmNombre = new Map<string, string>()
-    for (const r of (pmRes.data ?? []) as JsonApiResource[]) {
-      pmNombre.set(r.id, (r.attributes.name as string) ?? `pm-${r.id}`)
+    try {
+      const pmRes = await fudoGet(token, 'payment-methods')
+      for (const r of (pmRes.data ?? []) as JsonApiResource[]) {
+        if (!r?.id) continue
+        const name = (r.attributes?.name as string | undefined) ?? `pm-${r.id}`
+        pmNombre.set(r.id, name)
+      }
+    } catch (_e) {
+      // ignorar — pm queda con names "pm-{id}"
     }
 
-    // Cargar cashRegisters (cajas)
-    const crRes = await fudoGet(token, 'cash-registers').catch(() => ({ data: [] }))
+    // Cargar cashRegisters (cajas) — opcional
     const crNombre = new Map<string, string>()
-    for (const r of (crRes.data ?? []) as JsonApiResource[]) {
-      crNombre.set(r.id, (r.attributes.name as string) ?? `caja-${r.id}`)
+    try {
+      const crRes = await fudoGet(token, 'cash-registers')
+      for (const r of (crRes.data ?? []) as JsonApiResource[]) {
+        if (!r?.id) continue
+        const name = (r.attributes?.name as string | undefined) ?? `caja-${r.id}`
+        crNombre.set(r.id, name)
+      }
+    } catch (_e) {
+      // ignorar
     }
 
     // Búsqueda binaria de la última página
