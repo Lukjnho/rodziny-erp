@@ -664,11 +664,14 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
         map.set(a.periodo, { ...EMPTY_AUTO, difArqueo: Number(a.dif_total) });
       }
     }
-    // Sueldos pagados desde RRHH (pagos_sueldos) — se suma a lo que ya venga del RPC
+    // Sueldos pagados desde RRHH (pagos_sueldos) — REEMPLAZA lo que vino del RPC
+    // (single source of truth: si tildaste el pago en RRHH, ese es el monto del EdR).
+    // Si un mes no tiene registros en pagos_sueldos, queda el fallback de la subcat
+    // "sueldos" de la tabla gastos (compat con carga histórica vía Excel).
     for (const s of sueldosPagadosRaw ?? []) {
       const existing = map.get(s.periodo);
       if (existing) {
-        existing.sueldos += Number(s.sueldos_total);
+        existing.sueldos = Number(s.sueldos_total);
       } else {
         map.set(s.periodo, { ...EMPTY_AUTO, sueldos: Number(s.sueldos_total) });
       }
