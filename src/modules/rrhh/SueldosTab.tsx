@@ -20,7 +20,7 @@ import { PanelBonos } from './sueldos/PanelBonos';
 import { PanelErroresCaja, type CierreCajaError } from './sueldos/PanelErroresCaja';
 import { SeccionImpuestos } from './sueldos/SeccionImpuestos';
 
-type FiltroLocal = 'todos' | 'vedia' | 'saavedra' | 'ambos';
+type FiltroLocal = 'todos' | 'vedia' | 'saavedra';
 type PanelEstado = {
   tipo: 'adelantos' | 'sanciones' | 'descuentos' | 'bonos' | 'errores_caja';
   empleadoId: string;
@@ -421,9 +421,8 @@ export function SueldosTab() {
   const empleadosFiltrados = useMemo(() => {
     if (!empleados) return [];
     return empleados.filter((e) => {
-      if (filtroLocal === 'vedia' && e.local !== 'vedia' && e.local !== 'ambos') return false;
-      if (filtroLocal === 'saavedra' && e.local !== 'saavedra' && e.local !== 'ambos') return false;
-      if (filtroLocal === 'ambos' && e.local !== 'ambos') return false;
+      if (filtroLocal === 'vedia' && e.local !== 'vedia') return false;
+      if (filtroLocal === 'saavedra' && e.local !== 'saavedra') return false;
       if (busqueda.trim()) {
         const q = normalizarTexto(busqueda);
         const txt = normalizarTexto(`${e.nombre} ${e.apellido} ${e.dni ?? ''}`);
@@ -820,7 +819,6 @@ export function SueldosTab() {
           <option value="todos">Todos los locales</option>
           <option value="vedia">Vedia</option>
           <option value="saavedra">Saavedra</option>
-          <option value="ambos">Ambos locales</option>
         </select>
 
         <input

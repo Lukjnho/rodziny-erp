@@ -15,7 +15,7 @@ import {
   type TurnoCrono,
 } from './utils';
 
-type FiltroLocal = 'todos' | 'vedia' | 'saavedra' | 'ambos';
+type FiltroLocal = 'todos' | 'vedia' | 'saavedra';
 
 interface Cronograma {
   id: string;
@@ -82,11 +82,8 @@ export function CronogramaTab() {
 
   const empleadosFiltrados = useMemo(() => {
     let lista = empleados ?? [];
-    if (filtroLocal === 'vedia')
-      lista = lista.filter((e) => e.local === 'vedia' || e.local === 'ambos');
-    else if (filtroLocal === 'saavedra')
-      lista = lista.filter((e) => e.local === 'saavedra' || e.local === 'ambos');
-    else if (filtroLocal === 'ambos') lista = lista.filter((e) => e.local === 'ambos');
+    if (filtroLocal === 'vedia') lista = lista.filter((e) => e.local === 'vedia');
+    else if (filtroLocal === 'saavedra') lista = lista.filter((e) => e.local === 'saavedra');
     if (busqueda.trim()) {
       const q = normalizarTexto(busqueda);
       lista = lista.filter((e) =>
@@ -196,7 +193,6 @@ export function CronogramaTab() {
           <option value="todos">Todos los locales</option>
           <option value="vedia">Vedia</option>
           <option value="saavedra">Saavedra</option>
-          <option value="ambos">Ambos locales</option>
         </select>
 
         <input

@@ -18,7 +18,7 @@ import {
   type TurnoCrono,
 } from './utils';
 
-type FiltroLocal = 'todos' | 'vedia' | 'saavedra' | 'ambos';
+type FiltroLocal = 'todos' | 'vedia' | 'saavedra';
 type FiltroEstado = 'todos' | 'completas' | 'ausencias' | 'tardanzas' | 'incompletas';
 
 type EstadoEmpleadoDia =
@@ -166,9 +166,8 @@ export function AsistenciaTab() {
   const empleadosFiltrados = useMemo(() => {
     if (!empleados) return [];
     return empleados.filter((e) => {
-      if (filtroLocal === 'vedia' && e.local !== 'vedia' && e.local !== 'ambos') return false;
-      if (filtroLocal === 'saavedra' && e.local !== 'saavedra' && e.local !== 'ambos') return false;
-      if (filtroLocal === 'ambos' && e.local !== 'ambos') return false;
+      if (filtroLocal === 'vedia' && e.local !== 'vedia') return false;
+      if (filtroLocal === 'saavedra' && e.local !== 'saavedra') return false;
       if (busqueda.trim()) {
         const q = normalizarTexto(busqueda);
         const txt = normalizarTexto(`${e.nombre} ${e.apellido} ${e.dni ?? ''}`);
@@ -362,7 +361,6 @@ export function AsistenciaTab() {
           <option value="todos">Todos los locales</option>
           <option value="vedia">Vedia</option>
           <option value="saavedra">Saavedra</option>
-          <option value="ambos">Ambos locales</option>
         </select>
 
         <input
@@ -788,10 +786,10 @@ function DetalleDia({
   // Group by local when filtroLocal is 'todos'
   const mostrarSeparadores = filtroLocal === 'todos';
   const grupoVedia = mostrarSeparadores
-    ? filasConEstado.filter(({ emp }) => emp.local === 'vedia' || emp.local === 'ambos')
+    ? filasConEstado.filter(({ emp }) => emp.local === 'vedia')
     : [];
   const grupoSaavedra = mostrarSeparadores
-    ? filasConEstado.filter(({ emp }) => emp.local === 'saavedra' || emp.local === 'ambos')
+    ? filasConEstado.filter(({ emp }) => emp.local === 'saavedra')
     : [];
 
   function renderCard({ emp, estado, tarde }: (typeof filasConEstado)[number]) {

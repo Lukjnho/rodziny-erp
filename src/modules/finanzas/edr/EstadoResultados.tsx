@@ -465,14 +465,12 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
           // EdR devengado: agrupar por `periodo` (mes/quincena trabajada),
           // no por `fecha_pago`. La Q2 que se paga a principios del mes
           // siguiente pertenece al costo del mes en que se trabajó.
-          // El filtro de fecha es amplio para capturar pagos del año
-          // siguiente que correspondan a Q2 de diciembre.
           const { data } = await supabase
             .from('pagos_sueldos')
             .select('periodo, monto, local')
             .gte('periodo', `${año}-01`)
             .lte('periodo', `${año}-12-Q9`)
-            .or(`local.eq.${loc},local.eq.ambos`);
+            .eq('local', loc);
           const porMes = new Map<string, number>();
           for (const r of data ?? []) {
             const p = (r.periodo as string).substring(0, 7);

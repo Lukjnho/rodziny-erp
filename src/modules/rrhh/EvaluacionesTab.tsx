@@ -121,8 +121,8 @@ export function EvaluacionesTab() {
     const activos = empleados.filter((e) => e.activo && e.estado_laboral !== 'baja');
     const filtrados = activos.filter((e) => {
       if (filtroLocal === 'todos') return true;
-      if (filtroLocal === 'vedia') return e.local === 'vedia' || e.local === 'ambos';
-      if (filtroLocal === 'saavedra') return e.local === 'saavedra' || e.local === 'ambos';
+      if (filtroLocal === 'vedia') return e.local === 'vedia';
+      if (filtroLocal === 'saavedra') return e.local === 'saavedra';
       return true;
     });
 

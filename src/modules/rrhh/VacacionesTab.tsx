@@ -214,9 +214,8 @@ export function VacacionesTab() {
     if (!empleados || !vacaciones || !cronograma90 || !fichadas90) return [];
     const activos = empleados.filter((e) => e.activo && e.estado_laboral !== 'baja');
     const filtrados = activos.filter((e) => {
-      if (filtroLocal === 'vedia' && !(e.local === 'vedia' || e.local === 'ambos')) return false;
-      if (filtroLocal === 'saavedra' && !(e.local === 'saavedra' || e.local === 'ambos'))
-        return false;
+      if (filtroLocal === 'vedia' && e.local !== 'vedia') return false;
+      if (filtroLocal === 'saavedra' && e.local !== 'saavedra') return false;
       if (busqueda.trim()) {
         const q = normalizarTexto(busqueda);
         const txt = normalizarTexto(`${e.nombre} ${e.apellido} ${e.dni ?? ''}`);

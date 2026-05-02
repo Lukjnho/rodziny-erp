@@ -20,7 +20,7 @@ type Tab =
   | 'evaluaciones'
   | 'vacaciones'
   | 'aguinaldo';
-type FiltroLocal = 'todos' | 'vedia' | 'saavedra' | 'ambos';
+type FiltroLocal = 'todos' | 'vedia' | 'saavedra';
 type FiltroEstado = 'activos' | 'todos' | 'prueba' | 'efectivo' | 'suspendido' | 'baja';
 
 export interface Empleado {
@@ -31,7 +31,7 @@ export interface Empleado {
   telefono: string | null;
   email: string | null;
   puesto: string;
-  local: 'vedia' | 'saavedra' | 'ambos';
+  local: 'vedia' | 'saavedra';
   fecha_ingreso: string;
   sueldo_neto: number;
   horario_tipo: 'fijo' | 'flexible';
@@ -353,11 +353,8 @@ function LegajosTab() {
 
   const filtrados = useMemo(() => {
     let lista = empleados ?? [];
-    if (filtroLocal === 'vedia')
-      lista = lista.filter((e) => e.local === 'vedia' || e.local === 'ambos');
-    else if (filtroLocal === 'saavedra')
-      lista = lista.filter((e) => e.local === 'saavedra' || e.local === 'ambos');
-    else if (filtroLocal === 'ambos') lista = lista.filter((e) => e.local === 'ambos');
+    if (filtroLocal === 'vedia') lista = lista.filter((e) => e.local === 'vedia');
+    else if (filtroLocal === 'saavedra') lista = lista.filter((e) => e.local === 'saavedra');
     if (filtroEstado === 'activos') lista = lista.filter((e) => e.estado_laboral !== 'baja');
     else if (filtroEstado !== 'todos') lista = lista.filter((e) => e.estado_laboral === filtroEstado);
     if (busqueda.trim()) {
@@ -393,9 +390,8 @@ function LegajosTab() {
     const sinDomicilio = activos.filter((e) => !e.certificado_domicilio).length;
     return {
       total: activos.length,
-      vedia: activos.filter((e) => e.local === 'vedia' || e.local === 'ambos').length,
-      saavedra: activos.filter((e) => e.local === 'saavedra' || e.local === 'ambos').length,
-      ambos: activos.filter((e) => e.local === 'ambos').length,
+      vedia: activos.filter((e) => e.local === 'vedia').length,
+      saavedra: activos.filter((e) => e.local === 'saavedra').length,
       enPrueba: enPrueba.length,
       pruebaPorVencer: pruebaPorVencer.length,
       sueldoTotal: activos.reduce((s, e) => s + (e.sueldo_neto || 0), 0),
@@ -503,7 +499,6 @@ function LegajosTab() {
           <option value="todos">Todos los locales</option>
           <option value="vedia">Vedia</option>
           <option value="saavedra">Saavedra</option>
-          <option value="ambos">Ambos locales</option>
         </select>
         <select
           value={filtroEstado}
@@ -782,7 +777,6 @@ function ModalEmpleado({
               >
                 <option value="vedia">Vedia</option>
                 <option value="saavedra">Saavedra</option>
-                <option value="ambos">Ambos locales</option>
               </select>
             </Field>
             <Field label="Fecha de ingreso *">

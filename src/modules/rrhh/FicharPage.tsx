@@ -27,7 +27,7 @@ interface Empleado {
   nombre: string;
   apellido: string;
   dni: string;
-  local: 'vedia' | 'saavedra' | 'ambos';
+  local: 'vedia' | 'saavedra';
   pin_fichaje: string | null;
   horario_tipo: 'fijo' | 'flexible';
   horas_semanales_requeridas: number | null;
@@ -760,8 +760,7 @@ function Fichando({
       if (upErr) throw upErr;
 
       // Detectar local más cercano (si GPS llegó) — solo informativo
-      const localParaGuardar =
-        localDetectado ?? (empleado.local !== 'ambos' ? (empleado.local as LocalKey) : null);
+      const localParaGuardar = localDetectado ?? (empleado.local as LocalKey);
 
       // Insertar fichada
       const { error: insErr } = await supabase.from('fichadas').insert({
