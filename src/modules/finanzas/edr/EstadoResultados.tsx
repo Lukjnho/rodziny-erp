@@ -335,6 +335,33 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
   const [valorEdit, setValorEdit] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
   const qc = useQueryClient();
+  const [sincronizando, setSincronizando] = useState<'vedia' | 'saavedra' | null>(null);
+  const [resumenSync, setResumenSync] = useState<string | null>(null);
+
+  async function sincronizarFudo(loc: 'vedia' | 'saavedra') {
+    setSincronizando(loc);
+    setResumenSync(null);
+    try {
+      const { data: resp, error: err } = await supabase.functions.invoke('fudo-importar-ventas', {
+        body: { local: loc, anio: año },
+      });
+      if (err) throw new Error(err.message);
+      if (!resp?.ok) throw new Error(resp?.error ?? 'Error desconocido');
+      const d = resp.data;
+      setResumenSync(
+        `${loc.toUpperCase()} ${año}: ${d.ticketsImportados} tickets · ${d.dividendosImportados} pagos MP Lucas` +
+          (d.errores?.length ? ` · ${d.errores.length} errores` : ''),
+      );
+      // Invalidar todas las queries del EdR
+      qc.invalidateQueries({ queryKey: ['edr_tickets'] });
+      qc.invalidateQueries({ queryKey: ['edr_gastos_resumen'] });
+      qc.invalidateQueries({ queryKey: ['edr_partidas'] });
+    } catch (e) {
+      setResumenSync(`Error: ${(e as Error).message}`);
+    } finally {
+      setSincronizando(null);
+    }
+  }
 
   // ── helpers para queries multi-local ────────────────────────────────────────
   type TicketRow = { periodo: string; ing_bruto: number; iva_debito: number; ticket_count: number };
@@ -753,10 +780,52 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
             className="w-24 rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500"
           />
         </div>
-        <span className="ml-auto text-xs text-gray-400">
-          Clic en celda azul para editar · Enter para guardar · Esc para cancelar
-        </span>
+        <div className="ml-auto flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => sincronizarFudo('vedia')}
+            disabled={!!sincronizando}
+            className={cn(
+              'rounded-md border px-3 py-1.5 text-xs font-medium transition-colors',
+              sincronizando === 'vedia'
+                ? 'border-rodziny-300 bg-rodziny-50 text-rodziny-700'
+                : 'border-rodziny-600 bg-rodziny-600 text-white hover:bg-rodziny-700',
+              sincronizando && sincronizando !== 'vedia' && 'opacity-40',
+            )}
+          >
+            {sincronizando === 'vedia' ? 'Sincronizando...' : `↻ Vedia ${año}`}
+          </button>
+          <button
+            type="button"
+            onClick={() => sincronizarFudo('saavedra')}
+            disabled={!!sincronizando}
+            className={cn(
+              'rounded-md border px-3 py-1.5 text-xs font-medium transition-colors',
+              sincronizando === 'saavedra'
+                ? 'border-rodziny-300 bg-rodziny-50 text-rodziny-700'
+                : 'border-rodziny-600 bg-rodziny-600 text-white hover:bg-rodziny-700',
+              sincronizando && sincronizando !== 'saavedra' && 'opacity-40',
+            )}
+          >
+            {sincronizando === 'saavedra' ? 'Sincronizando...' : `↻ Saavedra ${año}`}
+          </button>
+        </div>
       </div>
+      {resumenSync && (
+        <p
+          className={cn(
+            'mb-3 rounded-md px-3 py-2 text-xs',
+            resumenSync.startsWith('Error')
+              ? 'border border-red-200 bg-red-50 text-red-700'
+              : 'border border-emerald-200 bg-emerald-50 text-emerald-700',
+          )}
+        >
+          {resumenSync}
+        </p>
+      )}
+      <p className="mb-4 text-xs text-gray-400">
+        Clic en celda azul para editar · Enter para guardar · Esc para cancelar
+      </p>
 
       {/* Tabla EdR */}
       <div className="overflow-hidden rounded-lg border border-surface-border bg-white">
