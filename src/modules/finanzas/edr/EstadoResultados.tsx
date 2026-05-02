@@ -462,16 +462,20 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
     queryFn: async () => {
       const results = await Promise.all(
         locales.map(async (loc) => {
+          // EdR devengado: agrupar por `periodo` (mes/quincena trabajada),
+          // no por `fecha_pago`. La Q2 que se paga a principios del mes
+          // siguiente pertenece al costo del mes en que se trabajó.
+          // El filtro de fecha es amplio para capturar pagos del año
+          // siguiente que correspondan a Q2 de diciembre.
           const { data } = await supabase
             .from('pagos_sueldos')
-            .select('fecha_pago, monto, local')
-            .gte('fecha_pago', `${año}-01-01`)
-            .lte('fecha_pago', `${año}-12-31`)
+            .select('periodo, monto, local')
+            .gte('periodo', `${año}-01`)
+            .lte('periodo', `${año}-12-Q9`)
             .or(`local.eq.${loc},local.eq.ambos`);
-          // Agrupar por periodo (YYYY-MM)
           const porMes = new Map<string, number>();
           for (const r of data ?? []) {
-            const p = (r.fecha_pago as string).substring(0, 7);
+            const p = (r.periodo as string).substring(0, 7);
             porMes.set(p, (porMes.get(p) ?? 0) + Number(r.monto));
           }
           return [...porMes.entries()].map(([periodo, sueldos_total]) => ({
