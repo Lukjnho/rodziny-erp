@@ -382,13 +382,13 @@ Deno.serve(async (req) => {
       // Acumular descuentos del ticket en el periodo.
       // Fudo guarda el discount con percentage pero amount=0 cuando es % sobre la venta,
       // así que el monto real lo calculamos como (subtotal de items) - (total post-descuento).
+      // OJO: Item.price ya viene con quantity aplicada (es el total del line item),
+      // NO multiplicar por quantity — eso infla el subtotal varias veces.
       // Si el ticket tiene algún discount al 100% → cortesía completa; sino → otros descuentos.
       if (discounts.length > 0) {
         let subtotal = 0
         for (const it of items) {
-          const price = Number(it.attributes.price ?? 0)
-          const qty = Number(it.attributes.quantity ?? 0)
-          subtotal += price * qty
+          subtotal += Number(it.attributes.price ?? 0)
         }
         const descuentoVenta = subtotal - total
         if (descuentoVenta > 0.01) {
