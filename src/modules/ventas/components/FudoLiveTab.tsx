@@ -15,6 +15,10 @@ import {
   Pie,
   Cell,
   Legend,
+  LineChart,
+  Line,
+  CartesianGrid,
+  ComposedChart,
 } from 'recharts';
 
 const COLORES = [
@@ -79,14 +83,61 @@ interface FudoProductosData {
   porDiaSemana: Record<number, { tickets: number; total: number }>;
 }
 
-type Seccion = 'ranking' | 'categorias' | 'horario';
+type Seccion = 'ranking' | 'categorias' | 'horario' | 'tendencia' | 'subebaja';
 type OrdenRanking = 'facturacion' | 'cantidad' | 'margen';
+
+interface MesData {
+  mes: string;
+  totalVentas: number;
+  cantidadTickets: number;
+  ticketPromedio: number;
+}
+
+const MESES_ABREV = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+function mesLabel(ym: string): string {
+  const [y, m] = ym.split('-');
+  return `${MESES_ABREV[Number(m) - 1]} ${y.slice(2)}`;
+}
+
+function diasEntre(desde: string, hasta: string): number {
+  const d1 = new Date(desde + 'T12:00:00Z').getTime();
+  const d2 = new Date(hasta + 'T12:00:00Z').getTime();
+  return Math.max(1, Math.round((d2 - d1) / 86400000) + 1);
+}
+
+function periodoAnterior(desde: string, hasta: string): { d: string; h: string } {
+  const dias = diasEntre(desde, hasta);
+  const dHasta = new Date(desde + 'T12:00:00Z');
+  dHasta.setUTCDate(dHasta.getUTCDate() - 1);
+  const dDesde = new Date(dHasta.getTime());
+  dDesde.setUTCDate(dDesde.getUTCDate() - (dias - 1));
+  const fmt = (d: Date) => d.toISOString().split('T')[0];
+  return { d: fmt(dDesde), h: fmt(dHasta) };
+}
+
+function delta(actual: number, anterior: number): { pct: number; signo: 'up' | 'down' | 'flat' } {
+  if (anterior === 0) return { pct: actual > 0 ? 100 : 0, signo: actual > 0 ? 'up' : 'flat' };
+  const pct = ((actual - anterior) / anterior) * 100;
+  return { pct, signo: pct > 0.5 ? 'up' : pct < -0.5 ? 'down' : 'flat' };
+}
+
+function ymd(d: Date) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
 
 export function FudoLiveTab() {
   const [local, setLocal] = useState<'vedia' | 'saavedra'>('vedia');
-  const hoy = new Date().toISOString().split('T')[0];
-  const hace7 = new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0];
-  const [fechaDesde, setFechaDesde] = useState(hace7);
+  const ahora = new Date();
+  const hoy = ymd(ahora);
+  const hace7 = ymd(new Date(Date.now() - 7 * 86400000));
+  const hace30 = ymd(new Date(Date.now() - 30 * 86400000));
+  const primerDelMes = ymd(new Date(ahora.getFullYear(), ahora.getMonth(), 1));
+  const primerMesAnt = ymd(new Date(ahora.getFullYear(), ahora.getMonth() - 1, 1));
+  const ultimoMesAnt = ymd(new Date(ahora.getFullYear(), ahora.getMonth(), 0));
+  const [fechaDesde, setFechaDesde] = useState(primerDelMes);
   const [fechaHasta, setFechaHasta] = useState(hoy);
   const [seccion, setSeccion] = useState<Seccion>('ranking');
   const [ordenRanking, setOrdenRanking] = useState<OrdenRanking>('facturacion');
@@ -105,6 +156,108 @@ export function FudoLiveTab() {
     },
     staleTime: 5 * 60 * 1000, // cache 5 min
   });
+
+  // Período anterior (mismo nro de días, justo antes del actual) — para Δ% y sube/baja
+  const periodoAnt = useMemo(() => periodoAnterior(fechaDesde, fechaHasta), [fechaDesde, fechaHasta]);
+  const { data: dataAnt, isLoading: loadingAnt } = useQuery({
+    queryKey: ['fudo-productos', local, periodoAnt.d, periodoAnt.h],
+    queryFn: async () => {
+      const { data: resp, error: err } = await supabase.functions.invoke('fudo-productos', {
+        body: { local, fechaDesde: periodoAnt.d, fechaHasta: periodoAnt.h },
+      });
+      if (err) throw new Error(`Edge Function: ${err.message}`);
+      if (!resp?.ok) throw new Error(resp?.error ?? 'Error desconocido');
+      return resp.data as FudoProductosData;
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+
+  // Tendencia mensual (12 meses) — sólo depende del local
+  const { data: dataMensual, isLoading: loadingMensual } = useQuery({
+    queryKey: ['fudo-mensuales', local],
+    queryFn: async () => {
+      const { data: resp, error: err } = await supabase.functions.invoke('fudo-mensuales', {
+        body: { local, meses: 12 },
+      });
+      if (err) throw new Error(`Edge Function: ${err.message}`);
+      if (!resp?.ok) throw new Error(resp?.error ?? 'Error desconocido');
+      return resp.data as { local: string; meses: MesData[] };
+    },
+    staleTime: 30 * 60 * 1000, // 30 min — los meses anteriores no cambian seguido
+  });
+
+  // Deltas vs período anterior
+  const deltaVentas = useMemo(() => {
+    if (!data || !dataAnt) return null;
+    return delta(data.totalVentas, dataAnt.totalVentas);
+  }, [data, dataAnt]);
+  const deltaTickets = useMemo(() => {
+    if (!data || !dataAnt) return null;
+    return delta(data.cantidadTickets, dataAnt.cantidadTickets);
+  }, [data, dataAnt]);
+  const deltaTicketProm = useMemo(() => {
+    if (!data || !dataAnt) return null;
+    return delta(data.ticketPromedio, dataAnt.ticketPromedio);
+  }, [data, dataAnt]);
+
+  // Sube/baja de productos (Δ unidades vs período anterior)
+  const subeBaja = useMemo(() => {
+    if (!data || !dataAnt) return null;
+    const antMap = new Map(dataAnt.ranking.map((p) => [p.productId, p]));
+    const actMap = new Map(data.ranking.map((p) => [p.productId, p]));
+    const ids = new Set([...antMap.keys(), ...actMap.keys()]);
+    const items: {
+      productId: string;
+      nombre: string;
+      categoria: string;
+      cantAct: number;
+      cantAnt: number;
+      deltaUds: number;
+      deltaPct: number;
+      factAct: number;
+      factAnt: number;
+      esNuevo: boolean;
+      desaparecio: boolean;
+    }[] = [];
+    for (const id of ids) {
+      const a = actMap.get(id);
+      const b = antMap.get(id);
+      const cantAct = a?.cantidad ?? 0;
+      const cantAnt = b?.cantidad ?? 0;
+      const deltaUds = cantAct - cantAnt;
+      const deltaPct = cantAnt > 0 ? (deltaUds / cantAnt) * 100 : cantAct > 0 ? 100 : 0;
+      items.push({
+        productId: id,
+        nombre: a?.nombre ?? b?.nombre ?? `Producto ${id}`,
+        categoria: a?.categoria ?? b?.categoria ?? 'Sin categoría',
+        cantAct,
+        cantAnt,
+        deltaUds,
+        deltaPct,
+        factAct: a?.facturacion ?? 0,
+        factAnt: b?.facturacion ?? 0,
+        esNuevo: !b && cantAct > 0,
+        desaparecio: !a && cantAnt > 0,
+      });
+    }
+    // Filtrar productos con muy pocas unidades en ambos períodos (ruido)
+    const significativos = items.filter((p) => Math.max(p.cantAct, p.cantAnt) >= 5);
+    const sube = [...significativos].sort((a, b) => b.deltaUds - a.deltaUds).slice(0, 10);
+    const baja = [...significativos].sort((a, b) => a.deltaUds - b.deltaUds).slice(0, 10);
+    return { sube, baja };
+  }, [data, dataAnt]);
+
+  // Datos de tendencia mensual para gráfico
+  const tendenciaData = useMemo(() => {
+    if (!dataMensual?.meses) return [];
+    return dataMensual.meses.map((m) => ({
+      mes: mesLabel(m.mes),
+      mesRaw: m.mes,
+      venta: m.totalVentas,
+      tickets: m.cantidadTickets,
+      ticketProm: m.ticketPromedio,
+    }));
+  }, [dataMensual]);
 
   // Categorías únicas para filtro
   const categorias = useMemo(() => {
@@ -183,15 +336,13 @@ export function FudoLiveTab() {
           />
         </div>
         {/* Presets rápidos */}
-        <div className="ml-2 flex gap-1">
+        <div className="ml-2 flex flex-wrap gap-1">
           {[
             { label: 'Hoy', d: hoy, h: hoy },
-            { label: '7 días', d: hace7, h: hoy },
-            {
-              label: '30 días',
-              d: new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0],
-              h: hoy,
-            },
+            { label: 'Semana', d: hace7, h: hoy },
+            { label: 'Mes', d: primerDelMes, h: hoy },
+            { label: 'Mes anterior', d: primerMesAnt, h: ultimoMesAnt },
+            { label: '30 días', d: hace30, h: hoy },
           ].map((p) => (
             <button
               key={p.label}
@@ -229,12 +380,19 @@ export function FudoLiveTab() {
               label="Tickets"
               value={data.cantidadTickets.toLocaleString('es-AR')}
               color="blue"
+              change={deltaTickets?.pct}
             />
-            <KPICard label="Venta total" value={formatARS(data.totalVentas)} color="green" />
+            <KPICard
+              label="Venta total"
+              value={formatARS(data.totalVentas)}
+              color="green"
+              change={deltaVentas?.pct}
+            />
             <KPICard
               label="Ticket promedio"
               value={formatARS(data.ticketPromedio)}
               color="yellow"
+              change={deltaTicketProm?.pct}
             />
             <KPICard
               label="Productos vendidos"
@@ -248,6 +406,14 @@ export function FudoLiveTab() {
               color="neutral"
             />
           </div>
+
+          {(dataAnt || loadingAnt) && (
+            <p className="text-xs text-gray-400">
+              {loadingAnt
+                ? 'Calculando comparativo con período anterior...'
+                : `Δ vs período anterior: ${periodoAnt.d} → ${periodoAnt.h}`}
+            </p>
+          )}
 
           {data.dias > 1 && (
             <div className="grid grid-cols-2 gap-3 md:grid-cols-2">
@@ -265,10 +431,12 @@ export function FudoLiveTab() {
           )}
 
           {/* Sub-tabs */}
-          <div className="flex gap-1 border-b border-gray-200">
+          <div className="flex gap-1 overflow-x-auto border-b border-gray-200">
             {(
               [
                 ['ranking', 'Ranking de productos'],
+                ['tendencia', 'Tendencia 12 meses'],
+                ['subebaja', 'Sube / Baja'],
                 ['categorias', 'Categorías'],
                 ['horario', 'Por hora / día'],
               ] as [Seccion, string][]
@@ -649,6 +817,283 @@ export function FudoLiveTab() {
                   </tbody>
                 </table>
               </div>
+            </div>
+          )}
+
+          {/* ── TENDENCIA 12 MESES ── */}
+          {seccion === 'tendencia' && (
+            <div className="space-y-4">
+              <div className="rounded-lg border border-surface-border bg-white p-5">
+                <div className="mb-4 flex items-center justify-between">
+                  <h3 className="text-sm font-semibold text-gray-700">
+                    Venta mensual — últimos 12 meses
+                  </h3>
+                  {loadingMensual && (
+                    <span className="animate-pulse text-xs text-gray-400">
+                      Cargando histórico...
+                    </span>
+                  )}
+                </div>
+                {tendenciaData.length > 0 && (
+                  <ResponsiveContainer width="100%" height={300}>
+                    <ComposedChart data={tendenciaData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                      <XAxis dataKey="mes" tick={{ fontSize: 11 }} />
+                      <YAxis
+                        yAxisId="left"
+                        tick={{ fontSize: 11 }}
+                        tickFormatter={(v) => `$${(v / 1_000_000).toFixed(1)}M`}
+                      />
+                      <YAxis
+                        yAxisId="right"
+                        orientation="right"
+                        tick={{ fontSize: 11 }}
+                      />
+                      <Tooltip
+                        formatter={(v, n) => {
+                          const num = Number(v) || 0;
+                          if (n === 'Venta') return [formatARS(num), 'Venta'];
+                          if (n === 'Tickets') return [num.toLocaleString('es-AR'), 'Tickets'];
+                          return [String(v), String(n)];
+                        }}
+                      />
+                      <Legend wrapperStyle={{ fontSize: 12 }} />
+                      <Bar
+                        yAxisId="left"
+                        dataKey="venta"
+                        name="Venta"
+                        fill="#82c44e"
+                        radius={[3, 3, 0, 0]}
+                      />
+                      <Line
+                        yAxisId="right"
+                        type="monotone"
+                        dataKey="tickets"
+                        name="Tickets"
+                        stroke="#1b3b0d"
+                        strokeWidth={2}
+                        dot={{ r: 3 }}
+                      />
+                    </ComposedChart>
+                  </ResponsiveContainer>
+                )}
+              </div>
+
+              <div className="rounded-lg border border-surface-border bg-white p-5">
+                <h3 className="mb-4 text-sm font-semibold text-gray-700">
+                  Ticket promedio mensual
+                </h3>
+                {tendenciaData.length > 0 && (
+                  <ResponsiveContainer width="100%" height={220}>
+                    <LineChart data={tendenciaData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                      <XAxis dataKey="mes" tick={{ fontSize: 11 }} />
+                      <YAxis
+                        tick={{ fontSize: 11 }}
+                        tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
+                      />
+                      <Tooltip formatter={(v) => [formatARS(Number(v) || 0), 'Ticket prom.']} />
+                      <Line
+                        type="monotone"
+                        dataKey="ticketProm"
+                        stroke="#f59e0b"
+                        strokeWidth={2}
+                        dot={{ r: 3 }}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                )}
+              </div>
+
+              {/* Tabla resumen */}
+              <div className="overflow-hidden rounded-lg border border-surface-border bg-white">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-4 py-2.5 text-left text-xs font-medium text-gray-500">
+                        Mes
+                      </th>
+                      <th className="px-4 py-2.5 text-right text-xs font-medium text-gray-500">
+                        Venta
+                      </th>
+                      <th className="px-4 py-2.5 text-right text-xs font-medium text-gray-500">
+                        Tickets
+                      </th>
+                      <th className="px-4 py-2.5 text-right text-xs font-medium text-gray-500">
+                        Ticket prom.
+                      </th>
+                      <th className="px-4 py-2.5 text-right text-xs font-medium text-gray-500">
+                        Δ vs mes anterior
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {tendenciaData.map((m, i) => {
+                      const prev = i > 0 ? tendenciaData[i - 1] : null;
+                      const d = prev ? delta(m.venta, prev.venta) : null;
+                      return (
+                        <tr key={m.mesRaw} className="hover:bg-gray-50">
+                          <td className="px-4 py-2.5 font-medium text-gray-700">{m.mes}</td>
+                          <td className="px-4 py-2.5 text-right font-medium text-gray-800">
+                            {formatARS(m.venta)}
+                          </td>
+                          <td className="px-4 py-2.5 text-right text-gray-600">
+                            {m.tickets.toLocaleString('es-AR')}
+                          </td>
+                          <td className="px-4 py-2.5 text-right text-gray-600">
+                            {formatARS(m.ticketProm)}
+                          </td>
+                          <td
+                            className={cn(
+                              'px-4 py-2.5 text-right text-xs font-medium',
+                              d?.signo === 'up' && 'text-emerald-600',
+                              d?.signo === 'down' && 'text-red-600',
+                              d?.signo === 'flat' && 'text-gray-400',
+                            )}
+                          >
+                            {d ? `${d.pct >= 0 ? '+' : ''}${d.pct.toFixed(1)}%` : '—'}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* ── SUBE / BAJA ── */}
+          {seccion === 'subebaja' && (
+            <div className="space-y-4">
+              <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+                Compara <strong>{fechaDesde} → {fechaHasta}</strong> ({diasEntre(fechaDesde, fechaHasta)} días)
+                vs período anterior <strong>{periodoAnt.d} → {periodoAnt.h}</strong>.
+                Se incluyen sólo productos con ≥5 unidades en alguno de los dos períodos.
+              </div>
+
+              {loadingAnt && (
+                <div className="rounded-lg border border-surface-border bg-white p-8 text-center text-sm text-gray-400">
+                  Cargando período anterior...
+                </div>
+              )}
+
+              {subeBaja && (
+                <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                  {/* SUBE */}
+                  <div className="overflow-hidden rounded-lg border border-emerald-200 bg-white">
+                    <div className="border-b border-emerald-100 bg-emerald-50 px-4 py-2.5">
+                      <h3 className="text-sm font-semibold text-emerald-800">
+                        ▲ Top 10 que más subieron
+                      </h3>
+                    </div>
+                    <table className="w-full text-sm">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">
+                            Producto
+                          </th>
+                          <th className="px-3 py-2 text-right text-xs font-medium text-gray-500">
+                            Antes
+                          </th>
+                          <th className="px-3 py-2 text-right text-xs font-medium text-gray-500">
+                            Ahora
+                          </th>
+                          <th className="px-3 py-2 text-right text-xs font-medium text-gray-500">
+                            Δ uds
+                          </th>
+                          <th className="px-3 py-2 text-right text-xs font-medium text-gray-500">
+                            Δ %
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-50">
+                        {subeBaja.sube.map((p) => (
+                          <tr key={p.productId} className="hover:bg-emerald-50/50">
+                            <td className="px-3 py-2">
+                              <div className="font-medium text-gray-800">
+                                {p.nombre}
+                                {p.esNuevo && (
+                                  <span className="ml-1.5 rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700">
+                                    nuevo
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-[11px] text-gray-400">{p.categoria}</div>
+                            </td>
+                            <td className="px-3 py-2 text-right text-gray-500">{p.cantAnt}</td>
+                            <td className="px-3 py-2 text-right font-medium text-gray-800">
+                              {p.cantAct}
+                            </td>
+                            <td className="px-3 py-2 text-right font-semibold text-emerald-600">
+                              +{p.deltaUds}
+                            </td>
+                            <td className="px-3 py-2 text-right text-xs font-medium text-emerald-600">
+                              {p.cantAnt === 0 ? '∞' : `+${p.deltaPct.toFixed(0)}%`}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* BAJA */}
+                  <div className="overflow-hidden rounded-lg border border-red-200 bg-white">
+                    <div className="border-b border-red-100 bg-red-50 px-4 py-2.5">
+                      <h3 className="text-sm font-semibold text-red-800">
+                        ▼ Top 10 que más cayeron
+                      </h3>
+                    </div>
+                    <table className="w-full text-sm">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">
+                            Producto
+                          </th>
+                          <th className="px-3 py-2 text-right text-xs font-medium text-gray-500">
+                            Antes
+                          </th>
+                          <th className="px-3 py-2 text-right text-xs font-medium text-gray-500">
+                            Ahora
+                          </th>
+                          <th className="px-3 py-2 text-right text-xs font-medium text-gray-500">
+                            Δ uds
+                          </th>
+                          <th className="px-3 py-2 text-right text-xs font-medium text-gray-500">
+                            Δ %
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-50">
+                        {subeBaja.baja.map((p) => (
+                          <tr key={p.productId} className="hover:bg-red-50/50">
+                            <td className="px-3 py-2">
+                              <div className="font-medium text-gray-800">
+                                {p.nombre}
+                                {p.desaparecio && (
+                                  <span className="ml-1.5 rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-medium text-red-700">
+                                    sin ventas
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-[11px] text-gray-400">{p.categoria}</div>
+                            </td>
+                            <td className="px-3 py-2 text-right text-gray-500">{p.cantAnt}</td>
+                            <td className="px-3 py-2 text-right font-medium text-gray-800">
+                              {p.cantAct}
+                            </td>
+                            <td className="px-3 py-2 text-right font-semibold text-red-600">
+                              {p.deltaUds}
+                            </td>
+                            <td className="px-3 py-2 text-right text-xs font-medium text-red-600">
+                              {p.cantAnt === 0 ? '—' : `${p.deltaPct.toFixed(0)}%`}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </>
