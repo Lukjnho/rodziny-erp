@@ -438,7 +438,7 @@ export function FudoLiveTab() {
             {(
               [
                 ['ranking', 'Ranking de productos'],
-                ['tendencia', 'Tendencia 12 meses'],
+                ['tendencia', 'Tendencia'],
                 ['subebaja', 'Sube / Baja'],
                 ['categorias', 'Categorías'],
                 ['horario', 'Por hora / día'],
