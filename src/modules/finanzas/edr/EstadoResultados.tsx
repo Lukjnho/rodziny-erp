@@ -50,13 +50,6 @@ const FILAS: FilaEdR[] = [
     depth: 1,
     formato: 'moneda',
   },
-  {
-    key: 'iva_debito',
-    label: '(-) IVA Débito (21% s/facturadas)',
-    tipo: 'auto',
-    depth: 1,
-    formato: 'moneda',
-  },
   { key: '__ing_netos', label: 'INGRESOS NETOS', tipo: 'calculada', depth: 0, formato: 'moneda' },
   {
     key: '__ticket_prom',
@@ -175,41 +168,11 @@ const FILAS: FilaEdR[] = [
     formato: 'porcentaje',
     benchmark: '> 5%',
   },
-  { key: '_esp_memo', label: '', tipo: 'espacio', depth: 0 },
-
-  // ── Memo fiscal ────────────────────────────────────────────────────────────
-  // Informativo. Ventas y gastos del EdR ya se muestran netos de IVA, así que
-  // esta sección queda aparte para ver la posición frente a ARCA (débito,
-  // crédito y saldo del mes) sin afectar ningún cálculo del resultado.
-  { key: '_memo_fiscal', label: 'MEMO FISCAL — POSICIÓN IVA', tipo: 'seccion', depth: 0 },
-  {
-    key: '__iva_debito_d',
-    label: 'IVA Débito (ventas facturadas)',
-    tipo: 'calculada',
-    depth: 1,
-    formato: 'moneda',
-  },
-  {
-    key: 'iva_credito',
-    label: 'IVA Crédito (compras c/factura)',
-    tipo: 'manual',
-    depth: 1,
-    formato: 'moneda',
-  },
-  {
-    key: '__iva_saldo',
-    label: 'Saldo fiscal del mes',
-    tipo: 'calculada',
-    depth: 1,
-    formato: 'moneda',
-  },
 ];
 
 // ── cálculos ──────────────────────────────────────────────────────────────────
 interface AutoMes {
   ingBruto: number;
-  ivaDebito: number;
-  ivaCredito: number;
   ticketCount: number;
   cmvAlimentos: number;
   cmvBebidas: number;
@@ -227,7 +190,7 @@ interface AutoMes {
 
 function computarMes(manual: Map<string, number>, auto: AutoMes): Map<string, number> {
   const m = (k: string) => manual.get(k) ?? 0;
-  const { ingBruto, ivaDebito, ticketCount } = auto;
+  const { ingBruto, ticketCount } = auto;
 
   // CMV: auto desde gastos Fudo, override manual si el usuario cargó algo
   const cmvAlimentos = manual.has('cmv_alimentos') ? m('cmv_alimentos') : auto.cmvAlimentos;
@@ -244,8 +207,9 @@ function computarMes(manual: Map<string, number>, auto: AutoMes): Map<string, nu
   // Diferencias de arqueo: auto desde cierres de caja, override manual
   const difArqueo = manual.has('dif_arqueo') ? m('dif_arqueo') : auto.difArqueo;
 
-  // IVA real desde Ventas Fiscales (sumado por ticket al importar)
-  const ingNeto = ingBruto + difArqueo - ivaDebito;
+  // EdR económico: ingresos brutos +/- diferencias de arqueo (sin IVA — el
+  // contador maneja la posición fiscal aparte).
+  const ingNeto = ingBruto + difArqueo;
   const cmvTotal = cmvAlimentos + cmvBebidas + cmvIndirectos;
   const margenBruto = ingNeto - cmvTotal;
   const persTotal = persSueldos + persCargas;
@@ -260,7 +224,6 @@ function computarMes(manual: Map<string, number>, auto: AutoMes): Map<string, nu
   const result = new Map<string, number>(manual);
   result.set('ing_bruto', ingBruto);
   result.set('dif_arqueo', difArqueo);
-  result.set('iva_debito', ivaDebito);
   result.set('__ing_netos', ingNeto);
   result.set('__ticket_prom', ticketCount > 0 ? ingBruto / ticketCount : 0);
   // Cortesías y otros descuentos (informativos — se guardan en edr_partidas al importar)
@@ -282,11 +245,6 @@ function computarMes(manual: Map<string, number>, auto: AutoMes): Map<string, nu
   result.set('impuestos_op', impuestosOp);
   result.set('fin_intereses', finIntereses);
   result.set('_kpi_gastosop', ingNeto > 0 ? gastosOp / ingNeto : 0);
-  // iva_credito: manual si el usuario lo cargó, sino auto desde gastos
-  const ivaCredito = manual.has('iva_credito') ? m('iva_credito') : auto.ivaCredito;
-  result.set('iva_credito', ivaCredito);
-  result.set('__iva_debito_d', ivaDebito);
-  result.set('__iva_saldo', ivaCredito - ivaDebito);
   result.set('__ebitda', ebitda);
   result.set('_kpi_ebitda', ingNeto > 0 ? ebitda / ingNeto : 0);
   result.set('amortizaciones', amortizaciones);
@@ -364,8 +322,7 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
   }
 
   // ── helpers para queries multi-local ────────────────────────────────────────
-  type TicketRow = { periodo: string; ing_bruto: number; iva_debito: number; ticket_count: number };
-  type GastoIvaRow = { periodo: string; iva: number };
+  type TicketRow = { periodo: string; ing_bruto: number; ticket_count: number };
   type GastoResRow = {
     periodo: string;
     cmv_alimentos: number;
@@ -417,27 +374,8 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
         }),
       );
       return esConsolidado
-        ? mergeByPeriodo(results, ['ing_bruto', 'iva_debito', 'ticket_count'])
+        ? mergeByPeriodo(results, ['ing_bruto', 'ticket_count'])
         : results[0];
-    },
-  });
-
-  const { data: gastosIvaRaw } = useQuery({
-    queryKey: ['edr_gastos_iva', año, localEdr],
-    queryFn: async () => {
-      const results = await Promise.all(
-        locales.map(async (loc) => {
-          const { data } = await supabase
-            .from('gastos')
-            .select('periodo, iva')
-            .eq('local', loc)
-            .gte('periodo', `${año}-01`)
-            .lte('periodo', `${año}-12`)
-            .neq('cancelado', true);
-          return (data ?? []) as GastoIvaRow[];
-        }),
-      );
-      return results.flat();
     },
   });
 
@@ -567,8 +505,6 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
   // ── derivar datos por mes ─────────────────────────────────────────────────
   const EMPTY_AUTO: AutoMes = {
     ingBruto: 0,
-    ivaDebito: 0,
-    ivaCredito: 0,
     ticketCount: 0,
     cmvAlimentos: 0,
     cmvBebidas: 0,
@@ -585,12 +521,6 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
   };
 
   const autoMap = useMemo(() => {
-    // Acumular IVA crédito por periodo (desde gastos)
-    const ivaCreditoMap = new Map<string, number>();
-    for (const g of gastosIvaRaw ?? []) {
-      ivaCreditoMap.set(g.periodo, (ivaCreditoMap.get(g.periodo) ?? 0) + Number(g.iva));
-    }
-
     // Gastos agrupados por periodo
     const gastosMap = new Map<
       string,
@@ -606,8 +536,6 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
       const g = gastosMap.get(t.periodo);
       map.set(t.periodo, {
         ingBruto: Number(t.ing_bruto),
-        ivaDebito: Number(t.iva_debito),
-        ivaCredito: ivaCreditoMap.get(t.periodo) ?? 0,
         ticketCount: Number(t.ticket_count),
         cmvAlimentos: Number(g?.cmv_alimentos ?? 0),
         cmvBebidas: Number(g?.cmv_bebidas ?? 0),
@@ -628,7 +556,6 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
       if (!map.has(g.periodo)) {
         map.set(g.periodo, {
           ...EMPTY_AUTO,
-          ivaCredito: ivaCreditoMap.get(g.periodo) ?? 0,
           cmvAlimentos: Number(g.cmv_alimentos),
           cmvBebidas: Number(g.cmv_bebidas),
           cmvIndirectos: Number(g.cmv_indirectos),
@@ -641,10 +568,6 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
           cargasSociales: Number(g.cargas_sociales),
         });
       }
-    }
-    // Periodos solo con IVA crédito
-    for (const [periodo, iva] of ivaCreditoMap) {
-      if (!map.has(periodo)) map.set(periodo, { ...EMPTY_AUTO, ivaCredito: iva });
     }
     // Amortizaciones auto desde tabla amortizaciones
     for (const a of amortRaw ?? []) {
@@ -677,7 +600,7 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
       }
     }
     return map;
-  }, [ticketsRaw, gastosIvaRaw, gastosResumen, amortRaw, arqueosRaw, sueldosPagadosRaw]);
+  }, [ticketsRaw, gastosResumen, amortRaw, arqueosRaw, sueldosPagadosRaw]);
 
   const manualMap = useMemo(() => {
     const map = new Map<string, Map<string, number>>();

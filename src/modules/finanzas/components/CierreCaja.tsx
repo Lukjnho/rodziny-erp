@@ -190,7 +190,11 @@ export function CierreCaja() {
       const fudoDebito = parse(fFudoDebito);
       const fudoCredito = parse(fFudoCredito);
       const fudoTransf = parse(fFudoTransf);
-      const totalFudo = fudoEfvo + fudoQR + fudoDebito + fudoCredito + fudoTransf;
+
+      // monto_esperado = solo efectivo que debería estar en la caja físicamente
+      // (fondo + efectivo Fudo - retiros). QR/débito/crédito/transferencia NO van
+      // acá porque no son efectivo: la diferencia siempre daría negativa por error.
+      const efectivoEsperado = fondoAp + fudoEfvo - otrosRet;
 
       const { error } = await supabase.from('cierres_caja').upsert(
         {
@@ -205,7 +209,7 @@ export function CierreCaja() {
           fudo_debito: fudoDebito,
           fudo_credito: fudoCredito,
           fudo_transferencia: fudoTransf,
-          monto_esperado: totalFudo > 0 ? totalFudo : null,
+          monto_esperado: fudoEfvo > 0 || fondoAp > 0 ? efectivoEsperado : null,
           monto_contado: contado,
           fondo_apertura: fondoAp,
           fondo_siguiente: 0,

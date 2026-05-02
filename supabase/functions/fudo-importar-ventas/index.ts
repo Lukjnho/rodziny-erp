@@ -169,9 +169,11 @@ Deno.serve(async (req) => {
     interface TicketAcum {
       sale: JsonApiResource
       payments: JsonApiResource[]
+      discounts: JsonApiResource[]
     }
     const tickets: TicketAcum[] = []
     const paymentsMap = new Map<string, JsonApiResource>()
+    const discountsMap = new Map<string, JsonApiResource>()
     const ventaIds = new Set<string>()
 
     let pag = ultimaPagina
@@ -181,7 +183,7 @@ Deno.serve(async (req) => {
       const res = await fudoGet(token, 'sales', {
         'page[size]': String(PAGE_SIZE),
         'page[number]': String(pag),
-        include: 'payments,cashRegister',
+        include: 'payments,cashRegister,discounts',
       })
 
       if (res.data.length === 0) {
@@ -189,10 +191,11 @@ Deno.serve(async (req) => {
         continue
       }
 
-      // Indexar payments del included
+      // Indexar payments y discounts del included
       if (res.included) {
         for (const r of res.included as JsonApiResource[]) {
           if (r.type === 'Payment') paymentsMap.set(r.id, r)
+          else if (r.type === 'Discount') discountsMap.set(r.id, r)
         }
       }
 
@@ -217,7 +220,16 @@ Deno.serve(async (req) => {
           }
         }
 
-        tickets.push({ sale, payments: ticketPayments })
+        const discountRels = sale.relationships?.discounts?.data
+        const ticketDiscounts: JsonApiResource[] = []
+        if (Array.isArray(discountRels)) {
+          for (const rel of discountRels) {
+            const d = discountsMap.get(rel.id)
+            if (d && !d.attributes.canceled) ticketDiscounts.push(d)
+          }
+        }
+
+        tickets.push({ sale, payments: ticketPayments, discounts: ticketDiscounts })
       }
 
       pag--
@@ -267,7 +279,10 @@ Deno.serve(async (req) => {
 
     let countPorEstado: Record<string, number> = {}
 
-    for (const { sale, payments } of tickets) {
+    // Acumulador de descuentos por periodo (cortesía = 100% off, otros = el resto)
+    const descPorMes: Record<string, { cortesias_monto: number; cortesias_cant: number; otros_descuentos: number }> = {}
+
+    for (const { sale, payments, discounts } of tickets) {
       const closedAt = sale.attributes.closedAt as string
       const { fecha, hora } = fechaHoraArg(closedAt)
       const periodo = fecha.substring(0, 7)
@@ -351,6 +366,21 @@ Deno.serve(async (req) => {
         es_dividendo: esDividendoCompleto,
         periodo,
       })
+
+      // Acumular descuentos del ticket en el periodo
+      if (discounts.length > 0) {
+        if (!descPorMes[periodo]) descPorMes[periodo] = { cortesias_monto: 0, cortesias_cant: 0, otros_descuentos: 0 }
+        for (const d of discounts) {
+          const monto = Number(d.attributes.amount ?? 0)
+          const pct = d.attributes.percentage as number | null
+          if (pct === 100) {
+            descPorMes[periodo].cortesias_monto += monto
+            descPorMes[periodo].cortesias_cant += 1
+          } else {
+            descPorMes[periodo].otros_descuentos += monto
+          }
+        }
+      }
     }
 
     // Reemplazar datos del año/local — borra todo y reinserta
@@ -382,6 +412,25 @@ Deno.serve(async (req) => {
     if (pagosRows.length) await insertChunk('ventas_pagos', pagosRows)
     if (dividendosRows.length) await insertChunk('dividendos', dividendosRows)
 
+    // Cortesías y descuentos en edr_partidas (informativo, no afecta cálculos del EdR).
+    // Upsert por (local, periodo, concepto) — reemplaza el monto del año entero.
+    const partidasRows: { local: string; periodo: string; concepto: string; monto: number }[] = []
+    for (const periodo of meses) {
+      const d = descPorMes[periodo]
+      if (!d) continue
+      if (d.cortesias_monto > 0) partidasRows.push({ local, periodo, concepto: 'cortesias_monto', monto: d.cortesias_monto })
+      if (d.cortesias_cant > 0) partidasRows.push({ local, periodo, concepto: 'cortesias_cant', monto: d.cortesias_cant })
+      if (d.otros_descuentos > 0) partidasRows.push({ local, periodo, concepto: 'otros_descuentos', monto: d.otros_descuentos })
+    }
+    // Borrar partidas viejas de descuentos para los meses que volvimos a sincronizar
+    await supabase
+      .from('edr_partidas')
+      .delete()
+      .eq('local', local)
+      .in('periodo', meses)
+      .in('concepto', ['cortesias_monto', 'cortesias_cant', 'otros_descuentos'])
+    if (partidasRows.length) await insertChunk('edr_partidas', partidasRows)
+
     // Resumen por mes para el response
     const resumenPorMes: Record<string, { tickets: number; bruto: number }> = {}
     for (const t of ticketsRows) {
@@ -399,8 +448,10 @@ Deno.serve(async (req) => {
           ticketsImportados: ticketsRows.length,
           pagosImportados: pagosRows.length,
           dividendosImportados: dividendosRows.length,
+          partidasImportadas: partidasRows.length,
           countPorEstado,
           resumenPorMes,
+          descuentosPorMes: descPorMes,
           errores,
         },
       }),
