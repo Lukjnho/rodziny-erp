@@ -235,6 +235,13 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
     () => (categorias ?? []).filter((c) => c.parent_id == null),
     [categorias],
   );
+
+  // Categorías de tipo sueldos/aguinaldo se cargan desde RRHH > Sueldos.
+  // Permitimos verlas si ya estaba seteada (edición de un gasto legacy ene-mar).
+  const categoriaBloqueada = (catId: string) =>
+    categorias?.find((c) => c.id === catId)?.tipo_edr === 'sueldos';
+  const filtrarBloqueadas = (hijos: CategoriaGasto[], excepcion: string | null) =>
+    hijos.filter((h) => h.tipo_edr !== 'sueldos' || h.id === excepcion);
   const padreSeleccionado = useMemo(() => {
     if (!form.categoria_id || !categorias) return null;
     const sub = categorias.find((c) => c.id === form.categoria_id);
@@ -946,7 +953,10 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
                   >
                     <option value="">— Seleccionar —</option>
                     {padresCat.map((p) => {
-                      const hijos = (categorias ?? []).filter((c) => c.parent_id === p.id);
+                      const hijos = filtrarBloqueadas(
+                        (categorias ?? []).filter((c) => c.parent_id === p.id),
+                        form.categoria_id,
+                      );
                       if (hijos.length === 0) return null;
                       return (
                         <optgroup key={p.id} label={p.nombre}>
@@ -963,6 +973,15 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
                     Categoría:{' '}
                     <strong className="text-gray-700">{padreSeleccionado?.nombre ?? '—'}</strong>
                   </p>
+                  {form.categoria_id && categoriaBloqueada(form.categoria_id) ? (
+                    <p className="mt-1 text-[11px] text-amber-700">
+                      ⚠ Categoría legacy. Los nuevos sueldos / aguinaldos van por RRHH &gt; Sueldos.
+                    </p>
+                  ) : (
+                    <p className="mt-1 text-[11px] text-gray-400">
+                      Sueldos y aguinaldos se cargan desde RRHH &gt; Sueldos, no acá.
+                    </p>
+                  )}
                 </div>
               )}
             </div>
@@ -1128,7 +1147,10 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
                           >
                             <option value="">⚠ Elegí subcategoría del EdR...</option>
                             {padresCat.map((p) => {
-                              const hijos = (categorias ?? []).filter((c) => c.parent_id === p.id);
+                              const hijos = filtrarBloqueadas(
+                                (categorias ?? []).filter((c) => c.parent_id === p.id),
+                                it.categoria_gasto_id,
+                              );
                               if (hijos.length === 0) return null;
                               return (
                                 <optgroup key={p.id} label={p.nombre}>
