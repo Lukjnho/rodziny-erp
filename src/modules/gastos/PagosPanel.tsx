@@ -29,77 +29,87 @@ export function PagosPanel({ local, desde, hasta }: Props) {
   const [guardando, setGuardando] = useState(false);
   const [errorPago, setErrorPago] = useState<string | null>(null);
 
-  const { data: gastos, isLoading } = useQuery({
-    queryKey: ['gastos_pagos', local, desde, hasta],
+  const HOY = new Date().toISOString().split('T')[0];
+
+  // Pendientes: TODA la deuda viva con fecha <= hasta, sin importar `desde`.
+  // Si en abril quedó algo sin pagar, sigue apareciendo en mayo / junio / etc.
+  const { data: pendientes, isLoading: loadingPend } = useQuery({
+    queryKey: ['gastos_pagos_pendientes', local, hasta],
     queryFn: async () => {
       let q = supabase
         .from('gastos')
         .select('*')
-        .gte('fecha', desde)
         .lte('fecha', hasta)
         .neq('cancelado', true)
-        .order('fecha', { ascending: false })
-        .limit(2000);
+        .order('fecha', { ascending: true })
+        .limit(3000);
       if (local !== 'ambos') q = q.eq('local', local);
       const { data, error } = await q;
       if (error) throw error;
-      return (data ?? []) as Gasto[];
+      return ((data ?? []) as Gasto[]).filter(
+        (g) => (g.estado_pago ?? '').toLowerCase() !== 'pagado',
+      );
     },
   });
 
-  // Historial de pagos realizados
-  const { data: pagosHechos } = useQuery({
-    queryKey: ['pagos_gastos_historial', local, desde, hasta],
+  // Pagados del rango: filtran por fecha_pago (cuando salió la plata),
+  // no por la fecha del comprobante.
+  const { data: pagosRango, isLoading: loadingPag } = useQuery({
+    queryKey: ['gastos_pagos_rango', local, desde, hasta],
     queryFn: async () => {
-      const ids = (gastos ?? []).map((g) => g.id);
-      if (!ids.length) return [];
-      const { data, error } = await supabase
+      let q = supabase
         .from('pagos_gastos')
-        .select('*')
-        .in('gasto_id', ids)
+        .select('*, gasto:gastos!inner(*)')
+        .gte('fecha_pago', desde)
+        .lte('fecha_pago', hasta)
         .order('fecha_pago', { ascending: false });
+      if (local !== 'ambos') q = q.eq('gasto.local', local);
+      const { data, error } = await q;
       if (error) throw error;
-      return (data ?? []) as PagoGasto[];
+      return (data ?? []) as (PagoGasto & { gasto: Gasto })[];
     },
-    enabled: !!(gastos && gastos.length > 0),
   });
 
-  const pagosMap = useMemo(() => {
-    const m = new Map<string, PagoGasto>();
-    for (const p of pagosHechos ?? []) m.set(p.gasto_id, p);
-    return m;
-  }, [pagosHechos]);
+  const isLoading = vista === 'pagados' ? loadingPag : loadingPend;
 
   const filtrados = useMemo(() => {
-    let lista = gastos ?? [];
+    let lista: { gasto: Gasto; pago?: PagoGasto }[] = [];
     if (vista === 'pendientes') {
-      lista = lista.filter((g) => (g.estado_pago ?? '').toLowerCase() !== 'pagado');
+      lista = (pendientes ?? []).map((g) => ({ gasto: g }));
     } else if (vista === 'pagados') {
-      lista = lista.filter((g) => (g.estado_pago ?? '').toLowerCase() === 'pagado');
+      lista = (pagosRango ?? []).map((p) => ({ gasto: p.gasto, pago: p }));
+    } else {
+      const ids = new Set<string>();
+      for (const g of pendientes ?? []) {
+        lista.push({ gasto: g });
+        ids.add(g.id);
+      }
+      for (const p of pagosRango ?? []) {
+        if (!ids.has(p.gasto.id)) {
+          lista.push({ gasto: p.gasto, pago: p });
+          ids.add(p.gasto.id);
+        }
+      }
     }
     if (busqueda.trim()) {
       const b = busqueda.toLowerCase();
       lista = lista.filter(
-        (g) =>
+        ({ gasto: g }) =>
           (g.proveedor ?? '').toLowerCase().includes(b) ||
           (g.comentario ?? '').toLowerCase().includes(b) ||
           (g.categoria ?? '').toLowerCase().includes(b),
       );
     }
     return lista;
-  }, [gastos, vista, busqueda]);
+  }, [pendientes, pagosRango, vista, busqueda]);
 
-  const totales = useMemo(() => {
-    const all = gastos ?? [];
-    const pendientes = all.filter((g) => (g.estado_pago ?? '').toLowerCase() !== 'pagado');
-    const pagados = all.filter((g) => (g.estado_pago ?? '').toLowerCase() === 'pagado');
-    return {
-      cantPendientes: pendientes.length,
-      montoPendiente: pendientes.reduce((s, g) => s + Number(g.importe_total), 0),
-      cantPagados: pagados.length,
-      montoPagado: pagados.reduce((s, g) => s + Number(g.importe_total), 0),
-    };
-  }, [gastos]);
+  const totales = useMemo(
+    () => ({
+      cantPendientes: pendientes?.length ?? 0,
+      cantPagados: pagosRango?.length ?? 0,
+    }),
+    [pendientes, pagosRango],
+  );
 
   function abrirModalPago(g: Gasto) {
     setGastoAPagar(g);
@@ -193,8 +203,9 @@ export function PagosPanel({ local, desde, hasta }: Props) {
       if (errIns) throw errIns;
 
       cerrarModalPago();
-      qc.invalidateQueries({ queryKey: ['gastos_pagos'] });
-      qc.invalidateQueries({ queryKey: ['pagos_gastos_historial'] });
+      qc.invalidateQueries({ queryKey: ['gastos_pagos_pendientes'] });
+      qc.invalidateQueries({ queryKey: ['gastos_pagos_rango'] });
+      qc.invalidateQueries({ queryKey: ['gastos_listado'] });
       qc.invalidateQueries({ queryKey: ['pagos_gastos'] });
       qc.invalidateQueries({ queryKey: ['gastos_resumen_kpis'] });
     } catch (e) {
@@ -223,8 +234,9 @@ export function PagosPanel({ local, desde, hasta }: Props) {
       return;
     }
     await supabase.from('pagos_gastos').delete().eq('gasto_id', g.id);
-    qc.invalidateQueries({ queryKey: ['gastos_pagos'] });
-    qc.invalidateQueries({ queryKey: ['pagos_gastos_historial'] });
+    qc.invalidateQueries({ queryKey: ['gastos_pagos_pendientes'] });
+    qc.invalidateQueries({ queryKey: ['gastos_pagos_rango'] });
+    qc.invalidateQueries({ queryKey: ['gastos_listado'] });
     qc.invalidateQueries({ queryKey: ['pagos_gastos'] });
     qc.invalidateQueries({ queryKey: ['gastos_resumen_kpis'] });
   }
@@ -278,6 +290,7 @@ export function PagosPanel({ local, desde, hasta }: Props) {
                 <th className="px-3 py-2 text-left font-semibold">Comentario</th>
                 <th className="px-3 py-2 text-right font-semibold">Total</th>
                 <th className="px-3 py-2 text-center font-semibold">Estado</th>
+                <th className="px-3 py-2 text-center font-semibold">Vence</th>
                 <th className="px-3 py-2 text-center font-semibold">Medio</th>
                 <th className="px-3 py-2 text-center font-semibold">Fecha pago</th>
                 <th className="px-3 py-2"></th>
@@ -286,27 +299,29 @@ export function PagosPanel({ local, desde, hasta }: Props) {
             <tbody>
               {isLoading && (
                 <tr>
-                  <td colSpan={9} className="px-3 py-8 text-center text-gray-400">
+                  <td colSpan={10} className="px-3 py-8 text-center text-gray-400">
                     Cargando...
                   </td>
                 </tr>
               )}
               {!isLoading && filtrados.length === 0 && (
                 <tr>
-                  <td colSpan={9} className="px-3 py-8 text-center text-gray-400">
-                    Sin gastos en este rango
+                  <td colSpan={10} className="px-3 py-8 text-center text-gray-400">
+                    Sin gastos
                   </td>
                 </tr>
               )}
-              {filtrados.map((g) => {
+              {filtrados.map(({ gasto: g, pago }) => {
                 const pagado = (g.estado_pago ?? '').toLowerCase() === 'pagado';
-                const pago = pagosMap.get(g.id);
+                const venc = !pagado && g.fecha_vencimiento ? g.fecha_vencimiento : null;
+                const vencido = venc !== null && venc < HOY;
                 return (
                   <tr
                     key={g.id}
                     className={cn(
                       'border-b border-gray-100 hover:bg-gray-50',
                       pagado && 'bg-green-50/30',
+                      vencido && 'bg-red-50/40',
                     )}
                   >
                     <td className="whitespace-nowrap px-3 py-2 text-gray-700">
@@ -327,11 +342,29 @@ export function PagosPanel({ local, desde, hasta }: Props) {
                       <span
                         className={cn(
                           'inline-block rounded px-2 py-0.5 text-[10px] font-medium',
-                          pagado ? 'bg-green-100 text-green-800' : 'bg-amber-100 text-amber-800',
+                          pagado
+                            ? 'bg-green-100 text-green-800'
+                            : vencido
+                              ? 'bg-red-100 text-red-800'
+                              : 'bg-amber-100 text-amber-800',
                         )}
                       >
-                        {pagado ? 'Pagado' : 'Pendiente'}
+                        {pagado ? 'Pagado' : vencido ? 'Vencido' : 'Pendiente'}
                       </span>
+                    </td>
+                    <td className="whitespace-nowrap px-3 py-2 text-center">
+                      {pagado ? (
+                        <span className="text-gray-300">—</span>
+                      ) : venc ? (
+                        <span
+                          className={cn('text-xs', vencido ? 'font-semibold text-red-700' : 'text-gray-600')}
+                          title={vencido ? 'Vencido — pagar cuanto antes' : 'Vence en el futuro'}
+                        >
+                          {formatFecha(venc)}
+                        </span>
+                      ) : (
+                        <span className="text-gray-300">—</span>
+                      )}
                     </td>
                     <td className="px-3 py-2 text-center text-gray-600">
                       {pago
@@ -369,9 +402,11 @@ export function PagosPanel({ local, desde, hasta }: Props) {
                     TOTAL ({filtrados.length}):
                   </td>
                   <td className="px-3 py-2 text-right tabular-nums">
-                    {formatARS(filtrados.reduce((s, g) => s + Number(g.importe_total), 0))}
+                    {formatARS(
+                      filtrados.reduce((s, { gasto: g }) => s + Number(g.importe_total), 0),
+                    )}
                   </td>
-                  <td colSpan={4}></td>
+                  <td colSpan={5}></td>
                 </tr>
               </tfoot>
             )}
