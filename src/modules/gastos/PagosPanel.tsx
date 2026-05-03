@@ -1,27 +1,21 @@
 import { useState, useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
-import { LocalSelector } from '@/components/ui/LocalSelector';
 import { formatARS, formatFecha, cn } from '@/lib/utils';
 import type { Gasto, MedioPago, PagoGasto } from './types';
 import { MEDIO_PAGO_LABEL } from './types';
 
-const HOY = new Date();
-function primerDiaDelMes(d: Date) {
-  return new Date(d.getFullYear(), d.getMonth(), 1).toISOString().split('T')[0];
-}
-function ultimoDiaDelMes(d: Date) {
-  return new Date(d.getFullYear(), d.getMonth() + 1, 0).toISOString().split('T')[0];
-}
-
 type Vista = 'pendientes' | 'pagados' | 'todos';
 
-export function PagosPanel() {
+interface Props {
+  local: 'vedia' | 'saavedra' | 'ambos';
+  desde: string;
+  hasta: string;
+}
+
+export function PagosPanel({ local, desde, hasta }: Props) {
   const qc = useQueryClient();
-  const [local, setLocal] = useState<'ambos' | 'vedia' | 'saavedra'>('vedia');
   const [vista, setVista] = useState<Vista>('pendientes');
-  const [desde, setDesde] = useState(() => primerDiaDelMes(HOY));
-  const [hasta, setHasta] = useState(() => ultimoDiaDelMes(HOY));
   const [busqueda, setBusqueda] = useState('');
 
   // Modal de pago
@@ -202,6 +196,7 @@ export function PagosPanel() {
       qc.invalidateQueries({ queryKey: ['gastos_pagos'] });
       qc.invalidateQueries({ queryKey: ['pagos_gastos_historial'] });
       qc.invalidateQueries({ queryKey: ['pagos_gastos'] });
+      qc.invalidateQueries({ queryKey: ['gastos_resumen_kpis'] });
     } catch (e) {
       setErrorPago((e as Error).message ?? 'Error al guardar el pago');
     } finally {
@@ -231,56 +226,22 @@ export function PagosPanel() {
     qc.invalidateQueries({ queryKey: ['gastos_pagos'] });
     qc.invalidateQueries({ queryKey: ['pagos_gastos_historial'] });
     qc.invalidateQueries({ queryKey: ['pagos_gastos'] });
+    qc.invalidateQueries({ queryKey: ['gastos_resumen_kpis'] });
   }
 
   return (
     <div>
       {/* Filtros */}
       <div className="mb-3 flex flex-wrap items-center gap-3">
-        <LocalSelector
-          value={local}
-          onChange={(v) => setLocal(v as 'ambos' | 'vedia' | 'saavedra')}
-          options={['vedia', 'saavedra', 'ambos']}
-        />
-        <input
-          type="date"
-          value={desde}
-          onChange={(e) => setDesde(e.target.value)}
-          className="rounded border border-gray-300 px-2 py-1.5 text-xs"
-        />
-        <span className="text-xs text-gray-400">→</span>
-        <input
-          type="date"
-          value={hasta}
-          onChange={(e) => setHasta(e.target.value)}
-          className="rounded border border-gray-300 px-2 py-1.5 text-xs"
-        />
         <input
           value={busqueda}
           onChange={(e) => setBusqueda(e.target.value)}
           placeholder="Buscar proveedor..."
           className="min-w-[180px] flex-1 rounded border border-gray-300 px-2 py-1.5 text-xs"
         />
-      </div>
-
-      {/* KPIs */}
-      <div className="mb-4 grid grid-cols-2 gap-3">
-        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
-          <div className="text-[10px] uppercase tracking-wide text-amber-700">
-            Pendientes de pago
-          </div>
-          <div className="mt-0.5 text-lg font-bold text-amber-900">
-            {totales.cantPendientes} — {formatARS(totales.montoPendiente)}
-          </div>
-        </div>
-        <div className="rounded-lg border border-green-200 bg-green-50 px-4 py-3">
-          <div className="text-[10px] uppercase tracking-wide text-green-700">
-            Pagados este período
-          </div>
-          <div className="mt-0.5 text-lg font-bold text-green-900">
-            {totales.cantPagados} — {formatARS(totales.montoPagado)}
-          </div>
-        </div>
+        <span className="text-xs text-gray-400">
+          {totales.cantPendientes} pendientes · {totales.cantPagados} pagados
+        </span>
       </div>
 
       {/* Vista tabs */}

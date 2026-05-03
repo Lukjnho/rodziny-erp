@@ -1,7 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
-import { LocalSelector } from '@/components/ui/LocalSelector';
 import { formatARS, cn } from '@/lib/utils';
 
 const MESES_LABEL = [
@@ -37,8 +36,11 @@ interface CatData {
   porMes: Map<string, number>;
 }
 
-export function AnalisisGastos() {
-  const [local, setLocal] = useState<'ambos' | 'vedia' | 'saavedra'>('vedia');
+interface Props {
+  local: 'vedia' | 'saavedra' | 'ambos';
+}
+
+export function AnalisisGastos({ local }: Props) {
   const localActivo = local === 'ambos' ? null : local;
   const [año, setAño] = useState(() => String(new Date().getFullYear()));
   const [expandidos, setExpandidos] = useState<Set<string>>(new Set());
@@ -173,11 +175,6 @@ export function AnalisisGastos() {
   return (
     <div>
       <div className="mb-4 flex flex-wrap items-center gap-4">
-        <LocalSelector
-          value={local}
-          onChange={(v) => setLocal(v as 'ambos' | 'vedia' | 'saavedra')}
-          options={['vedia', 'saavedra', 'ambos']}
-        />
         <div className="flex items-center gap-2">
           <label className="text-xs font-medium text-gray-500">Año</label>
           <input

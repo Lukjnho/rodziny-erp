@@ -725,6 +725,7 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
       qc.invalidateQueries({ queryKey: ['gastos_listado'] });
       qc.invalidateQueries({ queryKey: ['gastos_pagos'] });
       qc.invalidateQueries({ queryKey: ['gastos_vista'] });
+      qc.invalidateQueries({ queryKey: ['gastos_resumen_kpis'] });
       qc.invalidateQueries({ queryKey: ['recepciones_pendientes'] });
       qc.invalidateQueries({ queryKey: ['productos_stock'] });
       qc.invalidateQueries({ queryKey: ['productos_para_gasto'] });

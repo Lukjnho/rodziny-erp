@@ -1,63 +1,54 @@
 import { useState, useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
-import { LocalSelector } from '@/components/ui/LocalSelector';
 import { formatARS, formatFecha, cn } from '@/lib/utils';
-import { NuevoGastoModal } from './NuevoGastoModal';
 import type { Gasto } from './types';
 import { TIPO_COMPROBANTE_LABEL } from './types';
-
-const HOY = new Date();
-
-function primerDiaDelMes(d: Date) {
-  return new Date(d.getFullYear(), d.getMonth(), 1).toISOString().split('T')[0];
-}
-function ultimoDiaDelMes(d: Date) {
-  return new Date(d.getFullYear(), d.getMonth() + 1, 0).toISOString().split('T')[0];
-}
-
-type Preset = 'mes_actual' | 'mes_pasado' | 'ultimos_30' | 'anio' | 'personalizado';
+import { NuevoGastoModal } from './NuevoGastoModal';
 
 // Tipos de comprobante que exigen tener el archivo fiscal (factura_path) adjunto
 const TIPOS_REQUIEREN_FACTURA = new Set(['factura_a', 'factura_c', 'remito']);
 const requiereFactura = (g: Gasto) =>
   TIPOS_REQUIEREN_FACTURA.has((g.tipo_comprobante ?? '').toLowerCase()) && !g.factura_path;
 
-export function ListadoGastos({ localExterno }: { localExterno?: 'vedia' | 'saavedra' } = {}) {
+function primerDiaDelMes() {
+  const d = new Date();
+  return new Date(d.getFullYear(), d.getMonth(), 1).toISOString().split('T')[0];
+}
+function ultimoDiaDelMes() {
+  const d = new Date();
+  return new Date(d.getFullYear(), d.getMonth() + 1, 0).toISOString().split('T')[0];
+}
+
+interface Props {
+  local: 'vedia' | 'saavedra' | 'ambos';
+  desde?: string;       // default: primer día del mes
+  hasta?: string;       // default: último día del mes
+  onEditar?: (g: Gasto) => void; // si no viene, usa modal interno (modo standalone)
+}
+
+export function ListadoGastos({
+  local,
+  desde = primerDiaDelMes(),
+  hasta = ultimoDiaDelMes(),
+  onEditar,
+}: Props) {
   const qc = useQueryClient();
-  const [localInterno, setLocalInterno] = useState<'ambos' | 'vedia' | 'saavedra'>('vedia');
-  const local = localExterno ?? localInterno;
-  const [preset, setPreset] = useState<Preset>('mes_actual');
-  const [desde, setDesde] = useState(() => primerDiaDelMes(HOY));
-  const [hasta, setHasta] = useState(() => ultimoDiaDelMes(HOY));
   const [filtroEstado, setFiltroEstado] = useState<'todos' | 'pendiente' | 'pagado'>('todos');
+  // Fallback: modal interno cuando no hay `onEditar` externo (ComprasPage embebido)
+  const [modalInternoOpen, setModalInternoOpen] = useState(false);
+  const [gastoEditandoInterno, setGastoEditandoInterno] = useState<Gasto | null>(null);
+  const handleEditar = (g: Gasto) => {
+    if (onEditar) onEditar(g);
+    else {
+      setGastoEditandoInterno(g);
+      setModalInternoOpen(true);
+    }
+  };
   const [filtroProveedor, setFiltroProveedor] = useState('');
   const [filtroCategoria, setFiltroCategoria] = useState('');
   const [filtroSinFactura, setFiltroSinFactura] = useState(false);
   const [busqueda, setBusqueda] = useState('');
-  const [modalOpen, setModalOpen] = useState(false);
-  const [editandoGasto, setEditandoGasto] = useState<Gasto | null>(null);
-
-  function aplicarPreset(p: Preset) {
-    setPreset(p);
-    const h = new Date();
-    if (p === 'mes_actual') {
-      setDesde(primerDiaDelMes(h));
-      setHasta(ultimoDiaDelMes(h));
-    } else if (p === 'mes_pasado') {
-      const d = new Date(h.getFullYear(), h.getMonth() - 1, 1);
-      setDesde(primerDiaDelMes(d));
-      setHasta(ultimoDiaDelMes(d));
-    } else if (p === 'ultimos_30') {
-      const d = new Date();
-      d.setDate(d.getDate() - 30);
-      setDesde(d.toISOString().split('T')[0]);
-      setHasta(h.toISOString().split('T')[0]);
-    } else if (p === 'anio') {
-      setDesde(`${h.getFullYear()}-01-01`);
-      setHasta(`${h.getFullYear()}-12-31`);
-    }
-  }
 
   const { data: gastos, isLoading } = useQuery({
     queryKey: ['gastos_listado', local, desde, hasta],
@@ -108,7 +99,7 @@ export function ListadoGastos({ localExterno }: { localExterno?: 'vedia' | 'saav
     return lista;
   }, [gastos, filtroEstado, filtroProveedor, filtroCategoria, busqueda, filtroSinFactura]);
 
-  // Conteo total de gastos que exigen factura y no la tienen — para el KPI
+  // Conteo total de gastos que exigen factura y no la tienen — KPI clickeable
   const sinFacturaCount = useMemo(() => (gastos ?? []).filter(requiereFactura).length, [gastos]);
 
   const totales = useMemo(() => {
@@ -118,12 +109,9 @@ export function ListadoGastos({ localExterno }: { localExterno?: 'vedia' | 'saav
         acc.iva += Number(g.iva ?? 0);
         acc.total += Number(g.importe_total ?? 0);
         acc.cantidad += 1;
-        if ((g.estado_pago ?? '').toLowerCase() === 'pagado')
-          acc.pagado += Number(g.importe_total ?? 0);
-        else acc.pendiente += Number(g.importe_total ?? 0);
         return acc;
       },
-      { neto: 0, iva: 0, total: 0, cantidad: 0, pagado: 0, pendiente: 0 },
+      { neto: 0, iva: 0, total: 0, cantidad: 0 },
     );
   }, [filtrados]);
 
@@ -176,62 +164,13 @@ export function ListadoGastos({ localExterno }: { localExterno?: 'vedia' | 'saav
       return;
     }
     qc.invalidateQueries({ queryKey: ['gastos_listado'] });
+    qc.invalidateQueries({ queryKey: ['gastos_resumen_kpis'] });
   }
 
   return (
     <div>
-      {/* Filtros principales (línea 1) */}
+      {/* Filtros secundarios */}
       <div className="mb-3 flex flex-wrap items-center gap-3">
-        {!localExterno && (
-          <LocalSelector
-            value={localInterno}
-            onChange={(v) => setLocalInterno(v as 'ambos' | 'vedia' | 'saavedra')}
-            options={['vedia', 'saavedra', 'ambos']}
-          />
-        )}
-        <select
-          value={preset}
-          onChange={(e) => aplicarPreset(e.target.value as Preset)}
-          className="rounded border border-gray-300 bg-white px-2 py-1.5 text-xs"
-        >
-          <option value="mes_actual">Mes actual</option>
-          <option value="mes_pasado">Mes pasado</option>
-          <option value="ultimos_30">Últimos 30 días</option>
-          <option value="anio">Año en curso</option>
-          <option value="personalizado">Personalizado</option>
-        </select>
-        <input
-          type="date"
-          value={desde}
-          onChange={(e) => {
-            setDesde(e.target.value);
-            setPreset('personalizado');
-          }}
-          className="rounded border border-gray-300 px-2 py-1.5 text-xs"
-        />
-        <span className="text-xs text-gray-400">→</span>
-        <input
-          type="date"
-          value={hasta}
-          onChange={(e) => {
-            setHasta(e.target.value);
-            setPreset('personalizado');
-          }}
-          className="rounded border border-gray-300 px-2 py-1.5 text-xs"
-        />
-        <button
-          onClick={() => {
-            setEditandoGasto(null);
-            setModalOpen(true);
-          }}
-          className="ml-auto rounded-md bg-rodziny-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-rodziny-800"
-        >
-          + Nuevo gasto
-        </button>
-      </div>
-
-      {/* Filtros secundarios (línea 2) */}
-      <div className="mb-4 flex flex-wrap items-center gap-3">
         <input
           value={busqueda}
           onChange={(e) => setBusqueda(e.target.value)}
@@ -278,51 +217,21 @@ export function ListadoGastos({ localExterno }: { localExterno?: 'vedia' | 'saav
             </button>
           ))}
         </div>
-      </div>
-
-      {/* KPIs */}
-      <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-5">
-        <div className="rounded-lg border border-gray-200 bg-white px-4 py-3">
-          <div className="text-[10px] uppercase tracking-wide text-gray-500">Cantidad</div>
-          <div className="mt-0.5 text-lg font-bold text-gray-900">{totales.cantidad}</div>
-        </div>
-        <div className="rounded-lg border border-gray-200 bg-white px-4 py-3">
-          <div className="text-[10px] uppercase tracking-wide text-gray-500">Total</div>
-          <div className="mt-0.5 text-lg font-bold text-gray-900">{formatARS(totales.total)}</div>
-        </div>
-        <div className="rounded-lg border border-amber-200 bg-amber-50 bg-white px-4 py-3">
-          <div className="text-[10px] uppercase tracking-wide text-amber-700">
-            Pendiente de pago
-          </div>
-          <div className="mt-0.5 text-lg font-bold text-amber-900">
-            {formatARS(totales.pendiente)}
-          </div>
-        </div>
-        <div className="rounded-lg border border-green-200 bg-green-50 bg-white px-4 py-3">
-          <div className="text-[10px] uppercase tracking-wide text-green-700">Pagado</div>
-          <div className="mt-0.5 text-lg font-bold text-green-900">{formatARS(totales.pagado)}</div>
-        </div>
         <button
           type="button"
           onClick={() => setFiltroSinFactura((v) => !v)}
-          className={cn(
-            'rounded-lg border px-4 py-3 text-left transition-colors',
-            sinFacturaCount === 0
-              ? 'cursor-default border-gray-200 bg-gray-50'
-              : filtroSinFactura
-                ? 'border-red-300 bg-red-100 ring-1 ring-red-200'
-                : 'cursor-pointer border-red-200 bg-red-50 hover:bg-red-100',
-          )}
           disabled={sinFacturaCount === 0}
+          className={cn(
+            'rounded border px-2 py-1 text-xs',
+            sinFacturaCount === 0
+              ? 'cursor-default border-gray-200 bg-gray-50 text-gray-400'
+              : filtroSinFactura
+                ? 'border-red-300 bg-red-100 text-red-800 ring-1 ring-red-200'
+                : 'cursor-pointer border-red-200 bg-red-50 text-red-700 hover:bg-red-100',
+          )}
           title="Gastos con tipo Factura A/C o Remito que no tienen el archivo fiscal adjunto"
         >
-          <div className="text-[10px] uppercase tracking-wide text-red-700">
-            ⚠ Sin factura adjunta
-          </div>
-          <div className="mt-0.5 text-lg font-bold text-red-900">{sinFacturaCount}</div>
-          {filtroSinFactura && (
-            <div className="mt-0.5 text-[9px] text-red-700">Filtro activo · click para quitar</div>
-          )}
+          ⚠ Sin factura: {sinFacturaCount}
         </button>
       </div>
 
@@ -439,10 +348,7 @@ export function ListadoGastos({ localExterno }: { localExterno?: 'vedia' | 'saav
                     </td>
                     <td className="whitespace-nowrap px-3 py-2 text-right">
                       <button
-                        onClick={() => {
-                          setEditandoGasto(g);
-                          setModalOpen(true);
-                        }}
+                        onClick={() => handleEditar(g)}
                         className="mr-1 text-[10px] text-rodziny-700 hover:underline"
                       >
                         Editar
@@ -475,14 +381,15 @@ export function ListadoGastos({ localExterno }: { localExterno?: 'vedia' | 'saav
         </div>
       </div>
 
-      {modalOpen && (
+      {/* Modal interno (sólo en modo standalone — embeds como ComprasPage) */}
+      {!onEditar && modalInternoOpen && (
         <NuevoGastoModal
-          open={modalOpen}
+          open={modalInternoOpen}
           onClose={() => {
-            setModalOpen(false);
-            setEditandoGasto(null);
+            setModalInternoOpen(false);
+            setGastoEditandoInterno(null);
           }}
-          gastoEditando={editandoGasto}
+          gastoEditando={gastoEditandoInterno}
         />
       )}
     </div>
