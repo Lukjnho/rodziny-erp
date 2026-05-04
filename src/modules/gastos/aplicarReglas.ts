@@ -107,7 +107,10 @@ export async function previewReglas(supabase: SupabaseClient): Promise<Preview> 
   if (e1) throw e1;
   const reglas = (reglasData ?? []) as Regla[];
 
-  // Traer todos los movimientos pendientes (paginado)
+  // Traer todos los movimientos pendientes (paginado).
+  // Orden por id (UUID estable) para que la paginación no pierda/duplique
+  // filas — `fecha` no es único por sí solo y puede dar resultados inestables
+  // entre llamadas.
   const movs: MovimientoMin[] = [];
   const PAGE = 1000;
   let from = 0;
@@ -116,7 +119,7 @@ export async function previewReglas(supabase: SupabaseClient): Promise<Preview> 
       .from('movimientos_bancarios')
       .select('id, cuenta, fecha, descripcion, debito, credito, periodo')
       .is('tipo', null)
-      .order('fecha')
+      .order('id')
       .range(from, from + PAGE - 1);
     if (error) throw error;
     if (!data || data.length === 0) break;
