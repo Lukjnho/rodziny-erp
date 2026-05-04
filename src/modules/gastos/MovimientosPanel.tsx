@@ -4,6 +4,7 @@ import { supabase } from '@/lib/supabase';
 import { formatARS, formatFecha, cn } from '@/lib/utils';
 import { NuevoGastoModal, type PrefillGasto } from './NuevoGastoModal';
 import { ImportarExtractoModal } from './ImportarExtractoModal';
+import { AplicarReglasModal } from './AplicarReglasModal';
 import type { Gasto, MedioPago } from './types';
 
 type TipoMov =
@@ -86,6 +87,7 @@ export function MovimientosPanel({ desde, hasta }: Props) {
   } | null>(null);
   const [transferenciaMov, setTransferenciaMov] = useState<Movimiento | null>(null);
   const [importarOpen, setImportarOpen] = useState(false);
+  const [reglasOpen, setReglasOpen] = useState(false);
 
   const { data: movs, isLoading } = useQuery({
     queryKey: ['movimientos_bandeja', desde, hasta, cuenta, filtroEstado, filtroSigno],
@@ -200,7 +202,14 @@ export function MovimientosPanel({ desde, hasta }: Props) {
   return (
     <div>
       {/* Toolbar superior */}
-      <div className="mb-2 flex items-center justify-end">
+      <div className="mb-2 flex items-center justify-end gap-2">
+        <button
+          onClick={() => setReglasOpen(true)}
+          className="rounded-md border border-rodziny-700 px-3 py-1.5 text-xs font-medium text-rodziny-700 hover:bg-rodziny-50"
+          title="Generar gastos automáticos con las reglas configuradas"
+        >
+          🤖 Aplicar reglas
+        </button>
         <button
           onClick={() => setImportarOpen(true)}
           className="rounded-md bg-rodziny-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-rodziny-800"
@@ -448,6 +457,13 @@ export function MovimientosPanel({ desde, hasta }: Props) {
       <ImportarExtractoModal
         open={importarOpen}
         onClose={() => setImportarOpen(false)}
+        onSuccess={refrescar}
+      />
+
+      {/* Modal: Aplicar reglas automáticas */}
+      <AplicarReglasModal
+        open={reglasOpen}
+        onClose={() => setReglasOpen(false)}
         onSuccess={refrescar}
       />
     </div>
