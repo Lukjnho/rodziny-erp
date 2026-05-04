@@ -21,6 +21,12 @@ export interface PrefillGasto {
   comprobante_path?: string | null;
   items?: { producto_id: string; producto_nombre: string; cantidad: number; unidad: string }[];
   comentario?: string | null;
+  // Prefill desde un movimiento bancario (PR4A)
+  fecha?: string;
+  importe_total?: number;
+  medio_pago?: MedioPago;
+  estado_pago?: EstadoPago;
+  fecha_pago?: string;
 }
 
 interface Props {
@@ -185,9 +191,14 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
       setComprobantePath(gastoEditando.comprobante_path);
       setFacturaPath(gastoEditando.factura_path ?? null);
     } else {
+      const totalPrefill = prefill?.importe_total;
+      const ivaRate = totalPrefill !== undefined ? 0 : 21; // sin IVA por default si vino de un mov. bancario
+      const netoPrefill =
+        totalPrefill !== undefined ? totalPrefill : undefined;
       setForm({
         ...FORM_INICIAL,
         local: prefill?.local ?? 'vedia',
+        fecha: prefill?.fecha ?? FORM_INICIAL.fecha,
         proveedor_libre: prefill?.proveedor_nombre ?? '',
         comentario: prefill?.comentario ?? '',
         vincular_stock: !!prefill?.items?.length,
@@ -200,6 +211,14 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
           subtotal: 0,
           categoria_gasto_id: null,
         })),
+        importe_neto: netoPrefill !== undefined ? String(netoPrefill) : '',
+        iva_rate: ivaRate,
+        iva: '0',
+        importe_total:
+          totalPrefill !== undefined ? String(totalPrefill) : '',
+        estado_pago: prefill?.estado_pago ?? FORM_INICIAL.estado_pago,
+        fecha_pago: prefill?.fecha_pago ?? FORM_INICIAL.fecha_pago,
+        medio_pago: prefill?.medio_pago ?? FORM_INICIAL.medio_pago,
       });
       setComprobantePath(prefill?.comprobante_path ?? null);
       setFacturaPath(null);

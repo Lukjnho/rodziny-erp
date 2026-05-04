@@ -9,15 +9,17 @@ import { ListadoGastos } from './ListadoGastos';
 import { PagosPanel } from './PagosPanel';
 import { AnalisisGastos } from './AnalisisGastos';
 import { CategoriasPanel } from './CategoriasPanel';
+import { MovimientosPanel } from './MovimientosPanel';
 import { NuevoGastoModal } from './NuevoGastoModal';
 import type { Gasto } from './types';
 
-type Tab = 'listado' | 'pagos' | 'analisis' | 'categorias';
+type Tab = 'listado' | 'pagos' | 'movimientos' | 'analisis' | 'categorias';
 type Local = 'vedia' | 'saavedra' | 'ambos';
 
 const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: 'listado', label: 'Listado', icon: '📋' },
   { id: 'pagos', label: 'Pagos', icon: '💳' },
+  { id: 'movimientos', label: 'Movimientos', icon: '🏦' },
   { id: 'analisis', label: 'Análisis', icon: '📊' },
   { id: 'categorias', label: 'Categorías', icon: '🏷' },
 ];
@@ -300,6 +302,7 @@ export function GastosPage({ embedded = false }: { embedded?: boolean } = {}) {
         />
       )}
       {tab === 'pagos' && <PagosPanel local={local} desde={desde} hasta={hasta} />}
+      {tab === 'movimientos' && <MovimientosPanel desde={desde} hasta={hasta} />}
       {tab === 'analisis' && <AnalisisGastos local={local} />}
       {tab === 'categorias' && <CategoriasPanel />}
 
