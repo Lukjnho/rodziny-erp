@@ -50,7 +50,7 @@ export interface PreviewItem {
   cantidadMovs: number;
   total: number;
   movIds: string[];
-  cuentaDominante: string;
+  cuentas: string[];
   // Solo individuales
   fecha?: string;
   descripcion?: string;
@@ -171,6 +171,7 @@ export async function previewReglas(supabase: SupabaseClient): Promise<Preview> 
         existing.cantidadMovs++;
         existing.total += monto;
         existing.movIds.push(mov.id);
+        if (!existing.cuentas.includes(mov.cuenta)) existing.cuentas.push(mov.cuenta);
       } else {
         grupos.set(key, {
           reglaId: regla.id,
@@ -184,7 +185,7 @@ export async function previewReglas(supabase: SupabaseClient): Promise<Preview> 
           cantidadMovs: 1,
           total: monto,
           movIds: [mov.id],
-          cuentaDominante: mov.cuenta,
+          cuentas: [mov.cuenta],
         });
       }
     } else {
@@ -201,7 +202,7 @@ export async function previewReglas(supabase: SupabaseClient): Promise<Preview> 
         cantidadMovs: 1,
         total: monto,
         movIds: [mov.id],
-        cuentaDominante: mov.cuenta,
+        cuentas: [mov.cuenta],
         fecha: mov.fecha,
         descripcion: mov.descripcion ?? '',
       });
@@ -277,7 +278,8 @@ export async function ejecutarReglas(
 
       const fechaGasto =
         item.agrupacion === 'mensual' ? `${item.periodo}-01` : item.fecha!;
-      const medioPago = MEDIO_DESDE_CUENTA[item.cuentaDominante] ?? 'transferencia_mp';
+      const cuentaPrimaria = item.cuentas[0] ?? 'mercadopago';
+      const medioPago = MEDIO_DESDE_CUENTA[cuentaPrimaria] ?? 'transferencia_mp';
       const total = Math.round(item.total * 100) / 100;
 
       const { data: nuevo, error } = await supabase

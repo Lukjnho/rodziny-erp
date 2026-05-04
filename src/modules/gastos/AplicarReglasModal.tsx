@@ -3,6 +3,12 @@ import { supabase } from '@/lib/supabase';
 import { formatARS, cn } from '@/lib/utils';
 import { previewReglas, ejecutarReglas, type Preview } from './aplicarReglas';
 
+const CUENTA_LABEL: Record<string, string> = {
+  mercadopago: 'MercadoPago',
+  galicia: 'Galicia',
+  icbc: 'ICBC',
+};
+
 type Etapa = 'cargando' | 'preview' | 'ejecutando' | 'resultado' | 'error';
 
 interface Props {
@@ -127,6 +133,7 @@ export function AplicarReglasModal({ open, onClose, onSuccess }: Props) {
                 <thead className="border-b border-gray-200 bg-gray-50 text-[10px] uppercase text-gray-500">
                   <tr>
                     <th className="px-3 py-2 text-left">Período</th>
+                    <th className="px-3 py-2 text-left">Cuenta</th>
                     <th className="px-3 py-2 text-left">Regla / Proveedor</th>
                     <th className="px-3 py-2 text-center">Movs</th>
                     <th className="px-3 py-2 text-right">Total</th>
@@ -138,6 +145,11 @@ export function AplicarReglasModal({ open, onClose, onSuccess }: Props) {
                     <tr key={i} className="border-b border-gray-100">
                       <td className="whitespace-nowrap px-3 py-2 font-mono text-gray-600">
                         {it.periodo}
+                      </td>
+                      <td className="whitespace-nowrap px-3 py-2 text-gray-700">
+                        {it.cuentas
+                          .map((c) => CUENTA_LABEL[c] ?? c)
+                          .join(' + ')}
                       </td>
                       <td className="px-3 py-2">
                         <p className="font-medium text-gray-800">{it.proveedor}</p>
@@ -163,7 +175,7 @@ export function AplicarReglasModal({ open, onClose, onSuccess }: Props) {
                   ))}
                   {preview.items.length === 0 && (
                     <tr>
-                      <td colSpan={5} className="px-3 py-6 text-center text-gray-400">
+                      <td colSpan={6} className="px-3 py-6 text-center text-gray-400">
                         No hay movimientos pendientes que matcheen alguna regla.
                       </td>
                     </tr>
