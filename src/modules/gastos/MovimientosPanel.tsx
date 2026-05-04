@@ -30,6 +30,7 @@ interface Movimiento {
   tipo: TipoMov | null;
   gasto_id: string | null;
   transferencia_par_id: string | null;
+  sugerencia: string | null;
   gasto?: Pick<Gasto, 'id' | 'proveedor' | 'categoria' | 'importe_total' | 'fecha'> | null;
 }
 
@@ -95,7 +96,7 @@ export function MovimientosPanel({ desde, hasta }: Props) {
       let q = supabase
         .from('movimientos_bancarios')
         .select(
-          'id, cuenta, fecha, descripcion, debito, credito, saldo, categoria, local, referencia, fuente, tipo, gasto_id, transferencia_par_id, gasto:gastos(id, proveedor, categoria, importe_total, fecha)',
+          'id, cuenta, fecha, descripcion, debito, credito, saldo, categoria, local, referencia, fuente, tipo, gasto_id, transferencia_par_id, sugerencia, gasto:gastos(id, proveedor, categoria, importe_total, fecha)',
         )
         .gte('fecha', desde)
         .lte('fecha', hasta)
@@ -321,10 +322,15 @@ export function MovimientosPanel({ desde, hasta }: Props) {
                       {CUENTA_LABEL[m.cuenta] ?? m.cuenta}
                     </td>
                     <td
-                      className="max-w-[280px] truncate px-3 py-2 text-gray-700"
+                      className="max-w-[280px] px-3 py-2 text-gray-700"
                       title={`${m.descripcion ?? ''} · ${m.referencia ?? ''}`}
                     >
-                      {m.descripcion || m.referencia || '—'}
+                      <div className="truncate">{m.descripcion || m.referencia || '—'}</div>
+                      {m.sugerencia && !m.tipo && (
+                        <div className="mt-0.5 inline-block rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800">
+                          💡 {m.sugerencia}
+                        </div>
+                      )}
                     </td>
                     <td className="px-3 py-2 text-right tabular-nums text-red-700">
                       {Number(m.debito) > 0 ? formatARS(Number(m.debito)) : '—'}

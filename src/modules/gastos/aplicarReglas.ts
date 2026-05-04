@@ -1,6 +1,12 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { MedioPago } from './types';
 
+export type ReglaAccion =
+  | 'crear_gasto'
+  | 'sugerir_vincular'
+  | 'sugerir_transferencia'
+  | 'sugerir_ignorar';
+
 export interface Regla {
   id: string;
   nombre: string;
@@ -11,9 +17,16 @@ export interface Regla {
   subcategoria: string | null;
   categoria_gasto_id: string | null;
   agrupacion: 'individual' | 'mensual';
+  accion: ReglaAccion;
   prioridad: number;
   activo: boolean;
 }
+
+const TEXTO_SUGERENCIA: Record<Exclude<ReglaAccion, 'crear_gasto'>, string> = {
+  sugerir_vincular: 'Cheque · vincular a gasto',
+  sugerir_transferencia: 'Posible transferencia interna',
+  sugerir_ignorar: 'Sueldo (ignorar acá)',
+};
 
 interface MovimientoMin {
   id: string;
@@ -32,6 +45,7 @@ export interface PreviewItem {
   subcategoria: string | null;
   categoriaGastoId: string | null;
   agrupacion: 'individual' | 'mensual';
+  accion: ReglaAccion;
   periodo: string;
   cantidadMovs: number;
   total: number;
@@ -42,9 +56,19 @@ export interface PreviewItem {
   descripcion?: string;
 }
 
+export interface SugerenciaItem {
+  reglaId: string;
+  reglaNombre: string;
+  accion: Exclude<ReglaAccion, 'crear_gasto'>;
+  cantidadMovs: number;
+  movIds: string[];
+}
+
 export interface Preview {
   items: PreviewItem[];
+  sugerencias: SugerenciaItem[];
   movsClasificados: number;
+  movsSugeridos: number;
   movsSinRegla: number;
   totalGastos: number;
   totalMonto: number;
@@ -102,8 +126,10 @@ export async function previewReglas(supabase: SupabaseClient): Promise<Preview> 
   }
 
   const grupos = new Map<string, PreviewItem>();
+  const sugerencias = new Map<string, SugerenciaItem>();
   let movsSinRegla = 0;
   let movsClasificados = 0;
+  let movsSugeridos = 0;
 
   for (const mov of movs) {
     const regla = reglas.find((r) => matchea(mov, r));
@@ -111,6 +137,27 @@ export async function previewReglas(supabase: SupabaseClient): Promise<Preview> 
       movsSinRegla++;
       continue;
     }
+
+    // Reglas de sugerencia: no crean gasto, solo marcan al movimiento
+    if (regla.accion !== 'crear_gasto') {
+      movsSugeridos++;
+      const key = regla.id;
+      const existing = sugerencias.get(key);
+      if (existing) {
+        existing.cantidadMovs++;
+        existing.movIds.push(mov.id);
+      } else {
+        sugerencias.set(key, {
+          reglaId: regla.id,
+          reglaNombre: regla.nombre,
+          accion: regla.accion,
+          cantidadMovs: 1,
+          movIds: [mov.id],
+        });
+      }
+      continue;
+    }
+
     movsClasificados++;
     const monto = montoMov(mov, regla.signo);
 
@@ -129,6 +176,7 @@ export async function previewReglas(supabase: SupabaseClient): Promise<Preview> 
           subcategoria: regla.subcategoria,
           categoriaGastoId: regla.categoria_gasto_id,
           agrupacion: 'mensual',
+          accion: regla.accion,
           periodo: mov.periodo,
           cantidadMovs: 1,
           total: monto,
@@ -145,6 +193,7 @@ export async function previewReglas(supabase: SupabaseClient): Promise<Preview> 
         subcategoria: regla.subcategoria,
         categoriaGastoId: regla.categoria_gasto_id,
         agrupacion: 'individual',
+        accion: regla.accion,
         periodo: mov.periodo,
         cantidadMovs: 1,
         total: monto,
@@ -163,7 +212,9 @@ export async function previewReglas(supabase: SupabaseClient): Promise<Preview> 
 
   return {
     items,
+    sugerencias: Array.from(sugerencias.values()),
     movsClasificados,
+    movsSugeridos,
     movsSinRegla,
     totalGastos: items.length,
     totalMonto: items.reduce((s, i) => s + i.total, 0),
@@ -173,10 +224,31 @@ export async function previewReglas(supabase: SupabaseClient): Promise<Preview> 
 export async function ejecutarReglas(
   supabase: SupabaseClient,
   preview: Preview,
-): Promise<{ creados: number; vinculados: number; errores: string[] }> {
+): Promise<{ creados: number; vinculados: number; sugeridos: number; errores: string[] }> {
   let creados = 0;
   let vinculados = 0;
+  let sugeridos = 0;
   const errores: string[] = [];
+
+  // Aplicar sugerencias primero (rápido, no crea gastos): marca el movimiento con
+  // texto de sugerencia + regla, pero deja `tipo` como NULL para que el usuario
+  // siga decidiendo (vincular gasto, crear gasto, transferencia interna, ignorar).
+  for (const sug of preview.sugerencias) {
+    const texto = TEXTO_SUGERENCIA[sug.accion];
+    const CHUNK = 200;
+    for (let i = 0; i < sug.movIds.length; i += CHUNK) {
+      const slice = sug.movIds.slice(i, i + CHUNK);
+      const { error } = await supabase
+        .from('movimientos_bancarios')
+        .update({ sugerencia: texto, sugerencia_regla_id: sug.reglaId })
+        .in('id', slice);
+      if (error) {
+        errores.push(`Sugerencia ${sug.reglaNombre}: ${error.message}`);
+      } else {
+        sugeridos += slice.length;
+      }
+    }
+  }
 
   for (const item of preview.items) {
     try {
@@ -258,5 +330,5 @@ export async function ejecutarReglas(
     }
   }
 
-  return { creados, vinculados, errores };
+  return { creados, vinculados, sugeridos, errores };
 }

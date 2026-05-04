@@ -18,6 +18,7 @@ export function AplicarReglasModal({ open, onClose, onSuccess }: Props) {
   const [resultado, setResultado] = useState<{
     creados: number;
     vinculados: number;
+    sugeridos: number;
     errores: string[];
   } | null>(null);
 
@@ -76,11 +77,17 @@ export function AplicarReglasModal({ open, onClose, onSuccess }: Props) {
 
         {etapa === 'preview' && preview && (
           <>
-            <div className="mb-3 grid grid-cols-3 gap-3 text-center">
+            <div className="mb-3 grid grid-cols-4 gap-3 text-center">
               <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
-                <p className="text-xs text-gray-500">Movimientos a clasificar</p>
+                <p className="text-xs text-gray-500">Auto a gasto</p>
                 <p className="text-lg font-semibold text-gray-800">
                   {preview.movsClasificados.toLocaleString('es-AR')}
+                </p>
+              </div>
+              <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                <p className="text-xs text-gray-500">Marcados con sugerencia</p>
+                <p className="text-lg font-semibold text-gray-800">
+                  {preview.movsSugeridos.toLocaleString('es-AR')}
                 </p>
               </div>
               <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
@@ -99,9 +106,21 @@ export function AplicarReglasModal({ open, onClose, onSuccess }: Props) {
 
             <p className="mb-2 text-xs text-gray-500">
               Quedarán <strong>{preview.movsSinRegla.toLocaleString('es-AR')}</strong> movimientos
-              sin regla — los seguís clasificando vos a mano (transferencias internas, cheques,
-              etc).
+              sin regla — los seguís clasificando vos a mano.
             </p>
+
+            {preview.sugerencias.length > 0 && (
+              <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                <p className="font-semibold">Sugerencias (no se crea gasto, solo se marca):</p>
+                <ul className="mt-1 list-inside list-disc">
+                  {preview.sugerencias.map((s) => (
+                    <li key={s.reglaId}>
+                      <strong>{s.cantidadMovs}</strong> movimientos · {s.reglaNombre}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
 
             <div className="overflow-hidden rounded border border-gray-200">
               <table className="w-full text-xs">
@@ -188,7 +207,8 @@ export function AplicarReglasModal({ open, onClose, onSuccess }: Props) {
               )}
             >
               ✅ {resultado.creados} gastos creados ·{' '}
-              {resultado.vinculados.toLocaleString('es-AR')} movimientos vinculados
+              {resultado.vinculados.toLocaleString('es-AR')} movimientos vinculados ·{' '}
+              {resultado.sugeridos.toLocaleString('es-AR')} marcados con sugerencia
               {resultado.errores.length > 0 && (
                 <div className="mt-2 text-red-700">
                   <p className="font-medium">Errores ({resultado.errores.length}):</p>
