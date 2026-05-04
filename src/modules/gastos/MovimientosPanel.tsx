@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { formatARS, formatFecha, cn } from '@/lib/utils';
 import { NuevoGastoModal, type PrefillGasto } from './NuevoGastoModal';
+import { ImportarExtractoModal } from './ImportarExtractoModal';
 import type { Gasto, MedioPago } from './types';
 
 type TipoMov =
@@ -84,6 +85,7 @@ export function MovimientosPanel({ desde, hasta }: Props) {
     prefill: PrefillGasto;
   } | null>(null);
   const [transferenciaMov, setTransferenciaMov] = useState<Movimiento | null>(null);
+  const [importarOpen, setImportarOpen] = useState(false);
 
   const { data: movs, isLoading } = useQuery({
     queryKey: ['movimientos_bandeja', desde, hasta, cuenta, filtroEstado, filtroSigno],
@@ -197,6 +199,17 @@ export function MovimientosPanel({ desde, hasta }: Props) {
 
   return (
     <div>
+      {/* Toolbar superior */}
+      <div className="mb-2 flex items-center justify-end">
+        <button
+          onClick={() => setImportarOpen(true)}
+          className="rounded-md bg-rodziny-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-rodziny-800"
+          title="Subir CSV de MercadoPago, Galicia o ICBC"
+        >
+          📥 Importar extracto
+        </button>
+      </div>
+
       {/* Filtros */}
       <div className="mb-3 flex flex-wrap items-center gap-3">
         <select
@@ -430,6 +443,13 @@ export function MovimientosPanel({ desde, hasta }: Props) {
           onSaved={onGastoCreado}
         />
       )}
+
+      {/* Modal: Importar extracto bancario */}
+      <ImportarExtractoModal
+        open={importarOpen}
+        onClose={() => setImportarOpen(false)}
+        onSuccess={refrescar}
+      />
     </div>
   );
 }
@@ -437,6 +457,17 @@ export function MovimientosPanel({ desde, hasta }: Props) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Modal: Vincular movimiento a gasto existente
 // ─────────────────────────────────────────────────────────────────────────────
+
+interface PagoExistente {
+  id: string;
+  conciliado_movimiento_id: string | null;
+  monto: number;
+  fecha_pago: string;
+}
+
+interface GastoCandidato extends Gasto {
+  pagos?: PagoExistente[];
+}
 
 function VincularGastoModal({
   movimiento,
@@ -451,7 +482,11 @@ function VincularGastoModal({
   const [guardando, setGuardando] = useState(false);
   const monto = Number(movimiento.debito) > 0 ? Number(movimiento.debito) : Number(movimiento.credito);
 
-  // Buscar gastos pendientes con monto similar (±20%) y fecha dentro de 60 días previos.
+  // Buscar candidatos con monto similar (±20%) y fecha dentro de 60 días previos:
+  //   1) Gastos pendientes de pago (caso clásico: factura cargada antes del débito).
+  //   2) Gastos ya pagados pero con pagos_gastos SIN conciliar a un movimiento bancario
+  //      (caso ChecklistPagos: el pago se marcó pagado en la checklist, ahora aparece
+  //      el débito real en el extracto y necesitamos reconciliarlo, NO duplicar).
   const { data: candidatos, isLoading } = useQuery({
     queryKey: ['vincular_gasto_candidatos', movimiento.id],
     queryFn: async () => {
@@ -460,17 +495,23 @@ function VincularGastoModal({
       desdeFecha.setUTCDate(desdeFecha.getUTCDate() - 60);
       const { data, error } = await supabase
         .from('gastos')
-        .select('id, fecha, proveedor, categoria, importe_total, estado_pago, local')
+        .select(
+          'id, fecha, proveedor, categoria, importe_total, estado_pago, local, pagos:pagos_gastos(id, conciliado_movimiento_id, monto, fecha_pago)',
+        )
         .neq('cancelado', true)
-        .neq('estado_pago', 'Pagado')
         .gte('importe_total', monto - tolerancia)
         .lte('importe_total', monto + tolerancia)
         .gte('fecha', desdeFecha.toISOString().split('T')[0])
         .lte('fecha', movimiento.fecha)
         .order('fecha', { ascending: false })
-        .limit(50);
+        .limit(100);
       if (error) throw error;
-      return (data ?? []) as Gasto[];
+      // Excluir pagados que ya están todos conciliados — no aportan al modal
+      const lista = (data ?? []) as unknown as GastoCandidato[];
+      return lista.filter((g) => {
+        if (g.estado_pago !== 'Pagado') return true;
+        return (g.pagos ?? []).some((p) => p.conciliado_movimiento_id === null);
+      });
     },
   });
 
@@ -484,30 +525,53 @@ function VincularGastoModal({
     );
   }, [candidatos, busqueda]);
 
-  async function vincular(gasto: Gasto) {
+  async function vincular(gasto: GastoCandidato) {
     if (guardando) return;
     setGuardando(true);
     try {
-      // 1. Marcar el movimiento
+      // 1. Marcar el movimiento como pago_de_gasto vinculado al gasto
       const { error: e1 } = await supabase
         .from('movimientos_bancarios')
         .update({ tipo: 'pago_de_gasto', gasto_id: gasto.id })
         .eq('id', movimiento.id);
       if (e1) throw e1;
-      // 2. Marcar el gasto como pagado y registrar pago si aún no hay
-      const { error: e2 } = await supabase
-        .from('gastos')
-        .update({ estado_pago: 'Pagado', fecha_vencimiento: movimiento.fecha })
-        .eq('id', gasto.id);
-      if (e2) throw e2;
-      await supabase.from('pagos_gastos').insert({
-        gasto_id: gasto.id,
-        fecha_pago: movimiento.fecha,
-        monto: monto,
-        medio_pago: MEDIO_DESDE_CUENTA[movimiento.cuenta] ?? 'transferencia_mp',
-        referencia: movimiento.referencia,
-        conciliado_movimiento_id: movimiento.id,
-      });
+
+      // 2. Decidir: reconciliar pago existente o registrar pago nuevo
+      const pagosSinConciliar = (gasto.pagos ?? []).filter(
+        (p) => p.conciliado_movimiento_id === null,
+      );
+
+      if (pagosSinConciliar.length > 0) {
+        // Reconciliación: el gasto ya está pagado (típicamente desde ChecklistPagos).
+        // Buscar el pago cuyo monto más se acerque al del movimiento; vincular sin
+        // crear pago nuevo (evita duplicar el egreso en Flujo de Caja).
+        const tol = monto * 0.2;
+        const pagoTarget =
+          pagosSinConciliar.find((p) => Math.abs(Number(p.monto) - monto) <= tol) ??
+          pagosSinConciliar[0];
+        const { error } = await supabase
+          .from('pagos_gastos')
+          .update({ conciliado_movimiento_id: movimiento.id })
+          .eq('id', pagoTarget.id);
+        if (error) throw error;
+      } else {
+        // Pago nuevo: el gasto era Pendiente, lo marcamos pagado e insertamos pago_gasto.
+        const { error: e2 } = await supabase
+          .from('gastos')
+          .update({ estado_pago: 'Pagado' })
+          .eq('id', gasto.id);
+        if (e2) throw e2;
+        const { error: e3 } = await supabase.from('pagos_gastos').insert({
+          gasto_id: gasto.id,
+          fecha_pago: movimiento.fecha,
+          monto: monto,
+          medio_pago: MEDIO_DESDE_CUENTA[movimiento.cuenta] ?? 'transferencia_mp',
+          referencia: movimiento.referencia,
+          conciliado_movimiento_id: movimiento.id,
+        });
+        if (e3) throw e3;
+      }
+
       onVinculado();
       onClose();
     } catch (e) {
@@ -528,7 +592,11 @@ function VincularGastoModal({
             <span className="ml-1 text-gray-400">— {movimiento.descripcion ?? '—'}</span>
           </p>
           <p className="mt-1 text-[11px] text-gray-400">
-            Se muestran gastos pendientes con monto similar (±20%) en los últimos 60 días.
+            Mostramos gastos <span className="font-medium text-gray-600">pendientes</span> con monto
+            similar (±20%) en los últimos 60 días, y pagos ya marcados como pagados (ej. desde Pagos
+            fijos) que aún no se vincularon a este débito —{' '}
+            <span className="font-medium text-amber-700">reconciliar evita duplicar el egreso</span>
+            .
           </p>
         </div>
         <input
@@ -545,6 +613,7 @@ function VincularGastoModal({
                 <th className="px-3 py-2 text-left">Fecha</th>
                 <th className="px-3 py-2 text-left">Proveedor</th>
                 <th className="px-3 py-2 text-left">Categoría</th>
+                <th className="px-3 py-2 text-center">Estado</th>
                 <th className="px-3 py-2 text-right">Total</th>
                 <th className="px-3 py-2"></th>
               </tr>
@@ -552,41 +621,56 @@ function VincularGastoModal({
             <tbody>
               {isLoading && (
                 <tr>
-                  <td colSpan={5} className="px-3 py-6 text-center text-gray-400">
+                  <td colSpan={6} className="px-3 py-6 text-center text-gray-400">
                     Buscando...
                   </td>
                 </tr>
               )}
               {!isLoading && filtrados.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="px-3 py-6 text-center text-gray-400">
-                    No hay gastos pendientes con monto similar.
+                  <td colSpan={6} className="px-3 py-6 text-center text-gray-400">
+                    No hay gastos compatibles con monto similar.
                     <br />
                     Probá "Crear gasto" en su lugar.
                   </td>
                 </tr>
               )}
-              {filtrados.map((g) => (
-                <tr key={g.id} className="border-b border-gray-100 hover:bg-gray-50">
-                  <td className="whitespace-nowrap px-3 py-2 text-gray-700">
-                    {formatFecha(g.fecha)}
-                  </td>
-                  <td className="px-3 py-2 font-medium text-gray-900">{g.proveedor || '—'}</td>
-                  <td className="px-3 py-2 text-gray-600">{g.categoria || '—'}</td>
-                  <td className="px-3 py-2 text-right font-semibold tabular-nums text-gray-900">
-                    {formatARS(g.importe_total)}
-                  </td>
-                  <td className="whitespace-nowrap px-3 py-2 text-right">
-                    <button
-                      disabled={guardando}
-                      onClick={() => vincular(g)}
-                      className="rounded bg-blue-600 px-2 py-1 text-[10px] font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-                    >
-                      Vincular
-                    </button>
-                  </td>
-                </tr>
-              ))}
+              {filtrados.map((g) => {
+                const yaPagado = g.estado_pago === 'Pagado';
+                return (
+                  <tr key={g.id} className="border-b border-gray-100 hover:bg-gray-50">
+                    <td className="whitespace-nowrap px-3 py-2 text-gray-700">
+                      {formatFecha(g.fecha)}
+                    </td>
+                    <td className="px-3 py-2 font-medium text-gray-900">{g.proveedor || '—'}</td>
+                    <td className="px-3 py-2 text-gray-600">{g.categoria || '—'}</td>
+                    <td className="px-3 py-2 text-center">
+                      {yaPagado ? (
+                        <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800">
+                          Pagado · sin conciliar
+                        </span>
+                      ) : (
+                        <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-700">
+                          Pendiente
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2 text-right font-semibold tabular-nums text-gray-900">
+                      {formatARS(g.importe_total)}
+                    </td>
+                    <td className="whitespace-nowrap px-3 py-2 text-right">
+                      <button
+                        disabled={guardando}
+                        onClick={() => vincular(g)}
+                        className="rounded bg-blue-600 px-2 py-1 text-[10px] font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                        title={yaPagado ? 'Reconciliar pago existente con este movimiento' : 'Marcar como pagado y vincular'}
+                      >
+                        {yaPagado ? 'Reconciliar' : 'Vincular'}
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
