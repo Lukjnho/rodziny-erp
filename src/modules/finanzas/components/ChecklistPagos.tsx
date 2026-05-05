@@ -151,9 +151,11 @@ export function ChecklistPagos() {
   // Trackear secciones cerradas (default = todas abiertas, así al cambiar modo
   // los grupos nuevos aparecen expandidos automáticamente)
   const [seccionesCerradas, setSeccionesCerradas] = useState<Set<string>>(new Set());
-  const [medioPagoModal, setMedioPagoModal] = useState<{ pagoId: string; concepto: string } | null>(
-    null,
-  );
+  const [medioPagoModal, setMedioPagoModal] = useState<{
+    pagoId: string;
+    concepto: string;
+    medioInicial: string | null;
+  } | null>(null);
   const [toast, setToast] = useState<{
     tipo: 'pagado' | 'desmarcado';
     concepto: string;
@@ -284,8 +286,14 @@ export function ChecklistPagos() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['pagos_fijos', periodo] }),
   });
 
-  // Marcar como pagado: crea gasto + pago_gasto
-  async function marcarPagado(pago: PagoFijo, medioPago: string) {
+  // Marcar como pagado: crea gasto + pago_gasto. Si llega numeroOperacion, se
+  // guarda en pagos_gastos.referencia para que el matcher por id concilie
+  // automaticamente al sincronizar MP / importar extractos.
+  async function marcarPagado(
+    pago: PagoFijo,
+    medioPago: string,
+    numeroOperacion: string | null = null,
+  ) {
     const fechaPago = hoy();
     const local = derivarLocal(pago.concepto);
 
@@ -329,6 +337,7 @@ export function ChecklistPagos() {
       fecha_pago: fechaPago,
       monto: pago.monto ?? 0,
       medio_pago: medioPago,
+      referencia: numeroOperacion,
     });
 
     // 3. Actualizar pago_fijo
@@ -788,10 +797,12 @@ export function ChecklistPagos() {
                           onTogglePagado={() => {
                             if (pago.pagado) {
                               desmarcarPagado(pago);
-                            } else if (pago.medio_pago) {
-                              marcarPagado(pago, pago.medio_pago);
                             } else {
-                              setMedioPagoModal({ pagoId: pago.id, concepto: pago.concepto });
+                              setMedioPagoModal({
+                                pagoId: pago.id,
+                                concepto: pago.concepto,
+                                medioInicial: pago.medio_pago,
+                              });
                             }
                           }}
                           onDelete={() => {
@@ -863,13 +874,14 @@ export function ChecklistPagos() {
         </div>
       )}
 
-      {/* Modal medio de pago (al marcar pagado sin medio) */}
+      {/* Modal medio de pago + N° operacion al confirmar pago */}
       {medioPagoModal && (
         <ModalMedioPago
           concepto={medioPagoModal.concepto}
-          onSelect={(medio) => {
+          medioInicial={medioPagoModal.medioInicial}
+          onConfirmar={(medio, numeroOperacion) => {
             const pago = (pagos ?? []).find((p) => p.id === medioPagoModal.pagoId);
-            if (pago) marcarPagado(pago, medio);
+            if (pago) marcarPagado(pago, medio, numeroOperacion);
             setMedioPagoModal(null);
           }}
           onClose={() => setMedioPagoModal(null)}
@@ -1197,37 +1209,75 @@ function ModalAgregarPago({
   );
 }
 
-// ── modal medio de pago ──────────────────────────────────────────────────────
+// ── modal confirmar pago (medio + N° operacion opcional) ─────────────────────
 function ModalMedioPago({
   concepto,
-  onSelect,
+  medioInicial,
+  onConfirmar,
   onClose,
 }: {
   concepto: string;
-  onSelect: (medio: string) => void;
+  medioInicial: string | null;
+  onConfirmar: (medio: string, numeroOperacion: string | null) => void;
   onClose: () => void;
 }) {
+  const [medio, setMedio] = useState<string>(medioInicial ?? '');
+  const [numeroOp, setNumeroOp] = useState<string>('');
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
       <div className="w-full max-w-sm rounded-xl bg-white shadow-xl">
         <div className="border-b px-6 py-4">
-          <h3 className="font-semibold text-gray-800">Medio de pago</h3>
-          <p className="mt-1 text-xs text-gray-400">¿Cómo se pagó "{concepto}"?</p>
+          <h3 className="font-semibold text-gray-800">Confirmar pago</h3>
+          <p className="mt-1 text-xs text-gray-500">{concepto}</p>
         </div>
-        <div className="space-y-2 px-6 py-4">
-          {MEDIOS.map((m) => (
-            <button
-              key={m}
-              onClick={() => onSelect(m)}
-              className="hover:border-rodziny-300 w-full rounded-lg border border-gray-200 px-4 py-2.5 text-left text-sm transition-colors hover:bg-rodziny-50"
+        <div className="space-y-3 px-6 py-4">
+          <div>
+            <label className="mb-1 block text-xs text-gray-500">Medio de pago</label>
+            <select
+              autoFocus
+              value={medio}
+              onChange={(e) => setMedio(e.target.value)}
+              className="w-full rounded border border-gray-200 px-3 py-2 text-sm focus:border-rodziny-500 focus:outline-none"
             >
-              {MEDIO_PAGO_LABEL[m]}
-            </button>
-          ))}
+              <option value="">— Elegir medio —</option>
+              {MEDIOS.map((m) => (
+                <option key={m} value={m}>
+                  {MEDIO_PAGO_LABEL[m]}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="mb-1 block text-xs text-gray-500">
+              N° de operación <span className="text-gray-400">(opcional)</span>
+            </label>
+            <input
+              type="text"
+              value={numeroOp}
+              onChange={(e) => setNumeroOp(e.target.value)}
+              placeholder="Ej: 157737647098"
+              className="w-full rounded border border-gray-200 px-3 py-2 text-sm focus:border-rodziny-500 focus:outline-none"
+            />
+            <p className="mt-1 text-[11px] text-gray-400">
+              Si lo cargás, el sistema reconcilia automáticamente este pago contra el movimiento
+              bancario al sincronizar MP / importar extracto.
+            </p>
+          </div>
         </div>
-        <div className="border-t px-6 py-3">
-          <button onClick={onClose} className="text-sm text-gray-500 hover:text-gray-700">
+        <div className="flex justify-end gap-2 border-t px-6 py-3">
+          <button
+            onClick={onClose}
+            className="rounded px-3 py-1.5 text-sm text-gray-500 hover:bg-gray-100"
+          >
             Cancelar
+          </button>
+          <button
+            onClick={() => medio && onConfirmar(medio, numeroOp.trim() || null)}
+            disabled={!medio}
+            className="rounded-md bg-rodziny-800 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-rodziny-700 disabled:opacity-50"
+          >
+            Confirmar pago
           </button>
         </div>
       </div>
