@@ -486,6 +486,32 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
     },
   });
 
+  // Cargos MP sobre pagos egresos (impuesto al débito, comisiones por enviar plata).
+  // Vienen en movimientos_bancarios con tipo='cargo_mp' y gasto_id null. Como tipicamente
+  // no tienen local imputado (es un costo del medio de pago, no del local), en consolidado
+  // se traen todos; en vista por local solo los que tengan local matcheante.
+  const { data: cargosMPRaw } = useQuery({
+    queryKey: ['edr_cargos_mp', año, localEdr],
+    queryFn: async () => {
+      let q = supabase
+        .from('movimientos_bancarios')
+        .select('fecha, debito, local')
+        .eq('cuenta', 'mercadopago')
+        .eq('tipo', 'cargo_mp')
+        .is('gasto_id', null)
+        .gte('fecha', `${año}-01-01`)
+        .lte('fecha', `${año}-12-31`);
+      if (!esConsolidado) q = q.eq('local', localEdr);
+      const { data } = await q;
+      const porMes = new Map<string, number>();
+      for (const r of data ?? []) {
+        const p = (r.fecha as string).substring(0, 7);
+        porMes.set(p, (porMes.get(p) ?? 0) + Number(r.debito));
+      }
+      return [...porMes.entries()].map(([periodo, total]) => ({ periodo, total }));
+    },
+  });
+
   const { data: partidasRaw } = useQuery({
     queryKey: ['edr_partidas', año, localEdr],
     queryFn: async () => {
@@ -601,8 +627,18 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
         map.set(s.periodo, { ...EMPTY_AUTO, sueldos: Number(s.sueldos_total) });
       }
     }
+    // Cargos MP (impuesto al débito sobre pagos egresos) → suma a intereses
+    // (resultado financiero). Antes quedaban afuera del EdR.
+    for (const c of cargosMPRaw ?? []) {
+      const existing = map.get(c.periodo);
+      if (existing) {
+        existing.intereses = Number(existing.intereses) + Number(c.total);
+      } else {
+        map.set(c.periodo, { ...EMPTY_AUTO, intereses: Number(c.total) });
+      }
+    }
     return map;
-  }, [ticketsRaw, gastosResumen, amortRaw, arqueosRaw, sueldosPagadosRaw]);
+  }, [ticketsRaw, gastosResumen, amortRaw, arqueosRaw, sueldosPagadosRaw, cargosMPRaw]);
 
   const manualMap = useMemo(() => {
     const map = new Map<string, Map<string, number>>();

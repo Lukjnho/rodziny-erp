@@ -19,6 +19,8 @@ interface MovBancario {
   local: string;
   referencia: string;
   es_transferencia_interna: boolean;
+  tipo: string | null;
+  gasto_id: string | null;
 }
 
 interface CierreVerificado {
@@ -411,9 +413,19 @@ export function FlujoCaja() {
     // Liquidaciones MP: créditos de MP en extracto = MP depositando en banco (no operativo)
     const liquidacionesMP = movs.filter((m) => m.cuenta === 'mercadopago' && Number(m.credito) > 0);
 
-    // Egresos bancarios: débitos de Galicia e ICBC (los débitos MP ahora vienen de pagos_mp API)
+    // Egresos bancarios: débitos de Galicia e ICBC (los débitos MP por ventas vienen de
+    // pagos_mp API). Adicionalmente, débitos MP con tipo='cargo_mp' (impuesto al débito,
+    // comisiones por hacer pagos egresos) sin gasto vinculado — son costos financieros que
+    // antes quedaban afuera del flujo. Filtramos !gasto_id para evitar duplicar con pagos_gastos.
     const debitosGalicia = movs.filter((m) => m.cuenta === 'galicia' && Number(m.debito) > 0);
     const debitosICBC = movs.filter((m) => m.cuenta === 'icbc' && Number(m.debito) > 0);
+    const debitosMP = movs.filter(
+      (m) =>
+        m.cuenta === 'mercadopago' &&
+        Number(m.debito) > 0 &&
+        m.tipo === 'cargo_mp' &&
+        !m.gasto_id,
+    );
 
     // Créditos Galicia/ICBC: clasificar cada uno
     const creditosGalICBC = movs.filter(
@@ -439,6 +451,7 @@ export function FlujoCaja() {
       creditosOperativos,
       debitosGalicia,
       debitosICBC,
+      debitosMP,
       transferenciasInternas,
       capital,
     };
@@ -498,27 +511,42 @@ export function FlujoCaja() {
       else entry.items.push({ nombre: label, monto: Number(p.monto) });
     }
 
-    // 2) Costos financieros (comisiones MP desde API + débitos Galicia/ICBC desde extractos)
-    const { debitosGalicia, debitosICBC } = movimientosClasificados;
+    // 2) Costos financieros (comisiones MP desde API + débitos Galicia/ICBC desde extractos
+    //    + cargos MP sobre pagos egresos: impuesto al débito, comisiones por enviar plata).
+    const { debitosGalicia, debitosICBC, debitosMP } = movimientosClasificados;
     const bancarios: {
       nombre: string;
       monto: number;
       items: { nombre: string; monto: number }[];
     }[] = [];
 
-    // Comisiones e impuestos MP desde pagos_mp (API)
-    const comisionesMP = pagosMPFiltrados.reduce((s, p) => s + Number(p.comision_mp), 0);
-    const impuestosMP = pagosMPFiltrados.reduce((s, p) => s + Number(p.impuestos), 0);
-    const totalCostosMP = comisionesMP + impuestosMP;
+    // Comisiones e impuestos MP: combinamos costos sobre cobros (pagos_mp) con costos
+    // sobre pagos egresos (cargo_mp en movimientos_bancarios). Todo va al mismo grupo
+    // bancario para no fragmentar la vista.
+    const comisionesMPCobros = pagosMPFiltrados.reduce((s, p) => s + Number(p.comision_mp), 0);
+    const impuestosMPCobros = pagosMPFiltrados.reduce((s, p) => s + Number(p.impuestos), 0);
+    const cargosMPPagos = debitosMP.reduce((s, m) => s + Number(m.debito), 0);
+    const totalCostosMP = comisionesMPCobros + impuestosMPCobros + cargosMPPagos;
     if (totalCostosMP > 0) {
       const mpItems: { nombre: string; monto: number }[] = [];
-      if (comisionesMP > 0) mpItems.push({ nombre: 'Comisiones MercadoPago', monto: comisionesMP });
-      if (impuestosMP > 0)
-        mpItems.push({ nombre: 'Retenciones impositivas MP', monto: impuestosMP });
+      if (comisionesMPCobros > 0)
+        mpItems.push({ nombre: 'Comisiones MP (sobre ventas)', monto: comisionesMPCobros });
+      if (impuestosMPCobros > 0)
+        mpItems.push({ nombre: 'Retenciones impositivas MP', monto: impuestosMPCobros });
+      if (debitosMP.length > 0) {
+        const cargosByDescr = new Map<string, number>();
+        for (const m of debitosMP) {
+          const key = m.descripcion?.trim() || 'Impuesto al débito MP';
+          cargosByDescr.set(key, (cargosByDescr.get(key) ?? 0) + Number(m.debito));
+        }
+        for (const [nombre, monto] of cargosByDescr) {
+          mpItems.push({ nombre, monto });
+        }
+      }
       bancarios.push({
         nombre: GRUPO_DEBITO_LABEL.mercadopago,
         monto: totalCostosMP,
-        items: mpItems,
+        items: mpItems.sort((a, b) => b.monto - a.monto),
       });
     }
 
@@ -695,6 +723,7 @@ export function FlujoCaja() {
     for (const m of [
       ...movimientosClasificados.debitosGalicia,
       ...movimientosClasificados.debitosICBC,
+      ...movimientosClasificados.debitosMP,
     ]) {
       const d = byDay.get(m.fecha) ?? { ingresos: 0, egresos: 0 };
       d.egresos += Number(m.debito);
