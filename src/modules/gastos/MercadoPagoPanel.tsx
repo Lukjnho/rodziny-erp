@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { cn, formatARS } from '@/lib/utils';
-import { conciliarPorIdOperacion } from './conciliarPorIdOperacion';
 import { VincularGastoModal, type MovimientoVinculable } from './VincularGastoModal';
 import {
   TransferenciaInternaModal,
@@ -10,50 +9,27 @@ import {
 } from './TransferenciaInternaModal';
 import { NuevoGastoModal, type PrefillGasto } from './NuevoGastoModal';
 
-interface MesDetalle {
-  mes: string;
-  payments: number;
-  movs_nuevos: number;
-  movs_existentes: number;
-  charges_nuevos: number;
-  charges_existentes: number;
-  errores: string[];
-}
-
-interface SyncResult {
+interface TriggerResult {
   ok: boolean;
-  run_id?: string;
-  status?: 'success' | 'partial' | 'error';
-  meses_procesados?: number;
-  totales?: {
-    payments_encontrados: number;
-    movs_principales_nuevos: number;
-    movs_principales_existentes: number;
-    charges_nuevos: number;
-    charges_existentes: number;
-  };
-  detalle_meses?: MesDetalle[];
-  errores?: string[];
+  ya_existe?: boolean;
+  report_id?: string;
+  rango?: { desde: string; hasta: string };
+  mensaje?: string;
   error?: string;
 }
 
-interface Conc {
-  vinculados: number;
-  errores: string[];
-}
-
-interface SyncRunRow {
+interface ReleaseReportRow {
   id: string;
-  started_at: string;
-  finished_at: string | null;
-  desde: string;
-  hasta: string;
-  meses_procesados: number;
-  payments_encontrados: number;
-  movs_principales_nuevos: number;
-  charges_nuevos: number;
-  conciliados: number;
-  status: string;
+  begin_date: string;
+  end_date: string;
+  status: 'pending' | 'processing' | 'done' | 'error' | 'timeout';
+  payouts_insertados: number | null;
+  cargos_insertados: number | null;
+  filas_csv: number | null;
+  error_msg: string | null;
+  created_at: string;
+  processed_at: string | null;
+  poll_intentos: number | null;
 }
 
 interface MovMPRow {
@@ -82,8 +58,7 @@ export function MercadoPagoPanel() {
   const [desde, setDesde] = useState(primerMesAnt);
   const [hasta, setHasta] = useState(ultimoMesAnt);
   const [syncing, setSyncing] = useState(false);
-  const [resultado, setResultado] = useState<SyncResult | null>(null);
-  const [conc, setConc] = useState<Conc | null>(null);
+  const [resultado, setResultado] = useState<TriggerResult | null>(null);
   const [vincularMov, setVincularMov] = useState<MovimientoVinculable | null>(null);
   const [transferenciaMov, setTransferenciaMov] = useState<MovimientoTransferible | null>(null);
   const [crearGastoPrefill, setCrearGastoPrefill] = useState<{
@@ -94,6 +69,7 @@ export function MercadoPagoPanel() {
 
   function refrescar() {
     qc.invalidateQueries({ queryKey: ['mp_movs_recientes'] });
+    qc.invalidateQueries({ queryKey: ['mp_release_reports'] });
     qc.invalidateQueries({ queryKey: ['movimientos_bandeja'] });
     qc.invalidateQueries({ queryKey: ['gastos_listado'] });
     qc.invalidateQueries({ queryKey: ['gastos_pagos_pendientes'] });
@@ -167,18 +143,24 @@ export function MercadoPagoPanel() {
     refrescar();
   }
 
-  const { data: ultimosRuns } = useQuery({
-    queryKey: ['mp_sync_runs'],
+  const { data: ultimosReports } = useQuery({
+    queryKey: ['mp_release_reports'],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from('mp_sync_runs')
+        .from('mp_release_reports')
         .select(
-          'id, started_at, finished_at, desde, hasta, meses_procesados, payments_encontrados, movs_principales_nuevos, charges_nuevos, conciliados, status',
+          'id, begin_date, end_date, status, payouts_insertados, cargos_insertados, filas_csv, error_msg, created_at, processed_at, poll_intentos',
         )
-        .order('started_at', { ascending: false })
-        .limit(8);
+        .order('created_at', { ascending: false })
+        .limit(10);
       if (error) throw error;
-      return (data ?? []) as SyncRunRow[];
+      return (data ?? []) as ReleaseReportRow[];
+    },
+    // Auto-refresh cada 30s mientras haya pending/processing
+    refetchInterval: (query) => {
+      const data = query.state.data as ReleaseReportRow[] | undefined;
+      const hayActivos = data?.some((r) => r.status === 'pending' || r.status === 'processing');
+      return hayActivos ? 30000 : false;
     },
   });
 
@@ -189,7 +171,7 @@ export function MercadoPagoPanel() {
         .from('movimientos_bancarios')
         .select('id, fecha, descripcion, debito, referencia, fuente, tipo, gasto_id, sugerencia')
         .eq('cuenta', 'mercadopago')
-        .in('fuente', ['api_mp_egresos', 'api_mp_egresos_charge'])
+        .in('fuente', ['api_mp_release', 'api_mp_release_charge'])
         .gte('fecha', desde)
         .lte('fecha', hasta)
         .order('fecha', { ascending: false })
@@ -202,36 +184,16 @@ export function MercadoPagoPanel() {
   async function sincronizar() {
     setSyncing(true);
     setResultado(null);
-    setConc(null);
     try {
-      const { data, error } = await supabase.functions.invoke('sync-mp-egresos', {
+      const { data, error } = await supabase.functions.invoke('sync-mp-release-trigger', {
         body: { desde, hasta },
       });
       if (error) {
         setResultado({ ok: false, error: error.message });
         return;
       }
-      setResultado(data as SyncResult);
-
-      // Si hubo movs nuevos, correr conciliacion por N° operacion
-      const totalNuevos = (data as SyncResult)?.totales?.movs_principales_nuevos ?? 0;
-      if (totalNuevos > 0) {
-        const c = await conciliarPorIdOperacion();
-        setConc(c);
-
-        // Actualizar contador de conciliados en el run
-        const runId = (data as SyncResult)?.run_id;
-        if (runId && c.vinculados > 0) {
-          await supabase
-            .from('mp_sync_runs')
-            .update({ conciliados: c.vinculados })
-            .eq('id', runId);
-        }
-      }
-
-      qc.invalidateQueries({ queryKey: ['mp_sync_runs'] });
-      qc.invalidateQueries({ queryKey: ['mp_movs_recientes'] });
-      qc.invalidateQueries({ queryKey: ['mov_bancarios'] });
+      setResultado(data as TriggerResult);
+      qc.invalidateQueries({ queryKey: ['mp_release_reports'] });
     } catch (e) {
       setResultado({ ok: false, error: (e as Error).message });
     } finally {
@@ -249,10 +211,11 @@ export function MercadoPagoPanel() {
       <div className="rounded-lg border border-blue-200 bg-blue-50 p-4">
         <h3 className="text-sm font-semibold text-blue-900">🔄 Sincronización con MercadoPago</h3>
         <p className="mt-1 text-xs text-blue-800">
-          Trae automáticamente tus egresos de MP (transferencias, pagos con tarjeta, suscripciones) y
-          los carga como movimientos bancarios. Las comisiones e impuestos al débito se desglosan
-          como cargos hijos. Después de importar, el sistema concilia automáticamente con los pagos
-          que tengan N° de operación cargado.
+          Pide a MercadoPago el reporte completo de movimientos (Released Money). Trae{' '}
+          <strong>transferencias salientes</strong> + <strong>comisiones</strong> +{' '}
+          <strong>impuestos al débito</strong> de cada cobro. Es asincrónico:{' '}
+          <strong>tarda 5-10 minutos</strong> en procesarse — el sistema chequea automáticamente cada 5 min.
+          Los ingresos por ventas no se cargan acá (vienen por Fudo/POS).
         </p>
       </div>
 
@@ -301,176 +264,120 @@ export function MercadoPagoPanel() {
             disabled={syncing}
             className="ml-auto rounded-md bg-rodziny-700 px-4 py-2 text-sm font-medium text-white hover:bg-rodziny-800 disabled:opacity-50"
           >
-            {syncing ? '⏳ Sincronizando...' : '🔄 Sincronizar egresos MP'}
+            {syncing ? '⏳ Solicitando...' : '🔄 Solicitar reporte MP'}
           </button>
         </div>
         <p className="mt-2 text-[11px] text-gray-500">
-          Máximo 12 meses por sincronización. Idempotente: si ya importaste un período, los repetidos
-          se ignoran.
+          Hasta 60 días por reporte. Idempotente: si ya importaste un período, los repetidos se ignoran.
+          Los reportes se procesan automáticamente cada 5 minutos.
         </p>
       </div>
 
-      {syncing && (
-        <div className="rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-700">
-          ⏳ Procesando mes a mes... esto puede tardar 5-30 segundos según el rango.
-        </div>
-      )}
-
-      {resultado && !syncing && (
-        <div
-          className={cn(
-            'rounded-lg border p-4',
-            resultado.ok && resultado.status === 'success'
-              ? 'border-green-200 bg-green-50'
-              : resultado.status === 'partial'
-                ? 'border-amber-200 bg-amber-50'
-                : 'border-red-200 bg-red-50',
-          )}
-        >
-          {!resultado.ok && (
-            <div className="text-sm text-red-700">❌ Error: {resultado.error ?? 'Falló el sync'}</div>
-          )}
-          {resultado.ok && resultado.totales && (
-            <>
-              <div className="mb-2 text-sm font-semibold text-gray-800">
-                {resultado.status === 'success' ? '✅' : '⚠️'} Sincronización{' '}
-                {resultado.status === 'success' ? 'completa' : 'con avisos'}
-              </div>
-              <div className="grid grid-cols-2 gap-3 text-xs md:grid-cols-5">
-                <Stat label="Meses procesados" valor={resultado.meses_procesados ?? 0} />
-                <Stat label="Egresos encontrados" valor={resultado.totales.payments_encontrados} />
-                <Stat
-                  label="Movs nuevos"
-                  valor={resultado.totales.movs_principales_nuevos}
-                  destacado
-                />
-                <Stat
-                  label="Ya existían"
-                  valor={resultado.totales.movs_principales_existentes}
-                  muted
-                />
-                <Stat label="Cargos (com/imp)" valor={resultado.totales.charges_nuevos} />
-              </div>
-
-              {resultado.detalle_meses && resultado.detalle_meses.length > 0 && (
-                <div className="mt-3 overflow-x-auto">
-                  <table className="w-full text-xs">
-                    <thead className="bg-white/50 text-left text-gray-600">
-                      <tr>
-                        <th className="px-2 py-1">Mes</th>
-                        <th className="px-2 py-1 text-right">Payments</th>
-                        <th className="px-2 py-1 text-right">Nuevos</th>
-                        <th className="px-2 py-1 text-right">Existentes</th>
-                        <th className="px-2 py-1 text-right">Cargos nuevos</th>
-                        <th className="px-2 py-1">Errores</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {resultado.detalle_meses.map((m) => (
-                        <tr key={m.mes} className="border-t border-gray-100">
-                          <td className="px-2 py-1 font-medium">{m.mes}</td>
-                          <td className="px-2 py-1 text-right">{m.payments}</td>
-                          <td className="px-2 py-1 text-right text-green-700">{m.movs_nuevos}</td>
-                          <td className="px-2 py-1 text-right text-gray-500">
-                            {m.movs_existentes}
-                          </td>
-                          <td className="px-2 py-1 text-right">{m.charges_nuevos}</td>
-                          <td className="px-2 py-1 text-red-700">
-                            {m.errores.length > 0 ? m.errores[0].slice(0, 60) : '—'}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-
-              {resultado.errores && resultado.errores.length > 0 && (
-                <div className="mt-3 rounded border border-red-200 bg-red-50 p-2 text-xs text-red-700">
-                  <div className="font-medium">Errores:</div>
-                  <ul className="mt-1 list-inside list-disc">
-                    {resultado.errores.slice(0, 5).map((e, i) => (
-                      <li key={i}>{e}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </>
-          )}
-        </div>
-      )}
-
-      {conc && !syncing && (
+      {resultado && (
         <div
           className={cn(
             'rounded-lg border p-3 text-sm',
-            conc.errores.length === 0
-              ? 'border-blue-200 bg-blue-50 text-blue-800'
-              : 'border-amber-200 bg-amber-50 text-amber-800',
+            resultado.ok
+              ? resultado.ya_existe
+                ? 'border-amber-200 bg-amber-50 text-amber-800'
+                : 'border-blue-200 bg-blue-50 text-blue-800'
+              : 'border-red-200 bg-red-50 text-red-700',
           )}
         >
-          {conc.vinculados > 0 ? (
-            <>
-              🔗 <strong>{conc.vinculados}</strong> pago{conc.vinculados === 1 ? '' : 's'} vinculado
-              {conc.vinculados === 1 ? '' : 's'} automáticamente al gasto correspondiente por N° de
-              operación.
-            </>
+          {!resultado.ok ? (
+            <span>❌ Error: {resultado.error ?? 'Falló la solicitud'}</span>
+          ) : resultado.ya_existe ? (
+            <span>⏳ {resultado.mensaje}</span>
           ) : (
-            <span className="text-gray-600">
-              Ningún pago coincidió por N° de operación con los movimientos importados. Cargá pagos
-              con N° de operación o usá las reglas para vincular en lote.
-            </span>
+            <span>📨 {resultado.mensaje} (Rango: {resultado.rango?.desde} → {resultado.rango?.hasta})</span>
           )}
         </div>
       )}
 
-      {/* Historial de syncs */}
-      {ultimosRuns && ultimosRuns.length > 0 && (
+      {/* Historial de reportes */}
+      {ultimosReports && ultimosReports.length > 0 && (
         <div className="rounded-lg border border-surface-border bg-white p-4">
-          <h4 className="mb-2 text-sm font-semibold text-gray-800">Últimas sincronizaciones</h4>
+          <h4 className="mb-2 text-sm font-semibold text-gray-800">Reportes solicitados</h4>
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead className="bg-gray-50 text-left text-gray-600">
                 <tr>
-                  <th className="px-2 py-1">Cuándo</th>
+                  <th className="px-2 py-1">Solicitado</th>
                   <th className="px-2 py-1">Rango</th>
-                  <th className="px-2 py-1 text-right">Meses</th>
-                  <th className="px-2 py-1 text-right">Egresos</th>
-                  <th className="px-2 py-1 text-right">Nuevos</th>
-                  <th className="px-2 py-1 text-right">Cargos</th>
-                  <th className="px-2 py-1 text-right">Conciliados</th>
                   <th className="px-2 py-1">Estado</th>
+                  <th className="px-2 py-1 text-right">Payouts</th>
+                  <th className="px-2 py-1 text-right">Cargos</th>
+                  <th className="px-2 py-1 text-right">Filas CSV</th>
+                  <th className="px-2 py-1">Tiempo</th>
                 </tr>
               </thead>
               <tbody>
-                {ultimosRuns.map((r) => (
-                  <tr key={r.id} className="border-t border-gray-100">
-                    <td className="px-2 py-1 text-gray-500">
-                      {new Date(r.started_at).toLocaleString('es-AR', {
-                        day: '2-digit',
-                        month: '2-digit',
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      })}
-                    </td>
-                    <td className="px-2 py-1 text-gray-600">
-                      {r.desde} → {r.hasta}
-                    </td>
-                    <td className="px-2 py-1 text-right">{r.meses_procesados}</td>
-                    <td className="px-2 py-1 text-right">{r.payments_encontrados}</td>
-                    <td className="px-2 py-1 text-right text-green-700">
-                      {r.movs_principales_nuevos}
-                    </td>
-                    <td className="px-2 py-1 text-right">{r.charges_nuevos}</td>
-                    <td className="px-2 py-1 text-right text-blue-700">{r.conciliados}</td>
-                    <td className="px-2 py-1">
-                      {r.status === 'success' && <span className="text-green-700">✓ OK</span>}
-                      {r.status === 'partial' && <span className="text-amber-700">⚠ Parcial</span>}
-                      {r.status === 'error' && <span className="text-red-700">✗ Error</span>}
-                      {r.status === 'running' && <span className="text-blue-700">⏳ Corriendo</span>}
-                    </td>
-                  </tr>
-                ))}
+                {ultimosReports.map((r) => {
+                  const esperaMin = r.processed_at
+                    ? Math.round(
+                        (new Date(r.processed_at).getTime() - new Date(r.created_at).getTime()) /
+                          60000,
+                      )
+                    : Math.round((Date.now() - new Date(r.created_at).getTime()) / 60000);
+                  return (
+                    <tr key={r.id} className="border-t border-gray-100">
+                      <td className="px-2 py-1 text-gray-500">
+                        {new Date(r.created_at).toLocaleString('es-AR', {
+                          day: '2-digit',
+                          month: '2-digit',
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
+                      </td>
+                      <td className="px-2 py-1 text-gray-600">
+                        {r.begin_date} → {r.end_date}
+                      </td>
+                      <td className="px-2 py-1">
+                        {r.status === 'pending' && (
+                          <span className="rounded bg-blue-100 px-1.5 py-0.5 text-[10px] text-blue-700">
+                            ⏳ Esperando MP{r.poll_intentos ? ` (${r.poll_intentos} chequeos)` : ''}
+                          </span>
+                        )}
+                        {r.status === 'processing' && (
+                          <span className="rounded bg-cyan-100 px-1.5 py-0.5 text-[10px] text-cyan-700">
+                            ⚙️ Procesando
+                          </span>
+                        )}
+                        {r.status === 'done' && (
+                          <span className="rounded bg-green-100 px-1.5 py-0.5 text-[10px] text-green-700">
+                            ✓ Completado
+                          </span>
+                        )}
+                        {r.status === 'timeout' && (
+                          <span
+                            className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-700"
+                            title={r.error_msg ?? ''}
+                          >
+                            ⌛ Timeout
+                          </span>
+                        )}
+                        {r.status === 'error' && (
+                          <span
+                            className="rounded bg-red-100 px-1.5 py-0.5 text-[10px] text-red-700"
+                            title={r.error_msg ?? ''}
+                          >
+                            ✗ Error
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-2 py-1 text-right text-blue-700">
+                        {r.payouts_insertados ?? '—'}
+                      </td>
+                      <td className="px-2 py-1 text-right text-amber-700">
+                        {r.cargos_insertados ?? '—'}
+                      </td>
+                      <td className="px-2 py-1 text-right text-gray-500">{r.filas_csv ?? '—'}</td>
+                      <td className="px-2 py-1 text-gray-500">
+                        {esperaMin === 0 ? '<1 min' : `${esperaMin} min`}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -538,7 +445,7 @@ export function MercadoPagoPanel() {
                         )}
                       </td>
                       <td className="px-2 py-1">
-                        {m.fuente === 'api_mp_egresos_charge' ? (
+                        {m.fuente === 'api_mp_release_charge' ? (
                           <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-700">
                             Cargo
                           </span>
@@ -616,37 +523,6 @@ export function MercadoPagoPanel() {
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-function Stat({
-  label,
-  valor,
-  destacado,
-  muted,
-}: {
-  label: string;
-  valor: number;
-  destacado?: boolean;
-  muted?: boolean;
-}) {
-  return (
-    <div
-      className={cn(
-        'rounded-md p-2',
-        destacado ? 'bg-green-100' : muted ? 'bg-gray-100' : 'bg-white',
-      )}
-    >
-      <div className="text-[10px] uppercase text-gray-500">{label}</div>
-      <div
-        className={cn(
-          'text-lg font-bold',
-          destacado ? 'text-green-700' : muted ? 'text-gray-500' : 'text-gray-800',
-        )}
-      >
-        {valor.toLocaleString('es-AR')}
-      </div>
     </div>
   );
 }
