@@ -4,6 +4,10 @@ import { supabase } from '@/lib/supabase';
 import { cn, formatARS } from '@/lib/utils';
 import { conciliarPorIdOperacion } from './conciliarPorIdOperacion';
 import { VincularGastoModal, type MovimientoVinculable } from './VincularGastoModal';
+import {
+  TransferenciaInternaModal,
+  type MovimientoTransferible,
+} from './TransferenciaInternaModal';
 import { NuevoGastoModal, type PrefillGasto } from './NuevoGastoModal';
 
 interface MesDetalle {
@@ -81,6 +85,7 @@ export function MercadoPagoPanel() {
   const [resultado, setResultado] = useState<SyncResult | null>(null);
   const [conc, setConc] = useState<Conc | null>(null);
   const [vincularMov, setVincularMov] = useState<MovimientoVinculable | null>(null);
+  const [transferenciaMov, setTransferenciaMov] = useState<MovimientoTransferible | null>(null);
   const [crearGastoPrefill, setCrearGastoPrefill] = useState<{
     movId: string;
     prefill: PrefillGasto;
@@ -104,6 +109,17 @@ export function MercadoPagoPanel() {
       credito: 0,
       descripcion: m.descripcion,
       referencia: m.referencia,
+    });
+  }
+
+  function abrirTransferencia(m: MovMPRow) {
+    setTransferenciaMov({
+      id: m.id,
+      cuenta: 'mercadopago',
+      fecha: m.fecha,
+      debito: Number(m.debito),
+      credito: 0,
+      descripcion: m.descripcion,
     });
   }
 
@@ -480,6 +496,15 @@ export function MercadoPagoPanel() {
         />
       )}
 
+      {/* Modal: Transferencia interna con auto-match del gemelo */}
+      {transferenciaMov && (
+        <TransferenciaInternaModal
+          movimiento={transferenciaMov}
+          onClose={() => setTransferenciaMov(null)}
+          onConfirmado={refrescar}
+        />
+      )}
+
       {/* Movimientos MP recientes */}
       {movsRecientes && movsRecientes.length > 0 && (
         <div className="rounded-lg border border-surface-border bg-white p-4">
@@ -564,6 +589,13 @@ export function MercadoPagoPanel() {
                               title="Crear un gasto nuevo desde este movimiento"
                             >
                               Crear gasto
+                            </button>
+                            <button
+                              onClick={() => abrirTransferencia(m)}
+                              className="rounded bg-cyan-600 px-2 py-1 text-[10px] font-medium text-white hover:bg-cyan-700"
+                              title="Marcar como transferencia interna entre cuentas propias (MP ↔ Galicia/ICBC)"
+                            >
+                              Transf. interna
                             </button>
                             <button
                               onClick={() => ignorarMov(m)}
