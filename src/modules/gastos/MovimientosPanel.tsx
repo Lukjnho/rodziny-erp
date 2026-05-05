@@ -92,8 +92,10 @@ export function MovimientosPanel({ desde, hasta }: Props) {
   const [reglasOpen, setReglasOpen] = useState(false);
   // Cadena post-import: cuando ImportarExtractoModal cierra OK, guardamos las
   // cuentas importadas para que RevisarMatchesModal acote la búsqueda. Cuando
-  // ese cierra, auto-disparamos AplicarReglasModal para procesar gastos ocultos.
+  // ese cierra y el flag está activo, auto-disparamos AplicarReglasModal.
+  // El botón "Sugerir conciliaciones" abre el mismo modal pero sin encadenar.
   const [revisarMatchesCuentas, setRevisarMatchesCuentas] = useState<string[] | null>(null);
+  const [encadenarReglas, setEncadenarReglas] = useState(false);
 
   const { data: movs, isLoading } = useQuery({
     queryKey: ['movimientos_bandeja', desde, hasta, cuenta, filtroEstado, filtroSigno],
@@ -209,6 +211,13 @@ export function MovimientosPanel({ desde, hasta }: Props) {
     <div>
       {/* Toolbar superior */}
       <div className="mb-2 flex items-center justify-end gap-2">
+        <button
+          onClick={() => setRevisarMatchesCuentas([])}
+          className="rounded-md border border-blue-600 px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-50"
+          title="Buscar matches automáticos entre los movimientos pendientes y los gastos cargados"
+        >
+          🔗 Sugerir conciliaciones
+        </button>
         <button
           onClick={() => setReglasOpen(true)}
           className="rounded-md border border-rodziny-700 px-3 py-1.5 text-xs font-medium text-rodziny-700 hover:bg-rodziny-50"
@@ -471,6 +480,7 @@ export function MovimientosPanel({ desde, hasta }: Props) {
         onSuccess={(cuentasOk) => {
           refrescar();
           setImportarOpen(false);
+          setEncadenarReglas(true);
           setRevisarMatchesCuentas(cuentasOk);
         }}
       />
@@ -481,8 +491,10 @@ export function MovimientosPanel({ desde, hasta }: Props) {
         cuentasImportadas={revisarMatchesCuentas ?? []}
         onClose={() => {
           setRevisarMatchesCuentas(null);
-          // Encadenar motor de reglas para procesar comisiones / impuestos / etc.
-          setReglasOpen(true);
+          if (encadenarReglas) {
+            setEncadenarReglas(false);
+            setReglasOpen(true);
+          }
         }}
         onSuccess={refrescar}
       />
