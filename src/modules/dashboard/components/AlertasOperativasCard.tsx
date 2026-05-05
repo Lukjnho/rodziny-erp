@@ -122,10 +122,6 @@ export function AlertasOperativasCard() {
 
   if (data) {
     const ahora = new Date();
-    // Primer día del mes pasado: si hoy es 04/05, ese cutoff es 01/04
-    const primerDiaMesAnt = new Date(ahora.getFullYear(), ahora.getMonth() - 1, 1);
-    const mesAntNombre = NOMBRE_MES[primerDiaMesAnt.getMonth()];
-    const mesAntAnio = primerDiaMesAnt.getFullYear();
 
     // MercadoPago: API debería estar al día
     if (data.ultimas.mercadopago) {
@@ -153,23 +149,46 @@ export function AlertasOperativasCard() {
       });
     }
 
-    // Galicia / ICBC: extracto mensual, alerta si no hay nada del mes anterior
+    // Galicia / ICBC: extracto quincenal.
+    // Q1 cubre días 1-15, Q2 cubre días 16-fin de mes.
+    // - Si hoy >= día 16: ya cerró Q1 del mes actual → debería haber movs hasta día 15.
+    // - Si hoy entre 1-15: ya cerró Q2 del mes anterior → debería haber movs hasta último día mes pasado.
+    const dia = ahora.getDate();
+    let cutoff: Date;
+    let etiquetaQuincena: string;
+    if (dia >= 16) {
+      // Cerró Q1 mes actual
+      cutoff = new Date(ahora.getFullYear(), ahora.getMonth(), 15);
+      etiquetaQuincena = `Q1 ${NOMBRE_MES[ahora.getMonth()]} ${ahora.getFullYear()}`;
+    } else {
+      // Cerró Q2 mes anterior (último día del mes pasado)
+      cutoff = new Date(ahora.getFullYear(), ahora.getMonth(), 0);
+      etiquetaQuincena = `Q2 ${NOMBRE_MES[cutoff.getMonth()]} ${cutoff.getFullYear()}`;
+    }
+
     for (const cuenta of ['galicia', 'icbc'] as const) {
       const max = data.ultimas[cuenta];
-      const sinMesAnt = !max || new Date(max + 'T12:00:00Z') < primerDiaMesAnt;
-      if (sinMesAnt) {
-        alertas.push({
-          id: `extracto_${cuenta}`,
-          severidad: 'warning',
-          icono: '📥',
-          titulo: `Falta extracto ${CUENTA_LABEL[cuenta]} · ${mesAntNombre} ${mesAntAnio}`,
-          detalle: max
-            ? `Último movimiento cargado: ${max}`
-            : 'No hay movimientos cargados.',
-          link: '/compras',
-          cta: 'Importar extracto',
-        });
-      }
+      const maxDate = max ? new Date(max + 'T12:00:00Z') : null;
+      const faltaExtracto = !maxDate || maxDate < cutoff;
+      if (!faltaExtracto) continue;
+
+      const diasAtraso = maxDate
+        ? Math.floor((cutoff.getTime() - maxDate.getTime()) / 86400000)
+        : 999;
+      const severidad: Severidad =
+        diasAtraso > 30 ? 'critico' : diasAtraso > 10 ? 'warning' : 'info';
+
+      alertas.push({
+        id: `extracto_${cuenta}`,
+        severidad,
+        icono: '📥',
+        titulo: `Falta extracto ${CUENTA_LABEL[cuenta]} · ${etiquetaQuincena}`,
+        detalle: maxDate
+          ? `Último movimiento cargado: ${max} (${diasAtraso} día${diasAtraso !== 1 ? 's' : ''} de atraso)`
+          : 'No hay movimientos cargados.',
+        link: '/compras',
+        cta: 'Importar extracto',
+      });
     }
 
     if (data.gastosVencidos > 0) {

@@ -192,6 +192,12 @@ export function PagosPanel({ local, desde, hasta }: Props) {
       if (pathFactura && pathFactura !== gastoAPagar.factura_path) {
         updateGasto.factura_path = pathFactura;
       }
+      // Sincronizar el comprobante de pago al gasto para que aparezca en el
+      // listado (que lee gastos.comprobante_path). Solo si el gasto no tenía
+      // uno ya cargado, para no pisar comprobantes previos (ej: recepción QR).
+      if (pathComprobantePago && !gastoAPagar.comprobante_path) {
+        updateGasto.comprobante_path = pathComprobantePago;
+      }
       const { error: errUpd } = await supabase
         .from('gastos')
         .update(updateGasto)
