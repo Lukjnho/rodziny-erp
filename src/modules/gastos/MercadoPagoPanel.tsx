@@ -193,7 +193,7 @@ export function MercadoPagoPanel() {
         .gte('fecha', desde)
         .lte('fecha', hasta)
         .order('fecha', { ascending: false })
-        .limit(50);
+        .limit(500);
       if (error) throw error;
       return (data ?? []) as MovMPRow[];
     },
