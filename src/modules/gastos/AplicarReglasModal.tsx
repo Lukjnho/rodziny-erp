@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { formatARS, cn } from '@/lib/utils';
 import { previewReglas, ejecutarReglas, type Preview } from './aplicarReglas';
@@ -27,6 +27,11 @@ export function AplicarReglasModal({ open, onClose, onSuccess }: Props) {
     sugeridos: number;
     errores: string[];
   } | null>(null);
+  // Selección de items y sugerencias para aplicar. Default: todos tildados al
+  // cargar el preview. Permite que Lucas destilde los grupos que ya cargó por
+  // otra vía (típicamente financiaciones AFIP en Pagos Fijos).
+  const [itemsSel, setItemsSel] = useState<Set<number>>(new Set());
+  const [sugSel, setSugSel] = useState<Set<number>>(new Set());
 
   useEffect(() => {
     if (!open) return;
@@ -34,9 +39,13 @@ export function AplicarReglasModal({ open, onClose, onSuccess }: Props) {
     setPreview(null);
     setError(null);
     setResultado(null);
+    setItemsSel(new Set());
+    setSugSel(new Set());
     previewReglas(supabase)
       .then((p) => {
         setPreview(p);
+        setItemsSel(new Set(p.items.map((_, i) => i)));
+        setSugSel(new Set(p.sugerencias.map((_, i) => i)));
         setEtapa('preview');
       })
       .catch((e: unknown) => {
@@ -45,13 +54,57 @@ export function AplicarReglasModal({ open, onClose, onSuccess }: Props) {
       });
   }, [open]);
 
+  // KPIs reactivos: cuentan SOLO lo que está tildado.
+  const kpis = useMemo(() => {
+    if (!preview) return null;
+    const items = preview.items.filter((_, i) => itemsSel.has(i));
+    const sugs = preview.sugerencias.filter((_, i) => sugSel.has(i));
+    return {
+      movsClasificados: items.reduce((s, it) => s + it.cantidadMovs, 0),
+      movsSugeridos: sugs.reduce((s, su) => s + su.cantidadMovs, 0),
+      totalGastos: items.length,
+      totalMonto: items.reduce((s, it) => s + it.total, 0),
+    };
+  }, [preview, itemsSel, sugSel]);
+
   if (!open) return null;
+
+  function toggleItem(i: number) {
+    setItemsSel((prev) => {
+      const next = new Set(prev);
+      if (next.has(i)) next.delete(i);
+      else next.add(i);
+      return next;
+    });
+  }
+  function toggleSug(i: number) {
+    setSugSel((prev) => {
+      const next = new Set(prev);
+      if (next.has(i)) next.delete(i);
+      else next.add(i);
+      return next;
+    });
+  }
+  function seleccionarTodos() {
+    if (!preview) return;
+    setItemsSel(new Set(preview.items.map((_, i) => i)));
+    setSugSel(new Set(preview.sugerencias.map((_, i) => i)));
+  }
+  function deseleccionarTodos() {
+    setItemsSel(new Set());
+    setSugSel(new Set());
+  }
 
   async function ejecutar() {
     if (!preview) return;
     setEtapa('ejecutando');
     try {
-      const r = await ejecutarReglas(supabase, preview);
+      const previewFiltrado: Preview = {
+        ...preview,
+        items: preview.items.filter((_, i) => itemsSel.has(i)),
+        sugerencias: preview.sugerencias.filter((_, i) => sugSel.has(i)),
+      };
+      const r = await ejecutarReglas(supabase, previewFiltrado);
       setResultado(r);
       setEtapa('resultado');
       if (r.creados > 0) onSuccess();
@@ -81,47 +134,72 @@ export function AplicarReglasModal({ open, onClose, onSuccess }: Props) {
           <div className="rounded-md bg-red-50 p-4 text-sm text-red-700">❌ {error}</div>
         )}
 
-        {etapa === 'preview' && preview && (
+        {etapa === 'preview' && preview && kpis && (
           <>
             <div className="mb-3 grid grid-cols-4 gap-3 text-center">
               <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
                 <p className="text-xs text-gray-500">Auto a gasto</p>
                 <p className="text-lg font-semibold text-gray-800">
-                  {preview.movsClasificados.toLocaleString('es-AR')}
+                  {kpis.movsClasificados.toLocaleString('es-AR')}
                 </p>
               </div>
               <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
                 <p className="text-xs text-gray-500">Marcados con sugerencia</p>
                 <p className="text-lg font-semibold text-gray-800">
-                  {preview.movsSugeridos.toLocaleString('es-AR')}
+                  {kpis.movsSugeridos.toLocaleString('es-AR')}
                 </p>
               </div>
               <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
                 <p className="text-xs text-gray-500">Gastos a generar</p>
                 <p className="text-lg font-semibold text-gray-800">
-                  {preview.totalGastos.toLocaleString('es-AR')}
+                  {kpis.totalGastos.toLocaleString('es-AR')}
                 </p>
               </div>
               <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
                 <p className="text-xs text-gray-500">Monto total</p>
                 <p className="text-lg font-semibold text-gray-800">
-                  {formatARS(preview.totalMonto)}
+                  {formatARS(kpis.totalMonto)}
                 </p>
               </div>
             </div>
 
-            <p className="mb-2 text-xs text-gray-500">
-              Quedarán <strong>{preview.movsSinRegla.toLocaleString('es-AR')}</strong> movimientos
-              sin regla — los seguís clasificando vos a mano.
-            </p>
+            <div className="mb-2 flex items-center justify-between text-xs text-gray-500">
+              <p>
+                Quedarán <strong>{preview.movsSinRegla.toLocaleString('es-AR')}</strong> movimientos
+                sin regla. Destildá los grupos que ya cargaste por otra vía
+                (ej. financiaciones AFIP en Pagos Fijos).
+              </p>
+              <div className="flex gap-2">
+                <button
+                  onClick={seleccionarTodos}
+                  className="rounded border border-gray-300 px-2 py-1 text-[11px] text-gray-600 hover:bg-gray-50"
+                >
+                  Tildar todos
+                </button>
+                <button
+                  onClick={deseleccionarTodos}
+                  className="rounded border border-gray-300 px-2 py-1 text-[11px] text-gray-600 hover:bg-gray-50"
+                >
+                  Destildar
+                </button>
+              </div>
+            </div>
 
             {preview.sugerencias.length > 0 && (
               <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
                 <p className="font-semibold">Sugerencias (no se crea gasto, solo se marca):</p>
-                <ul className="mt-1 list-inside list-disc">
-                  {preview.sugerencias.map((s) => (
-                    <li key={s.reglaId}>
-                      <strong>{s.cantidadMovs}</strong> movimientos · {s.reglaNombre}
+                <ul className="mt-1 space-y-1">
+                  {preview.sugerencias.map((s, i) => (
+                    <li key={s.reglaId} className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={sugSel.has(i)}
+                        onChange={() => toggleSug(i)}
+                        className="h-3.5 w-3.5 cursor-pointer"
+                      />
+                      <span>
+                        <strong>{s.cantidadMovs}</strong> movimientos · {s.reglaNombre}
+                      </span>
                     </li>
                   ))}
                 </ul>
@@ -132,6 +210,18 @@ export function AplicarReglasModal({ open, onClose, onSuccess }: Props) {
               <table className="w-full text-xs">
                 <thead className="border-b border-gray-200 bg-gray-50 text-[10px] uppercase text-gray-500">
                   <tr>
+                    <th className="w-8 px-2 py-2 text-center">
+                      <input
+                        type="checkbox"
+                        checked={
+                          preview.items.length > 0 && itemsSel.size === preview.items.length
+                        }
+                        onChange={(e) =>
+                          e.target.checked ? seleccionarTodos() : setItemsSel(new Set())
+                        }
+                        className="h-3.5 w-3.5 cursor-pointer"
+                      />
+                    </th>
                     <th className="px-3 py-2 text-left">Período</th>
                     <th className="px-3 py-2 text-left">Cuenta</th>
                     <th className="px-3 py-2 text-left">Regla / Proveedor</th>
@@ -141,41 +231,60 @@ export function AplicarReglasModal({ open, onClose, onSuccess }: Props) {
                   </tr>
                 </thead>
                 <tbody>
-                  {preview.items.map((it, i) => (
-                    <tr key={i} className="border-b border-gray-100">
-                      <td className="whitespace-nowrap px-3 py-2 font-mono text-gray-600">
-                        {it.periodo}
-                      </td>
-                      <td className="whitespace-nowrap px-3 py-2 text-gray-700">
-                        {it.cuentas
-                          .map((c) => CUENTA_LABEL[c] ?? c)
-                          .join(' + ')}
-                      </td>
-                      <td className="px-3 py-2">
-                        <p className="font-medium text-gray-800">{it.proveedor}</p>
-                        <p className="text-[10px] text-gray-500">{it.reglaNombre}</p>
-                      </td>
-                      <td className="px-3 py-2 text-center text-gray-600">{it.cantidadMovs}</td>
-                      <td className="px-3 py-2 text-right tabular-nums font-semibold text-gray-900">
-                        {formatARS(it.total)}
-                      </td>
-                      <td className="px-3 py-2 text-center">
-                        <span
-                          className={cn(
-                            'rounded px-1.5 py-0.5 text-[10px] font-medium',
-                            it.agrupacion === 'mensual'
-                              ? 'bg-purple-100 text-purple-800'
-                              : 'bg-blue-100 text-blue-800',
-                          )}
-                        >
-                          {it.agrupacion}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
+                  {preview.items.map((it, i) => {
+                    const seleccionado = itemsSel.has(i);
+                    return (
+                      <tr
+                        key={i}
+                        onClick={() => toggleItem(i)}
+                        className={cn(
+                          'cursor-pointer border-b border-gray-100 hover:bg-gray-50',
+                          !seleccionado && 'opacity-40',
+                        )}
+                      >
+                        <td className="px-2 py-2 text-center">
+                          <input
+                            type="checkbox"
+                            checked={seleccionado}
+                            onChange={() => toggleItem(i)}
+                            onClick={(e) => e.stopPropagation()}
+                            className="h-3.5 w-3.5 cursor-pointer"
+                          />
+                        </td>
+                        <td className="whitespace-nowrap px-3 py-2 font-mono text-gray-600">
+                          {it.periodo}
+                        </td>
+                        <td className="whitespace-nowrap px-3 py-2 text-gray-700">
+                          {it.cuentas.map((c) => CUENTA_LABEL[c] ?? c).join(' + ')}
+                        </td>
+                        <td className="px-3 py-2">
+                          <p className="font-medium text-gray-800">{it.proveedor}</p>
+                          <p className="text-[10px] text-gray-500">{it.reglaNombre}</p>
+                        </td>
+                        <td className="px-3 py-2 text-center text-gray-600">
+                          {it.cantidadMovs}
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums font-semibold text-gray-900">
+                          {formatARS(it.total)}
+                        </td>
+                        <td className="px-3 py-2 text-center">
+                          <span
+                            className={cn(
+                              'rounded px-1.5 py-0.5 text-[10px] font-medium',
+                              it.agrupacion === 'mensual'
+                                ? 'bg-purple-100 text-purple-800'
+                                : 'bg-blue-100 text-blue-800',
+                            )}
+                          >
+                            {it.agrupacion}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
                   {preview.items.length === 0 && (
                     <tr>
-                      <td colSpan={6} className="px-3 py-6 text-center text-gray-400">
+                      <td colSpan={7} className="px-3 py-6 text-center text-gray-400">
                         No hay movimientos pendientes que matcheen alguna regla.
                       </td>
                     </tr>
@@ -193,10 +302,10 @@ export function AplicarReglasModal({ open, onClose, onSuccess }: Props) {
               </button>
               <button
                 onClick={ejecutar}
-                disabled={preview.items.length === 0}
+                disabled={itemsSel.size === 0 && sugSel.size === 0}
                 className="rounded-md bg-rodziny-700 px-4 py-1.5 text-xs font-medium text-white hover:bg-rodziny-800 disabled:opacity-50"
               >
-                Confirmar y aplicar
+                Aplicar {itemsSel.size + sugSel.size} regla{itemsSel.size + sugSel.size === 1 ? '' : 's'} tildada{itemsSel.size + sugSel.size === 1 ? '' : 's'}
               </button>
             </div>
           </>
