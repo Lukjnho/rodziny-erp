@@ -59,6 +59,7 @@ export function MercadoPagoPanel() {
   const [hasta, setHasta] = useState(ultimoMesAnt);
   const [syncing, setSyncing] = useState(false);
   const [resultado, setResultado] = useState<TriggerResult | null>(null);
+  const [verCargos, setVerCargos] = useState(false);
   const [vincularMov, setVincularMov] = useState<MovimientoVinculable | null>(null);
   const [transferenciaMov, setTransferenciaMov] = useState<MovimientoTransferible | null>(null);
   const [crearGastoPrefill, setCrearGastoPrefill] = useState<{
@@ -164,20 +165,59 @@ export function MercadoPagoPanel() {
     },
   });
 
+  // Lista principal: solo payouts (movimientos accionables, los que vinculas).
+  // Si verCargos=true, traer cargos tambien.
   const { data: movsRecientes } = useQuery({
-    queryKey: ['mp_movs_recientes', desde, hasta],
+    queryKey: ['mp_movs_recientes', desde, hasta, verCargos],
     queryFn: async () => {
+      const fuentes = verCargos
+        ? ['api_mp_release', 'api_mp_release_charge']
+        : ['api_mp_release'];
       const { data, error } = await supabase
         .from('movimientos_bancarios')
         .select('id, fecha, descripcion, debito, referencia, fuente, tipo, gasto_id, sugerencia')
         .eq('cuenta', 'mercadopago')
-        .in('fuente', ['api_mp_release', 'api_mp_release_charge'])
+        .in('fuente', fuentes)
         .gte('fecha', desde)
         .lte('fecha', hasta)
         .order('fecha', { ascending: false })
-        .limit(500);
+        .limit(verCargos ? 1000 : 500);
       if (error) throw error;
       return (data ?? []) as MovMPRow[];
+    },
+  });
+
+  // Resumen de cargos del periodo (siempre visible)
+  const { data: resumenCargos } = useQuery({
+    queryKey: ['mp_resumen_cargos', desde, hasta],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('movimientos_bancarios')
+        .select('debito, descripcion')
+        .eq('cuenta', 'mercadopago')
+        .eq('fuente', 'api_mp_release_charge')
+        .gte('fecha', desde)
+        .lte('fecha', hasta);
+      if (error) throw error;
+      const rows = data ?? [];
+      let totalImpuestos = 0;
+      let totalComisiones = 0;
+      let totalCargos = 0;
+      for (const r of rows) {
+        const monto = Number(r.debito);
+        totalCargos += monto;
+        if ((r.descripcion ?? '').toLowerCase().includes('impuesto')) {
+          totalImpuestos += monto;
+        } else if ((r.descripcion ?? '').toLowerCase().includes('comision')) {
+          totalComisiones += monto;
+        }
+      }
+      return {
+        cantidad: rows.length,
+        totalCargos,
+        totalImpuestos,
+        totalComisiones,
+      };
     },
   });
 
@@ -412,11 +452,37 @@ export function MercadoPagoPanel() {
         />
       )}
 
+      {/* Resumen de cargos automáticos */}
+      {resumenCargos && resumenCargos.cantidad > 0 && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="text-xs text-amber-800">
+              <span className="font-semibold">Cargos automáticos del período:</span>{' '}
+              {resumenCargos.cantidad} cargos · Total{' '}
+              <span className="font-semibold tabular-nums">
+                -{formatARS(resumenCargos.totalCargos)}
+              </span>
+              {' '}
+              <span className="text-[11px] text-amber-700">
+                (Impuesto al débito {formatARS(resumenCargos.totalImpuestos)} + Comisiones MP{' '}
+                {formatARS(resumenCargos.totalComisiones)})
+              </span>
+            </div>
+            <button
+              onClick={() => setVerCargos(!verCargos)}
+              className="rounded border border-amber-300 bg-white px-2 py-1 text-[11px] font-medium text-amber-800 hover:bg-amber-100"
+            >
+              {verCargos ? 'Ocultar cargos' : 'Ver detalle de cargos'}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Movimientos MP recientes */}
       {movsRecientes && movsRecientes.length > 0 && (
         <div className="rounded-lg border border-surface-border bg-white p-4">
           <h4 className="mb-2 text-sm font-semibold text-gray-800">
-            Movimientos MP del período ({movsRecientes.length})
+            {verCargos ? 'Egresos + cargos' : 'Egresos del período (transferencias salientes)'} ({movsRecientes.length})
           </h4>
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
