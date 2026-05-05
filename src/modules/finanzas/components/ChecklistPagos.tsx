@@ -215,14 +215,6 @@ export function ChecklistPagos() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['pagos_fijos', periodo] }),
   });
 
-  const updatePago = useMutation({
-    mutationFn: async ({ id, ...fields }: Partial<PagoFijo> & { id: string }) => {
-      const { error } = await supabase.from('pagos_fijos').update(fields).eq('id', id);
-      if (error) throw error;
-    },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['pagos_fijos', periodo] }),
-  });
-
   const deletePago = useMutation({
     mutationFn: async (pago: PagoFijo) => {
       // Si tiene gasto asociado, eliminar pago_gasto y gasto
@@ -378,25 +370,54 @@ export function ChecklistPagos() {
     setToast({ tipo: 'desmarcado', concepto: pago.concepto, monto: pago.monto ?? 0 });
   }
 
-  // Cambiar medio de pago. Si ya esta pagado, propagar a gasto + pago_gasto
-  // para que el cambio se refleje en Flujo de Caja y EdR.
-  async function cambiarMedio(pago: PagoFijo, nuevoMedio: string | null) {
-    await supabase
-      .from('pagos_fijos')
-      .update({ medio_pago: nuevoMedio })
-      .eq('id', pago.id);
+  // Actualizar campos del pago fijo. Si ya esta pagado, propagar al gasto +
+  // pago_gasto vinculados para que el cambio se refleje en Flujo de Caja y EdR
+  // sin tener que desmarcar/marcar de nuevo.
+  async function actualizarPago(pago: PagoFijo, fields: Partial<PagoFijo>) {
+    await supabase.from('pagos_fijos').update(fields).eq('id', pago.id);
+
     if (pago.pagado && pago.gasto_id) {
-      await supabase
-        .from('gastos')
-        .update({ medio_pago: nuevoMedio })
-        .eq('id', pago.gasto_id);
-      await supabase
-        .from('pagos_gastos')
-        .update({ medio_pago: nuevoMedio })
-        .eq('gasto_id', pago.gasto_id);
+      const updateGasto: Record<string, unknown> = {};
+      const updatePagoGasto: Record<string, unknown> = {};
+
+      if ('concepto' in fields && fields.concepto) {
+        updateGasto.proveedor = fields.concepto;
+      }
+      if ('monto' in fields) {
+        const m = fields.monto ?? 0;
+        updateGasto.importe_total = m;
+        updateGasto.importe_neto = m;
+        updatePagoGasto.monto = m;
+      }
+      if ('fecha_vencimiento' in fields) {
+        updateGasto.fecha_vencimiento = fields.fecha_vencimiento;
+      }
+      if ('categoria_gasto_id' in fields) {
+        updateGasto.categoria_id = fields.categoria_gasto_id;
+        const subcat = subcategorias.find((c) => c.id === fields.categoria_gasto_id);
+        const catPadre = subcat?.parent_id ? (padres.get(subcat.parent_id) ?? '') : '';
+        updateGasto.categoria = catPadre;
+        updateGasto.subcategoria = subcat?.nombre ?? (fields.concepto ?? pago.concepto);
+      }
+      if ('medio_pago' in fields) {
+        updateGasto.medio_pago = fields.medio_pago;
+        updatePagoGasto.medio_pago = fields.medio_pago;
+      }
+
+      if (Object.keys(updateGasto).length > 0) {
+        await supabase.from('gastos').update(updateGasto).eq('id', pago.gasto_id);
+      }
+      if (Object.keys(updatePagoGasto).length > 0) {
+        await supabase
+          .from('pagos_gastos')
+          .update(updatePagoGasto)
+          .eq('gasto_id', pago.gasto_id);
+      }
     }
+
     qc.invalidateQueries({ queryKey: ['pagos_fijos', periodo] });
     qc.invalidateQueries({ queryKey: ['fc_pagos'] });
+    qc.invalidateQueries({ queryKey: ['edr_gastos_resumen'] });
   }
 
   // ── datos derivados ──────────────────────────────────────────────────────
@@ -763,8 +784,7 @@ export function ChecklistPagos() {
                           pago={pago}
                           subcategorias={subcategorias}
                           padres={padres}
-                          onUpdate={(fields) => updatePago.mutate({ id: pago.id, ...fields })}
-                          onCambiarMedio={(medio) => cambiarMedio(pago, medio)}
+                          onUpdate={(fields) => actualizarPago(pago, fields)}
                           onTogglePagado={() => {
                             if (pago.pagado) {
                               desmarcarPagado(pago);
@@ -865,7 +885,6 @@ function FilaPago({
   subcategorias,
   padres,
   onUpdate,
-  onCambiarMedio,
   onTogglePagado,
   onDelete,
 }: {
@@ -873,13 +892,17 @@ function FilaPago({
   subcategorias: CategoriaGasto[];
   padres: Map<string, string>;
   onUpdate: (fields: Partial<PagoFijo>) => void;
-  onCambiarMedio: (medio: string | null) => void;
   onTogglePagado: () => void;
   onDelete: () => void;
 }) {
+  const [conceptoLocal, setConceptoLocal] = useState(pago.concepto);
   const [notasLocal, setNotasLocal] = useState(pago.notas ?? '');
 
-  const subcatNombre = subcategorias.find((c) => c.id === pago.categoria_gasto_id)?.nombre ?? '';
+  // Mantener input de concepto sincronizado si llega un cambio externo
+  useEffect(() => {
+    setConceptoLocal(pago.concepto);
+  }, [pago.concepto]);
+
   const urg: UrgenciaPago = pago.pagado ? 'ok' : urgenciaPago(pago.fecha_vencimiento);
 
   return (
@@ -893,16 +916,40 @@ function FilaPago({
       )}
     >
       <td className="px-4 py-2">
-        <span className={cn('text-gray-700', pago.pagado && 'text-gray-400 line-through')}>
-          {pago.concepto}
-        </span>
+        <input
+          type="text"
+          value={conceptoLocal}
+          onChange={(e) => setConceptoLocal(e.target.value)}
+          onBlur={() => {
+            const t = conceptoLocal.trim();
+            if (t && t !== pago.concepto) onUpdate({ concepto: t });
+            else if (!t) setConceptoLocal(pago.concepto);
+          }}
+          className={cn(
+            'w-full max-w-[200px] rounded border border-transparent bg-transparent px-1.5 py-1 text-sm text-gray-700 hover:border-gray-200 focus:border-rodziny-500 focus:bg-white focus:outline-none',
+            pago.pagado && 'text-gray-400 line-through',
+          )}
+        />
+        <select
+          className="mt-0.5 max-w-[200px] rounded border border-transparent bg-transparent px-1.5 py-0.5 text-[10px] text-gray-500 hover:border-gray-200 focus:border-rodziny-500 focus:bg-white focus:outline-none"
+          value={pago.categoria}
+          onChange={(e) => onUpdate({ categoria: e.target.value })}
+        >
+          {CATEGORIAS.map((c) => (
+            <option key={c} value={c}>
+              {c}
+            </option>
+          ))}
+          {!CATEGORIAS.includes(pago.categoria) && (
+            <option value={pago.categoria}>{pago.categoria}</option>
+          )}
+        </select>
       </td>
       <td className="px-4 py-2">
         <select
           className="max-w-[140px] rounded border border-gray-200 px-1.5 py-1 text-xs focus:border-rodziny-500 focus:outline-none"
           value={pago.categoria_gasto_id ?? ''}
           onChange={(e) => onUpdate({ categoria_gasto_id: e.target.value || null })}
-          disabled={pago.pagado}
         >
           <option value="">Sin asignar</option>
           {[...padres.entries()].map(([padreId, padreNombre]) => (
@@ -927,7 +974,6 @@ function FilaPago({
             const limpio = num ?? 0;
             if (limpio !== (pago.monto ?? 0)) onUpdate({ monto: limpio });
           }}
-          disabled={pago.pagado}
         />
       </td>
       <td className="px-4 py-2 text-center">
@@ -937,7 +983,6 @@ function FilaPago({
             className="rounded border border-gray-200 px-1.5 py-1 text-xs focus:border-rodziny-500 focus:outline-none"
             value={pago.fecha_vencimiento ?? ''}
             onChange={(e) => onUpdate({ fecha_vencimiento: e.target.value || null })}
-            disabled={pago.pagado}
           />
           {!pago.pagado && urg === 'vencido' && (
             <span className="rounded bg-red-200 px-1.5 py-0.5 text-[10px] font-bold text-red-800">
@@ -968,7 +1013,7 @@ function FilaPago({
         <select
           className="rounded border border-gray-200 bg-white px-1.5 py-1 text-xs focus:border-rodziny-500 focus:outline-none"
           value={pago.medio_pago ?? ''}
-          onChange={(e) => onCambiarMedio(e.target.value || null)}
+          onChange={(e) => onUpdate({ medio_pago: e.target.value || null })}
         >
           <option value="">—</option>
           {MEDIOS.map((m) => (
