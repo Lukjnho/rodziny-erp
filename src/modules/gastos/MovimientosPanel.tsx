@@ -5,6 +5,7 @@ import { formatARS, formatFecha, cn } from '@/lib/utils';
 import { NuevoGastoModal, type PrefillGasto } from './NuevoGastoModal';
 import { ImportarExtractoModal } from './ImportarExtractoModal';
 import { AplicarReglasModal } from './AplicarReglasModal';
+import { RevisarMatchesModal } from './RevisarMatchesModal';
 import type { Gasto, MedioPago } from './types';
 
 type TipoMov =
@@ -89,6 +90,10 @@ export function MovimientosPanel({ desde, hasta }: Props) {
   const [transferenciaMov, setTransferenciaMov] = useState<Movimiento | null>(null);
   const [importarOpen, setImportarOpen] = useState(false);
   const [reglasOpen, setReglasOpen] = useState(false);
+  // Cadena post-import: cuando ImportarExtractoModal cierra OK, guardamos las
+  // cuentas importadas para que RevisarMatchesModal acote la búsqueda. Cuando
+  // ese cierra, auto-disparamos AplicarReglasModal para procesar gastos ocultos.
+  const [revisarMatchesCuentas, setRevisarMatchesCuentas] = useState<string[] | null>(null);
 
   const { data: movs, isLoading } = useQuery({
     queryKey: ['movimientos_bandeja', desde, hasta, cuenta, filtroEstado, filtroSigno],
@@ -463,6 +468,22 @@ export function MovimientosPanel({ desde, hasta }: Props) {
       <ImportarExtractoModal
         open={importarOpen}
         onClose={() => setImportarOpen(false)}
+        onSuccess={(cuentasOk) => {
+          refrescar();
+          setImportarOpen(false);
+          setRevisarMatchesCuentas(cuentasOk);
+        }}
+      />
+
+      {/* Modal: Revisar matches automáticos (paso 2 del flujo de import) */}
+      <RevisarMatchesModal
+        open={revisarMatchesCuentas !== null}
+        cuentasImportadas={revisarMatchesCuentas ?? []}
+        onClose={() => {
+          setRevisarMatchesCuentas(null);
+          // Encadenar motor de reglas para procesar comisiones / impuestos / etc.
+          setReglasOpen(true);
+        }}
         onSuccess={refrescar}
       />
 

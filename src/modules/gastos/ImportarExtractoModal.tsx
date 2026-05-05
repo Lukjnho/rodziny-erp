@@ -13,7 +13,9 @@ interface ResultadoArchivo {
 interface Props {
   open: boolean;
   onClose: () => void;
-  onSuccess: () => void;
+  // Devuelve la lista de cuentas (mercadopago/galicia/icbc) cuyos archivos se
+  // procesaron sin error. Se usa para acotar el matcher proactivo a esas cuentas.
+  onSuccess: (cuentasOk: string[]) => void;
 }
 
 export function ImportarExtractoModal({ open, onClose, onSuccess }: Props) {
@@ -65,7 +67,14 @@ export function ImportarExtractoModal({ open, onClose, onSuccess }: Props) {
     }
     setResultados(acc);
     setProcesando(false);
-    if (acc.some((r) => r.procesados > 0 && !r.error)) onSuccess();
+    const cuentasOk = Array.from(
+      new Set(
+        acc
+          .filter((r) => r.procesados > 0 && !r.error && r.cuenta)
+          .map((r) => r.cuenta as string),
+      ),
+    );
+    if (cuentasOk.length > 0) onSuccess(cuentasOk);
   }
 
   return (
