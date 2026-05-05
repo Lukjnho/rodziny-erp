@@ -4,7 +4,7 @@ import { supabase } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
 
 type TipoPlan = 'relleno' | 'masa' | 'salsa' | 'postre' | 'pasteleria' | 'panaderia';
-type EstadoItem = 'pendiente' | 'en_produccion' | 'en_bandejas' | 'ciclo_completo' | 'fuera';
+type EstadoItem = 'pendiente' | 'en_produccion' | 'en_bandejas' | 'ciclo_completo';
 
 interface PlanItem {
   id: string;
@@ -22,28 +22,12 @@ interface PlanItem {
   receta?: { nombre: string } | null;
 }
 
-interface LoteRelleno {
-  id: string;
-  fecha: string;
-  receta_id: string | null;
-  receta?: { nombre: string } | null;
-  cantidad_recetas: number | null;
-}
-
 interface LoteMasa {
   id: string;
   fecha: string;
   receta_id: string | null;
   receta?: { nombre: string } | null;
   kg_producidos: number;
-}
-
-interface LoteProduccion {
-  id: string;
-  fecha: string;
-  receta_id: string | null;
-  categoria: string;
-  receta?: { nombre: string } | null;
 }
 
 interface LotePastaSemana {
@@ -128,8 +112,6 @@ function normNombre(s: string): string {
     .replace(/[̀-ͯ]/g, '');
 }
 
-// Nivel de estado para "el más avanzado". 'fuera' es ortogonal y se mantiene en 0
-// para que cualquier estado del plan le gane si conviven en el mismo grupo.
 function nivelEstado(e: EstadoItem): number {
   switch (e) {
     case 'ciclo_completo':
@@ -140,13 +122,10 @@ function nivelEstado(e: EstadoItem): number {
       return 2;
     case 'pendiente':
       return 1;
-    case 'fuera':
-      return 0;
   }
 }
 
 interface ItemPlanDetalle {
-  origen: 'plan' | 'fuera';
   cantidad: number | null;
   estado: EstadoItem;
   turno?: 'mañana' | 'tarde' | null;
@@ -169,7 +148,7 @@ interface PastaArmada {
   ubicacion: 'freezer_produccion' | 'camara_congelado';
 }
 
-// Card "madre": un relleno (planeado o fuera) con su flujo enriquecido.
+// Card "madre": un item del plan (relleno con flujo enriquecido o salsa/postre/etc).
 // Para tipos sin flujo (salsa/postre/pasteleria/panaderia) los campos
 // masasUsadas y pastasArmadas quedan vacíos.
 interface ItemAgrupado {
@@ -180,24 +159,10 @@ interface ItemAgrupado {
   totalCantidad: number;
   cuentaPlan: number;
   hechosPlan: number;
-  cuentaFuera: number;
   estado: EstadoItem;
   detalle: ItemPlanDetalle[];
   masasUsadas: MasaUsada[]; // solo para relleno
   pastasArmadas: PastaArmada[]; // solo para relleno
-}
-
-// Card huérfana: pasta armada cuyo relleno no aparece en el plan ni como
-// lote registrado, o pasta sin relleno asociado (tagliatelles, ñoquis simples).
-interface PastaHuerfanaAgrupada {
-  key: string;
-  nombre: string;
-  cantidadLotes: number;
-  totalPorciones: number;
-  totalBandejas: number;
-  enCamaraPorc: number;
-  enFreezerPorc: number;
-  detalle: PastaArmada[];
 }
 
 export function PlanSemanal({
@@ -239,20 +204,6 @@ export function PlanSemanal({
     },
   });
 
-  const { data: lotesRelleno } = useQuery({
-    queryKey: ['plan-semanal-relleno', local, desde, hasta],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('cocina_lotes_relleno')
-        .select('id, fecha, receta_id, cantidad_recetas, receta:cocina_recetas(nombre)')
-        .eq('local', local)
-        .gte('fecha', desde)
-        .lte('fecha', hasta);
-      if (error) throw error;
-      return (data ?? []) as unknown as LoteRelleno[];
-    },
-  });
-
   const { data: lotesMasa } = useQuery({
     queryKey: ['plan-semanal-masa', local, desde, hasta],
     queryFn: async () => {
@@ -264,20 +215,6 @@ export function PlanSemanal({
         .lte('fecha', hasta);
       if (error) throw error;
       return (data ?? []) as unknown as LoteMasa[];
-    },
-  });
-
-  const { data: lotesProduccion } = useQuery({
-    queryKey: ['plan-semanal-produccion', local, desde, hasta],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('cocina_lotes_produccion')
-        .select('id, fecha, receta_id, categoria, receta:cocina_recetas(nombre)')
-        .eq('local', local)
-        .gte('fecha', desde)
-        .lte('fecha', hasta);
-      if (error) throw error;
-      return (data ?? []) as unknown as LoteProduccion[];
     },
   });
 
@@ -333,24 +270,15 @@ export function PlanSemanal({
     return { rellenoAPastas, masaAPastas, pastaAReceta };
   }, [pastaRecetas]);
 
-  // Set de lote_id ya vinculados al plan.
-  const lotesEnPlan = useMemo(() => {
-    const set = new Set<string>();
-    for (const it of items ?? []) {
-      if (it.lote_id && it.lote_tabla) set.add(`${it.lote_tabla}:${it.lote_id}`);
-    }
-    return set;
-  }, [items]);
-
-  // Para cada fecha, agrupar items por (tipo, receta) y enriquecer rellenos
-  // con masas usadas + pastas armadas asociadas vía cocina_pasta_recetas.
+  // Para cada fecha, agrupar items del plan por (tipo, receta) y, solo para
+  // los rellenos planificados, enriquecer con masas usadas + pastas armadas
+  // vinculadas vía cocina_pasta_recetas.
   const datosPorFecha = useMemo(() => {
     type DiaData = {
       grupos: ItemAgrupado[];
-      pastasHuerfanas: PastaHuerfanaAgrupada[];
     };
     const map = new Map<string, DiaData>();
-    for (const f of fechas) map.set(f, { grupos: [], pastasHuerfanas: [] });
+    for (const f of fechas) map.set(f, { grupos: [] });
 
     function getGrupo(
       fecha: string,
@@ -372,7 +300,6 @@ export function PlanSemanal({
           totalCantidad: 0,
           cuentaPlan: 0,
           hechosPlan: 0,
-          cuentaFuera: 0,
           estado: 'pendiente',
           detalle: [],
           masasUsadas: [],
@@ -394,7 +321,6 @@ export function PlanSemanal({
       g.cuentaPlan += 1;
       if (estado === 'ciclo_completo') g.hechosPlan += 1;
       g.detalle.push({
-        origen: 'plan',
         cantidad: it.cantidad_recetas,
         estado,
         turno: it.turno,
@@ -402,54 +328,11 @@ export function PlanSemanal({
       if (nivelEstado(estado) > nivelEstado(g.estado)) g.estado = estado;
     }
 
-    // 2) Lotes "fuera del plan" (no incluimos masa: se renderiza dentro del relleno)
-    function pushFuera(
-      tipo: TipoPlan,
-      lote: {
-        id: string;
-        fecha: string;
-        receta_id: string | null;
-        receta?: { nombre: string } | null;
-        cantidad?: number | null;
-      },
-      tabla: string,
-    ) {
-      if (lotesEnPlan.has(`${tabla}:${lote.id}`)) return;
-      const nombre = lote.receta?.nombre ?? '(sin receta)';
-      const g = getGrupo(lote.fecha, tipo, nombre, lote.receta_id);
-      if (!g) return;
-      g.totalCantidad += Number(lote.cantidad ?? 0);
-      g.cuentaFuera += 1;
-      g.detalle.push({ origen: 'fuera', cantidad: lote.cantidad ?? null, estado: 'fuera' });
-      if (g.cuentaPlan === 0 && g.estado === 'pendiente') g.estado = 'fuera';
-    }
-
-    for (const l of lotesRelleno ?? []) {
-      pushFuera(
-        'relleno',
-        { id: l.id, fecha: l.fecha, receta_id: l.receta_id, receta: l.receta, cantidad: l.cantidad_recetas ?? null },
-        'cocina_lotes_relleno',
-      );
-    }
-    for (const l of lotesProduccion ?? []) {
-      const tipo = l.categoria as TipoPlan;
-      if (!TIPOS_VISIBLES.includes(tipo)) continue;
-      pushFuera(
-        tipo,
-        { id: l.id, fecha: l.fecha, receta_id: l.receta_id, receta: l.receta, cantidad: null },
-        'cocina_lotes_produccion',
-      );
-    }
-
-    // 3) Construir agrupado de pastas armadas y vincularlas a su card madre (relleno).
-    //    Una pasta tiene relleno asociado si pastaAReceta tiene >0 rellenos para ella.
-    //    Si su relleno está como card en el día (planeado o fuera), la pasta va dentro.
-    //    Si no, queda como card huérfana.
+    // 2) Pastas armadas: solo se muestran si su relleno está planificado en el día.
+    //    Las que no tengan card madre en el plan se descartan (no aparecen sueltas).
     for (const f of fechas) {
       const data = map.get(f)!;
       const lotesDelDia = (lotesPasta ?? []).filter((p) => p.fecha === f);
-
-      const huerfanasMap = new Map<string, PastaHuerfanaAgrupada>();
 
       for (const p of lotesDelDia) {
         const nombre = p.producto?.nombre ?? 'Pasta';
@@ -467,53 +350,18 @@ export function PlanSemanal({
         const recetasDeLaPasta = maps.pastaAReceta.get(p.producto_id);
         const rellenosDeLaPasta = recetasDeLaPasta?.rellenos ?? new Set<string>();
 
-        // Buscar card madre: una card de tipo='relleno' cuya recetaId esté en
-        // los rellenos asociados a esta pasta. Si hay varias coincidencias
-        // (raro, normalmente una pasta tiene un relleno principal por local),
-        // tomamos la primera.
-        let cardMadre: ItemAgrupado | null = null;
         for (const g of data.grupos) {
           if (g.tipo !== 'relleno') continue;
           if (g.recetaId && rellenosDeLaPasta.has(g.recetaId)) {
-            cardMadre = g;
+            g.pastasArmadas.push(armada);
             break;
           }
         }
-
-        if (cardMadre) {
-          cardMadre.pastasArmadas.push(armada);
-        } else {
-          // Pasta sin card madre disponible: va a sección huérfanas
-          const key = `pasta::${normNombre(nombre)}`;
-          let h = huerfanasMap.get(key);
-          if (!h) {
-            h = {
-              key,
-              nombre,
-              cantidadLotes: 0,
-              totalPorciones: 0,
-              totalBandejas: 0,
-              enCamaraPorc: 0,
-              enFreezerPorc: 0,
-              detalle: [],
-            };
-            huerfanasMap.set(key, h);
-          }
-          h.cantidadLotes += 1;
-          h.totalPorciones += porc;
-          h.totalBandejas += bandejas;
-          if (p.ubicacion === 'camara_congelado') h.enCamaraPorc += porc;
-          else h.enFreezerPorc += porc;
-          h.detalle.push(armada);
-        }
       }
-
-      data.pastasHuerfanas = Array.from(huerfanasMap.values());
     }
 
-    // 4) Vincular lotes_masa: para cada masa del día, encontrar las cards de relleno
-    //    que comparten al menos una pasta con esa masa según cocina_pasta_recetas.
-    //    Mostrar la masa dentro de cada una.
+    // 3) Vincular lotes_masa: solo a rellenos planificados que comparten pastas
+    //    con esa masa según cocina_pasta_recetas. Las masas sueltas se descartan.
     for (const f of fechas) {
       const data = map.get(f)!;
       const masasDelDia = (lotesMasa ?? []).filter((m) => m.fecha === f);
@@ -523,20 +371,17 @@ export function PlanSemanal({
         const pastasQueUsanMasa = maps.masaAPastas.get(m.receta_id) ?? new Set<string>();
         if (pastasQueUsanMasa.size === 0) continue;
 
-        // Cards de relleno cuya receta produce alguna pasta que también usa esta masa
         const rellenosVinculados = data.grupos.filter(
           (g) =>
             g.tipo === 'relleno' &&
             g.recetaId &&
             (maps.rellenoAPastas.get(g.recetaId) ?? new Set()).size > 0 &&
-            // intersección no vacía con pastas que usan esta masa
             [...(maps.rellenoAPastas.get(g.recetaId) ?? new Set())].some((pid) =>
               pastasQueUsanMasa.has(pid),
             ),
         );
 
         for (const g of rellenosVinculados) {
-          // Evitar duplicados si la misma masa ya estaba (por algún motivo)
           if (g.masasUsadas.some((mu) => mu.loteMasaId === m.id)) continue;
           g.masasUsadas.push({
             loteMasaId: m.id,
@@ -550,7 +395,7 @@ export function PlanSemanal({
     }
 
     return map;
-  }, [items, lotesRelleno, lotesMasa, lotesProduccion, lotesPasta, lotesEnPlan, fechas, maps]);
+  }, [items, lotesMasa, lotesPasta, fechas, maps]);
 
   const kpi = useMemo(() => {
     let hechos = 0;
@@ -605,10 +450,10 @@ export function PlanSemanal({
       ) : (
         <div className="grid grid-cols-1 gap-2 p-3 md:grid-cols-2 xl:grid-cols-7">
           {fechas.map((fecha) => {
-            const data = datosPorFecha.get(fecha) ?? { grupos: [], pastasHuerfanas: [] };
+            const data = datosPorFecha.get(fecha) ?? { grupos: [] };
             const esHoy = fecha === fechaHoy;
             const esFechaActiva = fecha === fechaActiva;
-            const vacio = data.grupos.length === 0 && data.pastasHuerfanas.length === 0;
+            const vacio = data.grupos.length === 0;
 
             const porTipo = new Map<TipoPlan, ItemAgrupado[]>();
             for (const g of data.grupos) {
@@ -669,23 +514,6 @@ export function PlanSemanal({
                       );
                     })}
 
-                    {data.pastasHuerfanas.length > 0 && (
-                      <div>
-                        <div className="mb-0.5 text-[10px] font-medium text-gray-500">
-                          🍜 Pastas armadas
-                        </div>
-                        <div className="space-y-0.5">
-                          {data.pastasHuerfanas.map((g) => (
-                            <PastaHuerfanaCard
-                              key={g.key}
-                              grupo={g}
-                              expandido={expandidas.has(g.key)}
-                              onToggle={() => toggleExpandida(g.key)}
-                            />
-                          ))}
-                        </div>
-                      </div>
-                    )}
                   </div>
                 )}
               </div>
@@ -722,7 +550,6 @@ function ItemAgrupadoCard({
         grupo.estado === 'en_bandejas' && 'border-blue-400',
         grupo.estado === 'en_produccion' && 'border-amber-400',
         grupo.estado === 'pendiente' && 'border-gray-200',
-        grupo.estado === 'fuera' && 'border-purple-400',
       )}
     >
       <div className="flex items-start justify-between gap-1">
@@ -744,22 +571,15 @@ function ItemAgrupadoCard({
           grupo.estado === 'en_bandejas' && 'text-blue-700',
           grupo.estado === 'en_produccion' && 'text-amber-700',
           grupo.estado === 'pendiente' && 'text-gray-500',
-          grupo.estado === 'fuera' && 'text-purple-700',
         )}
       >
         {grupo.estado === 'ciclo_completo' && '✅ Ciclo completo'}
         {grupo.estado === 'en_bandejas' && '🧊 En bandejas'}
         {grupo.estado === 'en_produccion' && '🥣 En producción'}
         {grupo.estado === 'pendiente' && '⏳ A terminar'}
-        {grupo.estado === 'fuera' && '🆕 Fuera del plan'}
         {grupo.cuentaPlan > 1 && (
           <span className="ml-1 text-[9px] font-normal normal-case text-gray-400">
             · {grupo.hechosPlan}/{grupo.cuentaPlan}
-          </span>
-        )}
-        {grupo.cuentaPlan > 0 && grupo.cuentaFuera > 0 && (
-          <span className="ml-1 text-[9px] font-normal normal-case text-purple-600">
-            +{grupo.cuentaFuera} extra
           </span>
         )}
         {tieneFlujo && totalPorciones > 0 && (
@@ -780,7 +600,6 @@ function ItemAgrupadoCard({
                   className="flex items-center justify-between text-[10px] text-gray-600"
                 >
                   <span className="truncate">
-                    {d.origen === 'fuera' ? '🆕 ' : ''}
                     {d.cantidad != null && (
                       <span className="text-gray-400">×{d.cantidad} </span>
                     )}
@@ -791,14 +610,12 @@ function ItemAgrupadoCard({
                         d.estado === 'en_bandejas' && 'text-blue-700',
                         d.estado === 'en_produccion' && 'text-amber-700',
                         d.estado === 'pendiente' && 'text-gray-500',
-                        d.estado === 'fuera' && 'text-purple-700',
                       )}
                     >
                       {d.estado === 'ciclo_completo' && 'completo'}
                       {d.estado === 'en_bandejas' && 'en bandejas'}
                       {d.estado === 'en_produccion' && 'en producción'}
                       {d.estado === 'pendiente' && 'pendiente'}
-                      {d.estado === 'fuera' && 'fuera del plan'}
                     </span>
                   </span>
                   {d.turno && (
@@ -874,87 +691,3 @@ function ItemAgrupadoCard({
   );
 }
 
-// ── Card huérfana: pasta armada sin relleno asociado (tagliatelles, etc) ──────
-
-function PastaHuerfanaCard({
-  grupo,
-  expandido,
-  onToggle,
-}: {
-  grupo: PastaHuerfanaAgrupada;
-  expandido: boolean;
-  onToggle: () => void;
-}) {
-  const todoEnCamara = grupo.enFreezerPorc === 0 && grupo.enCamaraPorc > 0;
-  const todoEnFreezer = grupo.enCamaraPorc === 0 && grupo.enFreezerPorc > 0;
-  const mixto = grupo.enCamaraPorc > 0 && grupo.enFreezerPorc > 0;
-
-  return (
-    <button
-      onClick={onToggle}
-      className={cn(
-        'block w-full rounded border-l-2 bg-white px-1.5 py-1 text-left text-[11px] transition-colors hover:bg-gray-50',
-        todoEnCamara && 'border-emerald-400',
-        todoEnFreezer && 'border-blue-300',
-        mixto && 'border-emerald-300',
-      )}
-    >
-      <div className="flex items-start justify-between gap-1">
-        <span className="flex-1 truncate" title={grupo.nombre}>
-          {grupo.nombre}
-          {grupo.totalBandejas > 0 && (
-            <span className="ml-1 text-gray-400">×{grupo.totalBandejas} band.</span>
-          )}
-        </span>
-        <span className="text-[9px] text-gray-300">{expandido ? '▾' : '▸'}</span>
-      </div>
-      <div
-        className={cn(
-          'mt-0.5 text-[9px] font-semibold uppercase',
-          todoEnCamara && 'text-emerald-700',
-          todoEnFreezer && 'text-blue-700',
-          mixto && 'text-emerald-700',
-        )}
-      >
-        {todoEnCamara && `✅ En cámara · ${grupo.totalPorciones} porc.`}
-        {todoEnFreezer && `🧊 En freezer · ${grupo.totalPorciones} porc.`}
-        {mixto && (
-          <>
-            🧊 {grupo.enFreezerPorc} fresc. · ✅ {grupo.enCamaraPorc} cám.
-          </>
-        )}
-        {grupo.cantidadLotes > 1 && (
-          <span className="ml-1 text-[9px] font-normal normal-case text-gray-400">
-            · {grupo.cantidadLotes} lotes
-          </span>
-        )}
-      </div>
-
-      {expandido && (
-        <div className="mt-1 space-y-0.5 border-t border-gray-100 pt-1">
-          {grupo.detalle.map((d) => (
-            <div
-              key={d.loteId}
-              className="flex items-center justify-between text-[10px] text-gray-600"
-            >
-              <span>
-                {d.bandejas > 0 && (
-                  <span className="text-gray-400">×{d.bandejas} band. </span>
-                )}
-                <span className="font-medium">{d.porciones} porc.</span>
-              </span>
-              <span
-                className={cn(
-                  'text-[9px] font-medium',
-                  d.ubicacion === 'camara_congelado' ? 'text-emerald-700' : 'text-blue-700',
-                )}
-              >
-                {d.ubicacion === 'camara_congelado' ? 'cámara' : 'freezer'}
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
-    </button>
-  );
-}
