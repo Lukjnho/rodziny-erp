@@ -13,7 +13,12 @@ interface MontoInputProps {
 }
 
 function formatear(n: number): string {
-  return n.toLocaleString('es-AR', {
+  // Supabase devuelve `numeric` como string en runtime aunque el tipo diga `number`.
+  // Si llega un string, String#toLocaleString ignora el locale y retorna el crudo
+  // ("1885406.89" en vez de "1.885.406,89"). Coercionamos defensivamente.
+  const num = typeof n === 'number' ? n : Number(n);
+  if (!isFinite(num)) return '';
+  return num.toLocaleString('es-AR', {
     minimumFractionDigits: 0,
     maximumFractionDigits: 2,
   });
