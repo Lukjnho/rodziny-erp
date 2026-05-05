@@ -378,6 +378,27 @@ export function ChecklistPagos() {
     setToast({ tipo: 'desmarcado', concepto: pago.concepto, monto: pago.monto ?? 0 });
   }
 
+  // Cambiar medio de pago. Si ya esta pagado, propagar a gasto + pago_gasto
+  // para que el cambio se refleje en Flujo de Caja y EdR.
+  async function cambiarMedio(pago: PagoFijo, nuevoMedio: string | null) {
+    await supabase
+      .from('pagos_fijos')
+      .update({ medio_pago: nuevoMedio })
+      .eq('id', pago.id);
+    if (pago.pagado && pago.gasto_id) {
+      await supabase
+        .from('gastos')
+        .update({ medio_pago: nuevoMedio })
+        .eq('id', pago.gasto_id);
+      await supabase
+        .from('pagos_gastos')
+        .update({ medio_pago: nuevoMedio })
+        .eq('gasto_id', pago.gasto_id);
+    }
+    qc.invalidateQueries({ queryKey: ['pagos_fijos', periodo] });
+    qc.invalidateQueries({ queryKey: ['fc_pagos'] });
+  }
+
   // ── datos derivados ──────────────────────────────────────────────────────
   const porCategoria = useMemo(() => {
     const grupos = new Map<string, PagoFijo[]>();
@@ -743,6 +764,7 @@ export function ChecklistPagos() {
                           subcategorias={subcategorias}
                           padres={padres}
                           onUpdate={(fields) => updatePago.mutate({ id: pago.id, ...fields })}
+                          onCambiarMedio={(medio) => cambiarMedio(pago, medio)}
                           onTogglePagado={() => {
                             if (pago.pagado) {
                               desmarcarPagado(pago);
@@ -843,6 +865,7 @@ function FilaPago({
   subcategorias,
   padres,
   onUpdate,
+  onCambiarMedio,
   onTogglePagado,
   onDelete,
 }: {
@@ -850,6 +873,7 @@ function FilaPago({
   subcategorias: CategoriaGasto[];
   padres: Map<string, string>;
   onUpdate: (fields: Partial<PagoFijo>) => void;
+  onCambiarMedio: (medio: string | null) => void;
   onTogglePagado: () => void;
   onDelete: () => void;
 }) {
@@ -940,10 +964,19 @@ function FilaPago({
           className="h-4 w-4 cursor-pointer rounded border-gray-300 text-green-600 focus:ring-green-500"
         />
       </td>
-      <td className="px-4 py-2 text-xs text-gray-500">
-        {pago.medio_pago
-          ? (MEDIO_PAGO_LABEL[pago.medio_pago as MedioPago] ?? pago.medio_pago)
-          : '—'}
+      <td className="px-4 py-2">
+        <select
+          className="rounded border border-gray-200 bg-white px-1.5 py-1 text-xs focus:border-rodziny-500 focus:outline-none"
+          value={pago.medio_pago ?? ''}
+          onChange={(e) => onCambiarMedio(e.target.value || null)}
+        >
+          <option value="">—</option>
+          {MEDIOS.map((m) => (
+            <option key={m} value={m}>
+              {MEDIO_PAGO_LABEL[m]}
+            </option>
+          ))}
+        </select>
       </td>
       <td className="px-4 py-2">
         <input
