@@ -51,8 +51,13 @@ export function VincularGastoModal({
   const monto =
     Number(movimiento.debito) > 0 ? Number(movimiento.debito) : Number(movimiento.credito);
 
-  // Candidatos con monto similar (±20%) y fecha dentro de 60 días previos:
-  //   1) Gastos pendientes (caso clásico: factura cargada antes del débito).
+  // Candidatos con monto similar (±20%) y fecha en una ventana ±60 días alrededor
+  // del movimiento. La ventana es bidireccional porque:
+  //   - Hacia atrás: factura cargada antes del débito (caso clásico).
+  //   - Hacia adelante: factura cargada después (ej. Pagos Fijos pone fecha=hoy
+  //     al marcar pagado, posterior a la fecha real del débito en el extracto).
+  // Casos cubiertos:
+  //   1) Gastos pendientes.
   //   2) Gastos pagados con pagos_gastos sin conciliar a un movimiento bancario
   //      (caso ChecklistPagos: pago marcado pagado, ahora aparece el débito real
   //      en el extracto y necesitamos reconciliarlo, NO duplicar).
@@ -60,8 +65,11 @@ export function VincularGastoModal({
     queryKey: ['vincular_gasto_candidatos', movimiento.id],
     queryFn: async () => {
       const tolerancia = monto * 0.2;
-      const desdeFecha = new Date(movimiento.fecha + 'T12:00:00Z');
+      const fechaBase = new Date(movimiento.fecha + 'T12:00:00Z');
+      const desdeFecha = new Date(fechaBase);
       desdeFecha.setUTCDate(desdeFecha.getUTCDate() - 60);
+      const hastaFecha = new Date(fechaBase);
+      hastaFecha.setUTCDate(hastaFecha.getUTCDate() + 60);
       const { data, error } = await supabase
         .from('gastos')
         .select(
@@ -71,7 +79,7 @@ export function VincularGastoModal({
         .gte('importe_total', monto - tolerancia)
         .lte('importe_total', monto + tolerancia)
         .gte('fecha', desdeFecha.toISOString().split('T')[0])
-        .lte('fecha', movimiento.fecha)
+        .lte('fecha', hastaFecha.toISOString().split('T')[0])
         .order('fecha', { ascending: false })
         .limit(100);
       if (error) throw error;
@@ -163,8 +171,8 @@ export function VincularGastoModal({
             <span className="ml-1 text-gray-400">— {movimiento.descripcion ?? '—'}</span>
           </p>
           <p className="mt-1 text-[11px] leading-relaxed text-gray-500">
-            Candidatos con monto similar (±20%) en los últimos 60 días, ordenados del más cercano
-            al monto del movimiento. Match exacto resaltado en verde.
+            Candidatos con monto similar (±20%) en una ventana de ±60 días alrededor del
+            movimiento, ordenados del más cercano al monto. Match exacto resaltado en verde.
           </p>
           <div className="mt-2 flex flex-wrap gap-3 text-[11px]">
             <span className="text-gray-500">
