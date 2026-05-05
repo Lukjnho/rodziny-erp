@@ -3,6 +3,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { cn, formatARS } from '@/lib/utils';
 import { conciliarPorIdOperacion } from './conciliarPorIdOperacion';
+import { VincularGastoModal, type MovimientoVinculable } from './VincularGastoModal';
+import { NuevoGastoModal, type PrefillGasto } from './NuevoGastoModal';
 
 interface MesDetalle {
   mes: string;
@@ -78,7 +80,76 @@ export function MercadoPagoPanel() {
   const [syncing, setSyncing] = useState(false);
   const [resultado, setResultado] = useState<SyncResult | null>(null);
   const [conc, setConc] = useState<Conc | null>(null);
+  const [vincularMov, setVincularMov] = useState<MovimientoVinculable | null>(null);
+  const [crearGastoPrefill, setCrearGastoPrefill] = useState<{
+    movId: string;
+    prefill: PrefillGasto;
+  } | null>(null);
   const qc = useQueryClient();
+
+  function refrescar() {
+    qc.invalidateQueries({ queryKey: ['mp_movs_recientes'] });
+    qc.invalidateQueries({ queryKey: ['movimientos_bandeja'] });
+    qc.invalidateQueries({ queryKey: ['gastos_listado'] });
+    qc.invalidateQueries({ queryKey: ['gastos_pagos_pendientes'] });
+    qc.invalidateQueries({ queryKey: ['gastos_resumen_kpis'] });
+  }
+
+  function abrirVincular(m: MovMPRow) {
+    setVincularMov({
+      id: m.id,
+      cuenta: 'mercadopago',
+      fecha: m.fecha,
+      debito: Number(m.debito),
+      credito: 0,
+      descripcion: m.descripcion,
+      referencia: m.referencia,
+    });
+  }
+
+  function abrirCrearGasto(m: MovMPRow) {
+    const prefill: PrefillGasto = {
+      fecha: m.fecha,
+      importe_total: Number(m.debito),
+      comentario: [m.descripcion, m.referencia].filter(Boolean).join(' · ') || null,
+      medio_pago: 'transferencia_mp',
+      estado_pago: 'pagado',
+      fecha_pago: m.fecha,
+      numero_operacion: m.referencia ?? '',
+    };
+    setCrearGastoPrefill({ movId: m.id, prefill });
+  }
+
+  async function onGastoCreado(gastoId: string) {
+    const movId = crearGastoPrefill?.movId;
+    setCrearGastoPrefill(null);
+    if (!movId) return;
+    const { error } = await supabase
+      .from('movimientos_bancarios')
+      .update({ tipo: 'gasto_auto', gasto_id: gastoId })
+      .eq('id', movId);
+    if (error) {
+      window.alert(`Gasto creado pero no se pudo vincular el movimiento: ${error.message}`);
+      return;
+    }
+    await supabase
+      .from('pagos_gastos')
+      .update({ conciliado_movimiento_id: movId })
+      .eq('gasto_id', gastoId);
+    refrescar();
+  }
+
+  async function ignorarMov(m: MovMPRow) {
+    const { error } = await supabase
+      .from('movimientos_bancarios')
+      .update({ tipo: 'ignorado' })
+      .eq('id', m.id);
+    if (error) {
+      window.alert(error.message);
+      return;
+    }
+    refrescar();
+  }
 
   const { data: ultimosRuns } = useQuery({
     queryKey: ['mp_sync_runs'],
@@ -390,6 +461,25 @@ export function MercadoPagoPanel() {
         </div>
       )}
 
+      {/* Modal: Vincular a gasto existente */}
+      {vincularMov && (
+        <VincularGastoModal
+          movimiento={vincularMov}
+          onClose={() => setVincularMov(null)}
+          onVinculado={refrescar}
+        />
+      )}
+
+      {/* Modal: Crear gasto desde movimiento (reusa NuevoGastoModal con prefill) */}
+      {crearGastoPrefill && (
+        <NuevoGastoModal
+          open
+          onClose={() => setCrearGastoPrefill(null)}
+          prefill={crearGastoPrefill.prefill}
+          onSaved={onGastoCreado}
+        />
+      )}
+
       {/* Movimientos MP recientes */}
       {movsRecientes && movsRecientes.length > 0 && (
         <div className="rounded-lg border border-surface-border bg-white p-4">
@@ -406,54 +496,89 @@ export function MercadoPagoPanel() {
                   <th className="px-2 py-1 text-right">Monto</th>
                   <th className="px-2 py-1">Ref</th>
                   <th className="px-2 py-1">Estado</th>
+                  <th className="px-2 py-1 text-right">Acción</th>
                 </tr>
               </thead>
               <tbody>
-                {movsRecientes.map((m) => (
-                  <tr key={m.id} className="border-t border-gray-100">
-                    <td className="px-2 py-1 text-gray-600">{m.fecha}</td>
-                    <td className="px-2 py-1">
-                      <span className="block max-w-xs truncate">
-                        {m.descripcion ?? '—'}
-                      </span>
-                      {m.sugerencia && (
-                        <span className="text-[10px] text-gray-400">→ {m.sugerencia}</span>
-                      )}
-                    </td>
-                    <td className="px-2 py-1">
-                      {m.fuente === 'api_mp_egresos_charge' ? (
-                        <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-700">
-                          Cargo
-                        </span>
-                      ) : (
-                        <span className="rounded bg-blue-100 px-1.5 py-0.5 text-[10px] text-blue-700">
-                          Egreso
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-2 py-1 text-right font-mono text-red-700">
-                      -{formatARS(m.debito)}
-                    </td>
-                    <td className="px-2 py-1 font-mono text-[10px] text-gray-500">
-                      {(m.referencia ?? '').slice(0, 14)}
-                    </td>
-                    <td className="px-2 py-1">
-                      {m.gasto_id ? (
-                        <span className="rounded bg-green-100 px-1.5 py-0.5 text-[10px] font-medium text-green-700">
-                          ✓ Vinculado
-                        </span>
-                      ) : m.tipo === 'cargo_mp' ? (
-                        <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-600">
-                          Cargo automático
-                        </span>
-                      ) : (
-                        <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-700">
-                          Sin vincular
-                        </span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
+                {movsRecientes.map((m) => {
+                  const sinVincular =
+                    !m.gasto_id && m.tipo !== 'cargo_mp' && m.tipo !== 'ignorado';
+                  return (
+                    <tr key={m.id} className="border-t border-gray-100">
+                      <td className="px-2 py-1 text-gray-600">{m.fecha}</td>
+                      <td className="px-2 py-1">
+                        <span className="block max-w-xs truncate">{m.descripcion ?? '—'}</span>
+                        {m.sugerencia && (
+                          <span className="text-[10px] text-gray-400">→ {m.sugerencia}</span>
+                        )}
+                      </td>
+                      <td className="px-2 py-1">
+                        {m.fuente === 'api_mp_egresos_charge' ? (
+                          <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-700">
+                            Cargo
+                          </span>
+                        ) : (
+                          <span className="rounded bg-blue-100 px-1.5 py-0.5 text-[10px] text-blue-700">
+                            Egreso
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-2 py-1 text-right font-mono text-red-700">
+                        -{formatARS(m.debito)}
+                      </td>
+                      <td className="px-2 py-1 font-mono text-[10px] text-gray-500">
+                        {(m.referencia ?? '').slice(0, 14)}
+                      </td>
+                      <td className="px-2 py-1">
+                        {m.gasto_id ? (
+                          <span className="rounded bg-green-100 px-1.5 py-0.5 text-[10px] font-medium text-green-700">
+                            ✓ Vinculado
+                          </span>
+                        ) : m.tipo === 'cargo_mp' ? (
+                          <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-600">
+                            Cargo automático
+                          </span>
+                        ) : m.tipo === 'ignorado' ? (
+                          <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">
+                            Ignorado
+                          </span>
+                        ) : (
+                          <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-700">
+                            Sin vincular
+                          </span>
+                        )}
+                      </td>
+                      <td className="whitespace-nowrap px-2 py-1 text-right">
+                        {sinVincular ? (
+                          <div className="flex justify-end gap-1">
+                            <button
+                              onClick={() => abrirVincular(m)}
+                              className="rounded bg-blue-600 px-2 py-1 text-[10px] font-medium text-white hover:bg-blue-700"
+                              title="Vincular este movimiento a un gasto que ya cargaste"
+                            >
+                              Vincular
+                            </button>
+                            <button
+                              onClick={() => abrirCrearGasto(m)}
+                              className="rounded bg-purple-600 px-2 py-1 text-[10px] font-medium text-white hover:bg-purple-700"
+                              title="Crear un gasto nuevo desde este movimiento"
+                            >
+                              Crear gasto
+                            </button>
+                            <button
+                              onClick={() => ignorarMov(m)}
+                              className="rounded border border-gray-300 px-2 py-1 text-[10px] text-gray-600 hover:bg-gray-50"
+                            >
+                              Ignorar
+                            </button>
+                          </div>
+                        ) : (
+                          <span className="text-[10px] text-gray-300">—</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
