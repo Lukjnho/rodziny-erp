@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
-import { formatARS, formatFecha } from '@/lib/utils';
+import { formatARS, formatFecha, cn } from '@/lib/utils';
 import type { Gasto, MedioPago } from './types';
 
 export interface MovimientoVinculable {
@@ -83,15 +83,23 @@ export function VincularGastoModal({
     },
   });
 
+  // Ordenar candidatos por cercanía al monto del movimiento — ascendente —
+  // para que los matchs más probables aparezcan arriba.
   const filtrados = useMemo(() => {
-    if (!busqueda.trim()) return candidatos ?? [];
-    const b = busqueda.toLowerCase();
-    return (candidatos ?? []).filter(
-      (g) =>
-        (g.proveedor ?? '').toLowerCase().includes(b) ||
-        (g.categoria ?? '').toLowerCase().includes(b),
+    let lista = candidatos ?? [];
+    if (busqueda.trim()) {
+      const b = busqueda.toLowerCase();
+      lista = lista.filter(
+        (g) =>
+          (g.proveedor ?? '').toLowerCase().includes(b) ||
+          (g.categoria ?? '').toLowerCase().includes(b),
+      );
+    }
+    return [...lista].sort(
+      (a, b) =>
+        Math.abs(Number(a.importe_total) - monto) - Math.abs(Number(b.importe_total) - monto),
     );
-  }, [candidatos, busqueda]);
+  }, [candidatos, busqueda, monto]);
 
   async function vincular(gasto: GastoCandidato) {
     if (guardando) return;
@@ -154,13 +162,25 @@ export function VincularGastoModal({
             <span className="font-semibold">{formatARS(monto)}</span>
             <span className="ml-1 text-gray-400">— {movimiento.descripcion ?? '—'}</span>
           </p>
-          <p className="mt-1 text-[11px] text-gray-400">
-            Mostramos gastos <span className="font-medium text-gray-600">pendientes</span> con monto
-            similar (±20%) en los últimos 60 días, y pagos ya marcados como pagados (ej. desde Pagos
-            fijos) que aún no se vincularon a este débito —{' '}
-            <span className="font-medium text-amber-700">reconciliar evita duplicar el egreso</span>
-            .
+          <p className="mt-1 text-[11px] leading-relaxed text-gray-500">
+            Candidatos con monto similar (±20%) en los últimos 60 días, ordenados del más cercano
+            al monto del movimiento. Match exacto resaltado en verde.
           </p>
+          <div className="mt-2 flex flex-wrap gap-3 text-[11px]">
+            <span className="text-gray-500">
+              <span className="rounded bg-blue-600 px-1.5 py-0.5 font-medium text-white">
+                Vincular
+              </span>{' '}
+              gasto pendiente — lo marca pagado y registra el pago.
+            </span>
+            <span className="text-gray-500">
+              <span className="rounded bg-blue-600 px-1.5 py-0.5 font-medium text-white">
+                Reconciliar
+              </span>{' '}
+              gasto ya pagado (ej. desde Pagos Fijos) — solo une el pago al movimiento, no
+              duplica el egreso en Flujo de Caja.
+            </span>
+          </div>
         </div>
         <input
           autoFocus
@@ -200,8 +220,18 @@ export function VincularGastoModal({
               )}
               {filtrados.map((g) => {
                 const yaPagado = g.estado_pago === 'Pagado';
+                const diff = Number(g.importe_total) - monto;
+                const absDiff = Math.abs(diff);
+                const matchExacto = absDiff < 1;
+                const matchCercano = !matchExacto && absDiff < monto * 0.02; // ≤2 %
                 return (
-                  <tr key={g.id} className="border-b border-gray-100 hover:bg-gray-50">
+                  <tr
+                    key={g.id}
+                    className={cn(
+                      'border-b border-gray-100 hover:bg-gray-50',
+                      matchExacto && 'bg-green-50/60',
+                    )}
+                  >
                     <td className="whitespace-nowrap px-3 py-2 text-gray-700">
                       {formatFecha(g.fecha)}
                     </td>
@@ -220,6 +250,20 @@ export function VincularGastoModal({
                     </td>
                     <td className="px-3 py-2 text-right font-semibold tabular-nums text-gray-900">
                       {formatARS(g.importe_total)}
+                      <div className="mt-0.5 text-[10px] font-normal">
+                        {matchExacto ? (
+                          <span className="font-bold text-green-700">✓ exacto</span>
+                        ) : (
+                          <span
+                            className={cn(
+                              matchCercano ? 'text-green-600' : 'text-gray-400',
+                            )}
+                          >
+                            {diff > 0 ? '+' : '−'}
+                            {formatARS(absDiff)}
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="whitespace-nowrap px-3 py-2 text-right">
                       <button
