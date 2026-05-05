@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth';
 import { cn, formatARS } from '@/lib/utils';
+import { MontoInput } from '@/components/ui/MontoInput';
 import type {
   Proveedor,
   CategoriaGasto,
@@ -1037,12 +1038,10 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
             <div className="grid grid-cols-5 gap-3">
               <div>
                 <label className="mb-1 block text-xs text-gray-600">Neto</label>
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  value={form.importe_neto}
-                  onChange={(e) => calcularDesdeNeto(e.target.value)}
-                  placeholder="0.00"
+                <MontoInput
+                  value={form.importe_neto ? Number(form.importe_neto.replace(',', '.')) : null}
+                  onChange={(n) => calcularDesdeNeto(n != null ? String(n) : '')}
+                  placeholder="0,00"
                   className="w-full rounded border border-gray-300 px-3 py-2 text-right text-sm"
                 />
               </div>
@@ -1061,33 +1060,27 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
               </div>
               <div>
                 <label className="mb-1 block text-xs text-gray-600">IVA $</label>
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  value={form.iva}
-                  onChange={(e) => setForm({ ...form, iva: e.target.value })}
+                <MontoInput
+                  value={form.iva ? Number(form.iva.replace(',', '.')) : null}
+                  onChange={(n) => setForm({ ...form, iva: n != null ? String(n) : '' })}
                   className="w-full rounded border border-gray-300 bg-gray-50 px-3 py-2 text-right text-sm"
                   readOnly
                 />
               </div>
               <div>
                 <label className="mb-1 block text-xs text-gray-600">IIBB</label>
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  value={form.iibb}
-                  onChange={(e) => setForm({ ...form, iibb: e.target.value })}
+                <MontoInput
+                  value={form.iibb ? Number(form.iibb.replace(',', '.')) : null}
+                  onChange={(n) => setForm({ ...form, iibb: n != null ? String(n) : '' })}
                   className="w-full rounded border border-gray-300 px-3 py-2 text-right text-sm"
                 />
               </div>
               <div>
                 <label className="mb-1 block text-xs text-gray-600">Total *</label>
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  value={form.importe_total}
-                  onChange={(e) => calcularDesdeTotal(e.target.value)}
-                  placeholder="0.00"
+                <MontoInput
+                  value={form.importe_total ? Number(form.importe_total.replace(',', '.')) : null}
+                  onChange={(n) => calcularDesdeTotal(n != null ? String(n) : '')}
+                  placeholder="0,00"
                   className="w-full rounded border border-rodziny-400 px-3 py-2 text-right text-sm font-semibold"
                 />
               </div>

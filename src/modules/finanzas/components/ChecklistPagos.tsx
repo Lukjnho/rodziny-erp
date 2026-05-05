@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { formatARS, cn } from '@/lib/utils';
+import { MontoInput } from '@/components/ui/MontoInput';
 import { type MedioPago, MEDIO_PAGO_LABEL } from '@/modules/gastos/types';
 import { urgenciaPago, usePagosAlertas, type UrgenciaPago } from '@/modules/finanzas/hooks/usePagosAlertas';
 
@@ -852,7 +853,6 @@ function FilaPago({
   onTogglePagado: () => void;
   onDelete: () => void;
 }) {
-  const [montoLocal, setMontoLocal] = useState(pago.monto != null ? String(pago.monto) : '');
   const [notasLocal, setNotasLocal] = useState(pago.notas ?? '');
 
   const subcatNombre = subcategorias.find((c) => c.id === pago.categoria_gasto_id)?.nombre ?? '';
@@ -895,19 +895,15 @@ function FilaPago({
         </select>
       </td>
       <td className="px-4 py-2">
-        <input
-          type="text"
-          inputMode="numeric"
+        <MontoInput
           className="w-full max-w-[120px] rounded border border-gray-200 px-2 py-1 text-right text-sm focus:border-rodziny-500 focus:outline-none"
-          value={montoLocal}
-          onChange={(e) => setMontoLocal(e.target.value)}
-          onFocus={(e) => e.target.select()}
-          onBlur={() => {
-            const num = parseFloat(montoLocal.replace(/\./g, '').replace(',', '.')) || 0;
-            if (num !== (pago.monto ?? 0)) onUpdate({ monto: num });
+          value={pago.monto}
+          onChange={() => {}}
+          onCommit={(num) => {
+            const limpio = num ?? 0;
+            if (limpio !== (pago.monto ?? 0)) onUpdate({ monto: limpio });
           }}
           disabled={pago.pagado}
-          placeholder="0"
         />
       </td>
       <td className="px-4 py-2 text-center">
@@ -991,7 +987,7 @@ function ModalAgregarPago({
   const [concepto, setConcepto] = useState('');
   const [categoria, setCategoria] = useState(CATEGORIAS[0]);
   const [catGastoId, setCatGastoId] = useState('');
-  const [monto, setMonto] = useState('');
+  const [monto, setMonto] = useState<number | null>(null);
   const [fechaVto, setFechaVto] = useState('');
   const [notas, setNotas] = useState('');
 
@@ -1002,7 +998,7 @@ function ModalAgregarPago({
       concepto: concepto.trim(),
       categoria,
       categoria_gasto_id: catGastoId || null,
-      monto: monto ? parseFloat(monto.replace(/\./g, '').replace(',', '.')) : null,
+      monto,
       fecha_vencimiento: fechaVto || null,
       notas: notas || null,
       pagado: false,
@@ -1073,13 +1069,11 @@ function ModalAgregarPago({
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="mb-1 block text-xs text-gray-500">Monto</label>
-              <input
-                type="text"
-                inputMode="numeric"
+              <MontoInput
                 value={monto}
-                onChange={(e) => setMonto(e.target.value)}
-                className="w-full rounded border border-gray-200 px-3 py-2 text-sm focus:border-rodziny-500 focus:outline-none"
-                placeholder="$0"
+                onChange={setMonto}
+                className="w-full rounded border border-gray-200 px-3 py-2 text-right text-sm focus:border-rodziny-500 focus:outline-none"
+                placeholder="0"
               />
             </div>
             <div>
