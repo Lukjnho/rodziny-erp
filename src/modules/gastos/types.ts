@@ -116,6 +116,10 @@ export interface PagoGasto {
   monto: number;
   medio_pago: MedioPago;
   referencia: string | null;
+  // N° de operación capturado del comprobante MP/Galicia/ICBC. Es la pieza que
+  // permite conciliación automática 1:1 con el extracto. Obligatorio cuando
+  // medio_pago != 'efectivo' (validado en NuevoGastoModal y PagosPanel).
+  numero_operacion: string | null;
   comprobante_pago_path: string | null;
   conciliado_movimiento_id: string | null;
   notas: string | null;

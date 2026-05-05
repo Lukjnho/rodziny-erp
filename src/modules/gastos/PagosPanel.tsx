@@ -144,6 +144,14 @@ export function PagosPanel({ local, desde, hasta }: Props) {
   async function confirmarPago() {
     if (!gastoAPagar) return;
     setErrorPago(null);
+    // Validación: N° de operación obligatorio salvo efectivo. Es la pieza
+    // que permite conciliar con el extracto bancario al importar el CSV.
+    if (pagoMedio !== 'efectivo' && !pagoReferencia.trim()) {
+      setErrorPago(
+        'N° de operación requerido. Copialo del comprobante (transferencia / cheque / cupón) para que se concilie automáticamente con el extracto.',
+      );
+      return;
+    }
     setGuardando(true);
     try {
       const carpeta = `${gastoAPagar.local}/${gastoAPagar.fecha.substring(0, 7)}`;
@@ -190,13 +198,15 @@ export function PagosPanel({ local, desde, hasta }: Props) {
         .eq('id', gastoAPagar.id);
       if (errUpd) throw errUpd;
 
-      // Insert del pago
+      // Insert del pago. El N° de operación va en su campo dedicado
+      // `numero_operacion` para que el matcher de import pueda conciliarlo
+      // por igualdad exacta con la referencia del movimiento bancario.
       const { error: errIns } = await supabase.from('pagos_gastos').insert({
         gasto_id: gastoAPagar.id,
         fecha_pago: pagoFecha,
         monto: gastoAPagar.importe_total,
         medio_pago: pagoMedio,
-        referencia: pagoReferencia.trim() || null,
+        numero_operacion: pagoReferencia.trim() || null,
         notas: pagoNotas.trim() || null,
         comprobante_pago_path: pathComprobantePago,
       });
@@ -459,15 +469,26 @@ export function PagosPanel({ local, desde, hasta }: Props) {
 
             <div>
               <label className="mb-1 block text-xs font-medium text-gray-600">
-                Referencia <span className="text-gray-400">(opcional)</span>
+                N° de operación{' '}
+                {pagoMedio === 'efectivo' ? (
+                  <span className="text-gray-400">(opcional)</span>
+                ) : (
+                  <span className="text-red-600">*</span>
+                )}
               </label>
               <input
                 type="text"
                 value={pagoReferencia}
                 onChange={(e) => setPagoReferencia(e.target.value)}
-                placeholder="N° de transferencia, cupón, ticket..."
-                className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm"
+                placeholder="Ej: 157727339602 (MP) · NRO 1234 (cheque) · cupón ICBC..."
+                className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm font-mono"
               />
+              {pagoMedio !== 'efectivo' && (
+                <p className="mt-1 text-[11px] text-gray-500">
+                  Copialo del comprobante. Permite conciliar automáticamente con
+                  el extracto cuando importes el CSV.
+                </p>
+              )}
             </div>
 
             <div>

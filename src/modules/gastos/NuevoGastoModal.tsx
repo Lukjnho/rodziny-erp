@@ -27,6 +27,7 @@ export interface PrefillGasto {
   medio_pago?: MedioPago;
   estado_pago?: EstadoPago;
   fecha_pago?: string;
+  numero_operacion?: string;
 }
 
 interface Props {
@@ -58,6 +59,7 @@ interface FormState {
   estado_pago: EstadoPago;
   fecha_pago: string;
   medio_pago: MedioPago;
+  numero_operacion: string;
   vincular_stock: boolean;
   items: ItemGastoStock[];
 }
@@ -81,6 +83,7 @@ const FORM_INICIAL: FormState = {
   estado_pago: 'pendiente',
   fecha_pago: HOY(),
   medio_pago: 'transferencia_mp',
+  numero_operacion: '',
   vincular_stock: false,
   items: [],
 };
@@ -176,6 +179,7 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
           : 'pendiente') as EstadoPago,
         fecha_pago: gastoEditando.fecha_vencimiento ?? HOY(),
         medio_pago: 'transferencia_mp',
+        numero_operacion: '',
         // Cargar ítems guardados del gasto (si los tiene). Se mantienen editables para corregir errores.
         vincular_stock: !!gastoEditando.items_json?.length,
         items: (gastoEditando.items_json ?? []).map((it) => ({
@@ -219,6 +223,7 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
         estado_pago: prefill?.estado_pago ?? FORM_INICIAL.estado_pago,
         fecha_pago: prefill?.fecha_pago ?? FORM_INICIAL.fecha_pago,
         medio_pago: prefill?.medio_pago ?? FORM_INICIAL.medio_pago,
+        numero_operacion: prefill?.numero_operacion ?? '',
       });
       setComprobantePath(prefill?.comprobante_path ?? null);
       setFacturaPath(null);
@@ -540,6 +545,22 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
       }
     }
 
+    // Validación N° de operación: obligatorio cuando se paga por transferencia /
+    // cheque / tarjeta. Es el ID que permite conciliar 1:1 con el extracto.
+    // Solo "efectivo" lo exime. Si es edición, no validamos: la edición no crea
+    // un pago nuevo, sólo actualiza el gasto.
+    if (
+      !gastoEditando &&
+      form.estado_pago === 'pagado' &&
+      form.medio_pago !== 'efectivo' &&
+      !form.numero_operacion.trim()
+    ) {
+      setError(
+        'N° de operación requerido. Es el comprobante de la transferencia / cheque / cupón que permite conciliar con el extracto. Para pagos en efectivo, cambiá el medio de pago.',
+      );
+      return;
+    }
+
     setGuardando(true);
     try {
       // 1) Subir comprobante de pago si hay uno nuevo
@@ -684,6 +705,7 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
 
       // 3) Pagos: si está marcado como pagado, crear un row por cada gasto creado
       if (form.estado_pago === 'pagado' && !gastoEditando) {
+        const numOp = form.numero_operacion.trim() || null;
         const rowsPago = gastosCreados.map((gid, i) => ({
           gasto_id: gid,
           fecha_pago: form.fecha_pago,
@@ -692,6 +714,7 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
               ? splitPorSubcat[i].total
               : parseFloat(form.importe_total.replace(',', '.')) || 0,
           medio_pago: form.medio_pago,
+          numero_operacion: numOp,
           creado_por: perfil?.nombre ?? null,
         }));
         const { error: errPago } = await supabase.from('pagos_gastos').insert(rowsPago);
@@ -1264,30 +1287,54 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
               </button>
             </div>
             {form.estado_pago === 'pagado' && (
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="mb-1 block text-xs text-gray-600">Fecha de pago</label>
-                  <input
-                    type="date"
-                    value={form.fecha_pago}
-                    onChange={(e) => setForm({ ...form, fecha_pago: e.target.value })}
-                    className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
-                  />
+              <div className="space-y-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="mb-1 block text-xs text-gray-600">Fecha de pago</label>
+                    <input
+                      type="date"
+                      value={form.fecha_pago}
+                      onChange={(e) => setForm({ ...form, fecha_pago: e.target.value })}
+                      className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs text-gray-600">Medio de pago</label>
+                    <select
+                      value={form.medio_pago}
+                      onChange={(e) =>
+                        setForm({ ...form, medio_pago: e.target.value as MedioPago })
+                      }
+                      className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm"
+                    >
+                      {Object.entries(MEDIO_PAGO_LABEL).map(([v, l]) => (
+                        <option key={v} value={v}>
+                          {l}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
-                <div>
-                  <label className="mb-1 block text-xs text-gray-600">Medio de pago</label>
-                  <select
-                    value={form.medio_pago}
-                    onChange={(e) => setForm({ ...form, medio_pago: e.target.value as MedioPago })}
-                    className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm"
-                  >
-                    {Object.entries(MEDIO_PAGO_LABEL).map(([v, l]) => (
-                      <option key={v} value={v}>
-                        {l}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                {form.medio_pago !== 'efectivo' && !gastoEditando && (
+                  <div>
+                    <label className="mb-1 block text-xs text-gray-600">
+                      N° de operación <span className="text-red-600">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={form.numero_operacion}
+                      onChange={(e) =>
+                        setForm({ ...form, numero_operacion: e.target.value })
+                      }
+                      placeholder="Ej: 157727339602 (MP) · NRO 1234 (cheque) · cupón ICBC..."
+                      className="w-full rounded border border-gray-300 px-3 py-2 text-sm font-mono"
+                    />
+                    <p className="mt-1 text-[11px] text-gray-500">
+                      Copialo del comprobante de la transferencia. Permite conciliar
+                      automáticamente con el extracto cuando importes el CSV.
+                    </p>
+                  </div>
+                )}
               </div>
             )}
           </div>

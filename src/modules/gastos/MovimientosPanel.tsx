@@ -5,7 +5,6 @@ import { formatARS, formatFecha, cn } from '@/lib/utils';
 import { NuevoGastoModal, type PrefillGasto } from './NuevoGastoModal';
 import { ImportarExtractoModal } from './ImportarExtractoModal';
 import { AplicarReglasModal } from './AplicarReglasModal';
-import { RevisarMatchesModal } from './RevisarMatchesModal';
 import type { Gasto, MedioPago } from './types';
 
 type TipoMov =
@@ -90,12 +89,6 @@ export function MovimientosPanel({ desde, hasta }: Props) {
   const [transferenciaMov, setTransferenciaMov] = useState<Movimiento | null>(null);
   const [importarOpen, setImportarOpen] = useState(false);
   const [reglasOpen, setReglasOpen] = useState(false);
-  // Cadena post-import: cuando ImportarExtractoModal cierra OK, guardamos las
-  // cuentas importadas para que RevisarMatchesModal acote la búsqueda. Cuando
-  // ese cierra y el flag está activo, auto-disparamos AplicarReglasModal.
-  // El botón "Sugerir conciliaciones" abre el mismo modal pero sin encadenar.
-  const [revisarMatchesCuentas, setRevisarMatchesCuentas] = useState<string[] | null>(null);
-  const [encadenarReglas, setEncadenarReglas] = useState(false);
 
   const { data: movs, isLoading } = useQuery({
     queryKey: ['movimientos_bandeja', desde, hasta, cuenta, filtroEstado, filtroSigno],
@@ -178,6 +171,10 @@ export function MovimientosPanel({ desde, hasta }: Props) {
       medio_pago: MEDIO_DESDE_CUENTA[mov.cuenta] ?? 'transferencia_mp',
       estado_pago: 'pagado',
       fecha_pago: mov.fecha,
+      // Pre-llena el N° con la referencia del mov: la conciliación queda
+      // automática porque el mov ya queda vinculado abajo (`gasto_id`) y el
+      // pago_gasto guarda el mismo N°.
+      numero_operacion: mov.referencia ?? '',
     };
     setCrearGastoPrefill({ mov, prefill });
   }
@@ -195,15 +192,12 @@ export function MovimientosPanel({ desde, hasta }: Props) {
       window.alert(`Gasto creado pero no se pudo vincular el movimiento: ${error.message}`);
       return;
     }
-    // Registrar el pago en pagos_gastos para conciliación
-    await supabase.from('pagos_gastos').insert({
-      gasto_id: gastoId,
-      fecha_pago: mov.fecha,
-      monto: Number(mov.debito) > 0 ? Number(mov.debito) : Number(mov.credito),
-      medio_pago: MEDIO_DESDE_CUENTA[mov.cuenta] ?? 'transferencia_mp',
-      referencia: mov.referencia,
-      conciliado_movimiento_id: mov.id,
-    });
+    // El pago_gasto ya lo creó NuevoGastoModal con el numero_operacion.
+    // Sólo nos falta marcar el pago como conciliado contra este movimiento.
+    await supabase
+      .from('pagos_gastos')
+      .update({ conciliado_movimiento_id: mov.id })
+      .eq('gasto_id', gastoId);
     refrescar();
   }
 
@@ -211,13 +205,6 @@ export function MovimientosPanel({ desde, hasta }: Props) {
     <div>
       {/* Toolbar superior */}
       <div className="mb-2 flex items-center justify-end gap-2">
-        <button
-          onClick={() => setRevisarMatchesCuentas([])}
-          className="rounded-md border border-blue-600 px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-50"
-          title="Buscar matches automáticos entre los movimientos pendientes y los gastos cargados"
-        >
-          🔗 Sugerir conciliaciones
-        </button>
         <button
           onClick={() => setReglasOpen(true)}
           className="rounded-md border border-rodziny-700 px-3 py-1.5 text-xs font-medium text-rodziny-700 hover:bg-rodziny-50"
@@ -473,30 +460,17 @@ export function MovimientosPanel({ desde, hasta }: Props) {
         />
       )}
 
-      {/* Modal: Importar extracto bancario */}
+      {/* Modal: Importar extracto bancario. Tras el upsert + matcher por ID,
+          encadenamos AplicarReglasModal para limpiar gastos ocultos
+          (impuestos / comisiones) que no matchean por ID. */}
       <ImportarExtractoModal
         open={importarOpen}
         onClose={() => setImportarOpen(false)}
-        onSuccess={(cuentasOk) => {
+        onSuccess={() => {
           refrescar();
           setImportarOpen(false);
-          setEncadenarReglas(true);
-          setRevisarMatchesCuentas(cuentasOk);
+          setReglasOpen(true);
         }}
-      />
-
-      {/* Modal: Revisar matches automáticos (paso 2 del flujo de import) */}
-      <RevisarMatchesModal
-        open={revisarMatchesCuentas !== null}
-        cuentasImportadas={revisarMatchesCuentas ?? []}
-        onClose={() => {
-          setRevisarMatchesCuentas(null);
-          if (encadenarReglas) {
-            setEncadenarReglas(false);
-            setReglasOpen(true);
-          }
-        }}
-        onSuccess={refrescar}
       />
 
       {/* Modal: Aplicar reglas automáticas */}
