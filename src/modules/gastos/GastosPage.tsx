@@ -9,19 +9,15 @@ import { ListadoGastos } from './ListadoGastos';
 import { PagosPanel } from './PagosPanel';
 import { AnalisisGastos } from './AnalisisGastos';
 import { CategoriasPanel } from './CategoriasPanel';
-import { MovimientosPanel } from './MovimientosPanel';
-import { MercadoPagoPanel } from './MercadoPagoPanel';
 import { NuevoGastoModal } from './NuevoGastoModal';
 import type { Gasto } from './types';
 
-type Tab = 'listado' | 'pagos' | 'movimientos' | 'mercadopago' | 'analisis' | 'categorias';
-type Local = 'vedia' | 'saavedra' | 'ambos';
+type Tab = 'listado' | 'pagos' | 'analisis' | 'categorias';
+type Local = 'vedia' | 'saavedra' | 'ambos' | 'sas';
 
 const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: 'listado', label: 'Listado', icon: '📋' },
   { id: 'pagos', label: 'Pagos', icon: '💳' },
-  { id: 'movimientos', label: 'Movimientos', icon: '🏦' },
-  { id: 'mercadopago', label: 'MercadoPago', icon: '💰' },
   { id: 'analisis', label: 'Análisis', icon: '📊' },
   { id: 'categorias', label: 'Categorías', icon: '🏷' },
 ];
@@ -69,7 +65,9 @@ function resumir(rows: { importe_total: number; estado_pago: string | null }[]):
 }
 
 export function GastosPage({ embedded = false }: { embedded?: boolean } = {}) {
-  const [tab, setTab] = useState<Tab>('listado');
+  // Cuando se renderiza embebido en Finanzas (tab "Resumen de compras") → vista analítica
+  // únicamente: KPIs + matriz mensual. La carga de gastos vive en el módulo Compras.
+  const [tab, setTab] = useState<Tab>(embedded ? 'analisis' : 'listado');
 
   // Estado global del módulo (compartido por sub-tabs)
   const ahora = new Date();
@@ -88,7 +86,7 @@ export function GastosPage({ embedded = false }: { embedded?: boolean } = {}) {
   const [modalOpen, setModalOpen] = useState(false);
   const [gastoEditando, setGastoEditando] = useState<Gasto | null>(null);
 
-  const localActivo: 'vedia' | 'saavedra' | null = local === 'ambos' ? null : local;
+  const localActivo: 'vedia' | 'saavedra' | 'sas' | null = local === 'ambos' ? null : local;
   const ocultarHeader = tab === 'categorias';
 
   // Período anterior (mismo nro de días, justo antes)
@@ -184,7 +182,7 @@ export function GastosPage({ embedded = false }: { embedded?: boolean } = {}) {
             <LocalSelector
               value={local}
               onChange={(v) => setLocal(v as Local)}
-              options={['vedia', 'saavedra', 'ambos']}
+              options={['vedia', 'saavedra', 'sas', 'ambos']}
             />
             <div className="flex items-center gap-2">
               <label className="text-xs text-gray-500">Desde</label>
@@ -226,15 +224,17 @@ export function GastosPage({ embedded = false }: { embedded?: boolean } = {}) {
                 </button>
               ))}
             </div>
-            <button
-              onClick={() => {
-                setGastoEditando(null);
-                setModalOpen(true);
-              }}
-              className="ml-auto rounded-md bg-rodziny-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-rodziny-800"
-            >
-              + Nuevo gasto
-            </button>
+            {!embedded && (
+              <button
+                onClick={() => {
+                  setGastoEditando(null);
+                  setModalOpen(true);
+                }}
+                className="ml-auto rounded-md bg-rodziny-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-rodziny-800"
+              >
+                + Nuevo gasto
+              </button>
+            )}
           </div>
 
           {/* KPIs comunes */}
@@ -274,25 +274,27 @@ export function GastosPage({ embedded = false }: { embedded?: boolean } = {}) {
         </>
       )}
 
-      {/* Sub-tabs */}
-      <div className="mb-5 flex gap-1 border-b border-gray-200">
-        {TABS.map((t) => (
-          <button
-            key={t.id}
-            onClick={() => setTab(t.id)}
-            className={cn(
-              'border-b-2 px-4 py-2 text-sm font-medium transition-colors',
-              tab === t.id
-                ? 'border-rodziny-700 text-rodziny-700'
-                : 'border-transparent text-gray-500 hover:text-gray-700',
-            )}
-          >
-            <span className="mr-1">{t.icon}</span> {t.label}
-          </button>
-        ))}
-      </div>
+      {/* Sub-tabs (ocultos en modo embedded — Finanzas/Resumen de compras es vista analítica solo) */}
+      {!embedded && (
+        <div className="mb-5 flex gap-1 border-b border-gray-200">
+          {TABS.map((t) => (
+            <button
+              key={t.id}
+              onClick={() => setTab(t.id)}
+              className={cn(
+                'border-b-2 px-4 py-2 text-sm font-medium transition-colors',
+                tab === t.id
+                  ? 'border-rodziny-700 text-rodziny-700'
+                  : 'border-transparent text-gray-500 hover:text-gray-700',
+              )}
+            >
+              <span className="mr-1">{t.icon}</span> {t.label}
+            </button>
+          ))}
+        </div>
+      )}
 
-      {tab === 'listado' && (
+      {tab === 'listado' && !embedded && (
         <ListadoGastos
           local={local}
           desde={desde}
@@ -303,13 +305,11 @@ export function GastosPage({ embedded = false }: { embedded?: boolean } = {}) {
           }}
         />
       )}
-      {tab === 'pagos' && <PagosPanel local={local} desde={desde} hasta={hasta} />}
-      {tab === 'movimientos' && <MovimientosPanel desde={desde} hasta={hasta} />}
-      {tab === 'mercadopago' && <MercadoPagoPanel />}
+      {tab === 'pagos' && !embedded && <PagosPanel local={local} desde={desde} hasta={hasta} />}
       {tab === 'analisis' && <AnalisisGastos local={local} />}
-      {tab === 'categorias' && <CategoriasPanel />}
+      {tab === 'categorias' && !embedded && <CategoriasPanel />}
 
-      {modalOpen && (
+      {!embedded && modalOpen && (
         <NuevoGastoModal
           open={modalOpen}
           onClose={() => {

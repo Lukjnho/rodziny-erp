@@ -10,13 +10,17 @@ import {
   type GastoRow,
 } from '@/modules/finanzas/parsers/parseFudoGastos';
 import { NuevoGastoModal, type PrefillGasto } from '@/modules/gastos/NuevoGastoModal';
+import NuevoGastoForm from '@/modules/gastos/NuevoGastoForm';
 import { ProveedoresPanel } from '@/modules/gastos/ProveedoresPanel';
 import { ListadoGastos } from '@/modules/gastos/ListadoGastos';
+import { ExtractosAlerta } from '@/modules/finanzas/components/ExtractosAlerta';
 import { PastasTerminadasPanel } from './components/PastasTerminadasPanel';
-import type { MedioPago } from '@/modules/gastos/types';
+import { ConciliacionTab } from './ConciliacionTab';
+import type { MedioPago, Gasto } from '@/modules/gastos/types';
 import { MEDIO_PAGO_LABEL } from '@/modules/gastos/types';
+import { PagarGastoModal } from '@/modules/gastos/PagarGastoModal';
 
-type Tab = 'gastos' | 'stock' | 'movimientos' | 'recepcion' | 'pagos' | 'proveedores';
+type Tab = 'gastos' | 'stock' | 'movimientos' | 'recepcion' | 'pagos' | 'proveedores' | 'conciliacion';
 type FiltroEstado = 'todos' | 'bajo_minimo' | 'sin_stock' | 'inactivos';
 
 interface Producto {
@@ -85,6 +89,16 @@ const ayudaPorTab: Record<Tab, { titulo: string; pasos: string[] }> = {
       'Paso 4: Revisá los matches — los verdes son automáticos, los amarillos necesitan que elijas el producto correcto del desplegable.',
       'Paso 5: Tildá los items que querés confirmar y hacé clic en "Confirmar recepción".',
       'Esto actualiza el stock Y guarda los gastos para el tab de Pagos.',
+    ],
+  },
+  conciliacion: {
+    titulo: 'Conciliación de extractos',
+    pasos: [
+      'Compara los movimientos del extracto bancario (Galicia, ICBC, MercadoPago) con los gastos cargados.',
+      'Vista 1 — Auto-match: vincula gastos manuales con su movimiento del extracto cuando coinciden por N° de operación.',
+      'Vista 2 — Cargos automáticos: genera gastos de "Impuestos y comisiones bancarias" (Rodziny S.A.S.) para impuestos Ley 25.413, comisiones MP, IVA bancario, etc.',
+      'Vista 3 — Sin conciliar: muestra los egresos del extracto que no matchean por N° op ni son cargos automáticos. Cargalos a mano desde Gastos.',
+      'Recomendado: ejecutar "Conciliar ahora" después de cada carga de gastos nuevos, y "Crear cargos automáticos" una vez por mes.',
     ],
   },
   pagos: {
@@ -193,34 +207,17 @@ export function ComprasPage() {
     enabled: tab === 'movimientos',
   });
 
-  interface GastoPago {
-    id: string;
-    fudo_id: string;
-    fecha: string;
-    fecha_vencimiento: string | null;
-    proveedor: string;
-    categoria: string;
-    subcategoria: string;
-    importe_total: number;
-    estado_pago: string;
-    comentario: string;
-    factura_path: string | null;
-    local: string;
-  }
-
   const { data: gastosPagos } = useQuery({
     queryKey: ['gastos_pagos', local],
     queryFn: async () => {
       const { data } = await supabase
         .from('gastos')
-        .select(
-          'id,fudo_id,fecha,fecha_vencimiento,proveedor,categoria,subcategoria,importe_total,estado_pago,comentario,factura_path,local',
-        )
+        .select('*')
         .eq('local', local)
         .eq('cancelado', false)
         .order('fecha_vencimiento', { ascending: true, nullsFirst: false })
         .limit(500);
-      return (data ?? []) as GastoPago[];
+      return (data ?? []) as Gasto[];
     },
     enabled: tab === 'pagos',
   });
@@ -231,6 +228,7 @@ export function ComprasPage() {
     fecha_pago: string;
     monto: number;
     medio_pago: string;
+    created_at: string;
   }
 
   const { data: pagosGastosData } = useQuery({
@@ -240,16 +238,22 @@ export function ComprasPage() {
       if (!ids.length) return [];
       const { data } = await supabase
         .from('pagos_gastos')
-        .select('id,gasto_id,fecha_pago,monto,medio_pago')
+        .select('id,gasto_id,fecha_pago,monto,medio_pago,created_at')
         .in('gasto_id', ids);
       return (data ?? []) as PagoGastoRow[];
     },
     enabled: tab === 'pagos' && !!(gastosPagos && gastosPagos.length > 0),
   });
 
+  // Map gasto_id → pago más reciente (por fecha_pago).
+  // Se usa para mostrar la fecha/medio del último pago y para filtrar
+  // el listado "Pagados" por el mes en que efectivamente salió la plata.
   const pagosGastosMap = useMemo(() => {
     const m = new Map<string, PagoGastoRow>();
-    for (const p of pagosGastosData ?? []) m.set(p.gasto_id, p);
+    for (const p of pagosGastosData ?? []) {
+      const previo = m.get(p.gasto_id);
+      if (!previo || p.fecha_pago > previo.fecha_pago) m.set(p.gasto_id, p);
+    }
     return m;
   }, [pagosGastosData]);
 
@@ -295,132 +299,18 @@ export function ComprasPage() {
     },
   });
 
-  // Modal de Nuevo Gasto desde recepción pendiente
+  // Modal de Nuevo Gasto desde recepción pendiente (modo avanzado, factura A con items)
   const [modalGastoOpen, setModalGastoOpen] = useState(false);
   const [prefillGasto, setPrefillGasto] = useState<PrefillGasto | undefined>(undefined);
 
-  // Modal de pago en tab Pagos
-  const [gastoAPagar, setGastoAPagar] = useState<GastoPago | null>(null);
-  const [pagoFecha, setPagoFecha] = useState(() => new Date().toISOString().split('T')[0]);
-  const [pagoMedio, setPagoMedio] = useState<MedioPago>('efectivo');
-  const [pagoDescuento, setPagoDescuento] = useState('');
-  const [pagoReferencia, setPagoReferencia] = useState('');
-  const [pagoNotas, setPagoNotas] = useState('');
-  const [pagoComprobante, setPagoComprobante] = useState<File | null>(null);
-  const [pagoFactura, setPagoFactura] = useState<File | null>(null);
-  const [guardandoPago, setGuardandoPago] = useState(false);
-  const [errorPago, setErrorPago] = useState<string | null>(null);
+  // Pantalla nueva: Nuevo gasto con OCR (flujo simple, mobile-first)
+  const [nuevoGastoFormOpen, setNuevoGastoFormOpen] = useState(false);
 
-  function abrirModalPagoCompra(g: GastoPago) {
+  // Modal único de pago — delegado a PagarGastoModal (canónico)
+  const [gastoAPagar, setGastoAPagar] = useState<Gasto | null>(null);
+
+  function abrirModalPagoCompra(g: Gasto) {
     setGastoAPagar(g);
-    setPagoFecha(new Date().toISOString().split('T')[0]);
-    setPagoMedio('efectivo');
-    setPagoDescuento('');
-    setPagoReferencia('');
-    setPagoNotas('');
-    setPagoComprobante(null);
-    setPagoFactura(null);
-    setErrorPago(null);
-  }
-
-  function cerrarModalPagoCompra() {
-    setGastoAPagar(null);
-    setPagoDescuento('');
-    setPagoReferencia('');
-    setPagoNotas('');
-    setPagoComprobante(null);
-    setPagoFactura(null);
-    setErrorPago(null);
-  }
-
-  async function abrirArchivoExistente(path: string) {
-    const BUCKETS = ['gastos-comprobantes', 'comprobantes', 'recepciones-fotos'];
-    for (const bucket of BUCKETS) {
-      const { data } = await supabase.storage.from(bucket).createSignedUrl(path, 60);
-      if (data?.signedUrl) {
-        window.open(data.signedUrl, '_blank');
-        return;
-      }
-    }
-    window.alert('No se pudo abrir el archivo');
-  }
-
-  async function confirmarPagoCompra() {
-    if (!gastoAPagar) return;
-    setErrorPago(null);
-    setGuardandoPago(true);
-    try {
-      const descuento =
-        parseFloat(pagoDescuento.replace(/\./g, '').replace(',', '.')) || 0;
-      if (descuento < 0) throw new Error('El descuento no puede ser negativo');
-      if (descuento > gastoAPagar.importe_total)
-        throw new Error('El descuento no puede ser mayor al importe total');
-      const montoPagado = gastoAPagar.importe_total - descuento;
-
-      const carpeta = `${gastoAPagar.local}/${gastoAPagar.fecha.substring(0, 7)}`;
-
-      // Subir comprobante de pago si hay
-      let pathComprobantePago: string | null = null;
-      if (pagoComprobante) {
-        const ext = pagoComprobante.name.split('.').pop()?.toLowerCase() || 'pdf';
-        const path = `${carpeta}/pago_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
-        const { error } = await supabase.storage
-          .from('gastos-comprobantes')
-          .upload(path, pagoComprobante, {
-            contentType: pagoComprobante.type || 'application/octet-stream',
-          });
-        if (error) throw error;
-        pathComprobantePago = path;
-      }
-
-      // Subir factura del proveedor si hay (y el gasto no la tiene aún)
-      let pathFactura = gastoAPagar.factura_path ?? null;
-      if (pagoFactura && !gastoAPagar.factura_path) {
-        const ext = pagoFactura.name.split('.').pop()?.toLowerCase() || 'pdf';
-        const path = `${carpeta}/factura_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
-        const { error } = await supabase.storage
-          .from('gastos-comprobantes')
-          .upload(path, pagoFactura, {
-            contentType: pagoFactura.type || 'application/octet-stream',
-          });
-        if (error) throw error;
-        pathFactura = path;
-      }
-
-      const updateGasto: Record<string, unknown> = {
-        estado_pago: 'Pagado',
-        fecha_vencimiento: pagoFecha,
-      };
-      if (pathFactura && pathFactura !== gastoAPagar.factura_path) {
-        updateGasto.factura_path = pathFactura;
-      }
-      const { error: errUpd } = await supabase
-        .from('gastos')
-        .update(updateGasto)
-        .eq('id', gastoAPagar.id);
-      if (errUpd) throw errUpd;
-
-      const { error: errIns } = await supabase.from('pagos_gastos').insert({
-        gasto_id: gastoAPagar.id,
-        fecha_pago: pagoFecha,
-        monto: montoPagado,
-        descuento,
-        medio_pago: pagoMedio,
-        referencia: pagoReferencia.trim() || null,
-        notas: pagoNotas.trim() || null,
-        comprobante_pago_path: pathComprobantePago,
-      });
-      if (errIns) throw errIns;
-
-      cerrarModalPagoCompra();
-      qc.invalidateQueries({ queryKey: ['gastos_pagos'] });
-      qc.invalidateQueries({ queryKey: ['pagos_gastos_compras'] });
-      qc.invalidateQueries({ queryKey: ['pagos_gastos'] });
-    } catch (e) {
-      setErrorPago((e as Error).message ?? 'Error al guardar el pago');
-    } finally {
-      setGuardandoPago(false);
-    }
   }
 
   function abrirGastoDesdeRecepcion(r: RecepcionPendiente) {
@@ -507,7 +397,9 @@ export function ComprasPage() {
   // Lista única de proveedores para el dropdown
   const proveedoresPagos = useMemo(() => {
     const todos = gastosPagos ?? [];
-    const unicos = [...new Set(todos.map((g) => g.proveedor).filter(Boolean))].sort();
+    const unicos = [
+      ...new Set(todos.map((g) => g.proveedor).filter((p): p is string => !!p)),
+    ].sort();
     return unicos;
   }, [gastosPagos]);
 
@@ -533,9 +425,26 @@ export function ComprasPage() {
 
     if (filtroPagos === 'pendientes')
       lista = lista.filter((g) => g.estado_pago?.toLowerCase() !== 'pagado');
-    else if (filtroPagos === 'pagados')
-      lista = lista.filter((g) => g.estado_pago?.toLowerCase() === 'pagado');
-    else if (filtroPagos === 'vencidos')
+    else if (filtroPagos === 'pagados') {
+      // Filtrar por el mes en que efectivamente se pagó (fecha del pago real,
+      // no la fecha del gasto), para que coincida con el flujo de caja.
+      lista = lista.filter((g) => {
+        if (g.estado_pago?.toLowerCase() !== 'pagado') return false;
+        const pago = pagosGastosMap.get(g.id);
+        if (!pago) return false;
+        return pago.fecha_pago.startsWith(mesPagos);
+      });
+      // Ordenar por fecha de pago descendente (último pago arriba); cuando
+      // hay empate, usar created_at del pago como tiebreaker para reflejar
+      // el orden real de carga.
+      lista = [...lista].sort((a, b) => {
+        const pa = pagosGastosMap.get(a.id);
+        const pb = pagosGastosMap.get(b.id);
+        const cmp = (pb?.fecha_pago ?? '').localeCompare(pa?.fecha_pago ?? '');
+        if (cmp !== 0) return cmp;
+        return (pb?.created_at ?? '').localeCompare(pa?.created_at ?? '');
+      });
+    } else if (filtroPagos === 'vencidos')
       lista = lista.filter(
         (g) =>
           g.estado_pago?.toLowerCase() !== 'pagado' &&
@@ -552,7 +461,7 @@ export function ComprasPage() {
       );
 
     return lista;
-  }, [gastosPagos, filtroPagos, filtroProveedor]);
+  }, [gastosPagos, filtroPagos, filtroProveedor, pagosGastosMap, mesPagos]);
 
   const [vistaResumenProv, setVistaResumenProv] = useState<'mes' | 'año'>('mes');
 
@@ -623,7 +532,7 @@ export function ComprasPage() {
       );
     }
 
-    const grupos = new Map<string, GastoPago[]>();
+    const grupos = new Map<string, Gasto[]>();
     for (const g of lista) {
       const key = g.proveedor || '(Sin proveedor)';
       if (!grupos.has(key)) grupos.set(key, []);
@@ -666,7 +575,7 @@ export function ComprasPage() {
   // Selección bulk: cálculos derivados
   const seleccionInfo = useMemo(() => {
     if (seleccionados.size === 0)
-      return { gastos: [] as GastoPago[], total: 0, proveedores: [] as string[] };
+      return { gastos: [] as Gasto[], total: 0, proveedores: [] as string[] };
     const gastos = (gastosPagos ?? []).filter((g) => seleccionados.has(g.id));
     const total = gastos.reduce((s, g) => s + g.importe_total, 0);
     const proveedores = [...new Set(gastos.map((g) => g.proveedor || '(Sin proveedor)'))];
@@ -689,7 +598,7 @@ export function ComprasPage() {
       return next;
     });
   }
-  function toggleSeleccionarTodosProveedor(prov: string, gastos: GastoPago[]) {
+  function toggleSeleccionarTodosProveedor(prov: string, gastos: Gasto[]) {
     const ids = gastos.map((g) => g.id);
     const todosSeleccionados = ids.every((id) => seleccionados.has(id));
     setSeleccionados((prev) => {
@@ -726,6 +635,22 @@ export function ComprasPage() {
   async function confirmarBulkPago() {
     if (seleccionInfo.gastos.length === 0) return;
     setBulkError(null);
+    // Mismo criterio que el pago individual: si el medio no es efectivo,
+    // exigimos referencia y comprobante para poder conciliar y respaldar.
+    if (bulkMedio !== 'efectivo') {
+      if (!bulkReferencia.trim()) {
+        setBulkError(
+          'N° de operación requerido para transferencias, cheques y tarjeta. Copialo del comprobante.',
+        );
+        return;
+      }
+      if (!bulkComprobante) {
+        setBulkError(
+          'Comprobante de pago requerido para transferencias, cheques y tarjeta. Subí la captura o PDF.',
+        );
+        return;
+      }
+    }
     setBulkGuardando(true);
     try {
       const carpeta = `${local}/${bulkFecha.substring(0, 7)}`;
@@ -817,7 +742,15 @@ export function ComprasPage() {
 
     // Total gastado del mes seleccionado (todos los gastos, pagados o no)
     const delMes = todos.filter((g) => g.fecha?.startsWith(mesPagos));
-    const pagadosDelMes = delMes.filter((g) => g.estado_pago?.toLowerCase() === 'pagado');
+    // Pagados del mes: filtra por la FECHA DEL PAGO REAL (cuando salió la
+    // plata), no por la fecha del gasto. Coherente con el flujo de caja y
+    // con el listado del filtro "pagados".
+    const pagadosDelMes = todos.filter((g) => {
+      if (g.estado_pago?.toLowerCase() !== 'pagado') return false;
+      const pago = pagosGastosMap.get(g.id);
+      if (!pago) return false;
+      return pago.fecha_pago.startsWith(mesPagos);
+    });
 
     return {
       totalPendiente: pendientes.reduce((s, g) => s + g.importe_total, 0),
@@ -831,7 +764,7 @@ export function ComprasPage() {
       pagadoMes: pagadosDelMes.reduce((s, g) => s + g.importe_total, 0),
       cantPagadoMes: pagadosDelMes.length,
     };
-  }, [gastosPagos, mesPagos]);
+  }, [gastosPagos, mesPagos, pagosGastosMap]);
 
   // ── Filtrar productos ──────────────────────────────────────────────────────
   const productosFiltrados = useMemo(() => {
@@ -1066,6 +999,9 @@ export function ComprasPage() {
 
   return (
     <PageContainer title="Gastos-Compras" subtitle="Gastos, stock, proveedores y pagos">
+      {/* Banner: avisa si hace >15 días que no importás algún extracto */}
+      <ExtractosAlerta variant="banner" to="/compras" />
+
       {/* Filtros */}
       <div className="mb-4 flex flex-wrap items-center gap-4">
         <LocalSelector
@@ -1085,6 +1021,7 @@ export function ComprasPage() {
               ['movimientos', '📋 Movimientos'],
               ...(local === 'saavedra' ? [['recepcion', '📬 Recepción']] : []),
               ['pagos', '💰 Pagos'],
+              ['conciliacion', '🔗 Conciliación'],
               ['proveedores', '🏢 Proveedores'],
             ] as [Tab, string][]
           ).map(([t, label]) => (
@@ -1120,7 +1057,22 @@ export function ComprasPage() {
       {ayudaAbierta && <AyudaPanel tab={tab} onClose={() => setAyudaAbierta(false)} />}
 
       {/* ═══ TAB: GASTOS ═══ */}
-      {tab === 'gastos' && <ListadoGastos local={local} />}
+      {tab === 'gastos' && (
+        <>
+          <div className="mb-3 flex items-center justify-between">
+            <div className="text-sm text-gray-600">
+              Cargá un gasto sacando una foto del comprobante. La IA lee automáticamente proveedor, monto, fecha y N° de operación.
+            </div>
+            <button
+              onClick={() => setNuevoGastoFormOpen(true)}
+              className="rounded-lg bg-rodziny-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-rodziny-700"
+            >
+              + Nuevo gasto
+            </button>
+          </div>
+          <ListadoGastos local={local} />
+        </>
+      )}
 
       {/* ═══ TAB: STOCK ═══ */}
       {tab === 'stock' && (
@@ -2907,6 +2859,8 @@ export function ComprasPage() {
       )}
 
       {/* ═══ TAB: PROVEEDORES ═══ */}
+      {tab === 'conciliacion' && <ConciliacionTab />}
+
       {tab === 'proveedores' && <ProveedoresPanel />}
 
       {/* Modal de Nuevo Gasto desde una recepción pendiente */}
@@ -2919,178 +2873,22 @@ export function ComprasPage() {
         prefill={prefillGasto}
       />
 
-      {/* Modal de pago para tab Pagos */}
-      {gastoAPagar &&
-        (() => {
-          const descuentoNum =
-            parseFloat(pagoDescuento.replace(/\./g, '').replace(',', '.')) || 0;
-          const montoPagar = Math.max(0, gastoAPagar.importe_total - descuentoNum);
-          const descuentoInvalido =
-            descuentoNum < 0 || descuentoNum > gastoAPagar.importe_total;
+      {/* Pantalla nueva: Nuevo gasto con OCR (flujo simple para los 3 admins) */}
+      <NuevoGastoForm
+        open={nuevoGastoFormOpen}
+        onClose={() => setNuevoGastoFormOpen(false)}
+        onCreated={() => {
+          // Invalidar la query del listado para refrescar después de crear
+          // (no necesita acción extra: el modal se queda en step="done" y el usuario cierra)
+        }}
+      />
 
-          return (
-            <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/40 p-4">
-              <div className="my-4 w-full max-w-md space-y-3 rounded-xl bg-white p-6 shadow-xl">
-                <div>
-                  <h3 className="text-sm font-semibold text-gray-800">Registrar pago</h3>
-                  <p className="mt-0.5 text-xs text-gray-500">
-                    {gastoAPagar.proveedor || 'Sin proveedor'} —{' '}
-                    {formatARS(gastoAPagar.importe_total)}
-                  </p>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="mb-1 block text-xs font-medium text-gray-600">
-                      Fecha de pago
-                    </label>
-                    <input
-                      type="date"
-                      value={pagoFecha}
-                      onChange={(e) => setPagoFecha(e.target.value)}
-                      className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm"
-                    />
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-xs font-medium text-gray-600">
-                      Medio de pago
-                    </label>
-                    <select
-                      value={pagoMedio}
-                      onChange={(e) => setPagoMedio(e.target.value as MedioPago)}
-                      className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm"
-                    >
-                      {Object.entries(MEDIO_PAGO_LABEL).map(([k, v]) => (
-                        <option key={k} value={k}>
-                          {v}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-gray-600">
-                    Descuento <span className="text-gray-400">(opcional)</span>
-                  </label>
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    value={pagoDescuento}
-                    onChange={(e) => setPagoDescuento(e.target.value)}
-                    placeholder="0"
-                    className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm"
-                  />
-                  <div className="mt-1.5 flex items-center justify-between rounded bg-gray-50 px-2 py-1.5 text-xs">
-                    <span className="text-gray-500">Total a pagar:</span>
-                    <span
-                      className={cn(
-                        'font-semibold',
-                        descuentoInvalido ? 'text-red-600' : 'text-gray-800',
-                      )}
-                    >
-                      {formatARS(montoPagar)}
-                      {descuentoNum > 0 && !descuentoInvalido && (
-                        <span className="ml-1 font-normal text-green-700">
-                          (- {formatARS(descuentoNum)})
-                        </span>
-                      )}
-                    </span>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-gray-600">
-                    Referencia <span className="text-gray-400">(opcional)</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={pagoReferencia}
-                    onChange={(e) => setPagoReferencia(e.target.value)}
-                    placeholder="Nº transferencia, cheque, etc."
-                    className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm"
-                  />
-                </div>
-
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-gray-600">
-                    Comprobante de pago{' '}
-                    <span className="text-gray-400">(transferencia / voucher)</span>
-                  </label>
-                  <input
-                    type="file"
-                    accept="image/*,application/pdf"
-                    onChange={(e) => setPagoComprobante(e.target.files?.[0] ?? null)}
-                    className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-xs file:mr-2 file:rounded file:border-0 file:bg-rodziny-50 file:px-2 file:py-1 file:text-rodziny-700"
-                  />
-                </div>
-
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-gray-600">
-                    Factura del proveedor{' '}
-                    {gastoAPagar.factura_path && (
-                      <button
-                        type="button"
-                        onClick={() => abrirArchivoExistente(gastoAPagar.factura_path!)}
-                        className="ml-1 text-rodziny-600 underline hover:text-rodziny-800"
-                      >
-                        ver actual
-                      </button>
-                    )}
-                  </label>
-                  <input
-                    type="file"
-                    accept="image/*,application/pdf"
-                    onChange={(e) => setPagoFactura(e.target.files?.[0] ?? null)}
-                    disabled={!!gastoAPagar.factura_path}
-                    className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-xs file:mr-2 file:rounded file:border-0 file:bg-rodziny-50 file:px-2 file:py-1 file:text-rodziny-700 disabled:opacity-50"
-                  />
-                  {gastoAPagar.factura_path && (
-                    <p className="mt-1 text-[10px] text-gray-400">
-                      Ya hay una factura cargada en este gasto.
-                    </p>
-                  )}
-                </div>
-
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-gray-600">
-                    Notas <span className="text-gray-400">(opcional)</span>
-                  </label>
-                  <textarea
-                    value={pagoNotas}
-                    onChange={(e) => setPagoNotas(e.target.value)}
-                    rows={2}
-                    placeholder="Ej: descuento por pronto pago"
-                    className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm"
-                  />
-                </div>
-
-                {errorPago && (
-                  <div className="rounded bg-red-50 px-3 py-2 text-xs text-red-700">
-                    {errorPago}
-                  </div>
-                )}
-
-                <div className="flex justify-end gap-2 pt-1">
-                  <button
-                    onClick={cerrarModalPagoCompra}
-                    disabled={guardandoPago}
-                    className="rounded-md border border-gray-300 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-50"
-                  >
-                    Cancelar
-                  </button>
-                  <button
-                    onClick={confirmarPagoCompra}
-                    disabled={guardandoPago || descuentoInvalido}
-                    className="rounded-md bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-50"
-                  >
-                    {guardandoPago ? 'Guardando...' : 'Confirmar pago'}
-                  </button>
-                </div>
-              </div>
-            </div>
-          );
-        })()}
+      {/* Modal único de pago — canónico */}
+      <PagarGastoModal
+        open={!!gastoAPagar}
+        gasto={gastoAPagar}
+        onClose={() => setGastoAPagar(null)}
+      />
 
       {/* Modal de pago BULK (varios gastos juntos) */}
       {bulkPagoOpen && (
@@ -3162,21 +2960,35 @@ export function ComprasPage() {
 
             <div>
               <label className="mb-1 block text-xs font-medium text-gray-600">
-                Referencia <span className="text-gray-400">(opcional)</span>
+                N° de operación{' '}
+                {bulkMedio === 'efectivo' ? (
+                  <span className="text-gray-400">(opcional)</span>
+                ) : (
+                  <span className="text-red-600">*</span>
+                )}
               </label>
               <input
                 type="text"
                 value={bulkReferencia}
                 onChange={(e) => setBulkReferencia(e.target.value)}
                 placeholder="Nº transferencia, cheque, etc."
-                className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm"
+                className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm font-mono"
               />
+              {bulkMedio !== 'efectivo' && (
+                <p className="mt-1 text-[11px] text-gray-500">
+                  Una sola operación cubre todo el bulk. Copiala del comprobante.
+                </p>
+              )}
             </div>
 
             <div>
               <label className="mb-1 block text-xs font-medium text-gray-600">
                 Comprobante de pago{' '}
-                <span className="text-gray-400">(transferencia / voucher único)</span>
+                {bulkMedio === 'efectivo' ? (
+                  <span className="text-gray-400">(opcional)</span>
+                ) : (
+                  <span className="text-red-600">* (voucher único)</span>
+                )}
               </label>
               <input
                 type="file"

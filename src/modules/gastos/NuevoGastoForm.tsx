@@ -1,0 +1,1935 @@
+// NuevoGastoForm — pantalla mobile-first para que Tamara/Karina/Martin carguen un gasto
+// con OCR automatico desde foto/PDF del comprobante de pago.
+//
+// Flujo:
+//  1) Usuario sube foto/PDF
+//  2) Se calcula SHA256 del archivo y se chequea duplicado exacto en `comprobantes`
+//  3) Si no hay duplicado, se sube a Storage `gastos-comprobantes/{local}/{YYYY-MM}/...`
+//  4) Se crea fila en `comprobantes` con ocr_status='pending'
+//  5) Se invoca edge function ocr-comprobante (Claude Haiku 4.5)
+//  6) Se muestra preview con datos extraidos + alerta de duplicado por OCR si lo hay
+//  7) Usuario edita/confirma; se crea fila en `gastos` con FK a comprobantes
+//  8) Si importe_total >= umbral_minimo de config_aprobaciones: estado_aprobacion='requiere_aprobacion'
+
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { supabase } from '../../lib/supabase';
+import { useAuth } from '../../lib/auth';
+import { sha256File } from '../../lib/hashFile';
+import { formatARS, cn } from '../../lib/utils';
+import {
+  MEDIO_PAGO_LABEL,
+  TIPO_COMPROBANTE_LABEL,
+  type MedioPago,
+  type Proveedor,
+  type CategoriaGasto,
+  type ItemGastoStock,
+} from './types';
+
+// ----- Props -----
+
+interface NuevoGastoFormProps {
+  open: boolean;
+  onClose: () => void;
+  onCreated?: (gastoId: string) => void;
+}
+
+// ----- Tipos internos -----
+
+type TipoGasto = 'digital' | 'fisico' | 'cuenta_corriente';
+type Step = 'tipo' | 'upload' | 'processing' | 'preview' | 'saving' | 'done';
+
+interface OcrExtraido {
+  tipo_comprobante: string | null;
+  proveedor_nombre: string | null;
+  proveedor_cuit: string | null;
+  monto: number | null;
+  fecha: string | null;
+  hora: string | null;
+  n_operacion: string | null;
+  medio_pago: string | null;
+  banco_origen: string | null;
+  banco_destino: string | null;
+  cbu_destino: string | null;
+  alias_destino: string | null;
+  concepto: string | null;
+  es_transferencia_interna?: boolean;
+  confianza: number;
+}
+
+// CUITs de la propia empresa — si el OCR los detecta como receptor, es transferencia interna (no gasto)
+const RODZINY_CUITS = ['30717352366', '30-71735236-6'];
+
+function esCuitDeRodziny(cuit: string | null | undefined): boolean {
+  if (!cuit) return false;
+  const limpio = cuit.replace(/\D/g, '');
+  return RODZINY_CUITS.some((c) => c.replace(/\D/g, '') === limpio);
+}
+
+interface DuplicadoMatch {
+  id: string;
+  match_type: 'n_operacion' | 'monto_fecha_cuit' | 'hash_archivo';
+  gasto_id: string | null;
+}
+
+interface OcrResponse {
+  ok: boolean;
+  comprobante_id?: string;
+  ocr_extraido?: OcrExtraido;
+  duplicados?: DuplicadoMatch[];
+  confianza?: number;
+  error?: string;
+}
+
+// ----- Helpers de formato moneda AR -----
+
+/** Formatea un numero como string AR sin simbolo: 285453.5 → "285.453,50" */
+function formatNumeroAR(value: number): string {
+  if (!isFinite(value)) return '';
+  const tieneDecimales = Math.round(value * 100) % 100 !== 0;
+  return new Intl.NumberFormat('es-AR', {
+    minimumFractionDigits: tieneDecimales ? 2 : 0,
+    maximumFractionDigits: 2,
+  }).format(value);
+}
+
+/** Parsea un string en formato AR: "285.453,50" → 285453.5 */
+function parseNumeroAR(text: string): number | null {
+  if (!text || !text.trim()) return null;
+  // Quitar todo lo que no sea digito, coma, punto o signo
+  let limpio = text.trim().replace(/[^\d,.\-]/g, '');
+  // En formato AR: punto = miles, coma = decimal. Sacamos puntos, cambiamos coma por punto.
+  limpio = limpio.replace(/\./g, '').replace(',', '.');
+  const num = parseFloat(limpio);
+  return isFinite(num) ? num : null;
+}
+
+// ----- Helpers de error -----
+
+function formatError(e: unknown): string {
+  if (e instanceof Error) return e.message;
+  if (typeof e === 'object' && e !== null) {
+    const obj = e as Record<string, unknown>;
+    if (typeof obj.message === 'string') {
+      const detalles = (obj.details as string | undefined) || (obj.hint as string | undefined) || (obj.code as string | undefined);
+      return detalles ? `${obj.message} [${detalles}]` : String(obj.message);
+    }
+    try { return JSON.stringify(obj).slice(0, 300); } catch { return '[error sin mensaje]'; }
+  }
+  return String(e);
+}
+
+// ----- Mapeo OCR → MedioPago del proyecto -----
+
+function mapOcrMedioPago(ocrMedio: string | null): MedioPago {
+  switch (ocrMedio) {
+    case 'transferencia':
+    case 'qr':
+      return 'transferencia_mp';
+    case 'cheque':
+      return 'cheque_galicia';
+    case 'tarjeta_credito':
+    case 'tarjeta_debito':
+      return 'tarjeta_icbc';
+    case 'efectivo':
+      return 'efectivo';
+    default:
+      return 'otro';
+  }
+}
+
+// ----- Componente principal -----
+
+export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoFormProps) {
+  const { user } = useAuth();
+  const qc = useQueryClient();
+
+  const [step, setStep] = useState<Step>('tipo');
+  const [tipoGasto, setTipoGasto] = useState<TipoGasto | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
+
+  // Upload state (solo aplica a tipo='digital')
+  const [file, setFile] = useState<File | null>(null);
+  const [hash, setHash] = useState<string | null>(null);
+  const [comprobanteId, setComprobanteId] = useState<string | null>(null);
+  const [filePath, setFilePath] = useState<string | null>(null);
+
+  // Factura fiscal (opcional, en ambos caminos)
+  const [facturaFile, setFacturaFile] = useState<File | null>(null);
+  const facturaInputRef = useRef<HTMLInputElement>(null);
+
+  // Importe como string formateado (asi se muestra "285.453,50" mientras se edita)
+  const [importeTexto, setImporteTexto] = useState<string>('');
+
+  // OCR result
+  const [ocrData, setOcrData] = useState<OcrExtraido | null>(null);
+  const [ocrConfianza, setOcrConfianza] = useState<number>(0);
+  const [duplicados, setDuplicados] = useState<DuplicadoMatch[]>([]);
+
+  // Form preview state
+  const [local, setLocal] = useState<'vedia' | 'saavedra' | 'sas'>('vedia');
+  const [proveedorId, setProveedorId] = useState<string | null>(null);
+  // Proveedor recien creado por el OCR (puede no estar todavia en la query cache)
+  const [proveedorRecienCreado, setProveedorRecienCreado] = useState<Proveedor | null>(null);
+  const [mensajeProveedor, setMensajeProveedor] = useState<string | null>(null);
+  const [categoriaId, setCategoriaId] = useState<string | null>(null);
+  const [fecha, setFecha] = useState<string>('');
+  const [nOperacion, setNOperacion] = useState<string>('');
+  const [medioPago, setMedioPago] = useState<MedioPago>('transferencia_mp');
+  const [comentario, setComentario] = useState<string>('');
+  const [tipoComprobante, setTipoComprobante] = useState<string>('recibo');
+
+  // Estado de pago — controla si se inserta pagos_gastos.
+  //  - digital: pagado=true siempre (subió comprobante)
+  //  - fisico: default pagado=true (ya lo pagué a mano)
+  //  - cuenta_corriente: pagado=false fijo, no se puede tildar
+  const [pagado, setPagado] = useState<boolean>(true);
+  // Fecha del pago efectivo (puede diferir de fecha del comprobante). Solo se usa cuando pagado=true.
+  const [fechaPago, setFechaPago] = useState<string>('');
+  // Fecha en que vence el pago (solo cuando es cuenta corriente y aún no pagaste)
+  const [fechaVencimiento, setFechaVencimiento] = useState<string>('');
+
+  // Vincular a stock (solo si la subcategoría seleccionada tiene productos asociados)
+  const [vincularStock, setVincularStock] = useState(false);
+  const [items, setItems] = useState<ItemGastoStock[]>([]);
+  const [busquedaProducto, setBusquedaProducto] = useState('');
+  // Drafts de texto para inputs numéricos (cantidad/subtotal): si no, React machaca la coma al re-render
+  const [itemDrafts, setItemDrafts] = useState<Record<string, string>>({});
+
+  // Reset al abrir/cerrar
+  useEffect(() => {
+    if (!open) {
+      // Limpiar estado al cerrar
+      setStep('tipo');
+      setTipoGasto(null);
+      setError(null);
+      setWarning(null);
+      setFile(null);
+      setHash(null);
+      setComprobanteId(null);
+      setFilePath(null);
+      setFacturaFile(null);
+      setOcrData(null);
+      setOcrConfianza(0);
+      setDuplicados([]);
+      setProveedorId(null);
+      setProveedorRecienCreado(null);
+      setMensajeProveedor(null);
+      setCategoriaId(null);
+      setImporteTexto('');
+      setFecha('');
+      setNOperacion('');
+      setMedioPago('transferencia_mp');
+      setComentario('');
+      setTipoComprobante('recibo');
+      setPagado(true);
+      setFechaPago('');
+      setFechaVencimiento('');
+      setVincularStock(false);
+      setItems([]);
+      setBusquedaProducto('');
+      setItemDrafts({});
+    }
+  }, [open]);
+
+  // Queries: proveedores y categorias
+  const { data: proveedores = [] } = useQuery<Proveedor[]>({
+    queryKey: ['proveedores-activos'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('proveedores')
+        .select('*')
+        .eq('activo', true)
+        .order('razon_social');
+      if (error) throw error;
+      return (data ?? []) as Proveedor[];
+    },
+    enabled: open,
+  });
+
+  const { data: categorias = [] } = useQuery<CategoriaGasto[]>({
+    queryKey: ['categorias-gasto-activas'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('categorias_gasto')
+        .select('*')
+        .eq('activo', true)
+        .order('orden');
+      if (error) throw error;
+      return (data ?? []) as CategoriaGasto[];
+    },
+    enabled: open,
+  });
+
+  // Umbral de aprobacion
+  const { data: configAprobaciones } = useQuery<{ umbral_minimo: number; activo: boolean } | null>({
+    queryKey: ['config-aprobaciones'],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('config_aprobaciones')
+        .select('umbral_minimo, activo')
+        .eq('id', 1)
+        .maybeSingle();
+      return data;
+    },
+    enabled: open,
+  });
+
+  const umbralAprobacion = configAprobaciones?.activo ? configAprobaciones.umbral_minimo : Infinity;
+  // Derivado: el importe como numero, parseado del input texto
+  const importeTotal = useMemo(() => parseNumeroAR(importeTexto) ?? 0, [importeTexto]);
+  const requiereAprobacion = importeTotal >= umbralAprobacion;
+
+  // Lista del dropdown: proveedores activos + proveedor recien creado por OCR (si aun no se refresco la query)
+  const proveedoresParaDropdown = useMemo(() => {
+    const lista = [...proveedores];
+    if (proveedorRecienCreado && !lista.find((p) => p.id === proveedorRecienCreado.id)) {
+      lista.unshift(proveedorRecienCreado);
+    }
+    return lista;
+  }, [proveedores, proveedorRecienCreado]);
+
+  // Categorias agrupadas por padre. Solo las subcategorias (parent_id != null) son seleccionables.
+  // Las categorias padre se usan como labels de optgroup (negrita por default).
+  const categoriasAgrupadas = useMemo(() => {
+    const padres = categorias.filter((c) => c.parent_id === null).sort((a, b) => a.orden - b.orden);
+    return padres.map((padre) => ({
+      padre,
+      hijos: categorias
+        .filter((c) => c.parent_id === padre.id)
+        .sort((a, b) => a.orden - b.orden),
+    }));
+  }, [categorias]);
+
+  // Subcategorías que tienen productos asociados en este local — define cuándo aparece "Vincular a stock"
+  const { data: subcategoriasConProductos = [] } = useQuery<string[]>({
+    queryKey: ['subcategorias-con-productos', local],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('productos')
+        .select('categoria_gasto_id')
+        .eq('local', local)
+        .not('activo', 'is', false)
+        .not('categoria_gasto_id', 'is', null);
+      if (error) throw error;
+      const ids = (data ?? [])
+        .map((p: { categoria_gasto_id: string | null }) => p.categoria_gasto_id)
+        .filter((x): x is string => !!x);
+      return Array.from(new Set(ids));
+    },
+    enabled: open,
+  });
+
+  const subcategoriasConProductosSet = useMemo(
+    () => new Set(subcategoriasConProductos),
+    [subcategoriasConProductos],
+  );
+
+  // Solo permitimos vincular a stock si la subcategoría elegida tiene productos asociados.
+  // Lucas: "que aparezcan 'vincular stock' a las categorias que tienen asociados productos unicamente"
+  const puedeVincularStock = useMemo(
+    () => Boolean(categoriaId && subcategoriasConProductosSet.has(categoriaId)),
+    [categoriaId, subcategoriasConProductosSet],
+  );
+
+  // Si la categoría elegida ya no permite vincular stock, apagamos el checkbox y limpiamos items
+  useEffect(() => {
+    if (!puedeVincularStock && vincularStock) {
+      setVincularStock(false);
+      setItems([]);
+      setItemDrafts({});
+    }
+  }, [puedeVincularStock, vincularStock]);
+
+  // Productos del local (carga lazy: solo cuando se activa "Vincular a stock")
+  type ProductoLite = {
+    id: string;
+    nombre: string;
+    unidad: string;
+    costo_unitario: number | null;
+    stock_actual: number | null;
+    categoria_gasto_id: string | null;
+  };
+  const { data: productosLocal = [] } = useQuery<ProductoLite[]>({
+    queryKey: ['productos-para-gasto', local],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('productos')
+        .select('id, nombre, unidad, costo_unitario, stock_actual, categoria_gasto_id')
+        .eq('local', local)
+        .not('activo', 'is', false)
+        .order('nombre');
+      if (error) throw error;
+      return (data ?? []) as ProductoLite[];
+    },
+    enabled: open && vincularStock,
+  });
+
+  // Buscar productos por texto (filtro normalizado, sin tildes, máx 8 resultados)
+  const productosFiltrados = useMemo(() => {
+    if (!productosLocal.length || !busquedaProducto.trim()) return [];
+    const q = busquedaProducto
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[̀-ͯ]/g, '');
+    return productosLocal
+      .filter((p) => {
+        const n = (p.nombre ?? '')
+          .toLowerCase()
+          .normalize('NFD')
+          .replace(/[̀-ͯ]/g, '');
+        return n.includes(q) && !items.some((it) => it.producto_id === p.id);
+      })
+      .slice(0, 8);
+  }, [productosLocal, busquedaProducto, items]);
+
+  // Total de items y validación de subcategoría por item
+  const totalItems = useMemo(
+    () => items.reduce((s, it) => s + (it.subtotal || it.precio_unitario * it.cantidad), 0),
+    [items],
+  );
+  const itemsSinSubcat = useMemo(() => items.filter((it) => !it.categoria_gasto_id), [items]);
+
+  // Split por subcategoría (replica del modal viejo): si los items tienen subcat distintas,
+  // se crea 1 gasto por subcat con el total prorrateado proporcional al subtotal de items.
+  const splitPorSubcat = useMemo(() => {
+    if (!vincularStock || items.length === 0 || itemsSinSubcat.length > 0) return [];
+    const totalT = importeTotal;
+    const totalIt = totalItems || 1;
+    const map = new Map<string, { subtotal: number; items: ItemGastoStock[] }>();
+    for (const it of items) {
+      const k = it.categoria_gasto_id!;
+      const prev = map.get(k) ?? { subtotal: 0, items: [] };
+      prev.subtotal += it.subtotal || it.precio_unitario * it.cantidad;
+      prev.items.push(it);
+      map.set(k, prev);
+    }
+    return Array.from(map.entries()).map(([catId, g]) => {
+      const prop = g.subtotal / totalIt;
+      const sub = categorias.find((c) => c.id === catId);
+      const padre = sub?.parent_id ? categorias.find((c) => c.id === sub.parent_id) : null;
+      return {
+        categoria_id: catId,
+        subcat_nombre: sub?.nombre ?? '—',
+        padre_nombre: padre?.nombre ?? null,
+        items: g.items,
+        subtotal_items: +g.subtotal.toFixed(2),
+        proporcion: prop,
+        total: +(totalT * prop).toFixed(2),
+      };
+    });
+  }, [vincularStock, items, importeTotal, totalItems, itemsSinSubcat, categorias]);
+
+  const usarSplit = splitPorSubcat.length >= 1 && vincularStock;
+
+  // ---- Handlers de items ----
+
+  function agregarProducto(productoId: string) {
+    const p = productosLocal.find((x) => x.id === productoId);
+    if (!p) return;
+    setItems((prev) => [
+      ...prev,
+      {
+        producto_id: p.id,
+        producto_nombre: p.nombre,
+        cantidad: 1,
+        unidad: p.unidad,
+        precio_unitario: p.costo_unitario || 0,
+        subtotal: +((p.costo_unitario || 0) * 1).toFixed(2),
+        categoria_gasto_id: p.categoria_gasto_id ?? null,
+      },
+    ]);
+    setBusquedaProducto('');
+  }
+
+  function actualizarSubcatItem(idx: number, categoria_gasto_id: string | null) {
+    setItems((prev) =>
+      prev.map((it, i) => (i === idx ? { ...it, categoria_gasto_id } : it)),
+    );
+  }
+
+  function actualizarItem(idx: number, campo: 'cantidad' | 'subtotal', valor: string) {
+    setItemDrafts((d) => ({ ...d, [`${idx}:${campo}`]: valor }));
+    const v = parseFloat(valor.replace(',', '.')) || 0;
+    setItems((prev) =>
+      prev.map((it, i) => {
+        if (i !== idx) return it;
+        if (campo === 'cantidad') {
+          // Mantengo subtotal y recalculo precio_unitario
+          const next = { ...it, cantidad: v };
+          next.precio_unitario = v > 0 ? +(it.subtotal / v).toFixed(4) : 0;
+          return next;
+        } else {
+          const next = { ...it, subtotal: v };
+          next.precio_unitario = it.cantidad > 0 ? +(v / it.cantidad).toFixed(4) : 0;
+          return next;
+        }
+      }),
+    );
+  }
+
+  function quitarItem(idx: number) {
+    setItems((prev) => prev.filter((_, i) => i !== idx));
+    setItemDrafts((d) => {
+      const c: Record<string, string> = {};
+      for (const [k, v] of Object.entries(d)) {
+        if (!k.startsWith(`${idx}:`)) c[k] = v;
+      }
+      return c;
+    });
+  }
+
+  function aplicarTotalDesdeItems() {
+    if (totalItems > 0) {
+      setImporteTexto(formatNumeroAR(totalItems));
+    }
+  }
+
+  // ---- Step 1: Upload ----
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  async function handleFileSelected(selected: File) {
+    setError(null);
+    setWarning(null);
+    setFile(selected);
+
+    try {
+      // 1. Calcular hash
+      const fileHash = await sha256File(selected);
+      setHash(fileHash);
+
+      // 2. Chequear duplicado exacto por hash (bloqueante).
+      // Solo bloqueamos si el archivo ya fue VINCULADO a un gasto real (estado='vinculado'
+      // o gasto_id != null). Comprobantes huerfanos/fallidos no bloquean — el usuario
+      // debe poder reintentar el mismo archivo cuando el OCR fallo (sin creditos, timeout, etc).
+      const { data: existente } = await supabase
+        .from('comprobantes')
+        .select('id, gasto_id')
+        .eq('hash_archivo', fileHash)
+        .not('gasto_id', 'is', null)
+        .maybeSingle();
+
+      if (existente) {
+        setError(
+          'Este archivo ya fue cargado y vinculado a un gasto. No se puede cargar dos veces el mismo comprobante.',
+        );
+        setStep('upload');
+        return;
+      }
+
+      // Si hay filas con el mismo hash pero huerfanas/fallidas, las descartamos antes
+      // de insertar la nueva (evita conflict con UNIQUE constraint en hash_archivo).
+      await supabase
+        .from('comprobantes')
+        .delete()
+        .eq('hash_archivo', fileHash)
+        .is('gasto_id', null);
+
+      // 3. Subir a Storage
+      setStep('processing');
+      const ext = selected.name.split('.').pop()?.toLowerCase() ?? 'bin';
+      const periodo = new Date().toISOString().slice(0, 7); // YYYY-MM
+      const path = `${local}/${periodo}/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
+
+      const { error: errUp } = await supabase.storage
+        .from('gastos-comprobantes')
+        .upload(path, selected, {
+          contentType: selected.type || 'application/octet-stream',
+        });
+
+      if (errUp) throw errUp;
+      setFilePath(path);
+
+      // 4. Crear fila en comprobantes
+      const { data: insComp, error: errInsComp } = await supabase
+        .from('comprobantes')
+        .insert({
+          hash_archivo: fileHash,
+          file_path: path,
+          mime_type: selected.type || null,
+          tamano_bytes: selected.size,
+          subido_por: user?.id ?? null,
+          ocr_status: 'pending',
+          estado: 'huerfano',
+        })
+        .select('id')
+        .single();
+
+      if (errInsComp) throw errInsComp;
+      setComprobanteId(insComp.id);
+
+      // 5. Invocar edge function
+      const { data: ocrRes, error: errOcr } = await supabase.functions.invoke<OcrResponse>(
+        'ocr-comprobante',
+        { body: { comprobante_id: insComp.id } },
+      );
+
+      if (errOcr) throw new Error(`Error invocando OCR: ${errOcr.message}`);
+      if (!ocrRes?.ok) throw new Error(ocrRes?.error ?? 'OCR fallo sin mensaje');
+
+      const extraido = ocrRes.ocr_extraido!;
+      setOcrData(extraido);
+      setOcrConfianza(ocrRes.confianza ?? extraido.confianza ?? 0);
+      setDuplicados(ocrRes.duplicados ?? []);
+
+      // 6a. Bloquear si es transferencia interna (no es un gasto)
+      const cuitEsRodziny = esCuitDeRodziny(extraido.proveedor_cuit);
+      if (extraido.es_transferencia_interna || cuitEsRodziny) {
+        // Limpiar el comprobante huerfano (no se va a usar)
+        await supabase.from('comprobantes').delete().eq('id', insComp.id);
+        setError(
+          'Este comprobante es una transferencia entre cuentas propias de Rodziny — no es un gasto a un proveedor.\n\n' +
+          'Las transferencias internas se concilian automáticamente al importar los extractos bancarios. ' +
+          'No las cargues acá.',
+        );
+        setStep('upload');
+        return;
+      }
+
+      // 6b. Pre-llenar form con datos del OCR
+      if (extraido.monto) setImporteTexto(formatNumeroAR(extraido.monto));
+      if (extraido.fecha) setFecha(extraido.fecha);
+      if (extraido.n_operacion) setNOperacion(extraido.n_operacion);
+      if (extraido.medio_pago) setMedioPago(mapOcrMedioPago(extraido.medio_pago));
+
+      // Auto-match o auto-crear proveedor con datos del OCR
+      await autoMatchOCrearProveedor(extraido);
+
+      // Aviso de duplicado por OCR (no bloqueante)
+      if ((ocrRes.duplicados?.length ?? 0) > 0) {
+        const tipo = ocrRes.duplicados![0].match_type;
+        setWarning(
+          tipo === 'n_operacion'
+            ? `Se encontro otro comprobante con el mismo N° de operacion. Verifica antes de confirmar.`
+            : `Se encontro un gasto con monto y fecha similares. Puede ser duplicado.`,
+        );
+      }
+
+      setStep('preview');
+    } catch (e) {
+      const msg = formatError(e);
+      console.error('[NuevoGastoForm] error:', e);
+      setError(`Error procesando comprobante: ${msg}`);
+      setStep('upload');
+    }
+  }
+
+  // ---- Auto-match o auto-crear proveedor desde OCR ----
+
+  async function autoMatchOCrearProveedor(extraido: OcrExtraido) {
+    const nombreOcr = (extraido.proveedor_nombre ?? '').trim();
+    const cuitLimpio = extraido.proveedor_cuit ? extraido.proveedor_cuit.replace(/\D/g, '') : null;
+
+    // Guard: nunca crear proveedor con CUIT de Rodziny
+    if (cuitLimpio && esCuitDeRodziny(cuitLimpio)) {
+      setMensajeProveedor('OCR detectó CUIT de Rodziny como receptor — eso no es un proveedor. Seleccionalo manualmente.');
+      return;
+    }
+
+    // 1. Match por CUIT (mas confiable)
+    if (cuitLimpio) {
+      const match = proveedores.find((p) => (p.cuit ?? '').replace(/\D/g, '') === cuitLimpio);
+      if (match) {
+        aplicarProveedorMatch(match, null);
+        return;
+      }
+    }
+
+    // 2. Match por nombre exacto (case-insensitive)
+    if (nombreOcr) {
+      const matchNombre = proveedores.find(
+        (p) => p.razon_social.trim().toLowerCase() === nombreOcr.toLowerCase(),
+      );
+      if (matchNombre) {
+        aplicarProveedorMatch(matchNombre, null);
+        return;
+      }
+    }
+
+    // 3. No hay match: auto-crear si tenemos CUIT + nombre
+    if (cuitLimpio && nombreOcr) {
+      const { data: nuevo, error: errIns } = await supabase
+        .from('proveedores')
+        .insert({
+          razon_social: nombreOcr,
+          cuit: cuitLimpio,
+          dias_pago: 0,
+          activo: true,
+        })
+        .select('*')
+        .single();
+
+      if (errIns) {
+        // Si el insert fallo por unique constraint, buscar el que ya existe
+        const { data: existente } = await supabase
+          .from('proveedores')
+          .select('*')
+          .eq('cuit', cuitLimpio)
+          .maybeSingle();
+        if (existente) {
+          aplicarProveedorMatch(existente as Proveedor, null);
+        }
+        return;
+      }
+
+      const nuevoProveedor = nuevo as Proveedor;
+      setProveedorRecienCreado(nuevoProveedor);
+      aplicarProveedorMatch(nuevoProveedor, `Proveedor creado automáticamente: ${nuevoProveedor.razon_social}`);
+      // Refrescar la lista global
+      qc.invalidateQueries({ queryKey: ['proveedores-activos'] });
+      return;
+    }
+
+    // 4. Solo nombre sin CUIT: no creamos automaticamente (riesgoso, podria duplicar)
+    //    El usuario seleccionara manualmente del dropdown.
+    if (nombreOcr) {
+      setMensajeProveedor(`OCR detectó: "${nombreOcr}" — seleccionalo del listado o creá uno nuevo si no existe.`);
+    }
+  }
+
+  function aplicarProveedorMatch(prov: Proveedor, mensaje: string | null) {
+    setProveedorId(prov.id);
+    if (prov.categoria_default_id) setCategoriaId(prov.categoria_default_id);
+    if (prov.medio_pago_default) setMedioPago(prov.medio_pago_default);
+    setMensajeProveedor(mensaje);
+  }
+
+  // Defaults al entrar al preview, según tipo de carga:
+  //  - digital: pagado=true (subió comprobante)
+  //  - fisico: pagado=true por default (lo cargás porque YA lo pagaste a mano)
+  //  - cuenta_corriente: pagado=false fijo (todavía no pagaste — vence el día X)
+  useEffect(() => {
+    if (step !== 'preview') return;
+    if (tipoGasto === 'fisico') {
+      setMedioPago((prev) => (prev === 'transferencia_mp' ? 'efectivo' : prev));
+      setFecha((prev) => prev || new Date().toISOString().slice(0, 10));
+      setPagado(true);
+    } else if (tipoGasto === 'cuenta_corriente') {
+      setFecha((prev) => prev || new Date().toISOString().slice(0, 10));
+      setPagado(false);
+    } else if (tipoGasto === 'digital') {
+      setPagado(true);
+    }
+  }, [step, tipoGasto]);
+
+  // Cuando se tilda "Pagado" en flujo físico, defaultear fecha de pago = fecha del comprobante
+  useEffect(() => {
+    if (pagado && !fechaPago && fecha) {
+      setFechaPago(fecha);
+    }
+  }, [pagado, fecha, fechaPago]);
+
+  // ---- Step 3: Confirmar y crear gasto ----
+
+  async function handleConfirmar() {
+    setError(null);
+
+    // Validaciones generales (aplican a ambos caminos)
+    if (importeTotal <= 0) {
+      setError('El importe debe ser mayor a 0');
+      return;
+    }
+    if (!fecha) {
+      setError('Falta la fecha del gasto');
+      return;
+    }
+    if (!proveedorId) {
+      setError('Seleccioná un proveedor');
+      return;
+    }
+    // Categoría: si hay items con stock vinculado, cada item tiene su propia subcat (split).
+    // Si no, requerimos la categoría general del gasto.
+    if (vincularStock && items.length > 0) {
+      if (itemsSinSubcat.length > 0) {
+        setError(`Faltan subcategorías en ${itemsSinSubcat.length} item(s) del stock`);
+        return;
+      }
+    } else if (!categoriaId) {
+      setError('Seleccioná una categoría');
+      return;
+    }
+    // Validaciones del bloque de pago — solo si "Pagado"
+    if (pagado) {
+      if (medioPago !== 'efectivo' && !nOperacion) {
+        setError('N° de operación es obligatorio si el medio de pago no es efectivo');
+        return;
+      }
+      if (tipoGasto !== 'digital' && !fechaPago) {
+        setError('Falta la fecha de pago');
+        return;
+      }
+    }
+    // Si es cuenta corriente (no pagado), la fecha de vencimiento es obligatoria
+    if (tipoGasto === 'cuenta_corriente' && !fechaVencimiento) {
+      setError('Falta la fecha de vencimiento (cuándo hay que pagar)');
+      return;
+    }
+
+    setStep('saving');
+
+    try {
+      const proveedor = proveedores.find((p) => p.id === proveedorId);
+      const periodo = fecha.slice(0, 7);
+
+      // Si hay factura fiscal pendiente de subir, la subimos primero
+      let facturaPath: string | null = null;
+      if (facturaFile) {
+        const ext = facturaFile.name.split('.').pop()?.toLowerCase() ?? 'bin';
+        facturaPath = `${local}/${periodo}/factura_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
+        const { error: errFac } = await supabase.storage
+          .from('gastos-comprobantes')
+          .upload(facturaPath, facturaFile, {
+            contentType: facturaFile.type || 'application/octet-stream',
+          });
+        if (errFac) throw errFac;
+      }
+
+      // Builder de payload para 1 fila de gasto. Total se prorratea cuando hay split.
+      const buildPayload = (
+        catId: string,
+        total: number,
+        comentarioExtra?: string,
+        itemsDelGrupo?: ItemGastoStock[],
+      ) => {
+        const itemsParaGuardar = vincularStock
+          ? (itemsDelGrupo ?? items).filter((it) => it.producto_id)
+          : null;
+        const comentarioBase = comentario.trim();
+        const com = [comentarioBase, comentarioExtra].filter(Boolean).join(' · ') || null;
+        return {
+          local,
+          fecha,
+          proveedor_id: proveedorId,
+          proveedor: proveedor?.razon_social ?? null, // legacy mirror
+          categoria_id: catId,
+          importe_total: total,
+          importe_neto: null,
+          iva: null,
+          iibb: null,
+          medio_pago: pagado ? medioPago : null,
+          tipo_comprobante: tipoComprobante,
+          nro_comprobante: pagado ? (nOperacion || null) : null,
+          estado_pago: pagado ? 'Pagado' : 'Pendiente',
+          fecha_vencimiento: !pagado ? (fechaVencimiento || null) : null,
+          comprobante_path: filePath, // null en flujo fisico
+          comprobante_id: comprobanteId, // null en flujo fisico
+          factura_path: facturaPath,
+          comentario: com,
+          creado_por: user?.id ?? null,
+          creado_manual: true,
+          cancelado: false,
+          periodo,
+          estado_aprobacion: requiereAprobacion ? 'requiere_aprobacion' : null,
+          items_json: itemsParaGuardar && itemsParaGuardar.length > 0 ? itemsParaGuardar : null,
+        };
+      };
+
+      // 1) Insertar gastos: 1 solo si no hay split, N filas si hay split por subcategoría
+      const gastosCreados: string[] = [];
+
+      if (usarSplit && splitPorSubcat.length > 1) {
+        const nroLabel = nOperacion || 'comprobante';
+        const rows = splitPorSubcat.map((s, i) =>
+          buildPayload(
+            s.categoria_id,
+            s.total,
+            `Parte ${i + 1}/${splitPorSubcat.length} de ${nroLabel}`,
+            s.items,
+          ),
+        );
+        const { data: ins, error: errIns } = await supabase
+          .from('gastos')
+          .insert(rows)
+          .select('id');
+        if (errIns) throw errIns;
+        for (const r of ins ?? []) gastosCreados.push(r.id as string);
+      } else {
+        // 1 sola fila: usa la subcategoría única de items si hay split de 1, si no la categoría general
+        const catId = usarSplit ? splitPorSubcat[0].categoria_id : categoriaId!;
+        const payload = buildPayload(catId, importeTotal);
+        const { data: ins, error: errIns } = await supabase
+          .from('gastos')
+          .insert(payload)
+          .select('id')
+          .single();
+        if (errIns) throw errIns;
+        gastosCreados.push(ins!.id as string);
+      }
+
+      // 2) Si el gasto se cargó como Pagado, registrar el pago en pagos_gastos.
+      //    Esto es lo que después matchea con el extracto bancario en Conciliación.
+      //    Si hubo split por subcategoría, prorrateamos el pago entre las N filas.
+      if (pagado && gastosCreados.length > 0) {
+        const fechaDelPago = tipoGasto !== 'digital' ? fechaPago : fecha;
+        if (gastosCreados.length === 1) {
+          await supabase.from('pagos_gastos').insert({
+            gasto_id: gastosCreados[0],
+            fecha_pago: fechaDelPago,
+            monto: importeTotal,
+            medio_pago: medioPago,
+            numero_operacion: nOperacion || null,
+            creado_por: user?.id ?? null,
+          });
+        } else {
+          // Split: 1 pago_gasto por cada gasto creado, con monto = total de cada parte
+          const filasPagos = gastosCreados.map((gid, i) => ({
+            gasto_id: gid,
+            fecha_pago: fechaDelPago,
+            monto: splitPorSubcat[i].total,
+            medio_pago: medioPago,
+            numero_operacion: nOperacion || null,
+            creado_por: user?.id ?? null,
+          }));
+          await supabase.from('pagos_gastos').insert(filasPagos);
+        }
+      }
+
+      // 3) Vincular comprobante OCR al PRIMER gasto creado (flujo digital)
+      if (comprobanteId && gastosCreados.length > 0) {
+        await supabase
+          .from('comprobantes')
+          .update({ gasto_id: gastosCreados[0], estado: 'vinculado' })
+          .eq('id', comprobanteId);
+      }
+
+      // 4) Stock + movimientos + self-learning de categoria_gasto_id en productos
+      if (vincularStock && items.length > 0) {
+        const proveedorNombre = proveedor?.razon_social ?? '';
+        const tipoLabel = (tipoComprobante ?? '').toUpperCase();
+        const refLabel = nOperacion ? ` ${nOperacion}` : '';
+        for (const it of items) {
+          const { data: prodActual } = await supabase
+            .from('productos')
+            .select('stock_actual, categoria_gasto_id')
+            .eq('id', it.producto_id)
+            .single();
+          if (prodActual) {
+            const updates: Record<string, unknown> = {
+              stock_actual: (prodActual.stock_actual ?? 0) + it.cantidad,
+              costo_unitario: it.precio_unitario,
+              updated_at: new Date().toISOString(),
+            };
+            // Self-learning: si el producto no tenía subcat guardada, persistir la actual
+            if (!prodActual.categoria_gasto_id && it.categoria_gasto_id) {
+              updates.categoria_gasto_id = it.categoria_gasto_id;
+            }
+            await supabase.from('productos').update(updates).eq('id', it.producto_id);
+          }
+          await supabase.from('movimientos_stock').insert({
+            local,
+            producto_id: it.producto_id,
+            producto_nombre: it.producto_nombre,
+            tipo: 'entrada',
+            cantidad: it.cantidad,
+            unidad: it.unidad,
+            motivo: 'Compra a proveedor',
+            observacion: `Gasto ${proveedorNombre}${tipoLabel ? ` · ${tipoLabel}` : ''}${refLabel}`,
+            registrado_por: user?.id ?? null,
+          });
+        }
+      }
+
+      // 5) Invalidar caches
+      qc.invalidateQueries({ queryKey: ['gastos'] });
+      qc.invalidateQueries({ queryKey: ['gastos_listado'] });
+      qc.invalidateQueries({ queryKey: ['gastos_vista'] });
+      qc.invalidateQueries({ queryKey: ['gastos_resumen_kpis'] });
+      qc.invalidateQueries({ queryKey: ['gastos_pagos_map'] });
+      qc.invalidateQueries({ queryKey: ['pagos_gastos'] });
+      qc.invalidateQueries({ queryKey: ['productos_stock'] });
+      qc.invalidateQueries({ queryKey: ['productos-para-gasto'] });
+      qc.invalidateQueries({ queryKey: ['subcategorias-con-productos'] });
+      qc.invalidateQueries({ queryKey: ['movimientos_stock'] });
+
+      setStep('done');
+      onCreated?.(gastosCreados[0]);
+    } catch (e) {
+      const msg = formatError(e);
+      console.error('[NuevoGastoForm] error:', e);
+      setError(`No se pudo guardar el gasto: ${msg}`);
+      setStep('preview');
+    }
+  }
+
+  // ---- Render ----
+
+  if (!open) return null;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 md:items-center md:p-4"
+      onClick={onClose}
+    >
+      <div
+        className="flex w-full flex-col bg-white shadow-xl md:max-w-2xl md:max-h-[92vh] md:rounded-lg overflow-hidden"
+        style={{ maxHeight: '92vh' }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between border-b px-4 py-3">
+          <div>
+            <h2 className="text-lg font-semibold">Nuevo gasto</h2>
+            <p className="text-xs text-gray-500">
+              {step === 'tipo' && 'Elegí cómo cargarlo'}
+              {step === 'upload' && 'Sube una foto o PDF del comprobante'}
+              {step === 'processing' && 'Analizando con IA…'}
+              {step === 'preview' && (tipoGasto === 'digital' ? 'Verificá los datos antes de guardar' : tipoGasto === 'cuenta_corriente' ? 'Cargá la factura — pago pendiente' : 'Cargá los datos del gasto')}
+              {step === 'saving' && 'Guardando…'}
+              {step === 'done' && 'Listo'}
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="rounded p-2 text-gray-500 hover:bg-gray-100"
+            aria-label="Cerrar"
+          >
+            ✕
+          </button>
+        </div>
+
+        {/* Stepper — varia segun tipoGasto */}
+        {step !== 'tipo' && (
+          <div className="flex border-b bg-gray-50 px-4 py-2 text-xs">
+            {tipoGasto === 'digital' ? (
+              <>
+                <StepBadge n={1} active={step === 'upload' || step === 'processing'} done={['preview','saving','done'].includes(step)} label="Subir" />
+                <span className="mx-2 self-center text-gray-300">─</span>
+                <StepBadge n={2} active={step === 'preview'} done={['saving','done'].includes(step)} label="Verificar" />
+                <span className="mx-2 self-center text-gray-300">─</span>
+                <StepBadge n={3} active={step === 'saving'} done={step === 'done'} label="Confirmar" />
+              </>
+            ) : (
+              <>
+                <StepBadge n={1} active={step === 'preview'} done={['saving','done'].includes(step)} label="Cargar datos" />
+                <span className="mx-2 self-center text-gray-300">─</span>
+                <StepBadge n={2} active={step === 'saving'} done={step === 'done'} label="Confirmar" />
+              </>
+            )}
+          </div>
+        )}
+
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto p-4">
+          {/* Errores y warnings comunes a todos los steps */}
+          {error && (
+            <div className="mb-3 rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+              {error}
+            </div>
+          )}
+          {warning && step === 'preview' && (
+            <div className="mb-3 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              ⚠ {warning}
+            </div>
+          )}
+
+          {/* Step 0: Elegir tipo de gasto */}
+          {step === 'tipo' && (
+            <div className="space-y-4">
+              <p className="text-center text-sm text-gray-600">
+                ¿Cómo querés cargar este gasto?
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  setTipoGasto('digital');
+                  setStep('upload');
+                }}
+                className="flex w-full flex-col items-center gap-2 rounded-lg border-2 border-rodziny-200 bg-rodziny-50 p-6 text-center transition hover:border-rodziny-400 hover:bg-rodziny-100"
+              >
+                <div className="text-4xl">📷</div>
+                <div className="text-base font-semibold text-rodziny-900">Gasto digital</div>
+                <div className="text-xs text-gray-600">
+                  Tengo foto o PDF del comprobante de pago — la IA extrae los datos automáticamente
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setTipoGasto('fisico');
+                  setStep('preview');
+                }}
+                className="flex w-full flex-col items-center gap-2 rounded-lg border-2 border-gray-200 bg-gray-50 p-6 text-center transition hover:border-gray-400 hover:bg-gray-100"
+              >
+                <div className="text-4xl">💵</div>
+                <div className="text-base font-semibold text-gray-800">Pagado a mano</div>
+                <div className="text-xs text-gray-600">
+                  Ya pagué (efectivo o transferencia hecha) pero no tengo foto del comprobante — cargo todo a mano
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setTipoGasto('cuenta_corriente');
+                  setStep('preview');
+                }}
+                className="flex w-full flex-col items-center gap-2 rounded-lg border-2 border-amber-200 bg-amber-50 p-6 text-center transition hover:border-amber-400 hover:bg-amber-100"
+              >
+                <div className="text-4xl">📋</div>
+                <div className="text-base font-semibold text-amber-900">Cuenta corriente</div>
+                <div className="text-xs text-amber-800">
+                  Todavía no lo pagué — registro la factura con fecha de vencimiento. Cuando se pague, lo concilio con el comprobante.
+                </div>
+              </button>
+            </div>
+          )}
+
+          {/* Step 1: Upload (solo en flujo digital) */}
+          {step === 'upload' && (
+            <div className="space-y-4">
+              <div>
+                <label className="mb-1 block text-sm font-medium">Local</label>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setLocal('vedia')}
+                    className={cn(
+                      'flex-1 rounded border px-4 py-3 text-sm font-medium transition',
+                      local === 'vedia'
+                        ? 'border-rodziny-600 bg-rodziny-50 text-rodziny-900'
+                        : 'border-gray-300 text-gray-700 hover:bg-gray-50',
+                    )}
+                  >
+                    Vedia
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setLocal('saavedra')}
+                    className={cn(
+                      'flex-1 rounded border px-4 py-3 text-sm font-medium transition',
+                      local === 'saavedra'
+                        ? 'border-rodziny-600 bg-rodziny-50 text-rodziny-900'
+                        : 'border-gray-300 text-gray-700 hover:bg-gray-50',
+                    )}
+                  >
+                    Saavedra
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setLocal('sas')}
+                    className={cn(
+                      'flex-1 rounded border px-4 py-3 text-sm font-medium transition',
+                      local === 'sas'
+                        ? 'border-rodziny-600 bg-rodziny-50 text-rodziny-900'
+                        : 'border-gray-300 text-gray-700 hover:bg-gray-50',
+                    )}
+                    title="Gastos de la razón social — impuestos, ARCA, comisiones bancarias"
+                  >
+                    SAS
+                  </button>
+                </div>
+              </div>
+
+              <div
+                className="rounded-lg border-2 border-dashed border-gray-300 bg-gray-50 p-8 text-center"
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*,application/pdf"
+                  capture="environment"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) void handleFileSelected(f);
+                  }}
+                />
+                <div className="text-4xl">📷</div>
+                <div className="mt-2 text-sm font-medium">Tomar foto o subir archivo</div>
+                <div className="mt-1 text-xs text-gray-500">JPG, PNG o PDF · max 10 MB</div>
+              </div>
+
+              <div className="text-center text-xs text-gray-500">
+                El sistema va a leer automaticamente: proveedor, monto, fecha, N° de operacion, CUIT.
+              </div>
+            </div>
+          )}
+
+          {/* Step 1.5: Processing */}
+          {step === 'processing' && (
+            <div className="flex flex-col items-center justify-center py-16">
+              <div className="h-12 w-12 animate-spin rounded-full border-4 border-rodziny-200 border-t-rodziny-600"></div>
+              <div className="mt-4 text-sm font-medium">Analizando comprobante con IA…</div>
+              <div className="mt-1 text-xs text-gray-500">Esto tarda 3-8 segundos</div>
+              {file && (
+                <div className="mt-3 text-xs text-gray-400">{file.name}</div>
+              )}
+            </div>
+          )}
+
+          {/* Step 2: Preview & edit */}
+          {step === 'preview' && (
+            <div className="space-y-3">
+              {/* Confianza del OCR (solo en flujo digital) */}
+              {ocrData && (
+                <div
+                  className={cn(
+                    'rounded border px-3 py-2 text-xs',
+                    ocrConfianza >= 0.8
+                      ? 'border-green-200 bg-green-50 text-green-800'
+                      : ocrConfianza >= 0.5
+                        ? 'border-amber-200 bg-amber-50 text-amber-800'
+                        : 'border-red-200 bg-red-50 text-red-800',
+                  )}
+                >
+                  Confianza OCR: <strong>{Math.round(ocrConfianza * 100)}%</strong>
+                  {ocrConfianza < 0.7 && ' — verificá los datos con cuidado'}
+                </div>
+              )}
+
+              {/* Duplicado advertencia */}
+              {duplicados.length > 0 && duplicados[0].gasto_id && (
+                <div className="rounded border border-orange-300 bg-orange-50 px-3 py-2 text-sm text-orange-800">
+                  ⚠ Hay un gasto previo con datos similares.{' '}
+                  <a
+                    href={`/compras?gasto=${duplicados[0].gasto_id}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="underline"
+                  >
+                    Ver gasto
+                  </a>
+                </div>
+              )}
+
+              {/* Local: editable en flujo fisico, read-only en digital */}
+              <Field label={tipoGasto !== 'digital' ? 'Local *' : 'Local'}>
+                {tipoGasto !== 'digital' ? (
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setLocal('vedia')}
+                      className={cn(
+                        'flex-1 rounded border px-3 py-2 text-sm font-medium',
+                        local === 'vedia' ? 'border-rodziny-600 bg-rodziny-50 text-rodziny-900' : 'border-gray-300 text-gray-700',
+                      )}
+                    >
+                      Vedia
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setLocal('saavedra')}
+                      className={cn(
+                        'flex-1 rounded border px-3 py-2 text-sm font-medium',
+                        local === 'saavedra' ? 'border-rodziny-600 bg-rodziny-50 text-rodziny-900' : 'border-gray-300 text-gray-700',
+                      )}
+                    >
+                      Saavedra
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setLocal('sas')}
+                      className={cn(
+                        'flex-1 rounded border px-3 py-2 text-sm font-medium',
+                        local === 'sas' ? 'border-rodziny-600 bg-rodziny-50 text-rodziny-900' : 'border-gray-300 text-gray-700',
+                      )}
+                      title="Razón social Rodziny S.A.S. — gastos no atribuibles a un local (impuestos, ARCA, comisiones bancarias)"
+                    >
+                      SAS
+                    </button>
+                  </div>
+                ) : (
+                  <div className="rounded bg-gray-100 px-3 py-2 text-sm">
+                    {local === 'vedia' ? 'Vedia' : local === 'saavedra' ? 'Saavedra' : 'SAS'}
+                  </div>
+                )}
+              </Field>
+
+              {/* Proveedor */}
+              <Field label="Proveedor *">
+                <select
+                  value={proveedorId ?? ''}
+                  onChange={(e) => setProveedorId(e.target.value || null)}
+                  className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                >
+                  <option value="">— Seleccionar —</option>
+                  {proveedoresParaDropdown.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.razon_social}
+                      {p.cuit ? ` (${p.cuit})` : ''}
+                    </option>
+                  ))}
+                </select>
+                {mensajeProveedor && (
+                  <div className={cn(
+                    'mt-1 rounded px-2 py-1 text-xs',
+                    proveedorRecienCreado
+                      ? 'bg-green-50 text-green-800'
+                      : 'bg-blue-50 text-blue-800',
+                  )}>
+                    {proveedorRecienCreado ? '✓ ' : 'ℹ '}{mensajeProveedor}
+                  </div>
+                )}
+              </Field>
+
+              {/* Categoria — solo subcategorias son seleccionables, agrupadas por padre */}
+              <Field label={vincularStock && items.length > 0 ? 'Categoría' : 'Categoría *'}>
+                {vincularStock && items.length > 0 ? (
+                  <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                    Se asigna por item (abajo en "Vincular a stock"). Si los items tienen
+                    subcategorías distintas, este comprobante se va a dividir en N gastos.
+                  </div>
+                ) : (
+                  <>
+                    <select
+                      value={categoriaId ?? ''}
+                      onChange={(e) => setCategoriaId(e.target.value || null)}
+                      className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                    >
+                      <option value="">— Seleccionar —</option>
+                      {categoriasAgrupadas.map(({ padre, hijos }) => (
+                        <optgroup key={padre.id} label={padre.nombre}>
+                          {hijos.map((h) => (
+                            <option key={h.id} value={h.id}>
+                              {h.nombre}
+                            </option>
+                          ))}
+                        </optgroup>
+                      ))}
+                    </select>
+                    <div className="mt-1 text-xs text-gray-500">
+                      Elegí una subcategoría (las categorías madre no son seleccionables)
+                    </div>
+                  </>
+                )}
+              </Field>
+
+              {/* Vincular a stock — solo aparece si la subcategoría seleccionada tiene productos asociados */}
+              {puedeVincularStock && (
+                <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                  <label className="flex cursor-pointer items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={vincularStock}
+                      onChange={(e) => {
+                        setVincularStock(e.target.checked);
+                        if (!e.target.checked) {
+                          setItems([]);
+                          setItemDrafts({});
+                          setBusquedaProducto('');
+                        }
+                      }}
+                      className="rounded"
+                    />
+                    <span className="text-sm font-medium text-gray-700">Vincular a stock</span>
+                    <span className="text-[11px] text-gray-500">
+                      (suma productos al inventario)
+                    </span>
+                  </label>
+
+                  {vincularStock && (
+                    <div className="mt-3 space-y-3">
+                      {/* Items existentes */}
+                      {items.length > 0 && (
+                        <>
+                          {/* Desktop: tabla */}
+                          <div className="hidden md:block overflow-x-auto rounded border border-gray-200 bg-white">
+                            <table className="w-full text-xs">
+                              <thead className="border-b border-gray-200 bg-gray-50 text-gray-500">
+                                <tr>
+                                  <th className="px-2 py-1.5 text-left font-medium">Producto</th>
+                                  <th className="px-2 py-1.5 text-right font-medium">Cant.</th>
+                                  <th className="px-2 py-1.5 text-left font-medium">Un.</th>
+                                  <th className="px-2 py-1.5 text-right font-medium">$/u</th>
+                                  <th className="px-2 py-1.5 text-right font-medium">Subtotal</th>
+                                  <th className="px-2 py-1.5 text-left font-medium">
+                                    Subcategoría
+                                  </th>
+                                  <th className="px-2 py-1.5"></th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-gray-100">
+                                {items.map((it, idx) => (
+                                  <tr key={idx}>
+                                    <td className="px-2 py-1.5 font-medium text-gray-800">
+                                      {it.producto_nombre}
+                                    </td>
+                                    <td className="px-2 py-1.5">
+                                      <input
+                                        type="text"
+                                        inputMode="decimal"
+                                        value={itemDrafts[`${idx}:cantidad`] ?? String(it.cantidad)}
+                                        onChange={(e) =>
+                                          actualizarItem(idx, 'cantidad', e.target.value)
+                                        }
+                                        onBlur={() =>
+                                          setItemDrafts((d) => {
+                                            const c = { ...d };
+                                            delete c[`${idx}:cantidad`];
+                                            return c;
+                                          })
+                                        }
+                                        className="w-16 rounded border border-gray-300 px-1.5 py-0.5 text-right tabular-nums"
+                                      />
+                                    </td>
+                                    <td className="px-2 py-1.5 text-gray-500">{it.unidad}</td>
+                                    <td className="px-2 py-1.5 text-right tabular-nums text-gray-500">
+                                      {formatARS(it.precio_unitario || 0)}
+                                    </td>
+                                    <td className="px-2 py-1.5">
+                                      <input
+                                        type="text"
+                                        inputMode="decimal"
+                                        value={itemDrafts[`${idx}:subtotal`] ?? String(it.subtotal)}
+                                        onChange={(e) =>
+                                          actualizarItem(idx, 'subtotal', e.target.value)
+                                        }
+                                        onBlur={() =>
+                                          setItemDrafts((d) => {
+                                            const c = { ...d };
+                                            delete c[`${idx}:subtotal`];
+                                            return c;
+                                          })
+                                        }
+                                        className="w-24 rounded border border-gray-300 px-1.5 py-0.5 text-right font-medium tabular-nums"
+                                      />
+                                    </td>
+                                    <td className="px-2 py-1.5">
+                                      <select
+                                        value={it.categoria_gasto_id ?? ''}
+                                        onChange={(e) =>
+                                          actualizarSubcatItem(idx, e.target.value || null)
+                                        }
+                                        className={cn(
+                                          'w-full max-w-[180px] rounded border bg-white px-1.5 py-0.5 text-[11px]',
+                                          it.categoria_gasto_id
+                                            ? 'border-gray-300'
+                                            : 'border-amber-300 bg-amber-50 text-amber-800',
+                                        )}
+                                      >
+                                        <option value="">⚠ Subcategoría...</option>
+                                        {categoriasAgrupadas.map(({ padre, hijos }) => (
+                                          <optgroup key={padre.id} label={padre.nombre}>
+                                            {hijos.map((h) => (
+                                              <option key={h.id} value={h.id}>
+                                                {h.nombre}
+                                              </option>
+                                            ))}
+                                          </optgroup>
+                                        ))}
+                                      </select>
+                                    </td>
+                                    <td className="px-2 py-1.5 text-right">
+                                      <button
+                                        type="button"
+                                        onClick={() => quitarItem(idx)}
+                                        className="text-red-500 hover:text-red-700"
+                                        aria-label="Quitar item"
+                                      >
+                                        ✕
+                                      </button>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+
+                          {/* Mobile: cards */}
+                          <div className="space-y-2 md:hidden">
+                            {items.map((it, idx) => (
+                              <div
+                                key={idx}
+                                className="rounded border border-gray-200 bg-white p-2 text-xs"
+                              >
+                                <div className="flex items-start justify-between gap-2">
+                                  <div className="font-medium text-gray-800">
+                                    {it.producto_nombre}
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => quitarItem(idx)}
+                                    className="text-red-500 hover:text-red-700"
+                                    aria-label="Quitar item"
+                                  >
+                                    ✕
+                                  </button>
+                                </div>
+                                <div className="mt-2 grid grid-cols-2 gap-2">
+                                  <div>
+                                    <label className="block text-[10px] text-gray-500">
+                                      Cantidad
+                                    </label>
+                                    <div className="flex items-center gap-1">
+                                      <input
+                                        type="text"
+                                        inputMode="decimal"
+                                        value={itemDrafts[`${idx}:cantidad`] ?? String(it.cantidad)}
+                                        onChange={(e) =>
+                                          actualizarItem(idx, 'cantidad', e.target.value)
+                                        }
+                                        onBlur={() =>
+                                          setItemDrafts((d) => {
+                                            const c = { ...d };
+                                            delete c[`${idx}:cantidad`];
+                                            return c;
+                                          })
+                                        }
+                                        className="w-full rounded border border-gray-300 px-1.5 py-1 text-right tabular-nums"
+                                      />
+                                      <span className="text-[10px] text-gray-500">
+                                        {it.unidad}
+                                      </span>
+                                    </div>
+                                  </div>
+                                  <div>
+                                    <label className="block text-[10px] text-gray-500">
+                                      Subtotal $
+                                    </label>
+                                    <input
+                                      type="text"
+                                      inputMode="decimal"
+                                      value={itemDrafts[`${idx}:subtotal`] ?? String(it.subtotal)}
+                                      onChange={(e) =>
+                                        actualizarItem(idx, 'subtotal', e.target.value)
+                                      }
+                                      onBlur={() =>
+                                        setItemDrafts((d) => {
+                                          const c = { ...d };
+                                          delete c[`${idx}:subtotal`];
+                                          return c;
+                                        })
+                                      }
+                                      className="w-full rounded border border-gray-300 px-1.5 py-1 text-right font-medium tabular-nums"
+                                    />
+                                  </div>
+                                </div>
+                                <div className="mt-2">
+                                  <label className="block text-[10px] text-gray-500">
+                                    Subcategoría
+                                  </label>
+                                  <select
+                                    value={it.categoria_gasto_id ?? ''}
+                                    onChange={(e) =>
+                                      actualizarSubcatItem(idx, e.target.value || null)
+                                    }
+                                    className={cn(
+                                      'w-full rounded border bg-white px-1.5 py-1',
+                                      it.categoria_gasto_id
+                                        ? 'border-gray-300'
+                                        : 'border-amber-300 bg-amber-50 text-amber-800',
+                                    )}
+                                  >
+                                    <option value="">⚠ Elegí subcategoría</option>
+                                    {categoriasAgrupadas.map(({ padre, hijos }) => (
+                                      <optgroup key={padre.id} label={padre.nombre}>
+                                        {hijos.map((h) => (
+                                          <option key={h.id} value={h.id}>
+                                            {h.nombre}
+                                          </option>
+                                        ))}
+                                      </optgroup>
+                                    ))}
+                                  </select>
+                                </div>
+                                <div className="mt-1 text-right text-[10px] text-gray-400">
+                                  {formatARS(it.precio_unitario || 0)}/u
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+
+                          {/* Subtotal items + Aplicar al total */}
+                          <div className="flex items-center justify-between rounded border border-gray-200 bg-white px-3 py-2">
+                            <span className="text-xs text-gray-600">Subtotal items</span>
+                            <div className="flex items-center gap-3">
+                              <span className="text-sm font-bold tabular-nums">
+                                {formatARS(totalItems)}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={aplicarTotalDesdeItems}
+                                className="text-[11px] text-rodziny-700 underline hover:text-rodziny-900"
+                              >
+                                Aplicar al total
+                              </button>
+                            </div>
+                          </div>
+                        </>
+                      )}
+
+                      {/* Buscador de productos */}
+                      <div className="relative">
+                        <input
+                          value={busquedaProducto}
+                          onChange={(e) => setBusquedaProducto(e.target.value)}
+                          placeholder="Buscar producto para agregar…"
+                          className="w-full rounded border border-gray-300 px-3 py-2 text-xs"
+                        />
+                        {productosFiltrados.length > 0 && (
+                          <div className="absolute left-0 right-0 z-20 mt-1 max-h-56 overflow-y-auto rounded border border-gray-200 bg-white shadow-lg">
+                            {productosFiltrados.map((p) => (
+                              <button
+                                key={p.id}
+                                type="button"
+                                onClick={() => agregarProducto(p.id)}
+                                className="w-full border-b border-gray-50 px-3 py-1.5 text-left text-xs hover:bg-gray-100"
+                              >
+                                <div className="font-medium">{p.nombre}</div>
+                                <div className="text-[10px] text-gray-500">
+                                  stock {p.stock_actual ?? 0} {p.unidad} · costo{' '}
+                                  {formatARS(p.costo_unitario ?? 0)}
+                                </div>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Preview de split por subcategoría */}
+                      {usarSplit && splitPorSubcat.length > 1 && (
+                        <div className="rounded border border-amber-200 bg-amber-50 p-2">
+                          <div className="mb-1.5 text-xs font-semibold text-amber-900">
+                            ⚠ Este comprobante se va a dividir en {splitPorSubcat.length} gastos
+                          </div>
+                          <p className="mb-2 text-[11px] text-amber-800">
+                            Los items tienen subcategorías distintas. Se crea 1 gasto por
+                            subcategoría con el total prorrateado proporcional al subtotal.
+                          </p>
+                          <table className="w-full text-[11px]">
+                            <thead>
+                              <tr className="border-b border-amber-200 text-amber-700">
+                                <th className="py-1 text-left">Subcategoría</th>
+                                <th className="py-1 text-right">Items</th>
+                                <th className="py-1 text-right">Total</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {splitPorSubcat.map((s) => (
+                                <tr
+                                  key={s.categoria_id}
+                                  className="border-b border-amber-100 last:border-0"
+                                >
+                                  <td className="py-1">
+                                    <div className="font-medium text-amber-900">
+                                      {s.subcat_nombre}
+                                    </div>
+                                    {s.padre_nombre && (
+                                      <div className="text-[9px] text-amber-700">
+                                        {s.padre_nombre}
+                                      </div>
+                                    )}
+                                  </td>
+                                  <td className="py-1 text-right text-amber-800">
+                                    {s.items.length}
+                                  </td>
+                                  <td className="py-1 text-right font-semibold tabular-nums text-amber-900">
+                                    {formatARS(s.total)}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+
+                      {/* Aviso de items sin subcategoría */}
+                      {itemsSinSubcat.length > 0 && (
+                        <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                          ⚠ Asigná una subcategoría a cada item. Faltan {itemsSinSubcat.length} de{' '}
+                          {items.length}.
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Importe */}
+              <Field label="Importe total *">
+                <div className="flex items-center rounded border border-gray-300">
+                  <span className="px-3 text-sm text-gray-500">$</span>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={importeTexto}
+                    onChange={(e) => setImporteTexto(e.target.value)}
+                    onBlur={() => {
+                      // Re-formatear al perder foco (acomoda separadores)
+                      const num = parseNumeroAR(importeTexto);
+                      if (num !== null) setImporteTexto(formatNumeroAR(num));
+                    }}
+                    placeholder="285.453,50"
+                    className="w-full rounded-r px-2 py-2 text-sm tabular-nums focus:outline-none"
+                  />
+                </div>
+                {requiereAprobacion && (
+                  <div className="mt-1 rounded bg-amber-100 px-2 py-1 text-xs text-amber-900">
+                    ⚠ Supera el umbral de {formatARS(umbralAprobacion)}. Este gasto va a quedar
+                    pendiente de aprobacion por Lucas.
+                  </div>
+                )}
+              </Field>
+
+              <Field label="Fecha del comprobante *">
+                <input
+                  type="date"
+                  value={fecha}
+                  onChange={(e) => setFecha(e.target.value)}
+                  className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                />
+              </Field>
+
+              {/* Toggle Pagado / Pendiente — solo en flujo "fisico" (en cuenta_corriente es siempre Pendiente) */}
+              {tipoGasto === 'fisico' && (
+                <Field label="Estado del pago *">
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setPagado(true)}
+                      className={cn(
+                        'flex-1 rounded border px-3 py-2 text-sm font-medium',
+                        pagado
+                          ? 'border-green-600 bg-green-50 text-green-900'
+                          : 'border-gray-300 text-gray-700',
+                      )}
+                    >
+                      ✓ Pagado
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPagado(false)}
+                      className={cn(
+                        'flex-1 rounded border px-3 py-2 text-sm font-medium',
+                        !pagado
+                          ? 'border-amber-500 bg-amber-50 text-amber-900'
+                          : 'border-gray-300 text-gray-700',
+                      )}
+                    >
+                      📋 Aún no pagué
+                    </button>
+                  </div>
+                </Field>
+              )}
+
+              {/* Fecha de vencimiento — visible cuando NO está pagado (cuenta corriente o físico-pendiente) */}
+              {!pagado && (
+                <Field label={tipoGasto === 'cuenta_corriente' ? 'Fecha de vencimiento *' : 'Fecha de vencimiento (opcional)'}>
+                  <input
+                    type="date"
+                    value={fechaVencimiento}
+                    onChange={(e) => setFechaVencimiento(e.target.value)}
+                    className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                  />
+                  <div className="mt-1 rounded bg-amber-50 px-2 py-1 text-xs text-amber-800">
+                    📋 Queda en cuenta corriente. Cuando pagues, lo registrás desde el listado con <strong>💸 Pagar</strong>.
+                  </div>
+                </Field>
+              )}
+
+              {/* Bloque de pago — visible solo si está pagado (siempre en flujo digital) */}
+              {pagado && (
+                <>
+                  <div className="grid grid-cols-2 gap-3">
+                    {tipoGasto !== 'digital' && (
+                      <Field label="Fecha de pago *">
+                        <input
+                          type="date"
+                          value={fechaPago}
+                          onChange={(e) => setFechaPago(e.target.value)}
+                          className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                        />
+                      </Field>
+                    )}
+                    <Field label="Medio de pago *">
+                      <select
+                        value={medioPago}
+                        onChange={(e) => setMedioPago(e.target.value as MedioPago)}
+                        className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                      >
+                        {(Object.keys(MEDIO_PAGO_LABEL) as MedioPago[]).map((m) => (
+                          <option key={m} value={m}>
+                            {MEDIO_PAGO_LABEL[m]}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                  </div>
+
+                  <Field label={`N° de operacion${medioPago !== 'efectivo' ? ' *' : ''}`}>
+                    <input
+                      type="text"
+                      value={nOperacion}
+                      onChange={(e) => setNOperacion(e.target.value)}
+                      className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                      placeholder="Ref. bancaria / N° de transferencia"
+                    />
+                  </Field>
+                </>
+              )}
+
+              <Field label="Tipo de comprobante">
+                <select
+                  value={tipoComprobante}
+                  onChange={(e) => setTipoComprobante(e.target.value)}
+                  className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                >
+                  {Object.entries(TIPO_COMPROBANTE_LABEL).map(([k, v]) => (
+                    <option key={k} value={k}>
+                      {v}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+
+              <Field label="Comentario (opcional)">
+                <textarea
+                  value={comentario}
+                  onChange={(e) => setComentario(e.target.value)}
+                  rows={2}
+                  className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                />
+              </Field>
+
+              {/* Factura fiscal (opcional, en ambos caminos) */}
+              <Field label="Factura fiscal del proveedor (opcional)">
+                <input
+                  ref={facturaInputRef}
+                  type="file"
+                  accept="image/*,application/pdf"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) setFacturaFile(f);
+                  }}
+                />
+                {facturaFile ? (
+                  <div className="flex items-center justify-between rounded border border-green-200 bg-green-50 px-3 py-2 text-sm">
+                    <span className="truncate text-green-800">📎 {facturaFile.name}</span>
+                    <button
+                      type="button"
+                      onClick={() => setFacturaFile(null)}
+                      className="ml-2 text-xs text-red-600 hover:underline"
+                    >
+                      Quitar
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => facturaInputRef.current?.click()}
+                    className="w-full rounded border border-dashed border-gray-300 bg-gray-50 px-3 py-3 text-sm text-gray-600 hover:bg-gray-100"
+                  >
+                    + Adjuntar factura A/C/remito (si la tenés)
+                  </button>
+                )}
+              </Field>
+            </div>
+          )}
+
+          {/* Step: saving */}
+          {step === 'saving' && (
+            <div className="flex flex-col items-center justify-center py-16">
+              <div className="h-12 w-12 animate-spin rounded-full border-4 border-rodziny-200 border-t-rodziny-600"></div>
+              <div className="mt-4 text-sm font-medium">Guardando gasto…</div>
+            </div>
+          )}
+
+          {/* Step: done */}
+          {step === 'done' && (
+            <div className="flex flex-col items-center justify-center py-12">
+              <div className="text-5xl">✅</div>
+              <div className="mt-3 text-base font-semibold">Gasto cargado</div>
+              {requiereAprobacion ? (
+                <div className="mt-2 text-center text-sm text-amber-700">
+                  Esta esperando aprobacion de Lucas (supera {formatARS(umbralAprobacion)}).
+                </div>
+              ) : (
+                <div className="mt-2 text-center text-sm text-gray-600">
+                  Todo en orden. Ya aparece en Compras y en el EdR.
+                </div>
+              )}
+              <button
+                onClick={onClose}
+                className="mt-6 rounded bg-rodziny-600 px-4 py-2 text-sm font-medium text-white hover:bg-rodziny-700"
+              >
+                Cerrar
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        {(step === 'tipo' || step === 'preview' || step === 'upload') && (
+          <div className="flex justify-between gap-2 border-t px-4 py-3">
+            {/* Boton volver (preview en flujo fisico → tipo; upload → tipo) */}
+            {step === 'upload' && (
+              <button
+                onClick={() => setStep('tipo')}
+                className="rounded px-3 py-2 text-sm text-gray-600 hover:bg-gray-100"
+              >
+                ← Volver
+              </button>
+            )}
+            {step === 'preview' && tipoGasto !== 'digital' && (
+              <button
+                onClick={() => setStep('tipo')}
+                className="rounded px-3 py-2 text-sm text-gray-600 hover:bg-gray-100"
+              >
+                ← Volver
+              </button>
+            )}
+            <div className="ml-auto flex gap-2">
+              <button
+                onClick={onClose}
+                className="rounded border border-gray-300 px-4 py-2 text-sm hover:bg-gray-50"
+              >
+                Cancelar
+              </button>
+              {step === 'preview' && (
+                <button
+                  onClick={handleConfirmar}
+                  className="rounded bg-rodziny-600 px-4 py-2 text-sm font-medium text-white hover:bg-rodziny-700"
+                >
+                  Confirmar y guardar
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ----- Subcomponentes -----
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <label className="mb-1 block text-sm font-medium text-gray-700">{label}</label>
+      {children}
+    </div>
+  );
+}
+
+function StepBadge({ n, active, done, label }: { n: number; active: boolean; done: boolean; label: string }) {
+  return (
+    <div className="flex items-center gap-1.5">
+      <div
+        className={cn(
+          'flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold',
+          done
+            ? 'bg-green-600 text-white'
+            : active
+              ? 'bg-rodziny-600 text-white'
+              : 'bg-gray-300 text-white',
+        )}
+      >
+        {done ? '✓' : n}
+      </div>
+      <span
+        className={cn(
+          'font-medium',
+          done || active ? 'text-gray-800' : 'text-gray-400',
+        )}
+      >
+        {label}
+      </span>
+    </div>
+  );
+}

@@ -14,7 +14,10 @@ const CONDICIONES: { value: CondicionIVA; label: string }[] = [
 
 const FORM_VACIO: Partial<Proveedor> = {
   razon_social: '',
+  nombre_comercial: null,
   cuit: null,
+  cuits_alt: [],
+  aliases: [],
   condicion_iva: 'responsable_inscripto',
   categoria_default_id: null,
   medio_pago_default: 'transferencia_mp',
@@ -25,6 +28,76 @@ const FORM_VACIO: Partial<Proveedor> = {
   activo: true,
   notas: null,
 };
+
+// Input de chips: el usuario escribe + Enter (o coma) para agregar, X para quitar.
+// Usado para aliases (variantes del nombre) y cuits_alt (CUITs del titular destino).
+function ChipsInput({
+  value,
+  onChange,
+  placeholder,
+  sanitize,
+}: {
+  value: string[];
+  onChange: (next: string[]) => void;
+  placeholder: string;
+  sanitize?: (s: string) => string;
+}) {
+  const [draft, setDraft] = useState('');
+  function add() {
+    const limpio = (sanitize ? sanitize(draft) : draft.trim());
+    if (!limpio) return;
+    if (value.includes(limpio)) {
+      setDraft('');
+      return;
+    }
+    onChange([...value, limpio]);
+    setDraft('');
+  }
+  function remove(idx: number) {
+    onChange(value.filter((_, i) => i !== idx));
+  }
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 rounded border border-gray-300 bg-white px-2 py-1.5">
+      {value.map((v, i) => (
+        <span
+          key={`${v}-${i}`}
+          className="inline-flex items-center gap-1 rounded bg-rodziny-50 px-2 py-0.5 text-xs text-rodziny-800"
+        >
+          {v}
+          <button
+            type="button"
+            onClick={() => remove(i)}
+            className="text-rodziny-500 hover:text-rodziny-800"
+            title="Quitar"
+          >
+            ×
+          </button>
+        </span>
+      ))}
+      <input
+        type="text"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ',') {
+            e.preventDefault();
+            add();
+          } else if (e.key === 'Backspace' && draft === '' && value.length > 0) {
+            remove(value.length - 1);
+          }
+        }}
+        onBlur={add}
+        placeholder={value.length === 0 ? placeholder : ''}
+        className="min-w-[120px] flex-1 border-0 bg-transparent text-sm focus:outline-none"
+      />
+    </div>
+  );
+}
+
+// CUIT: dejamos solo dígitos y guiones para que matchee tal cual aparece en el extracto.
+function sanitizeCuit(s: string): string {
+  return s.trim().replace(/[^0-9-]/g, '');
+}
 
 export function ProveedoresPanel() {
   const qc = useQueryClient();
@@ -154,7 +227,10 @@ export function ProveedoresPanel() {
     try {
       const payload = {
         razon_social: razon,
+        nombre_comercial: editando.nombre_comercial?.trim() || null,
         cuit: editando.cuit?.trim() || null,
+        cuits_alt: (editando.cuits_alt ?? []).filter((c) => c.trim().length > 0),
+        aliases: (editando.aliases ?? []).filter((a) => a.trim().length > 0),
         condicion_iva: editando.condicion_iva ?? null,
         categoria_default_id: editando.categoria_default_id ?? null,
         medio_pago_default: editando.medio_pago_default ?? null,
@@ -328,7 +404,7 @@ export function ProveedoresPanel() {
               <div className="grid grid-cols-2 gap-3">
                 <div className="col-span-2">
                   <label className="mb-1 block text-xs font-medium text-gray-600">
-                    Razón social *
+                    Razón social * <span className="text-gray-400">(como factura)</span>
                   </label>
                   <input
                     value={editando.razon_social ?? ''}
@@ -336,8 +412,23 @@ export function ProveedoresPanel() {
                     className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
                   />
                 </div>
+                <div className="col-span-2">
+                  <label className="mb-1 block text-xs font-medium text-gray-600">
+                    Nombre comercial <span className="text-gray-400">(con el que lo conocemos)</span>
+                  </label>
+                  <input
+                    value={editando.nombre_comercial ?? ''}
+                    onChange={(e) =>
+                      setEditando({ ...editando, nombre_comercial: e.target.value })
+                    }
+                    placeholder="ej: Miliana Fiambrería"
+                    className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                  />
+                </div>
                 <div>
-                  <label className="mb-1 block text-xs font-medium text-gray-600">CUIT</label>
+                  <label className="mb-1 block text-xs font-medium text-gray-600">
+                    CUIT <span className="text-gray-400">(fiscal)</span>
+                  </label>
                   <input
                     value={editando.cuit ?? ''}
                     onChange={(e) => setEditando({ ...editando, cuit: e.target.value })}
@@ -445,6 +536,37 @@ export function ProveedoresPanel() {
                     onChange={(e) => setEditando({ ...editando, email: e.target.value })}
                     className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
                   />
+                </div>
+                <div className="col-span-2">
+                  <label className="mb-1 block text-xs font-medium text-gray-600">
+                    Aliases <span className="text-gray-400">(cómo aparece en el extracto)</span>
+                  </label>
+                  <ChipsInput
+                    value={editando.aliases ?? []}
+                    onChange={(next) => setEditando({ ...editando, aliases: next })}
+                    placeholder="ej: Mendoza Juan Carlos, MILIANA FIAM, …  (Enter para agregar)"
+                  />
+                  <p className="mt-1 text-[10px] text-gray-500">
+                    Agregá variantes del nombre con que aparece este proveedor en los movimientos
+                    bancarios. Sirve para auto-vincular.
+                  </p>
+                </div>
+                <div className="col-span-2">
+                  <label className="mb-1 block text-xs font-medium text-gray-600">
+                    CUITs alternativos{' '}
+                    <span className="text-gray-400">(titular de la cuenta destino)</span>
+                  </label>
+                  <ChipsInput
+                    value={editando.cuits_alt ?? []}
+                    onChange={(next) => setEditando({ ...editando, cuits_alt: next })}
+                    placeholder="ej: 20-12345678-9  (Enter para agregar)"
+                    sanitize={sanitizeCuit}
+                  />
+                  <p className="mt-1 text-[10px] text-gray-500">
+                    Si le transferís a una cuenta a nombre de otra persona (ej: el dueño en lugar de
+                    la SRL), agregá ese CUIT acá. La conciliación lo va a matchear automáticamente
+                    cuando aparezca en el extracto.
+                  </p>
                 </div>
                 <div className="col-span-2">
                   <label className="mb-1 block text-xs font-medium text-gray-600">Notas</label>

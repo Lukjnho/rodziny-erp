@@ -7,6 +7,27 @@ export interface MovimientoRaw {
   saldo: number | null;
   referencia: string;
   periodo: string; // '2026-02'
+  es_transferencia_interna?: boolean;
+}
+
+// CUITs/CUILs propios de la empresa — usado para detectar transferencias
+// internas entre cuentas propias (de MP a Galicia, etc.) que no son egresos reales.
+const CUITS_PROPIOS = ['30717352366']; // Rodziny S.A.S.
+
+// Detecta si una descripción de movimiento corresponde a una transferencia entre
+// cuentas propias (no es ingreso/egreso real, solo mover plata interna).
+// IMPORTANTE: NO matchear cobros tipo "Producto de Rodziny Pastas" — esos son
+// ventas QR del local, NO transferencias.
+function detectarTransferenciaInterna(descripcion: string): boolean {
+  if (!descripcion) return false;
+  const upper = descripcion.toUpperCase();
+  // Patrón 1: "TRANSFERENCIA DE CUENTA PROPIA" (Galicia)
+  if (upper.includes('CUENTA PROPIA')) return true;
+  // Patrón 2: descripción contiene TRANSFERENCIA + razón social propia
+  if (upper.includes('TRANSFERENCIA') && upper.includes('RODZINY')) return true;
+  // Patrón 3: CUIT propio explícito en la descripción
+  if (CUITS_PROPIOS.some((c) => descripcion.includes(c))) return true;
+  return false;
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
@@ -66,16 +87,110 @@ function parseCSVLine(line: string): string[] {
 }
 
 export function parseMercadoPago(csv: string, filename: string): MovimientoRaw[] {
-  const lines = csv.split('\n').filter(Boolean);
+  // Quitar BOM UTF-8 si viene
+  const clean = csv.replace(/^﻿/, '');
+  const lines = clean.split('\n').filter(Boolean);
   if (lines.length < 2) return [];
 
   const header = lines[0].trim();
+
+  // Reporte "Retiros" (CSV con separador ; y header en español)
+  if (
+    header.toLowerCase().includes('fecha de creación del retiro') ||
+    header.toLowerCase().includes('fecha de creacion del retiro') ||
+    header.includes('withdraw_id')
+  ) {
+    return parseMercadoPagoRetiros(lines);
+  }
 
   // Detectar formato por headers
   if (header.startsWith('EXTERNAL_REFERENCE') || header.includes('TRANSACTION_AMOUNT')) {
     return parseMercadoPagoNuevo(lines);
   }
   return parseMercadoPagoLegacy(lines);
+}
+
+// Reporte "Retiros" (Mercado Pago → Reportes descargables → Retiros)
+// Cada fila es un EGRESO de la cuenta MP hacia un banco externo.
+// Header (ES, separador ;):
+//   Fecha de creación del retiro;Número de retiro;Estado;Detalles del estado;Monto;Tarifa de retiro;...
+//   ...;Nombre del titular;Tipo de identificación;Número de identificación;ID del banco;Nombre del banco;...
+// La columna "Número de retiro" es el N° de operación que matchea con pagos_gastos.numero_operacion.
+function parseMercadoPagoRetiros(lines: string[]): MovimientoRaw[] {
+  const headers = lines[0].split(';').map((h) => h.trim().replace(/^"|"$/g, '').toLowerCase());
+  const colIdx = (...candidates: string[]) =>
+    headers.findIndex((h) => candidates.some((c) => h.includes(c.toLowerCase())));
+
+  const iDate = colIdx('date_created', 'fecha de creación', 'fecha de creacion');
+  const iId = colIdx('withdraw_id', 'número de retiro', 'numero de retiro');
+  const iStatus = colIdx('status', 'estado');
+  const iAmount = colIdx('amount', 'monto');
+  const iFee = colIdx('fee', 'tarifa');
+  const iHolder = colIdx('bank_account_holder', 'nombre del titular');
+  const iCuit = colIdx('identification_number', 'número de identificación', 'numero de identificacion');
+  const iBank = colIdx('bank_name', 'nombre del banco');
+
+  if (iDate < 0 || iId < 0 || iAmount < 0) return [];
+
+  const result: MovimientoRaw[] = [];
+
+  for (let i = 1; i < lines.length; i++) {
+    const cols = lines[i].split(';').map((c) => c.trim().replace(/^"|"$/g, ''));
+    if (cols.length < 5) continue;
+
+    const fecha = (cols[iDate] ?? '').substring(0, 10);
+    if (!fecha || fecha.length < 10) continue;
+
+    const status = (iStatus >= 0 ? cols[iStatus] : '').toLowerCase();
+    if (status && status !== 'approved') continue; // sólo retiros aprobados
+
+    const withdrawId = cols[iId] ?? '';
+    const amount = parseFloat(cols[iAmount] ?? '0') || 0;
+    const fee = iFee >= 0 ? parseFloat(cols[iFee] ?? '0') || 0 : 0;
+    if (amount <= 0) continue;
+
+    const holder = iHolder >= 0 ? cols[iHolder] : '';
+    const cuit = iCuit >= 0 ? cols[iCuit] : '';
+    const bank = iBank >= 0 ? cols[iBank] : '';
+
+    const descPartes = [`Retiro MP`];
+    if (holder) descPartes.push(`a ${holder}`);
+    if (bank) descPartes.push(`(${bank})`);
+    if (cuit) descPartes.push(`CUIT ${cuit}`);
+    descPartes.push(`Op. ${withdrawId}`);
+
+    // Si el CUIT del beneficiario es propio → es transferencia interna
+    // (de la cuenta MP a otra cuenta de la misma empresa, no es egreso real)
+    const esInterna = CUITS_PROPIOS.includes(cuit);
+
+    result.push({
+      cuenta: 'mercadopago',
+      fecha,
+      descripcion: descPartes.join(' '),
+      debito: amount,
+      credito: 0,
+      saldo: null,
+      referencia: withdrawId || `mp_ret_${i}`,
+      periodo: periodoFromFecha(fecha),
+      es_transferencia_interna: esInterna,
+    });
+
+    // Tarifa de retiro como débito separado (si hubiera)
+    if (fee > 0) {
+      result.push({
+        cuenta: 'mercadopago',
+        fecha,
+        descripcion: `Tarifa retiro MP · Op. ${withdrawId}`,
+        debito: fee,
+        credito: 0,
+        saldo: null,
+        referencia: `${withdrawId}_fee`,
+        periodo: periodoFromFecha(fecha),
+      });
+    }
+  }
+
+  return result;
 }
 
 function parseMercadoPagoNuevo(lines: string[]): MovimientoRaw[] {
@@ -159,7 +274,13 @@ function parseMercadoPagoNuevo(lines: string[]): MovimientoRaw[] {
           periodo: periodoFromFecha(fecha),
         });
       }
-    } else if (txType === 'WITHDRAWAL' || txType === 'REFUND' || txType === 'PAYOUT') {
+    } else if (txType === 'WITHDRAWAL' || txType === 'PAYOUT') {
+      // Los retiros (WITHDRAWAL/PAYOUT) los traemos del CSV "Retiros" que tiene
+      // más contexto (beneficiario, CUIT, banco) y el monto NETO. Si los procesamos
+      // también acá, generamos duplicados con monto BRUTO y descripción genérica
+      // ("Transferencia saliente"). Lucas tiene que subir el reporte de Retiros aparte.
+      continue;
+    } else if (txType === 'REFUND') {
       result.push({
         cuenta: 'mercadopago',
         fecha,
@@ -250,6 +371,7 @@ export function parseICBC(csv: string, filename: string): MovimientoRaw[] {
       saldo,
       referencia: infoComp || `icbc_${i}`,
       periodo: periodoFromFecha(fecha),
+      es_transferencia_interna: detectarTransferenciaInterna(concepto),
     });
   }
 
@@ -302,6 +424,7 @@ export function parseGalicia(csv: string, filename: string): MovimientoRaw[] {
       saldo,
       referencia: refUnica,
       periodo: periodoFromFecha(fecha),
+      es_transferencia_interna: detectarTransferenciaInterna(descFinal),
     });
   }
 
@@ -311,13 +434,19 @@ export function parseGalicia(csv: string, filename: string): MovimientoRaw[] {
 // ─── Auto-detector ────────────────────────────────────────────────────────────
 export function parseExtracto(content: string, filename: string): MovimientoRaw[] {
   const lower = filename.toLowerCase();
-  const firstLine = content.split('\n')[0] ?? '';
+  // Quitar BOM UTF-8 antes de leer la primera línea (MP-Retiros lo trae)
+  const firstLine = content.replace(/^﻿/, '').split('\n')[0] ?? '';
+  const firstLower = firstLine.toLowerCase();
 
   if (
     lower.includes('mp') ||
     lower.includes('mercadopago') ||
+    lower.includes('withdraw') ||
     firstLine.startsWith('DATE;') ||
-    firstLine.startsWith('EXTERNAL_REFERENCE')
+    firstLine.startsWith('EXTERNAL_REFERENCE') ||
+    firstLower.includes('withdraw_id') ||
+    firstLower.includes('fecha de creación del retiro') ||
+    firstLower.includes('fecha de creacion del retiro')
   )
     return parseMercadoPago(content, filename);
 

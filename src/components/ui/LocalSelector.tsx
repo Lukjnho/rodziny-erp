@@ -1,6 +1,6 @@
 import { cn } from '@/lib/utils';
 
-type LocalOption = 'vedia' | 'saavedra' | 'ambos' | 'consolidado';
+type LocalOption = 'vedia' | 'saavedra' | 'ambos' | 'consolidado' | 'sas';
 
 interface Props {
   value: string;
@@ -13,6 +13,7 @@ const LABELS: Record<LocalOption, string> = {
   saavedra: 'Rodziny Saavedra',
   ambos: 'Ambos Locales',
   consolidado: 'Consolidado',
+  sas: 'Rodziny S.A.S.',
 };
 
 export function LocalSelector({ value, onChange, options = ['vedia', 'saavedra'] }: Props) {

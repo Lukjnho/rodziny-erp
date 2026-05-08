@@ -4,11 +4,12 @@ import { supabase } from '@/lib/supabase';
 import { formatARS, formatFecha, cn } from '@/lib/utils';
 import type { Gasto, MedioPago, PagoGasto } from './types';
 import { MEDIO_PAGO_LABEL } from './types';
+import { PagarGastoModal } from './PagarGastoModal';
 
 type Vista = 'pendientes' | 'pagados' | 'todos';
 
 interface Props {
-  local: 'vedia' | 'saavedra' | 'ambos';
+  local: 'vedia' | 'saavedra' | 'ambos' | 'sas';
   desde: string;
   hasta: string;
 }
@@ -18,16 +19,8 @@ export function PagosPanel({ local, desde, hasta }: Props) {
   const [vista, setVista] = useState<Vista>('pendientes');
   const [busqueda, setBusqueda] = useState('');
 
-  // Modal de pago
+  // Modal único de pago — delegado a PagarGastoModal
   const [gastoAPagar, setGastoAPagar] = useState<Gasto | null>(null);
-  const [pagoFecha, setPagoFecha] = useState(() => new Date().toISOString().split('T')[0]);
-  const [pagoMedio, setPagoMedio] = useState<MedioPago>('efectivo');
-  const [pagoReferencia, setPagoReferencia] = useState('');
-  const [pagoNotas, setPagoNotas] = useState('');
-  const [pagoComprobante, setPagoComprobante] = useState<File | null>(null);
-  const [pagoFactura, setPagoFactura] = useState<File | null>(null);
-  const [guardando, setGuardando] = useState(false);
-  const [errorPago, setErrorPago] = useState<string | null>(null);
 
   const HOY = new Date().toISOString().split('T')[0];
 
@@ -111,126 +104,6 @@ export function PagosPanel({ local, desde, hasta }: Props) {
     [pendientes, pagosRango],
   );
 
-  function abrirModalPago(g: Gasto) {
-    setGastoAPagar(g);
-    setPagoFecha(new Date().toISOString().split('T')[0]);
-    setPagoMedio('efectivo');
-    setPagoReferencia('');
-    setPagoNotas('');
-    setPagoComprobante(null);
-    setPagoFactura(null);
-    setErrorPago(null);
-  }
-
-  function cerrarModalPago() {
-    setGastoAPagar(null);
-    setErrorPago(null);
-    setPagoComprobante(null);
-    setPagoFactura(null);
-  }
-
-  async function abrirArchivoExistente(path: string) {
-    const BUCKETS = ['gastos-comprobantes', 'comprobantes', 'recepciones-fotos'];
-    for (const bucket of BUCKETS) {
-      const { data } = await supabase.storage.from(bucket).createSignedUrl(path, 60);
-      if (data?.signedUrl) {
-        window.open(data.signedUrl, '_blank');
-        return;
-      }
-    }
-    window.alert('No se pudo abrir el archivo');
-  }
-
-  async function confirmarPago() {
-    if (!gastoAPagar) return;
-    setErrorPago(null);
-    // Validación: N° de operación obligatorio salvo efectivo. Es la pieza
-    // que permite conciliar con el extracto bancario al importar el CSV.
-    if (pagoMedio !== 'efectivo' && !pagoReferencia.trim()) {
-      setErrorPago(
-        'N° de operación requerido. Copialo del comprobante (transferencia / cheque / cupón) para que se concilie automáticamente con el extracto.',
-      );
-      return;
-    }
-    setGuardando(true);
-    try {
-      const carpeta = `${gastoAPagar.local}/${gastoAPagar.fecha.substring(0, 7)}`;
-
-      // Subir comprobante de pago si hay
-      let pathComprobantePago: string | null = null;
-      if (pagoComprobante) {
-        const ext = pagoComprobante.name.split('.').pop()?.toLowerCase() || 'pdf';
-        const path = `${carpeta}/pago_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
-        const { error } = await supabase.storage
-          .from('gastos-comprobantes')
-          .upload(path, pagoComprobante, {
-            contentType: pagoComprobante.type || 'application/octet-stream',
-          });
-        if (error) throw error;
-        pathComprobantePago = path;
-      }
-
-      // Subir factura del proveedor si hay (y el gasto no la tiene aún)
-      let pathFactura = gastoAPagar.factura_path ?? null;
-      if (pagoFactura && !gastoAPagar.factura_path) {
-        const ext = pagoFactura.name.split('.').pop()?.toLowerCase() || 'pdf';
-        const path = `${carpeta}/factura_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
-        const { error } = await supabase.storage
-          .from('gastos-comprobantes')
-          .upload(path, pagoFactura, {
-            contentType: pagoFactura.type || 'application/octet-stream',
-          });
-        if (error) throw error;
-        pathFactura = path;
-      }
-
-      // Update del gasto
-      const updateGasto: Record<string, unknown> = {
-        estado_pago: 'Pagado',
-        fecha_vencimiento: pagoFecha,
-      };
-      if (pathFactura && pathFactura !== gastoAPagar.factura_path) {
-        updateGasto.factura_path = pathFactura;
-      }
-      // Sincronizar el comprobante de pago al gasto para que aparezca en el
-      // listado (que lee gastos.comprobante_path). Solo si el gasto no tenía
-      // uno ya cargado, para no pisar comprobantes previos (ej: recepción QR).
-      if (pathComprobantePago && !gastoAPagar.comprobante_path) {
-        updateGasto.comprobante_path = pathComprobantePago;
-      }
-      const { error: errUpd } = await supabase
-        .from('gastos')
-        .update(updateGasto)
-        .eq('id', gastoAPagar.id);
-      if (errUpd) throw errUpd;
-
-      // Insert del pago. El N° de operación va en su campo dedicado
-      // `numero_operacion` para que el matcher de import pueda conciliarlo
-      // por igualdad exacta con la referencia del movimiento bancario.
-      const { error: errIns } = await supabase.from('pagos_gastos').insert({
-        gasto_id: gastoAPagar.id,
-        fecha_pago: pagoFecha,
-        monto: gastoAPagar.importe_total,
-        medio_pago: pagoMedio,
-        numero_operacion: pagoReferencia.trim() || null,
-        notas: pagoNotas.trim() || null,
-        comprobante_pago_path: pathComprobantePago,
-      });
-      if (errIns) throw errIns;
-
-      cerrarModalPago();
-      qc.invalidateQueries({ queryKey: ['gastos_pagos_pendientes'] });
-      qc.invalidateQueries({ queryKey: ['gastos_pagos_rango'] });
-      qc.invalidateQueries({ queryKey: ['gastos_listado'] });
-      qc.invalidateQueries({ queryKey: ['pagos_gastos'] });
-      qc.invalidateQueries({ queryKey: ['gastos_resumen_kpis'] });
-    } catch (e) {
-      setErrorPago((e as Error).message ?? 'Error al guardar el pago');
-    } finally {
-      setGuardando(false);
-    }
-  }
-
   async function revertirPago(g: Gasto) {
     if (
       !window.confirm(
@@ -241,7 +114,7 @@ export function PagosPanel({ local, desde, hasta }: Props) {
     const { error } = await supabase
       .from('gastos')
       .update({
-        estado_pago: 'pendiente',
+        estado_pago: 'Pendiente',
         fecha_vencimiento: null,
       })
       .eq('id', g.id);
@@ -373,7 +246,10 @@ export function PagosPanel({ local, desde, hasta }: Props) {
                         <span className="text-gray-300">—</span>
                       ) : venc ? (
                         <span
-                          className={cn('text-xs', vencido ? 'font-semibold text-red-700' : 'text-gray-600')}
+                          className={cn(
+                            'text-xs',
+                            vencido ? 'font-semibold text-red-700' : 'text-gray-600',
+                          )}
                           title={vencido ? 'Vencido — pagar cuanto antes' : 'Vence en el futuro'}
                         >
                           {formatFecha(venc)}
@@ -393,7 +269,7 @@ export function PagosPanel({ local, desde, hasta }: Props) {
                     <td className="whitespace-nowrap px-3 py-2 text-right">
                       {!pagado ? (
                         <button
-                          onClick={() => abrirModalPago(g)}
+                          onClick={() => setGastoAPagar(g)}
                           className="rounded bg-green-600 px-2 py-1 text-[10px] font-medium text-white hover:bg-green-700"
                         >
                           Registrar pago
@@ -430,157 +306,12 @@ export function PagosPanel({ local, desde, hasta }: Props) {
         </div>
       </div>
 
-      {/* Modal de pago */}
-      {gastoAPagar && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="max-h-[90vh] w-full max-w-md space-y-4 overflow-y-auto rounded-xl bg-white p-6 shadow-xl">
-            <div>
-              <h3 className="text-sm font-semibold text-gray-800">Registrar pago</h3>
-              <p className="mt-0.5 text-xs text-gray-500">
-                {gastoAPagar.proveedor || 'Sin proveedor'} —{' '}
-                <span className="font-semibold">{formatARS(gastoAPagar.importe_total)}</span>
-                <span className="ml-1 text-gray-400">· {formatFecha(gastoAPagar.fecha)}</span>
-              </p>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="mb-1 block text-xs font-medium text-gray-600">
-                  Fecha de pago
-                </label>
-                <input
-                  type="date"
-                  value={pagoFecha}
-                  onChange={(e) => setPagoFecha(e.target.value)}
-                  className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm"
-                />
-              </div>
-              <div>
-                <label className="mb-1 block text-xs font-medium text-gray-600">
-                  Medio de pago
-                </label>
-                <select
-                  value={pagoMedio}
-                  onChange={(e) => setPagoMedio(e.target.value as MedioPago)}
-                  className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm"
-                >
-                  {Object.entries(MEDIO_PAGO_LABEL).map(([k, v]) => (
-                    <option key={k} value={k}>
-                      {v}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <div>
-              <label className="mb-1 block text-xs font-medium text-gray-600">
-                N° de operación{' '}
-                {pagoMedio === 'efectivo' ? (
-                  <span className="text-gray-400">(opcional)</span>
-                ) : (
-                  <span className="text-red-600">*</span>
-                )}
-              </label>
-              <input
-                type="text"
-                value={pagoReferencia}
-                onChange={(e) => setPagoReferencia(e.target.value)}
-                placeholder="Ej: 157727339602 (MP) · NRO 1234 (cheque) · cupón ICBC..."
-                className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm font-mono"
-              />
-              {pagoMedio !== 'efectivo' && (
-                <p className="mt-1 text-[11px] text-gray-500">
-                  Copialo del comprobante. Permite conciliar automáticamente con
-                  el extracto cuando importes el CSV.
-                </p>
-              )}
-            </div>
-
-            <div>
-              <label className="mb-1 block text-xs font-medium text-gray-600">
-                Comprobante de pago <span className="text-gray-400">(transferencia / voucher)</span>
-              </label>
-              <input
-                type="file"
-                accept="image/*,application/pdf"
-                onChange={(e) => setPagoComprobante(e.target.files?.[0] ?? null)}
-                className="w-full text-xs file:mr-2 file:rounded file:border-0 file:bg-rodziny-700 file:px-2 file:py-1 file:text-[11px] file:text-white"
-              />
-              {pagoComprobante && (
-                <div className="mt-1 text-[11px] text-green-700">📎 {pagoComprobante.name}</div>
-              )}
-            </div>
-
-            <div>
-              <label className="mb-1 block text-xs font-medium text-gray-600">
-                Factura del proveedor{' '}
-                <span className="text-gray-400">(A / C / remito)</span>
-              </label>
-              {gastoAPagar.factura_path ? (
-                <div className="flex items-center justify-between rounded-md border border-green-200 bg-green-50 px-3 py-1.5 text-xs">
-                  <span className="text-green-800">✓ Ya cargada en el gasto</span>
-                  <button
-                    type="button"
-                    onClick={() => abrirArchivoExistente(gastoAPagar.factura_path!)}
-                    className="text-rodziny-700 underline hover:text-rodziny-800"
-                  >
-                    Ver
-                  </button>
-                </div>
-              ) : (
-                <>
-                  <input
-                    type="file"
-                    accept="image/*,application/pdf"
-                    onChange={(e) => setPagoFactura(e.target.files?.[0] ?? null)}
-                    className="w-full text-xs file:mr-2 file:rounded file:border-0 file:bg-rodziny-700 file:px-2 file:py-1 file:text-[11px] file:text-white"
-                  />
-                  {pagoFactura && (
-                    <div className="mt-1 text-[11px] text-green-700">📎 {pagoFactura.name}</div>
-                  )}
-                </>
-              )}
-            </div>
-
-            <div>
-              <label className="mb-1 block text-xs font-medium text-gray-600">
-                Notas <span className="text-gray-400">(opcional)</span>
-              </label>
-              <textarea
-                value={pagoNotas}
-                onChange={(e) => setPagoNotas(e.target.value)}
-                placeholder="Observaciones sobre este pago..."
-                rows={2}
-                className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm"
-              />
-            </div>
-
-            {errorPago && (
-              <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-                {errorPago}
-              </div>
-            )}
-
-            <div className="flex justify-end gap-2 pt-2">
-              <button
-                onClick={cerrarModalPago}
-                disabled={guardando}
-                className="rounded-md border border-gray-300 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-50"
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={confirmarPago}
-                disabled={guardando}
-                className="rounded-md bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-50"
-              >
-                {guardando ? 'Guardando…' : 'Confirmar pago'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Modal único de pago */}
+      <PagarGastoModal
+        open={!!gastoAPagar}
+        gasto={gastoAPagar}
+        onClose={() => setGastoAPagar(null)}
+      />
     </div>
   );
 }

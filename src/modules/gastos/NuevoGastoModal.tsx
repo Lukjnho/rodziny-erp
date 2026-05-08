@@ -17,7 +17,7 @@ import { TIPO_COMPROBANTE_LABEL, MEDIO_PAGO_LABEL } from './types';
 
 export interface PrefillGasto {
   recepcion_id?: string;
-  local?: 'vedia' | 'saavedra';
+  local?: 'vedia' | 'saavedra' | 'sas';
   proveedor_nombre?: string | null;
   comprobante_path?: string | null;
   items?: { producto_id: string; producto_nombre: string; cantidad: number; unidad: string }[];
@@ -42,7 +42,7 @@ interface Props {
 const HOY = () => new Date().toISOString().split('T')[0];
 
 interface FormState {
-  local: 'vedia' | 'saavedra';
+  local: 'vedia' | 'saavedra' | 'sas';
   fecha: string; // fecha del comprobante (devengado)
   fecha_vencimiento: string;
   proveedor_id: string | null;
@@ -863,7 +863,7 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
                 <select
                   value={form.local}
                   onChange={(e) =>
-                    setForm({ ...form, local: e.target.value as 'vedia' | 'saavedra' })
+                    setForm({ ...form, local: e.target.value as 'vedia' | 'saavedra' | 'sas' })
                   }
                   className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm"
                 >

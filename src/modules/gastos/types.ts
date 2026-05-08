@@ -18,6 +18,8 @@ export type TipoEdr =
 export type MedioPago =
   | 'efectivo'
   | 'transferencia_mp'
+  | 'transferencia_galicia'
+  | 'transferencia_icbc'
   | 'cheque_galicia'
   | 'tarjeta_icbc'
   | 'otro';
@@ -25,7 +27,9 @@ export type MedioPago =
 export const MEDIO_PAGO_LABEL: Record<MedioPago, string> = {
   efectivo: 'Efectivo',
   transferencia_mp: 'Transferencia (MercadoPago)',
-  cheque_galicia: 'Cheque (Galicia)',
+  transferencia_galicia: 'Transferencia (Galicia)',
+  transferencia_icbc: 'Transferencia (ICBC)',
+  cheque_galicia: 'Cheque / ECHEQ (Galicia)',
   tarjeta_icbc: 'Tarjeta Visa (ICBC)',
   otro: 'Otro',
 };
@@ -54,7 +58,15 @@ export type EstadoPago = 'pendiente' | 'pagado' | 'parcial';
 export interface Proveedor {
   id: string;
   razon_social: string;
-  cuit: string | null;
+  nombre_comercial: string | null;
+  cuit: string | null; // CUIT fiscal (factura)
+  // CUITs alternativos del titular de la cuenta destino de transferencia
+  // (ej: facturás a Miliana SRL pero transferís a la cuenta personal de "Mendoza").
+  // La RPC buscar_proveedor_por_texto los usa para conciliar el extracto.
+  cuits_alt: string[] | null;
+  // Variantes del nombre con que aparece el proveedor en el extracto bancario
+  // o en gastos cargados a mano (ej: "Mendoza", "MILIANA FIAM", "Miliana S.A.S.").
+  aliases: string[] | null;
   condicion_iva: CondicionIVA | null;
   categoria_default_id: string | null;
   medio_pago_default: MedioPago | null;
@@ -78,9 +90,13 @@ export interface CategoriaGasto {
   created_at: string;
 }
 
+// 'sas' = gastos de la razón social Rodziny S.A.S. (cargos bancarios, impuestos
+// generales, comisiones MP, etc.) que no son atribuibles a un local operativo.
+export type LocalGasto = 'vedia' | 'saavedra' | 'sas';
+
 export interface Gasto {
   id: string;
-  local: 'vedia' | 'saavedra';
+  local: LocalGasto;
   fecha: string; // fecha del comprobante (devengado)
   fecha_vencimiento: string | null;
   proveedor: string | null; // legacy string libre
@@ -107,6 +123,7 @@ export interface Gasto {
   periodo: string; // YYYY-MM
   fudo_id: string | null;
   items_json: ItemGastoStock[] | null; // ítems vinculados al stock — persistidos para poder editarlos
+  created_at: string; // momento de carga — usado para ordenar el listado (último cargado arriba)
 }
 
 export interface PagoGasto {

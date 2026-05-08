@@ -37,7 +37,7 @@ interface CatData {
 }
 
 interface Props {
-  local: 'vedia' | 'saavedra' | 'ambos';
+  local: 'vedia' | 'saavedra' | 'ambos' | 'sas';
 }
 
 export function AnalisisGastos({ local }: Props) {

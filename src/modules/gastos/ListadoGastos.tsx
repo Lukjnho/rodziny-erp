@@ -6,6 +6,15 @@ import type { Gasto } from './types';
 import { TIPO_COMPROBANTE_LABEL } from './types';
 import { NuevoGastoModal } from './NuevoGastoModal';
 
+// Normaliza el estado_pago para evitar mismatches por capitalización
+// (datos viejos: "Pagado", "pagado", "Pendiente", "A pagar", "Parcial")
+function estadoNormalizado(g: Gasto): 'pagado' | 'parcial' | 'pendiente' {
+  const v = (g.estado_pago ?? '').toLowerCase().trim();
+  if (v === 'pagado') return 'pagado';
+  if (v === 'parcial') return 'parcial';
+  return 'pendiente';
+}
+
 // Tipos de comprobante que exigen tener el archivo fiscal (factura_path) adjunto
 const TIPOS_REQUIEREN_FACTURA = new Set(['factura_a', 'factura_c', 'remito']);
 const requiereFactura = (g: Gasto) =>
@@ -21,7 +30,7 @@ function ultimoDiaDelMes() {
 }
 
 interface Props {
-  local: 'vedia' | 'saavedra' | 'ambos';
+  local: 'vedia' | 'saavedra' | 'ambos' | 'sas';
   desde?: string;       // default: primer día del mes
   hasta?: string;       // default: último día del mes
   onEditar?: (g: Gasto) => void; // si no viene, usa modal interno (modo standalone)
@@ -59,6 +68,9 @@ export function ListadoGastos({
         .gte('fecha', desde)
         .lte('fecha', hasta)
         .neq('cancelado', true)
+        // Último cargado primero. Tiebreaker por fecha del comprobante para los gastos viejos
+        // que fueron backfilleados con created_at = fecha::timestamptz.
+        .order('created_at', { ascending: false })
         .order('fecha', { ascending: false })
         .limit(2000);
       if (local !== 'ambos') q = q.eq('local', local);
@@ -68,12 +80,59 @@ export function ListadoGastos({
     },
   });
 
+  // IDs de gastos que ya tienen un movimiento bancario vinculado (= conciliados con extracto)
+  const { data: gastosConciliadosSet } = useQuery({
+    queryKey: ['gastos_conciliados_ids', local, desde, hasta, gastos?.length ?? 0],
+    enabled: !!gastos && gastos.length > 0,
+    queryFn: async () => {
+      const ids = (gastos ?? []).map((g) => g.id);
+      const set = new Set<string>();
+      const PAGE = 800;
+      for (let i = 0; i < ids.length; i += PAGE) {
+        const batch = ids.slice(i, i + PAGE);
+        const { data } = await supabase
+          .from('movimientos_bancarios')
+          .select('gasto_id')
+          .in('gasto_id', batch);
+        for (const m of data ?? []) {
+          if (m.gasto_id) set.add(m.gasto_id as string);
+        }
+      }
+      return set;
+    },
+  });
+
+  // Suma de pagos por gasto — para mostrar progreso en parciales
+  const { data: pagosPorGasto } = useQuery({
+    queryKey: ['gastos_pagos_map', local, desde, hasta, gastos?.length ?? 0],
+    enabled: !!gastos && gastos.length > 0,
+    queryFn: async () => {
+      const ids = (gastos ?? []).map((g) => g.id);
+      const map = new Map<string, number>();
+      const PAGE = 800;
+      for (let i = 0; i < ids.length; i += PAGE) {
+        const batch = ids.slice(i, i + PAGE);
+        const { data } = await supabase
+          .from('pagos_gastos')
+          .select('gasto_id, monto')
+          .in('gasto_id', batch);
+        for (const p of data ?? []) {
+          if (p.gasto_id) {
+            map.set(p.gasto_id as string, (map.get(p.gasto_id as string) ?? 0) + Number(p.monto ?? 0));
+          }
+        }
+      }
+      return map;
+    },
+  });
+
   const filtrados = useMemo(() => {
     let lista = gastos ?? [];
     if (filtroEstado === 'pendiente') {
-      lista = lista.filter((g) => (g.estado_pago ?? '').toLowerCase() !== 'pagado');
+      // "Pendientes" incluye Parciales (todavía deben algo)
+      lista = lista.filter((g) => estadoNormalizado(g) !== 'pagado');
     } else if (filtroEstado === 'pagado') {
-      lista = lista.filter((g) => (g.estado_pago ?? '').toLowerCase() === 'pagado');
+      lista = lista.filter((g) => estadoNormalizado(g) === 'pagado');
     }
     if (filtroProveedor) {
       const f = filtroProveedor.toLowerCase();
@@ -101,6 +160,16 @@ export function ListadoGastos({
 
   // Conteo total de gastos que exigen factura y no la tienen — KPI clickeable
   const sinFacturaCount = useMemo(() => (gastos ?? []).filter(requiereFactura).length, [gastos]);
+
+  // KPI: cantidad y saldo total de gastos pendientes (Pendiente + Parcial)
+  const pendientesKpi = useMemo(() => {
+    const pendientes = (gastos ?? []).filter((g) => estadoNormalizado(g) !== 'pagado');
+    const saldo = pendientes.reduce((s, g) => {
+      const yaPagado = pagosPorGasto?.get(g.id) ?? 0;
+      return s + Math.max(0, Number(g.importe_total) - yaPagado);
+    }, 0);
+    return { cantidad: pendientes.length, saldo };
+  }, [gastos, pagosPorGasto]);
 
   const totales = useMemo(() => {
     return filtrados.reduce(
@@ -217,6 +286,23 @@ export function ListadoGastos({
             </button>
           ))}
         </div>
+        {/* KPI clickeable: a pagar */}
+        <button
+          type="button"
+          onClick={() => setFiltroEstado(filtroEstado === 'pendiente' ? 'todos' : 'pendiente')}
+          disabled={pendientesKpi.cantidad === 0}
+          className={cn(
+            'rounded border px-2 py-1 text-xs',
+            pendientesKpi.cantidad === 0
+              ? 'cursor-default border-gray-200 bg-gray-50 text-gray-400'
+              : filtroEstado === 'pendiente'
+                ? 'border-amber-400 bg-amber-100 text-amber-900 ring-1 ring-amber-200'
+                : 'cursor-pointer border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100',
+          )}
+          title="Total a pagar (gastos Pendientes + saldo de Parciales)"
+        >
+          📋 A pagar: {pendientesKpi.cantidad} · {formatARS(pendientesKpi.saldo)}
+        </button>
         <button
           type="button"
           onClick={() => setFiltroSinFactura((v) => !v)}
@@ -270,7 +356,12 @@ export function ListadoGastos({
                 </tr>
               )}
               {filtrados.map((g) => {
-                const pagado = (g.estado_pago ?? '').toLowerCase() === 'pagado';
+                const estado = estadoNormalizado(g);
+                const pagado = estado === 'pagado';
+                const yaPagado = pagosPorGasto?.get(g.id) ?? 0;
+                const saldoRestante = Math.max(0, Number(g.importe_total) - yaPagado);
+                const hoyIso = new Date().toISOString().slice(0, 10);
+                const vencido = !pagado && g.fecha_vencimiento && g.fecha_vencimiento < hoyIso;
                 const tipoLabel = g.tipo_comprobante
                   ? (TIPO_COMPROBANTE_LABEL[
                       g.tipo_comprobante as keyof typeof TIPO_COMPROBANTE_LABEL
@@ -305,14 +396,45 @@ export function ListadoGastos({
                       {formatARS(g.importe_total)}
                     </td>
                     <td className="px-3 py-2 text-center">
-                      <span
-                        className={cn(
-                          'inline-block rounded px-2 py-0.5 text-[10px] font-medium',
-                          pagado ? 'bg-green-100 text-green-800' : 'bg-amber-100 text-amber-800',
+                      <div className="flex flex-col items-center gap-0.5">
+                        <span
+                          className={cn(
+                            'inline-block rounded px-2 py-0.5 text-[10px] font-medium',
+                            estado === 'pagado'
+                              ? 'bg-green-100 text-green-800'
+                              : estado === 'parcial'
+                                ? 'bg-orange-100 text-orange-800'
+                                : 'bg-amber-100 text-amber-800',
+                          )}
+                        >
+                          {estado === 'pagado' ? 'Pagado' : estado === 'parcial' ? 'Parcial' : 'Pendiente'}
+                        </span>
+                        {estado === 'parcial' && (
+                          <span className="text-[9px] tabular-nums text-orange-700" title={`Pagado ${formatARS(yaPagado)} de ${formatARS(g.importe_total)}`}>
+                            {formatARS(yaPagado)} / {formatARS(g.importe_total)}
+                          </span>
                         )}
-                      >
-                        {pagado ? 'Pagado' : 'Pendiente'}
-                      </span>
+                        {!pagado && g.fecha_vencimiento && (
+                          <span
+                            className={cn(
+                              'text-[9px] font-medium',
+                              vencido ? 'text-red-600' : 'text-gray-500',
+                            )}
+                            title={vencido ? 'Vencido — pagar ya' : 'Fecha de vencimiento'}
+                          >
+                            {vencido ? '⚠ Vencido ' : 'Vence '}
+                            {formatFecha(g.fecha_vencimiento)}
+                          </span>
+                        )}
+                        {gastosConciliadosSet?.has(g.id) && (
+                          <span
+                            className="inline-block rounded bg-blue-100 px-1.5 py-0.5 text-[9px] font-medium text-blue-800"
+                            title="Vinculado a su movimiento del extracto bancario"
+                          >
+                            🔗 Conciliado
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="px-3 py-2 text-center">
                       <div className="flex items-center justify-center gap-1.5">
@@ -392,6 +514,7 @@ export function ListadoGastos({
           gastoEditando={gastoEditandoInterno}
         />
       )}
+
     </div>
   );
 }
