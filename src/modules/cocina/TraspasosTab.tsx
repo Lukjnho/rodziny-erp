@@ -9,15 +9,13 @@ interface Producto {
   nombre: string;
   codigo: string;
 }
-interface LoteStock {
+// Fila de la vista BD v_cocina_stock_pastas — fuente única de verdad del stock de cámara.
+interface StockPastaView {
   producto_id: string;
-  porciones: number | null;
   local: string;
-}
-interface MovStock {
-  producto_id: string;
-  porciones: number;
-  local: string;
+  porciones_camara: number | null;
+  porciones_traspasadas: number | null;
+  porciones_merma: number | null;
 }
 type StockMap = Map<string, number>; // key = `${producto_id}|${local}`
 
@@ -81,58 +79,31 @@ export function TraspasosTab() {
     },
   });
 
-  const { data: lotesCamara } = useQuery({
-    queryKey: ['cocina-stock-lotes', 'camara'],
+  // Stock disponible: viene de la vista v_cocina_stock_pastas (misma fuente que el Dashboard).
+  // porciones_camara ya incluye los ajustes manuales acumulados en cocina_ajustes_stock.
+  const { data: stockPastas } = useQuery({
+    queryKey: ['cocina_stock_pastas'],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from('cocina_lotes_pasta')
-        .select('producto_id, porciones, local')
-        .eq('ubicacion', 'camara_congelado');
+        .from('v_cocina_stock_pastas')
+        .select('producto_id, local, porciones_camara, porciones_traspasadas, porciones_merma');
       if (error) throw error;
-      return data as LoteStock[];
+      return (data ?? []) as StockPastaView[];
     },
   });
 
-  const { data: traspasosTotales } = useQuery({
-    queryKey: ['cocina-stock-traspasos'],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('cocina_traspasos')
-        .select('producto_id, porciones, local');
-      if (error) throw error;
-      return data as MovStock[];
-    },
-  });
-
-  const { data: mermasTotales } = useQuery({
-    queryKey: ['cocina-stock-merma'],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('cocina_merma')
-        .select('producto_id, porciones, local');
-      if (error) throw error;
-      return data as MovStock[];
-    },
-  });
-
-  // Stock disponible por producto × local: cámara − traspasos − merma
+  // Stock disponible por producto × local: clamp a 0 (nunca negativo).
   const stockDisponible = useMemo<StockMap>(() => {
     const map: StockMap = new Map();
-    if (!lotesCamara || !traspasosTotales || !mermasTotales) return map;
-    for (const l of lotesCamara) {
-      const k = stockKey(l.producto_id, l.local);
-      map.set(k, (map.get(k) ?? 0) + (l.porciones ?? 0));
-    }
-    for (const t of traspasosTotales) {
-      const k = stockKey(t.producto_id, t.local);
-      map.set(k, (map.get(k) ?? 0) - t.porciones);
-    }
-    for (const m of mermasTotales) {
-      const k = stockKey(m.producto_id, m.local);
-      map.set(k, (map.get(k) ?? 0) - m.porciones);
+    if (!stockPastas) return map;
+    for (const r of stockPastas) {
+      const camara = Number(r.porciones_camara) || 0;
+      const traspasos = Number(r.porciones_traspasadas) || 0;
+      const merma = Number(r.porciones_merma) || 0;
+      map.set(stockKey(r.producto_id, r.local), Math.max(0, camara - traspasos - merma));
     }
     return map;
-  }, [lotesCamara, traspasosTotales, mermasTotales]);
+  }, [stockPastas]);
 
   const { data: traspasos, isLoading: cargandoT } = useQuery({
     queryKey: ['cocina-traspasos', fecha],
@@ -196,6 +167,7 @@ export function TraspasosTab() {
       qc.invalidateQueries({ queryKey: ['cocina-stock'] });
       qc.invalidateQueries({ queryKey: ['cocina-stock-traspasos'] });
       qc.invalidateQueries({ queryKey: ['cocina-stock-traspasos-hoy'] });
+      qc.invalidateQueries({ queryKey: ['cocina_stock_pastas'] });
     },
   });
 
@@ -209,6 +181,7 @@ export function TraspasosTab() {
       qc.invalidateQueries({ queryKey: ['cocina-stock'] });
       qc.invalidateQueries({ queryKey: ['cocina-stock-merma'] });
       qc.invalidateQueries({ queryKey: ['cocina-stock-merma-hoy'] });
+      qc.invalidateQueries({ queryKey: ['cocina_stock_pastas'] });
     },
   });
 
