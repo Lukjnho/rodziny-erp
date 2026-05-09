@@ -293,6 +293,23 @@ function formatValor(v: number, formato?: Formato): string {
   return v !== 0 ? formatARS(v) : '—';
 }
 
+// Sentido de la fila para colorear el Δ% mes anterior:
+//   +1 → subir el valor numérico es bueno (ingresos, márgenes; también IVA y financiero
+//        que se almacenan en negativo: subir = menos negativo = mejor)
+//   -1 → subir el valor numérico es malo (costos, impuestos, anticipos)
+//    0 → neutro (informativos, ticket promedio): muestra el delta en gris
+const SENTIDO_FILA: Record<string, 1 | -1 | 0> = {
+  ing_bruto: 1, iva_debito: 1, dif_arqueo: 1, __ing_netos: 1,
+  __ticket_prom: 0, __cortesias_info: 0, __otros_desc: 0,
+  cmv_alimentos: -1, cmv_bebidas: -1, cmv_indirectos: -1, __cmv_total: -1,
+  __margen_bruto: 1,
+  pers_sueldos: -1, pers_cargas: -1, __pers_total: -1, __prime_cost: -1,
+  gastos_op: -1, impuestos_op: -1,
+  __ebitda: 1, amortizaciones: -1, __ebit: 1,
+  fin_intereses: 1, fin_arca: -1, fin_prestamo: -1, __fin_total: 1,
+  __rdo_antes: 1, anticipo_gcias: -1, __rdo_neto: 1,
+};
+
 // ── componente ────────────────────────────────────────────────────────────────
 export function EstadoResultados({ embedded = false }: { embedded?: boolean } = {}) {
   const [año, setAño] = useState(() => String(new Date().getFullYear()));
@@ -373,6 +390,29 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
     } finally {
       setSincronizando(false);
     }
+  }
+
+  // Δ% vs mes anterior (con datos). Devuelve null si no se puede calcular.
+  // Ignora cambios menores al 0.5% para no ensuciar la tabla con ruido.
+  function calcularDelta(filaKey: string, mes: string): number | null {
+    const idx = meses.indexOf(mes);
+    if (idx <= 0) return null;
+    // Buscar el mes anterior CON datos. Saltea meses vacíos para que enero→marzo
+    // no muestre delta con respecto a febrero=0.
+    let prev: string | null = null;
+    for (let i = idx - 1; i >= 0; i--) {
+      if (mesesConDatos.has(meses[i])) {
+        prev = meses[i];
+        break;
+      }
+    }
+    if (!prev) return null;
+    const valActual = valoresPorMes.get(mes)?.get(filaKey) ?? 0;
+    const valPrev = valoresPorMes.get(prev)?.get(filaKey) ?? 0;
+    if (valPrev === 0 || valActual === 0) return null;
+    const pct = ((valActual - valPrev) / Math.abs(valPrev)) * 100;
+    if (Math.abs(pct) < 0.5) return null;
+    return pct;
   }
 
   // Texto "hace X min" / "hace X h" / "hace X días". Más viejo que 7d → fecha.
@@ -956,6 +996,20 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
                       const color = esKpi ? semaforo(fila.key, valor) : null;
                       const sinDatos = !mesesConDatos.has(mes);
 
+                      // Δ% vs mes anterior con datos. Solo en filas con sentido definido
+                      // (no en manuales, KPIs o informativos sin clasificar).
+                      const sentido = SENTIDO_FILA[fila.key];
+                      const mostrarDelta =
+                        !esKpi && !esManual && sentido !== undefined && !sinDatos && valor !== 0;
+                      const deltaPct = mostrarDelta ? calcularDelta(fila.key, mes) : null;
+                      const deltaColor = (() => {
+                        if (deltaPct === null || sentido === undefined) return '';
+                        if (sentido === 0) return 'text-gray-400';
+                        const subio = deltaPct > 0;
+                        const esBueno = (sentido === 1 && subio) || (sentido === -1 && !subio);
+                        return esBueno ? 'text-emerald-600' : 'text-red-500';
+                      })();
+
                       return (
                         <td
                           key={mes}
@@ -1007,6 +1061,11 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
                                 '—'
                               )}
                             </span>
+                          )}
+                          {deltaPct !== null && !estaEditando && (
+                            <div className={cn('mt-0.5 text-[10px] leading-none', deltaColor)}>
+                              {deltaPct > 0 ? '↑' : '↓'} {Math.abs(deltaPct).toFixed(1)}%
+                            </div>
                           )}
                         </td>
                       );
