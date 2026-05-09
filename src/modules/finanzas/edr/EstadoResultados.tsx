@@ -304,32 +304,89 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
   const [valorEdit, setValorEdit] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
   const qc = useQueryClient();
-  const [sincronizando, setSincronizando] = useState<'vedia' | 'saavedra' | null>(null);
+  const [sincronizando, setSincronizando] = useState(false);
   const [resumenSync, setResumenSync] = useState<string | null>(null);
 
-  async function sincronizarFudo(loc: 'vedia' | 'saavedra') {
-    setSincronizando(loc);
+  // Última sync OK por local (para mostrar "hace X min" en el header).
+  const { data: ultimaSync } = useQuery({
+    queryKey: ['fudo_sync_runs_ultima'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('fudo_sync_runs')
+        .select('local, finished_at, tickets_importados')
+        .eq('status', 'ok')
+        .not('finished_at', 'is', null)
+        .order('finished_at', { ascending: false })
+        .limit(20);
+      if (error) throw error;
+      const byLocal = new Map<string, { finished_at: string; tickets: number }>();
+      for (const r of data ?? []) {
+        if (!byLocal.has(r.local))
+          byLocal.set(r.local, {
+            finished_at: r.finished_at as string,
+            tickets: r.tickets_importados as number,
+          });
+      }
+      return byLocal;
+    },
+    refetchInterval: 60_000, // refresca el "hace X min" cada minuto
+  });
+
+  // Sync de ambos locales en paralelo. Un solo botón en el header.
+  async function sincronizarFudoAmbos() {
+    setSincronizando(true);
     setResumenSync(null);
     try {
-      const { data: resp, error: err } = await supabase.functions.invoke('fudo-importar-ventas', {
-        body: { local: loc, anio: año },
-      });
-      if (err) throw new Error(err.message);
-      if (!resp?.ok) throw new Error(resp?.error ?? 'Error desconocido');
-      const d = resp.data;
-      setResumenSync(
-        `${loc.toUpperCase()} ${año}: ${d.ticketsImportados} tickets · ${d.dividendosImportados} pagos MP Lucas` +
-          (d.errores?.length ? ` · ${d.errores.length} errores` : ''),
+      const results = await Promise.all(
+        (['vedia', 'saavedra'] as const).map(async (loc) => {
+          const { data: resp, error: err } = await supabase.functions.invoke(
+            'fudo-importar-ventas',
+            { body: { local: loc, anio: año } },
+          );
+          if (err) return { loc, ok: false, error: err.message };
+          if (!resp?.ok) return { loc, ok: false, error: resp?.error ?? 'Error desconocido' };
+          return {
+            loc,
+            ok: true,
+            tickets: resp.data.ticketsImportados as number,
+            dividendos: resp.data.dividendosImportados as number,
+            errores: (resp.data.errores ?? []) as string[],
+          };
+        }),
       );
-      // Invalidar todas las queries del EdR
+
+      const partes = results.map((r) => {
+        if (!r.ok) return `${r.loc}: ❌ ${r.error}`;
+        const errSuf = r.errores && r.errores.length ? ` · ${r.errores.length} errores` : '';
+        const divSuf = r.dividendos ? ` · ${r.dividendos} pagos Lucas` : '';
+        return `${r.loc}: ${r.tickets} tickets${divSuf}${errSuf}`;
+      });
+      const algunoFalló = results.some((r) => !r.ok);
+      setResumenSync((algunoFalló ? '⚠ ' : '✓ ') + partes.join(' | '));
+
       qc.invalidateQueries({ queryKey: ['edr_tickets'] });
       qc.invalidateQueries({ queryKey: ['edr_gastos_resumen'] });
       qc.invalidateQueries({ queryKey: ['edr_partidas'] });
+      qc.invalidateQueries({ queryKey: ['fudo_sync_runs_ultima'] });
     } catch (e) {
       setResumenSync(`Error: ${(e as Error).message}`);
     } finally {
-      setSincronizando(null);
+      setSincronizando(false);
     }
+  }
+
+  // Texto "hace X min" / "hace X h" / "hace X días". Más viejo que 7d → fecha.
+  function tiempoRelativo(iso: string | undefined): string {
+    if (!iso) return 'sin sync';
+    const diff = Date.now() - new Date(iso).getTime();
+    const min = Math.floor(diff / 60_000);
+    if (min < 1) return 'recién';
+    if (min < 60) return `hace ${min} min`;
+    const h = Math.floor(min / 60);
+    if (h < 24) return `hace ${h} h`;
+    const d = Math.floor(h / 24);
+    if (d < 7) return `hace ${d} d`;
+    return new Date(iso).toLocaleDateString('es-AR');
   }
 
   // ── helpers para queries multi-local ────────────────────────────────────────
@@ -757,34 +814,33 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
             className="w-24 rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500"
           />
         </div>
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex items-center gap-3">
+          <div className="text-right text-[11px] leading-tight text-gray-500">
+            <div>
+              Vedia:{' '}
+              <span className="font-medium text-gray-700">
+                {tiempoRelativo(ultimaSync?.get('vedia')?.finished_at)}
+              </span>
+            </div>
+            <div>
+              Saavedra:{' '}
+              <span className="font-medium text-gray-700">
+                {tiempoRelativo(ultimaSync?.get('saavedra')?.finished_at)}
+              </span>
+            </div>
+          </div>
           <button
             type="button"
-            onClick={() => sincronizarFudo('vedia')}
-            disabled={!!sincronizando}
+            onClick={sincronizarFudoAmbos}
+            disabled={sincronizando}
             className={cn(
-              'rounded-md border px-3 py-1.5 text-xs font-medium transition-colors',
-              sincronizando === 'vedia'
+              'rounded-md border px-4 py-2 text-xs font-semibold transition-colors',
+              sincronizando
                 ? 'border-rodziny-300 bg-rodziny-50 text-rodziny-700'
                 : 'border-rodziny-600 bg-rodziny-600 text-white hover:bg-rodziny-700',
-              sincronizando && sincronizando !== 'vedia' && 'opacity-40',
             )}
           >
-            {sincronizando === 'vedia' ? 'Sincronizando...' : `↻ Vedia ${año}`}
-          </button>
-          <button
-            type="button"
-            onClick={() => sincronizarFudo('saavedra')}
-            disabled={!!sincronizando}
-            className={cn(
-              'rounded-md border px-3 py-1.5 text-xs font-medium transition-colors',
-              sincronizando === 'saavedra'
-                ? 'border-rodziny-300 bg-rodziny-50 text-rodziny-700'
-                : 'border-rodziny-600 bg-rodziny-600 text-white hover:bg-rodziny-700',
-              sincronizando && sincronizando !== 'saavedra' && 'opacity-40',
-            )}
-          >
-            {sincronizando === 'saavedra' ? 'Sincronizando...' : `↻ Saavedra ${año}`}
+            {sincronizando ? '↻ Sincronizando...' : `↻ Sincronizar Fudo ${año}`}
           </button>
         </div>
       </div>

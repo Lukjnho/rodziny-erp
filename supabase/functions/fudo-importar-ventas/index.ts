@@ -103,21 +103,32 @@ Deno.serve(async (req) => {
     return new Response('ok', { headers: corsHeaders })
   }
 
+  // Cliente y runId fuera del try para que el catch pueda registrar el error en
+  // fudo_sync_runs (sin esto, una falla post-insert quedaría como 'running' eterno).
+  const supaUrl = Deno.env.get('SUPABASE_URL')!
+  const supaKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+  const supabase = createClient(supaUrl, supaKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  })
+  let runId: string | null = null
+
   try {
     const body = await req.json().catch(() => ({}))
     const local: string = body.local
     const anio: string = String(body.anio ?? new Date().getFullYear())
+    const iniciadoPor: string | null = body.iniciado_por ?? null
 
     if (!local) throw new Error('Falta parámetro: local')
     if (!CREDENCIALES[local]) throw new Error(`Local "${local}" sin credenciales Fudo`)
     if (!/^\d{4}$/.test(anio)) throw new Error('anio inválido (formato YYYY)')
 
-    // Cliente Supabase admin (service role) para escribir en tablas
-    const supaUrl = Deno.env.get('SUPABASE_URL')!
-    const supaKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-    const supabase = createClient(supaUrl, supaKey, {
-      auth: { autoRefreshToken: false, persistSession: false },
-    })
+    // Registrar inicio del sync. El frontend lee finished_at para el "Última sync hace X min".
+    const { data: runData } = await supabase
+      .from('fudo_sync_runs')
+      .insert({ local, anio, status: 'running', iniciado_por: iniciadoPor })
+      .select('id')
+      .single()
+    runId = runData?.id ?? null
 
     const token = await autenticar(local)
 
@@ -489,6 +500,21 @@ Deno.serve(async (req) => {
       resumenPorMes[t.periodo].bruto += t.total_bruto
     }
 
+    // Cerrar el log con resultado final.
+    if (runId) {
+      await supabase
+        .from('fudo_sync_runs')
+        .update({
+          finished_at: new Date().toISOString(),
+          status: errores.length === 0 ? 'ok' : 'error',
+          tickets_importados: ticketsRows.length,
+          dividendos_importados: dividendosRows.length,
+          errores: errores,
+          error_msg: errores.length > 0 ? errores[0] : null,
+        })
+        .eq('id', runId)
+    }
+
     return new Response(
       JSON.stringify({
         ok: errores.length === 0,
@@ -508,8 +534,19 @@ Deno.serve(async (req) => {
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
     )
   } catch (e) {
+    const msg = (e as Error).message
+    if (runId) {
+      await supabase
+        .from('fudo_sync_runs')
+        .update({
+          finished_at: new Date().toISOString(),
+          status: 'error',
+          error_msg: msg,
+        })
+        .eq('id', runId)
+    }
     return new Response(
-      JSON.stringify({ ok: false, error: (e as Error).message }),
+      JSON.stringify({ ok: false, error: msg }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
     )
   }
