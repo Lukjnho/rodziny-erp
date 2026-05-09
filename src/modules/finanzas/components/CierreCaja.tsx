@@ -213,7 +213,9 @@ export function CierreCaja() {
           monto_contado: contado,
           fondo_apertura: fondoAp,
           fondo_siguiente: 0,
-          retiro: otrosRet,
+          // retiro es columna legacy; el dato real va en otros_retiros.
+          // Antes se guardaba duplicado, lo cual provocaba doble conteo.
+          retiro: 0,
           otros_retiros: otrosRet,
           otros_retiros_nota: fOtrosRetNota || null,
           nota: fNota || null,
@@ -328,18 +330,20 @@ export function CierreCaja() {
         verificados: 0,
         pendientes: 0,
         totalContado: 0,
-        totalRetiros: 0,
         totalOtrosRetiros: 0,
         totalFudo: 0,
+        totalFudoEfectivo: 0,
+        totalFondoApertura: 0,
       };
     let total = 0,
       positivos = 0,
       negativos = 0,
       verificados = 0,
       totalContado = 0,
-      totalRetiros = 0,
       totalOtrosRetiros = 0,
-      totalFudo = 0;
+      totalFudo = 0,
+      totalFudoEfectivo = 0,
+      totalFondoApertura = 0;
     for (const c of cierres) {
       const dif = calcDif(c);
       total += dif;
@@ -347,9 +351,14 @@ export function CierreCaja() {
       if (dif < 0) negativos += dif;
       if (c.verificado) verificados++;
       totalContado += c.monto_contado ?? 0;
-      totalRetiros += c.retiro ?? 0;
       totalOtrosRetiros += c.otros_retiros ?? 0;
       totalFudo += c.monto_esperado ?? 0;
+      totalFondoApertura += c.fondo_apertura ?? 0;
+      // Ingreso real del turno: fudo_efectivo si está; sino derivar.
+      totalFudoEfectivo +=
+        Number(c.fudo_efectivo) > 0
+          ? Number(c.fudo_efectivo)
+          : (c.monto_contado ?? 0) + (c.otros_retiros ?? 0) - (c.fondo_apertura ?? 0);
     }
     return {
       total,
@@ -359,9 +368,10 @@ export function CierreCaja() {
       verificados,
       pendientes: cierres.length - verificados,
       totalContado,
-      totalRetiros,
       totalOtrosRetiros,
       totalFudo,
+      totalFudoEfectivo,
+      totalFondoApertura,
     };
   }, [cierres]);
 
@@ -412,18 +422,42 @@ export function CierreCaja() {
       </div>
 
       {/* KPIs resumen */}
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
         <div className="rounded-lg border border-surface-border bg-white p-4">
-          <p className="mb-1 text-xs text-gray-500">Efectivo del mes</p>
-          <p className="text-lg font-semibold text-green-700">
-            {formatARS(resumen.totalContado - resumen.totalRetiros)}
+          <p className="mb-1 text-xs text-gray-500">Cambio inicial</p>
+          <p className="text-lg font-semibold text-gray-700">
+            {formatARS(resumen.totalFondoApertura)}
           </p>
-          <p className="mt-0.5 text-[10px] text-gray-400">Contado - retiros de cambio</p>
+          <p className="mt-0.5 text-[10px] text-gray-400">
+            Fondo de apertura sumado de todos los turnos
+          </p>
         </div>
         <div className="rounded-lg border border-surface-border bg-white p-4">
-          <p className="mb-1 text-xs text-gray-500">Total Fudo del mes</p>
-          <p className="text-lg font-semibold text-blue-700">{formatARS(resumen.totalFudo)}</p>
-          <p className="mt-0.5 text-[10px] text-gray-400">Suma de todos los cierres</p>
+          <p className="mb-1 text-xs text-gray-500">Efectivo recaudado</p>
+          <p className="text-lg font-semibold text-green-700">
+            {formatARS(resumen.totalFudoEfectivo)}
+          </p>
+          <p className="mt-0.5 text-[10px] text-gray-400">
+            Lo que entró por ventas en efectivo (Fudo)
+          </p>
+        </div>
+        <div className="rounded-lg border border-surface-border bg-white p-4">
+          <p className="mb-1 text-xs text-gray-500">Retirado del cajón</p>
+          <p className="text-lg font-semibold text-amber-700">
+            {formatARS(resumen.totalOtrosRetiros)}
+          </p>
+          <p className="mt-0.5 text-[10px] text-gray-400">
+            Plata sacada durante el turno (cambio + gastos)
+          </p>
+        </div>
+        <div className="rounded-lg border border-surface-border bg-white p-4">
+          <p className="mb-1 text-xs text-gray-500">Quedó en cajón</p>
+          <p className="text-lg font-semibold text-rodziny-700">
+            {formatARS(resumen.totalContado)}
+          </p>
+          <p className="mt-0.5 text-[10px] text-gray-400">
+            Cambio inicial + Recaudado − Retirado
+          </p>
         </div>
         <div className="rounded-lg border border-surface-border bg-white p-4">
           <p className="mb-1 text-xs text-gray-500">Diferencia neta</p>
@@ -855,19 +889,13 @@ export function CierreCaja() {
                     Turno
                   </th>
                   <th className="px-4 py-2.5 text-right text-xs font-semibold text-gray-600">
-                    Fudo total
+                    Recaudado (Fudo)
                   </th>
                   <th className="px-4 py-2.5 text-right text-xs font-semibold text-gray-600">
-                    Contado
+                    Retirado
                   </th>
                   <th className="px-4 py-2.5 text-right text-xs font-semibold text-gray-600">
-                    Cambio
-                  </th>
-                  <th className="px-4 py-2.5 text-right text-xs font-semibold text-gray-600">
-                    Retiro
-                  </th>
-                  <th className="px-4 py-2.5 text-right text-xs font-semibold text-gray-600">
-                    Otros ret.
+                    Quedó en cajón
                   </th>
                   <th className="px-4 py-2.5 text-right text-xs font-semibold text-gray-600">
                     Diferencia
@@ -915,36 +943,35 @@ export function CierreCaja() {
                           </div>
                         )}
                       </td>
-                      <td className="px-4 py-2 text-right text-gray-600">
-                        {c.monto_esperado != null ? formatARS(c.monto_esperado) : '—'}
-                      </td>
                       <td className="px-4 py-2 text-right font-medium text-gray-900">
-                        {formatARS(c.monto_contado)}
-                      </td>
-                      <td className="px-4 py-2 text-right text-xs text-gray-500">
-                        {c.fondo_apertura > 0 && <div>Inicio: {formatARS(c.fondo_apertura)}</div>}
-                      </td>
-                      <td className="px-4 py-2 text-right font-medium text-green-700">
-                        {c.retiro > 0 ? formatARS(c.retiro) : '—'}
+                        <div>{Number(c.fudo_efectivo) > 0 ? formatARS(c.fudo_efectivo) : '—'}</div>
+                        {c.fondo_apertura > 0 && (
+                          <div className="text-[10px] font-normal text-gray-400">
+                            Cambio inicio: {formatARS(c.fondo_apertura)}
+                          </div>
+                        )}
                       </td>
                       <td className="px-4 py-2 text-right text-xs">
-                        {(c.otros_retiros ?? 0) > 0 ? (
+                        {(c.otros_retiros ?? 0) === 0 ? (
+                          <span className="text-gray-400">—</span>
+                        ) : (
                           <div>
                             <span className="font-medium text-amber-700">
                               {formatARS(c.otros_retiros)}
                             </span>
                             {c.otros_retiros_nota && (
                               <div
-                                className="max-w-[120px] truncate text-gray-400"
+                                className="max-w-[140px] truncate text-[10px] text-gray-400"
                                 title={c.otros_retiros_nota}
                               >
                                 {c.otros_retiros_nota}
                               </div>
                             )}
                           </div>
-                        ) : (
-                          '—'
                         )}
+                      </td>
+                      <td className="px-4 py-2 text-right font-semibold text-rodziny-700">
+                        {formatARS(c.monto_contado)}
                       </td>
                       <td className="px-4 py-2 text-right">
                         {(() => {

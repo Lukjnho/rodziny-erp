@@ -8,6 +8,7 @@ import { GastosPage } from '@/modules/gastos/GastosPage';
 import { EstadoResultados } from './edr/EstadoResultados';
 import { AmortizacionesPage } from './amortizaciones/AmortizacionesPage';
 import { ChecklistPagos } from './components/ChecklistPagos';
+import { CierreMesPanel } from './components/CierreMesPanel';
 import { CosteoTab } from './components/CosteoTab';
 import { ProductosTab } from '@/modules/cocina/ProductosTab';
 import { useAuth, type Modulo } from '@/lib/auth';
@@ -18,6 +19,7 @@ type Tab =
   | 'compras'
   | 'edr'
   | 'flujo'
+  | 'cierre_mes'
   | 'amortizaciones'
   | 'checklist'
   | 'costeo'
@@ -60,6 +62,13 @@ const TABS: TabDef[] = [
     label: 'Flujo de caja',
     icon: '💰',
     subtitle: 'Movimientos bancarios y efectivo',
+    modulo: 'finanzas',
+  },
+  {
+    id: 'cierre_mes',
+    label: 'Cierre de mes',
+    icon: '🗓️',
+    subtitle: 'Checklist de control: que toda entrada y salida del mes esté cargada',
     modulo: 'finanzas',
   },
   {
@@ -148,7 +157,10 @@ export function FinanzasPage() {
       {tab === 'ventas' && <VentasPage embedded />}
       {tab === 'compras' && <GastosPage embedded />}
       {tab === 'edr' && <EstadoResultados embedded />}
-      {tab === 'flujo' && <FlujoCaja />}
+      {tab === 'flujo' && <FlujoCaja onNavigateToTab={(t) => setTab(t as Tab)} />}
+      {tab === 'cierre_mes' && (
+        <CierreMesPanel onNavigateToTab={(t) => setTab(t as Tab)} />
+      )}
       {tab === 'checklist' && <ChecklistPagos />}
       {tab === 'costeo' && <CosteoTab />}
       {tab === 'productos' && <ProductosTab />}

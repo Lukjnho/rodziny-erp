@@ -162,6 +162,49 @@ function AyudaPanel({ tab, onClose }: { tab: Tab; onClose: () => void }) {
 export function ComprasPage() {
   const [local, setLocal] = useState<'vedia' | 'saavedra'>('vedia');
   const [tab, setTab] = useState<Tab>('gastos');
+  // Período del listado de gastos (mes en formato YYYY-MM). Default: mes actual.
+  const [gastosPeriodo, setGastosPeriodo] = useState(() =>
+    new Date().toISOString().substring(0, 7),
+  );
+  // Filtro de local específico para el tab Gastos (independiente del selector
+  // global de la página). "ambos" suma Vedia+Saavedra; "sas" muestra solo
+  // gastos de la razón social.
+  const [gastosLocal, setGastosLocal] = useState<'vedia' | 'saavedra' | 'sas' | 'ambos'>('ambos');
+  const { gastosDesde, gastosHasta } = useMemo(() => {
+    const [y, m] = gastosPeriodo.split('-').map(Number);
+    const last = new Date(y, m, 0).getDate();
+    return {
+      gastosDesde: `${gastosPeriodo}-01`,
+      gastosHasta: `${gastosPeriodo}-${String(last).padStart(2, '0')}`,
+    };
+  }, [gastosPeriodo]);
+
+  // KPIs del listado de gastos: agregados rápidos del período + local seleccionado.
+  // Cuando local='ambos' suma Vedia+Saavedra (excluye sas para que ese caso requiera
+  // selección explícita).
+  const { data: gastosKpis } = useQuery({
+    queryKey: ['gastos_kpis', gastosLocal, gastosDesde, gastosHasta],
+    queryFn: async () => {
+      let q = supabase
+        .from('gastos')
+        .select('id, importe_total, factura_path, categoria_id, estado_pago, local')
+        .gte('fecha', gastosDesde)
+        .lte('fecha', gastosHasta)
+        .neq('cancelado', true);
+      if (gastosLocal === 'ambos') q = q.in('local', ['vedia', 'saavedra']);
+      else q = q.eq('local', gastosLocal);
+      const { data } = await q;
+      const rows = data ?? [];
+      const total = rows.length;
+      const totalMonto = rows.reduce((s, r) => s + Number(r.importe_total ?? 0), 0);
+      const conFactura = rows.filter((r) => r.factura_path && (r.factura_path as string).length > 0).length;
+      const sinCategoria = rows.filter((r) => !r.categoria_id).length;
+      const pagados = rows.filter(
+        (r) => (r.estado_pago ?? '').toString().toLowerCase() === 'pagado',
+      ).length;
+      return { total, totalMonto, conFactura, sinCategoria, pagados };
+    },
+  });
 
   // Filtro de fechas para historial de movimientos (default: últimos 30 días)
   const [movDesde, setMovDesde] = useState<string>(() => {
@@ -1059,18 +1102,110 @@ export function ComprasPage() {
       {/* ═══ TAB: GASTOS ═══ */}
       {tab === 'gastos' && (
         <>
-          <div className="mb-3 flex items-center justify-between">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
             <div className="text-sm text-gray-600">
               Cargá un gasto sacando una foto del comprobante. La IA lee automáticamente proveedor, monto, fecha y N° de operación.
             </div>
-            <button
-              onClick={() => setNuevoGastoFormOpen(true)}
-              className="rounded-lg bg-rodziny-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-rodziny-700"
-            >
-              + Nuevo gasto
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Filtro de local específico del tab Gastos */}
+              <div className="flex gap-1 rounded-md border border-gray-300 bg-white p-0.5">
+                {(
+                  [
+                    { id: 'ambos', label: 'Ambos' },
+                    { id: 'vedia', label: 'Vedia' },
+                    { id: 'saavedra', label: 'Saavedra' },
+                    { id: 'sas', label: 'SAS' },
+                  ] as const
+                ).map((o) => (
+                  <button
+                    key={o.id}
+                    onClick={() => setGastosLocal(o.id)}
+                    className={cn(
+                      'rounded px-2.5 py-1 text-xs font-medium transition-colors',
+                      gastosLocal === o.id
+                        ? 'bg-rodziny-700 text-white'
+                        : 'text-gray-600 hover:bg-gray-100',
+                    )}
+                  >
+                    {o.label}
+                  </button>
+                ))}
+              </div>
+              <label className="text-xs font-medium text-gray-500">Período</label>
+              <input
+                type="month"
+                value={gastosPeriodo}
+                onChange={(e) => setGastosPeriodo(e.target.value)}
+                className="rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500"
+              />
+              <button
+                onClick={() => setNuevoGastoFormOpen(true)}
+                className="rounded-lg bg-rodziny-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-rodziny-700"
+              >
+                + Nuevo gasto
+              </button>
+            </div>
           </div>
-          <ListadoGastos local={local} />
+
+          {/* KPIs del período */}
+          <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-5">
+            <div className="rounded-lg border border-surface-border bg-white p-4">
+              <p className="text-[10px] font-medium uppercase tracking-wide text-gray-500">
+                Gastos del mes
+              </p>
+              <p className="mt-0.5 text-lg font-bold text-gray-900">
+                {gastosKpis?.total ?? '—'}
+              </p>
+            </div>
+            <div className="rounded-lg border border-surface-border bg-white p-4">
+              <p className="text-[10px] font-medium uppercase tracking-wide text-gray-500">
+                Total $
+              </p>
+              <p className="mt-0.5 text-lg font-bold text-gray-900">
+                {gastosKpis ? formatARS(gastosKpis.totalMonto) : '—'}
+              </p>
+            </div>
+            <div className="rounded-lg border border-surface-border bg-white p-4">
+              <p className="text-[10px] font-medium uppercase tracking-wide text-gray-500">
+                Pagados
+              </p>
+              <p className="mt-0.5 text-lg font-bold text-gray-900">
+                {gastosKpis ? `${gastosKpis.pagados} / ${gastosKpis.total}` : '—'}
+              </p>
+            </div>
+            <div className="rounded-lg border border-surface-border bg-white p-4">
+              <p className="text-[10px] font-medium uppercase tracking-wide text-gray-500">
+                Con factura
+              </p>
+              <p
+                className={cn(
+                  'mt-0.5 text-lg font-bold',
+                  gastosKpis && gastosKpis.total > 0 && gastosKpis.conFactura / gastosKpis.total < 0.7
+                    ? 'text-amber-600'
+                    : 'text-gray-900',
+                )}
+              >
+                {gastosKpis
+                  ? `${gastosKpis.conFactura} / ${gastosKpis.total}`
+                  : '—'}
+              </p>
+            </div>
+            <div className="rounded-lg border border-surface-border bg-white p-4">
+              <p className="text-[10px] font-medium uppercase tracking-wide text-gray-500">
+                Sin categoría
+              </p>
+              <p
+                className={cn(
+                  'mt-0.5 text-lg font-bold',
+                  gastosKpis && gastosKpis.sinCategoria > 0 ? 'text-red-600' : 'text-green-600',
+                )}
+              >
+                {gastosKpis?.sinCategoria ?? '—'}
+              </p>
+            </div>
+          </div>
+
+          <ListadoGastos local={gastosLocal} desde={gastosDesde} hasta={gastosHasta} />
         </>
       )}
 

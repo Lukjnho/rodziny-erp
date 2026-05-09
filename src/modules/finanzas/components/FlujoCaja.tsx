@@ -1,7 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
-import { LocalSelector } from '@/components/ui/LocalSelector';
 import { formatARS, formatFecha, cn } from '@/lib/utils';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 
@@ -33,10 +32,31 @@ interface CierreVerificado {
   monto_esperado: number | null;
   diferencia: number | null;
   retiro: number;
+  fudo_efectivo: number;
+  otros_retiros: number | null;
   fondo_apertura: number;
   fondo_siguiente: number;
   verificado: boolean;
   verificado_por: string | null;
+}
+
+// Ingreso real en efectivo del turno = lo que entró por ventas, no lo que
+// quedó al final. monto_contado refleja lo que QUEDA en el cajón después de
+// retiros, así que undercuenta el efectivo cobrado. fudo_efectivo es la
+// fuente de verdad cuando está cargado; sino derivamos por la ecuación
+// monto_contado + otros_retiros - fondo_apertura.
+function efectivoTurno(c: {
+  fudo_efectivo: number;
+  monto_contado: number;
+  otros_retiros: number | null;
+  fondo_apertura: number;
+}): number {
+  if (Number(c.fudo_efectivo) > 0) return Number(c.fudo_efectivo);
+  return (
+    Number(c.monto_contado ?? 0) +
+    Number(c.otros_retiros ?? 0) -
+    Number(c.fondo_apertura ?? 0)
+  );
 }
 
 interface GastoPagado {
@@ -176,11 +196,13 @@ function esMovCapital(m: MovBancario): boolean {
 
 // ── componente principal ─────────────────────────────────────────────────────
 
-export function FlujoCaja() {
+export function FlujoCaja({ onNavigateToTab }: { onNavigateToTab?: (tab: string) => void } = {}) {
   const qc = useQueryClient();
-  const [local, setLocal] = useState<'ambos' | 'vedia' | 'saavedra'>('ambos');
+  // El flujo de caja es a nivel empresa (Rodziny SAS) — los movimientos bancarios
+  // son de la SAS, no del local. Filtrar por local daba una vista parcial confusa.
   const [periodo, setPeriodo] = useState(() => new Date().toISOString().substring(0, 7));
   const [ingresosOpen, setIngresosOpen] = useState(true);
+  const [bannerCerrado, setBannerCerrado] = useState(false);
   const [egresosOpen, setEgresosOpen] = useState(true);
   const [dividendosOpen, setDividendosOpen] = useState(false);
   const [noOperativoOpen, setNoOperativoOpen] = useState(false);
@@ -216,6 +238,29 @@ export function FlujoCaja() {
     },
   });
 
+  // Última fecha de movimiento por cuenta (para el banner de "exports
+  // desactualizados"). 3 queries paralelas con limit 1 — no agrega migración
+  // y soporta gaps grandes en cualquiera de las cuentas.
+  const { data: ultimasFechasBancos } = useQuery({
+    queryKey: ['fc_ultimas_fechas_bancos'],
+    queryFn: async () => {
+      const cuentas = ['galicia', 'icbc', 'mercadopago'] as const;
+      const results = await Promise.all(
+        cuentas.map(async (c) => {
+          const { data } = await supabase
+            .from('movimientos_bancarios')
+            .select('fecha')
+            .eq('cuenta', c)
+            .order('fecha', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+          return { cuenta: c, fecha: data?.fecha as string | undefined };
+        }),
+      );
+      return results;
+    },
+  });
+
   const { data: cierres } = useQuery({
     queryKey: ['fc_cierres', periodo],
     queryFn: async () => {
@@ -231,7 +276,9 @@ export function FlujoCaja() {
     },
   });
 
-  // Pagos reales: fecha de pago es cuando salió la plata (no la fecha del comprobante)
+  // Pagos reales: fecha de pago es cuando salió la plata (no la fecha del comprobante).
+  // El !inner + neq cancelado descartan pagos cuyo gasto fue cancelado después
+  // (ej: gasto cargado por error y luego anulado, pero el pago quedó huérfano).
   const { data: pagosRealizados } = useQuery({
     queryKey: ['fc_pagos', periodo],
     queryFn: async () => {
@@ -240,10 +287,11 @@ export function FlujoCaja() {
       const { data } = await supabase
         .from('pagos_gastos')
         .select(
-          'id, gasto_id, fecha_pago, monto, medio_pago, gasto:gastos(local, proveedor, categoria, subcategoria, categoria_id)',
+          'id, gasto_id, fecha_pago, monto, medio_pago, gasto:gastos!inner(local, proveedor, categoria, subcategoria, categoria_id, cancelado)',
         )
         .gte('fecha_pago', `${periodo}-01`)
-        .lte('fecha_pago', `${periodo}-${lastDay}`);
+        .lte('fecha_pago', `${periodo}-${lastDay}`)
+        .neq('gasto.cancelado', true);
       return (data ?? []) as unknown as PagoRealizado[];
     },
   });
@@ -349,38 +397,12 @@ export function FlujoCaja() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['fc_dividendos'] }),
   });
 
-  // ── filtros ────────────────────────────────────────────────────────────────
-
-  const filtrarPorLocal = <T extends { local?: string | null }>(items: T[]) => {
-    if (local === 'ambos') return items;
-    return items.filter((i) => i.local === local || i.local === 'general');
-  };
-
-  const cierresFiltrados = useMemo(() => filtrarPorLocal(cierres ?? []), [cierres, local]);
-  const pagosFiltrados = useMemo(() => {
-    const pagos = pagosRealizados ?? [];
-    if (local === 'ambos') return pagos;
-    return pagos.filter((p) => {
-      const loc = p.gasto?.local;
-      return loc === local || !loc;
-    });
-  }, [pagosRealizados, local]);
-  const divsFiltrados = useMemo(() => {
-    if (local === 'ambos') return dividendos ?? [];
-    return (dividendos ?? []).filter((d) => d.local === local || !d.local);
-  }, [dividendos, local]);
-
-  const sueldosFiltrados = useMemo(() => {
-    const pagos = pagosSueldos ?? [];
-    if (local === 'ambos') return pagos;
-    return pagos.filter((p) => p.local === local || p.local === 'ambos');
-  }, [pagosSueldos, local]);
-
-  const pagosMPFiltrados = useMemo(() => {
-    const pagos = pagosMP ?? [];
-    if (local === 'ambos') return pagos;
-    return pagos.filter((p) => p.local === local || p.local === 'ambos');
-  }, [pagosMP, local]);
+  // ── data consolidada (sin filtro de local) ────────────────────────────────
+  const cierresFiltrados = cierres ?? [];
+  const pagosFiltrados = pagosRealizados ?? [];
+  const divsFiltrados = dividendos ?? [];
+  const sueldosFiltrados = pagosSueldos ?? [];
+  const pagosMPFiltrados = pagosMP ?? [];
 
   // Mapa de categoría ID → tipo_edr
   const catMap = useMemo(() => {
@@ -410,15 +432,21 @@ export function FlujoCaja() {
   const movimientosClasificados = useMemo(() => {
     const movs = movimientos ?? [];
 
-    // Liquidaciones MP: créditos de MP en extracto = MP depositando en banco (no operativo)
-    const liquidacionesMP = movs.filter((m) => m.cuenta === 'mercadopago' && Number(m.credito) > 0);
+    // Créditos del extracto MP — son los cobros individuales que ya tenemos
+    // duplicados en pagos_mp (API MP). No los mostramos para no confundir.
+    // Si en el futuro necesitamos ver las liquidaciones reales (MP → banco),
+    // habría que filtrar por descripción específica del extracto.
 
-    // Egresos bancarios: débitos de Galicia e ICBC (los débitos MP por ventas vienen de
-    // pagos_mp API). Adicionalmente, débitos MP con tipo='cargo_mp' (impuesto al débito,
-    // comisiones por hacer pagos egresos) sin gasto vinculado — son costos financieros que
-    // antes quedaban afuera del flujo. Filtramos !gasto_id para evitar duplicar con pagos_gastos.
-    const debitosGalicia = movs.filter((m) => m.cuenta === 'galicia' && Number(m.debito) > 0);
-    const debitosICBC = movs.filter((m) => m.cuenta === 'icbc' && Number(m.debito) > 0);
+    // Egresos bancarios SOLO los que NO tienen gasto vinculado — sino se duplica
+    // con pagos_gastos. Aplicamos !gasto_id en las 3 cuentas (Galicia, ICBC, MP).
+    // En MP además requerimos tipo='cargo_mp' para limitar a impuesto al débito y
+    // comisiones (los débitos MP por venta-cobro son liquidaciones, no egresos).
+    const debitosGalicia = movs.filter(
+      (m) => m.cuenta === 'galicia' && Number(m.debito) > 0 && !m.gasto_id,
+    );
+    const debitosICBC = movs.filter(
+      (m) => m.cuenta === 'icbc' && Number(m.debito) > 0 && !m.gasto_id,
+    );
     const debitosMP = movs.filter(
       (m) =>
         m.cuenta === 'mercadopago' &&
@@ -432,7 +460,14 @@ export function FlujoCaja() {
       (m) => (m.cuenta === 'galicia' || m.cuenta === 'icbc') && Number(m.credito) > 0,
     );
 
-    const capital: MovBancario[] = [];
+    // Créditos del extracto MP por defecto se ignoran (cobros ya cubiertos por
+    // pagos_mp API). EXCEPCIÓN: créditos con patrón capital (retiros desde IOL
+    // directo a MP) — los sumamos a "no operativo" para no perder trazabilidad.
+    const creditosMPCapital = movs.filter(
+      (m) => m.cuenta === 'mercadopago' && Number(m.credito) > 0 && esMovCapital(m),
+    );
+
+    const capital: MovBancario[] = [...creditosMPCapital];
     const transferenciasInternas: MovBancario[] = [];
     const creditosOperativos: MovBancario[] = []; // dev. impuestos, cheques rechazados, etc.
 
@@ -447,7 +482,6 @@ export function FlujoCaja() {
     }
 
     return {
-      liquidacionesMP,
       creditosOperativos,
       debitosGalicia,
       debitosICBC,
@@ -460,14 +494,17 @@ export function FlujoCaja() {
   // ── INGRESOS ─────────────────────────────────────────────────────────────────
 
   const ingresos = useMemo(() => {
-    const cierresVerif = cierresFiltrados.filter((c) => c.verificado);
-    const efectivoVerificado = cierresVerif.reduce(
-      (s, c) => s + (c.retiro > 0 ? c.retiro : c.monto_contado),
-      0,
-    );
-    const cierresPendientes = cierresFiltrados.filter((c) => !c.verificado).length;
+    // Efectivo desglosado por local (los cajones físicos son por local).
+    // Usamos efectivoTurno = fudo_efectivo, no monto_contado (post-retiros).
+    const efectivoVedia = cierresFiltrados
+      .filter((c) => c.local === 'vedia')
+      .reduce((s, c) => s + efectivoTurno(c), 0);
+    const efectivoSaavedra = cierresFiltrados
+      .filter((c) => c.local === 'saavedra')
+      .reduce((s, c) => s + efectivoTurno(c), 0);
+    const cantPendientes = cierresFiltrados.filter((c) => !c.verificado).length;
 
-    // Ventas MP desde la API (bruto por medio de pago)
+    // Ventas MP — cuenta única SAS, no se desglosa por local
     const ventasMPBruto = pagosMPFiltrados.reduce((s, p) => s + Number(p.monto), 0);
     const ventasMPPorMedio = new Map<string, number>();
     for (const p of pagosMPFiltrados) {
@@ -477,15 +514,17 @@ export function FlujoCaja() {
       );
     }
 
+    // Otros ingresos: créditos operativos de Galicia/ICBC (devoluciones, cheques)
     const otrosIngresos = movimientosClasificados.creditosOperativos.reduce(
       (s, m) => s + Number(m.credito),
       0,
     );
-    const total = efectivoVerificado + ventasMPBruto + otrosIngresos;
+    const total = efectivoVedia + efectivoSaavedra + ventasMPBruto + otrosIngresos;
 
     return {
-      efectivoVerificado,
-      cierresPendientes,
+      efectivoVedia,
+      efectivoSaavedra,
+      cantPendientes,
       ventasMPBruto,
       ventasMPPorMedio,
       otrosIngresos,
@@ -496,15 +535,25 @@ export function FlujoCaja() {
   // ── EGRESOS ──────────────────────────────────────────────────────────────────
 
   const egresos = useMemo(() => {
-    // 1) Pagos realizados agrupados por tipo EdR del gasto asociado
-    const grupos = new Map<string, { total: number; items: { nombre: string; monto: number }[] }>();
+    // 1) Pagos realizados agrupados por tipo EdR del gasto asociado.
+    // Para CMV / gastos_op / rrhh agregamos desglose por local; el resto va consolidado.
+    const grupos = new Map<
+      string,
+      {
+        total: number;
+        porLocal: Map<string, number>;
+        items: { nombre: string; monto: number }[];
+      }
+    >();
     for (const p of pagosFiltrados) {
       const g = p.gasto;
       const tipoEdr = g?.categoria_id ? (catMap.get(g.categoria_id) ?? null) : null;
       const grupo = tipoEdrAGrupo(tipoEdr);
-      if (!grupos.has(grupo)) grupos.set(grupo, { total: 0, items: [] });
+      const localGasto = g?.local ?? 'sas';
+      if (!grupos.has(grupo)) grupos.set(grupo, { total: 0, porLocal: new Map(), items: [] });
       const entry = grupos.get(grupo)!;
       entry.total += Number(p.monto);
+      entry.porLocal.set(localGasto, (entry.porLocal.get(localGasto) ?? 0) + Number(p.monto));
       const label = g?.categoria || g?.subcategoria || g?.proveedor || 'Sin categoría';
       const existing = entry.items.find((i) => i.nombre === label);
       if (existing) existing.monto += Number(p.monto);
@@ -588,7 +637,7 @@ export function FlujoCaja() {
     // 3) Sueldos (RRHH) — individual por empleado, se suma al grupo existente
     const totalSueldos = sueldosFiltrados.reduce((s, p) => s + Number(p.monto), 0);
     if (totalSueldos > 0) {
-      if (!grupos.has('rrhh')) grupos.set('rrhh', { total: 0, items: [] });
+      if (!grupos.has('rrhh')) grupos.set('rrhh', { total: 0, porLocal: new Map(), items: [] });
       const entry = grupos.get('rrhh')!;
       // Agrupar por medio de pago para el resumen
       const sueldoEfectivo = sueldosFiltrados
@@ -602,9 +651,14 @@ export function FlujoCaja() {
       if (sueldoTransf > 0)
         entry.items.push({ nombre: 'Sueldos por transferencia', monto: sueldoTransf });
       entry.total += totalSueldos;
+      // Desglose de sueldos por local
+      for (const s of sueldosFiltrados) {
+        const loc = s.local && s.local !== 'ambos' ? s.local : 'sas';
+        entry.porLocal.set(loc, (entry.porLocal.get(loc) ?? 0) + Number(s.monto));
+      }
     }
 
-    // 4) Dividendos
+    // 4) Dividendos (sin desglose por local — son retiros del SAS)
     const totalDivs = divsFiltrados.reduce((s, d) => s + Number(d.monto), 0);
     if (totalDivs > 0) {
       const divItems = SOCIOS.map((s) => ({
@@ -613,7 +667,7 @@ export function FlujoCaja() {
           .filter((d) => d.socio === s)
           .reduce((sum, d) => sum + Number(d.monto), 0),
       })).filter((i) => i.monto > 0);
-      grupos.set('dividendos', { total: totalDivs, items: divItems });
+      grupos.set('dividendos', { total: totalDivs, porLocal: new Map(), items: divItems });
     }
 
     const totalPagos = pagosFiltrados.reduce((s, p) => s + Number(p.monto), 0);
@@ -632,9 +686,8 @@ export function FlujoCaja() {
   // ── NO OPERATIVO ───────────────────────────────────────────────────────────
 
   const noOperativo = useMemo(() => {
-    const { transferenciasInternas, capital, liquidacionesMP } = movimientosClasificados;
+    const { transferenciasInternas, capital } = movimientosClasificados;
     const totalTransf = transferenciasInternas.reduce((s, m) => s + Number(m.credito), 0);
-    const totalLiquidacionesMP = liquidacionesMP.reduce((s, m) => s + Number(m.credito), 0);
     const capitalIn = capital
       .filter((m) => Number(m.credito) > 0)
       .reduce((s, m) => s + Number(m.credito), 0);
@@ -644,9 +697,7 @@ export function FlujoCaja() {
     return {
       transferenciasInternas,
       capital,
-      liquidacionesMP,
       totalTransf,
-      totalLiquidacionesMP,
       capitalIn,
       capitalOut,
     };
@@ -690,10 +741,10 @@ export function FlujoCaja() {
   const chartData = useMemo(() => {
     const byDay = new Map<string, { ingresos: number; egresos: number }>();
 
-    // Ingresos: cierres verificados + MP API (bruto) + otros bancarios
-    for (const c of cierresFiltrados.filter((c) => c.verificado)) {
+    // Ingresos: TODOS los cierres del mes (verificados o pendientes) + MP API (bruto) + otros bancarios
+    for (const c of cierresFiltrados) {
       const d = byDay.get(c.fecha) ?? { ingresos: 0, egresos: 0 };
-      d.ingresos += c.retiro > 0 ? c.retiro : c.monto_contado;
+      d.ingresos += efectivoTurno(c);
       byDay.set(c.fecha, d);
     }
     for (const p of pagosMPFiltrados) {
@@ -751,6 +802,26 @@ export function FlujoCaja() {
     divsFiltrados,
   ]);
 
+  // ── banner exports desactualizados ─────────────────────────────────────────
+
+  const avisoExports = useMemo(() => {
+    if (!ultimasFechasBancos) return null;
+    const hoy = new Date();
+    hoy.setHours(0, 0, 0, 0);
+    type AvisoItem = { cuenta: 'galicia' | 'icbc' | 'mercadopago'; diasGap: number | null };
+    const desact: AvisoItem[] = [];
+    for (const u of ultimasFechasBancos) {
+      if (!u.fecha) {
+        desact.push({ cuenta: u.cuenta, diasGap: null });
+        continue;
+      }
+      const f = new Date(u.fecha + 'T00:00:00');
+      const diasGap = Math.floor((hoy.getTime() - f.getTime()) / (1000 * 60 * 60 * 24));
+      if (diasGap > 5) desact.push({ cuenta: u.cuenta, diasGap });
+    }
+    return desact.length > 0 ? desact : null;
+  }, [ultimasFechasBancos]);
+
   // ── semáforo ───────────────────────────────────────────────────────────────
 
   function semaforoColor(
@@ -769,11 +840,6 @@ export function FlujoCaja() {
     <div className="space-y-5">
       {/* Filtros */}
       <div className="flex flex-wrap items-center gap-4">
-        <LocalSelector
-          value={local}
-          onChange={(v) => setLocal(v as 'ambos' | 'vedia' | 'saavedra')}
-          options={['vedia', 'saavedra', 'ambos']}
-        />
         <div>
           <label className="mr-2 text-xs font-medium text-gray-500">Período</label>
           <input
@@ -827,6 +893,40 @@ export function FlujoCaja() {
           <button
             onClick={() => setSyncResult(null)}
             className="ml-2 text-gray-400 hover:text-gray-600"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
+      {/* Banner exports desactualizados — discreto, una línea, cerrable */}
+      {avisoExports && !bannerCerrado && (
+        <div className="flex items-center gap-2 rounded border border-amber-200 bg-amber-50 px-3 py-1.5 text-[11px] text-amber-800">
+          <span>⚠️</span>
+          <span>
+            Exports desactualizados:{' '}
+            {avisoExports.map((a, i) => (
+              <span key={a.cuenta}>
+                {i > 0 && ' · '}
+                <strong className="capitalize">
+                  {a.cuenta === 'mercadopago' ? 'MP' : a.cuenta}
+                </strong>
+                {a.diasGap === null ? ' (sin datos)' : ` (${a.diasGap}d sin mov.)`}
+              </span>
+            ))}
+          </span>
+          {onNavigateToTab && (
+            <button
+              onClick={() => onNavigateToTab('importar')}
+              className="ml-auto rounded bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-900 hover:bg-amber-200"
+            >
+              Importar →
+            </button>
+          )}
+          <button
+            onClick={() => setBannerCerrado(true)}
+            className="text-amber-600 hover:text-amber-800"
+            aria-label="Cerrar aviso"
           >
             ✕
           </button>
@@ -930,11 +1030,15 @@ export function FlujoCaja() {
       >
         <div className="divide-y divide-gray-100">
           <LineaDetalle
-            label="Efectivo (cierres verificados)"
-            monto={ingresos.efectivoVerificado}
+            label="Efectivo Vedia (cierres de caja)"
+            monto={ingresos.efectivoVedia}
+          />
+          <LineaDetalle
+            label="Efectivo Saavedra (cierres de caja)"
+            monto={ingresos.efectivoSaavedra}
             nota={
-              ingresos.cierresPendientes > 0
-                ? `⚠️ ${ingresos.cierresPendientes} pendiente${ingresos.cierresPendientes > 1 ? 's' : ''} de verificar`
+              ingresos.cantPendientes > 0
+                ? `⚠️ ${ingresos.cantPendientes} cierre${ingresos.cantPendientes > 1 ? 's' : ''} sin verificar — los datos pueden no estar revisados todavía`
                 : undefined
             }
           />
@@ -961,7 +1065,9 @@ export function FlujoCaja() {
         color="red"
       >
         <div className="divide-y divide-gray-100">
-          {/* Gastos pagados por categoría EdR */}
+          {/* Gastos pagados por categoría EdR. CMV / gastos_op / rrhh se
+              desglosan por local (sub-línea con totales Vedia/Saavedra/SAS).
+              El resto va consolidado porque son de la SAS o no tienen local. */}
           {[
             'cmv',
             'gastos_op',
@@ -974,12 +1080,14 @@ export function FlujoCaja() {
           ].map((grupo) => {
             const data = egresos.grupos.get(grupo);
             if (!data || data.total === 0) return null;
+            const conDesglose = grupo === 'cmv' || grupo === 'gastos_op' || grupo === 'rrhh';
             return (
               <GrupoEgreso
                 key={grupo}
                 label={GRUPO_EGRESO_LABEL[grupo]}
                 total={data.total}
                 items={data.items}
+                porLocal={conDesglose ? data.porLocal : undefined}
               />
             );
           })}
@@ -996,9 +1104,7 @@ export function FlujoCaja() {
       </SeccionExpandible>
 
       {/* ═══ NO OPERATIVO ═══ */}
-      {(noOperativo.transferenciasInternas.length > 0 ||
-        noOperativo.capital.length > 0 ||
-        noOperativo.liquidacionesMP.length > 0) && (
+      {(noOperativo.transferenciasInternas.length > 0 || noOperativo.capital.length > 0) && (
         <SeccionExpandible
           titulo="MOVIMIENTOS NO OPERATIVOS"
           total={0}
@@ -1011,39 +1117,6 @@ export function FlujoCaja() {
               Movimientos entre cuentas propias y cuenta comitente. No son ingresos ni egresos del
               negocio — no afectan los KPIs.
             </p>
-
-            {/* Liquidaciones MP (depósitos de MP al banco) */}
-            {noOperativo.liquidacionesMP.length > 0 && (
-              <div>
-                <h4 className="mb-2 text-xs font-semibold text-gray-700">
-                  Liquidaciones MercadoPago (depósitos al banco)
-                </h4>
-                <p className="mb-2 text-[10px] text-gray-400">
-                  MP transfiere los fondos cobrados a la cuenta bancaria. No son ventas nuevas — las
-                  ventas ya se contaron arriba desde la API de MP.
-                </p>
-                <div className="overflow-hidden rounded-lg bg-gray-50">
-                  <table className="w-full text-xs">
-                    <tbody>
-                      {noOperativo.liquidacionesMP.map((m) => (
-                        <tr key={m.id} className="border-t border-gray-100">
-                          <td className="px-3 py-1.5 text-gray-500">{formatFecha(m.fecha)}</td>
-                          <td className="max-w-[250px] truncate px-3 py-1.5 text-gray-500">
-                            {m.descripcion}
-                          </td>
-                          <td className="px-3 py-1.5 text-right font-medium tabular-nums text-gray-700">
-                            {formatARS(Number(m.credito))}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                <p className="mt-1 text-right text-[10px] text-gray-400">
-                  Total liquidado: {formatARS(noOperativo.totalLiquidacionesMP)}
-                </p>
-              </div>
-            )}
 
             {/* Transferencias internas */}
             {noOperativo.transferenciasInternas.length > 0 && (
@@ -1400,13 +1473,25 @@ function GrupoEgreso({
   label,
   total,
   items,
+  porLocal,
 }: {
   label: string;
   total: number;
   items: { nombre: string; monto: number }[];
+  porLocal?: Map<string, number>;
 }) {
   const [open, setOpen] = useState(false);
   const sorted = [...items].sort((a, b) => b.monto - a.monto);
+  const localLabel: Record<string, string> = {
+    vedia: 'Vedia',
+    saavedra: 'Saavedra',
+    sas: 'SAS',
+    ambos: 'Ambos',
+    general: 'General',
+  };
+  const localesSorted = porLocal
+    ? [...porLocal.entries()].filter(([, m]) => m > 0).sort((a, b) => b[1] - a[1])
+    : [];
 
   return (
     <div>
@@ -1420,6 +1505,17 @@ function GrupoEgreso({
         </div>
         <span className="text-sm font-semibold tabular-nums text-red-700">-{formatARS(total)}</span>
       </button>
+      {/* Desglose por local — visible siempre, no requiere expandir */}
+      {localesSorted.length > 0 && (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-5 pb-2 text-[11px] text-gray-500">
+          {localesSorted.map(([loc, monto]) => (
+            <span key={loc}>
+              <span className="font-medium text-gray-600">{localLabel[loc] ?? loc}:</span>{' '}
+              <span className="tabular-nums">{formatARS(monto)}</span>
+            </span>
+          ))}
+        </div>
+      )}
       {open && (
         <div className="border-t border-gray-100 bg-gray-50">
           {sorted.map((item, i) => (

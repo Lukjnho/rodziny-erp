@@ -294,6 +294,34 @@ Deno.serve(async (req) => {
     // Acumulador de descuentos por periodo (cortesía = 100% off, otros = el resto)
     const descPorMes: Record<string, { cortesias_monto: number; cortesias_cant: number; otros_descuentos: number }> = {}
 
+    // Lista de meses del año (usada para borrar/pre-cargar)
+    const meses: string[] = []
+    for (let i = 1; i <= 12; i++) meses.push(`${anio}-${String(i).padStart(2, '0')}`)
+
+    // Preservar campos fiscales (iva / total_neto / es_fiscal) que vienen del
+    // Excel de Fudo. La API pública v1alpha1 no los expone, así que si los
+    // borráramos sin más, perderíamos el dato bueno cargado por UploadFudo.
+    // Estrategia: leer los previos ANTES de borrar y mergear al re-insertar.
+    const { data: previos } = await supabase
+      .from('ventas_tickets')
+      .select('fudo_id, iva, total_neto, es_fiscal')
+      .eq('local', local)
+      .in('periodo', meses)
+    const fiscalPrevio = new Map<
+      string,
+      { iva: number; total_neto: number | null; es_fiscal: boolean }
+    >()
+    for (const r of (previos ?? []) as { fudo_id: string; iva: number | null; total_neto: number | null; es_fiscal: boolean | null }[]) {
+      const tieneDato = (Number(r.iva ?? 0) > 0) || r.es_fiscal === true || r.total_neto !== null
+      if (tieneDato) {
+        fiscalPrevio.set(r.fudo_id, {
+          iva: Number(r.iva ?? 0),
+          total_neto: r.total_neto,
+          es_fiscal: !!r.es_fiscal,
+        })
+      }
+    }
+
     for (const { sale, payments, discounts, items } of tickets) {
       const closedAt = sale.attributes.closedAt as string
       const { fecha, hora } = fechaHoraArg(closedAt)
@@ -362,6 +390,8 @@ Deno.serve(async (req) => {
             ? mediosUnicos[0]
             : 'Mixto'
 
+      // Si el ticket ya tenía datos fiscales (cargado vía Excel), respetarlos
+      const previo = fiscalPrevio.get(sale.id)
       ticketsRows.push({
         local,
         fudo_id: sale.id,
@@ -372,9 +402,9 @@ Deno.serve(async (req) => {
         tipo_venta: '',
         medio_pago: medioPagoStr,
         total_bruto: totalAjustado,
-        total_neto: null,
-        iva: 0,
-        es_fiscal: false,
+        total_neto: previo?.total_neto ?? null,
+        iva: previo?.iva ?? 0,
+        es_fiscal: previo?.es_fiscal ?? false,
         es_dividendo: esDividendoCompleto,
         periodo,
       })
@@ -404,10 +434,9 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Reemplazar datos del año/local — borra todo y reinserta
-    const meses: string[] = []
-    for (let i = 1; i <= 12; i++) meses.push(`${anio}-${String(i).padStart(2, '0')}`)
-
+    // Reemplazar datos del año/local — borra todo y reinserta. Los campos
+    // fiscales ya fueron preservados arriba via fiscalPrevio y mergeados en
+    // ticketsRows, así que borrar acá no pierde nada.
     await supabase.from('ventas_tickets').delete().eq('local', local).in('periodo', meses)
     await supabase.from('ventas_pagos').delete().eq('local', local).in('periodo', meses)
     await supabase
