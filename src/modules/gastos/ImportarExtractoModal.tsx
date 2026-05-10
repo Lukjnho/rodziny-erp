@@ -1,8 +1,14 @@
 import { useState, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/lib/auth';
 import { parseExtracto } from '@/modules/finanzas/parsers/parseExtractos';
 import { cn } from '@/lib/utils';
 import { conciliarPorIdOperacion } from './conciliarPorIdOperacion';
+
+// ID estable de la subcategoría "Impuestos y comisiones bancarias"
+// (ver memory/reference_categorias_clave.md). Usada por la RPC
+// crear_cargos_automaticos_bancarios para imputar los cargos auto del extracto.
+const CATEGORIA_BANCARIA_ID = 'fcb639e7-4be6-4d7b-989a-fd15d42a2534';
 
 interface ResultadoArchivo {
   nombre: string;
@@ -13,6 +19,13 @@ interface ResultadoArchivo {
   error: string | null;
 }
 
+interface ResumenAuto {
+  etiquetados: number; // sugerencia agregada (Ley 25.413, Comisión MP, etc.)
+  vinculados: number; // gastos manuales matcheados con su mov por N° op
+  cargosCreados: number; // gastos auto creados (impuestos / comisiones bancarias)
+  errores: string[];
+}
+
 interface Props {
   open: boolean;
   onClose: () => void;
@@ -20,12 +33,10 @@ interface Props {
 }
 
 export function ImportarExtractoModal({ open, onClose, onSuccess }: Props) {
+  const { user } = useAuth();
   const [procesando, setProcesando] = useState(false);
   const [resultados, setResultados] = useState<ResultadoArchivo[]>([]);
-  const [conciliacion, setConciliacion] = useState<{
-    vinculados: number;
-    errores: string[];
-  } | null>(null);
+  const [resumenAuto, setResumenAuto] = useState<ResumenAuto | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   if (!open) return null;
@@ -33,8 +44,11 @@ export function ImportarExtractoModal({ open, onClose, onSuccess }: Props) {
   async function procesarArchivos(files: FileList | File[]) {
     setProcesando(true);
     setResultados([]);
-    setConciliacion(null);
+    setResumenAuto(null);
     const acc: ResultadoArchivo[] = [];
+    // Rango cubierto por los archivos importados (para acotar las RPCs)
+    let fechaMin: string | null = null;
+    let fechaMax: string | null = null;
     for (const file of Array.from(files)) {
       try {
         const text = await file.text();
@@ -72,6 +86,13 @@ export function ImportarExtractoModal({ open, onClose, onSuccess }: Props) {
           duplicados: movimientos.length - nuevos,
           error: error ? error.message : null,
         });
+        if (nuevos > 0) {
+          for (const m of movimientos) {
+            if (!m.fecha) continue;
+            if (!fechaMin || m.fecha < fechaMin) fechaMin = m.fecha;
+            if (!fechaMax || m.fecha > fechaMax) fechaMax = m.fecha;
+          }
+        }
       } catch (e) {
         acc.push({
           nombre: file.name,
@@ -85,16 +106,62 @@ export function ImportarExtractoModal({ open, onClose, onSuccess }: Props) {
     }
     setResultados(acc);
 
-    // Solo dispara conciliación si hay filas nuevas — si todo eran duplicados,
-    // los movs ya estaban procesados de un import previo.
+    // Solo dispara auto-clasificación si hay filas nuevas — si todo eran
+    // duplicados, los movs ya estaban procesados de un import previo.
     const huboImports = acc.some((r) => r.nuevos > 0 && !r.error);
-    if (huboImports) {
-      // Conciliación automática por igualdad EXACTA de N° de operación.
-      // Sin scoring, sin tolerancia, sin sugerencias parciales: si el N°
-      // capturado al pagar aparece en la referencia/descripción del mov,
-      // se vincula. El resto queda para motor de reglas + manual.
+    if (huboImports && fechaMin && fechaMax) {
+      const errores: string[] = [];
+      let etiquetados = 0;
+      let cargosCreados = 0;
+
+      // 1) Etiquetar campo `sugerencia` (Ley 25.413, Comisión MP, IVA bancario, etc.)
+      try {
+        const { data, error } = await supabase.rpc('aplicar_reglas_sugerencia');
+        if (error) throw error;
+        etiquetados = (data as { etiquetados: number })?.etiquetados ?? 0;
+      } catch (e) {
+        errores.push(`reglas: ${(e as Error).message}`);
+      }
+
+      // 2) Auto-vincular movs ↔ gastos cargados manualmente por N° de operación
+      //    (RPC servidor — más rápida y robusta que conciliarPorIdOperacion en cliente)
+      try {
+        const { error } = await supabase.rpc('auto_match_gastos_extracto', {
+          p_fecha_desde: fechaMin,
+          p_fecha_hasta: fechaMax,
+        });
+        if (error) throw error;
+      } catch (e) {
+        errores.push(`auto-match: ${(e as Error).message}`);
+      }
+
+      // 3) Crear gastos automáticos por cargos del banco (impuestos, comisiones,
+      //    retenciones, sellos). Se imputan a Rodziny S.A.S. en categoría
+      //    "Impuestos y comisiones bancarias" → impactan el Flujo de caja.
+      try {
+        const { data, error } = await supabase.rpc('crear_cargos_automaticos_bancarios', {
+          p_categoria_id: CATEGORIA_BANCARIA_ID,
+          p_creado_por: user?.id ?? null,
+          p_fecha_desde: fechaMin,
+          p_fecha_hasta: fechaMax,
+        });
+        if (error) throw error;
+        cargosCreados = (data as { creados: number })?.creados ?? 0;
+      } catch (e) {
+        errores.push(`cargos auto: ${(e as Error).message}`);
+      }
+
+      // 4) Conciliación adicional cliente (marca también pagos_gastos.conciliado_movimiento_id —
+      //    cosa que la RPC servidor no toca). Reduntante con (2) en parte; pendiente unificar.
       const conc = await conciliarPorIdOperacion();
-      setConciliacion(conc);
+      errores.push(...conc.errores);
+
+      setResumenAuto({
+        etiquetados,
+        vinculados: conc.vinculados,
+        cargosCreados,
+        errores,
+      });
       onSuccess();
     }
     setProcesando(false);
@@ -184,36 +251,38 @@ export function ImportarExtractoModal({ open, onClose, onSuccess }: Props) {
           </div>
         )}
 
-        {conciliacion && (
+        {resumenAuto && (
           <div
             className={cn(
               'mt-3 rounded-md border p-3 text-xs',
-              conciliacion.errores.length === 0
+              resumenAuto.errores.length === 0
                 ? 'border-blue-200 bg-blue-50'
                 : 'border-amber-200 bg-amber-50',
             )}
           >
-            <div className="font-medium text-gray-800">🔗 Conciliación automática</div>
-            <div className="mt-1 text-gray-700">
-              {conciliacion.vinculados > 0 ? (
-                <>
-                  ✅ <strong>{conciliacion.vinculados}</strong> pago{conciliacion.vinculados === 1 ? '' : 's'}{' '}
-                  vinculado{conciliacion.vinculados === 1 ? '' : 's'} automáticamente por N° de operación
-                </>
-              ) : (
-                <span className="text-gray-500">
-                  Ningún pago coincidió por N° de operación con los movimientos importados.
-                  Vinculá manualmente desde la tabla, o aplicá reglas para gastos automáticos.
-                </span>
-              )}
-              {conciliacion.errores.length > 0 && (
-                <ul className="mt-2 list-inside list-disc text-red-700">
-                  {conciliacion.errores.slice(0, 5).map((e, i) => (
-                    <li key={i}>{e}</li>
-                  ))}
-                </ul>
-              )}
-            </div>
+            <div className="font-medium text-gray-800">🔗 Auto-clasificación</div>
+            <ul className="mt-1 space-y-0.5 text-gray-700">
+              <li>
+                🏷 <strong>{resumenAuto.etiquetados}</strong> mov{resumenAuto.etiquetados === 1 ? '' : 's'} etiquetados con sugerencia
+                {resumenAuto.etiquetados === 0 && ' (nada nuevo para etiquetar)'}
+              </li>
+              <li>
+                💸 <strong>{resumenAuto.cargosCreados}</strong> gasto{resumenAuto.cargosCreados === 1 ? '' : 's'} automáticos creados
+                {resumenAuto.cargosCreados > 0 && (
+                  <span className="text-gray-500"> (impuestos / comisiones bancarias)</span>
+                )}
+              </li>
+              <li>
+                🔗 <strong>{resumenAuto.vinculados}</strong> pago{resumenAuto.vinculados === 1 ? '' : 's'} cargados vinculados a su mov por N° de operación
+              </li>
+            </ul>
+            {resumenAuto.errores.length > 0 && (
+              <ul className="mt-2 list-inside list-disc text-red-700">
+                {resumenAuto.errores.slice(0, 5).map((e, i) => (
+                  <li key={i}>{e}</li>
+                ))}
+              </ul>
+            )}
           </div>
         )}
 

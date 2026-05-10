@@ -1,13 +1,11 @@
 // Hook para detectar cuándo fue la última importación de extractos bancarios.
 //
-// Usa MAX(fecha) por cuenta como proxy: si las cuentas tienen movimientos
-// diarios y la última transacción es de hace >15 días, es señal clara de
-// que falta importar el extracto del período.
+// Usa MAX(fecha) por cuenta como proxy. Cada cuenta tiene su propio umbral
+// porque tienen ritmos muy distintos:
+//  - MP / Galicia: movs diarios → 15/25 días
+//  - ICBC: pocos movs/mes (poco usada para operación) → 45/60 días
 //
-// Umbrales:
-//  - 0–14 días: ok (verde)
-//  - 15–24 días: aviso (amarillo) — toca importar
-//  - 25+ días: critico (rojo) — falta importar urgente
+// Estados: 0–warn-1 = ok · warn–critico-1 = aviso · critico+ = critico
 
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
@@ -24,16 +22,28 @@ export interface FrescuraCuenta {
 
 const CUENTAS: CuentaBanco[] = ['mercadopago', 'galicia', 'icbc'];
 
+// Umbrales por cuenta — [aviso, crítico]
+const UMBRALES: Record<CuentaBanco, { aviso: number; critico: number }> = {
+  mercadopago: { aviso: 15, critico: 25 },
+  galicia: { aviso: 15, critico: 25 },
+  icbc: { aviso: 45, critico: 60 }, // ICBC tiene pocos movs, threshold laxo
+};
+
 export const LABEL_CUENTA: Record<CuentaBanco, string> = {
   mercadopago: 'MercadoPago',
   galicia: 'Galicia',
   icbc: 'ICBC',
 };
 
-function clasificar(diasDesde: number, ultimaFecha: string | null): EstadoFrescura {
+function clasificar(
+  cuenta: CuentaBanco,
+  diasDesde: number,
+  ultimaFecha: string | null,
+): EstadoFrescura {
   if (!ultimaFecha) return 'sin_datos';
-  if (diasDesde >= 25) return 'critico';
-  if (diasDesde >= 15) return 'aviso';
+  const u = UMBRALES[cuenta];
+  if (diasDesde >= u.critico) return 'critico';
+  if (diasDesde >= u.aviso) return 'aviso';
   return 'ok';
 }
 
@@ -65,7 +75,7 @@ export function useExtractosFrescura() {
             cuenta,
             ultimaFecha,
             diasDesde,
-            estado: clasificar(diasDesde, ultimaFecha),
+            estado: clasificar(cuenta, diasDesde, ultimaFecha),
           } as FrescuraCuenta;
         }),
       );

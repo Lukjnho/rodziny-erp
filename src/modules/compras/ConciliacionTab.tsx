@@ -449,20 +449,36 @@ export function ConciliacionTab() {
   async function handleAutoMatch() {
     setProcesando('match');
     setMensaje(null);
+    const pendientesAntes = pendientesMatch?.sinConciliar.length ?? 0;
     try {
       const { data, error } = await supabase.rpc('auto_match_gastos_extracto', {
         p_fecha_desde: desde,
         p_fecha_hasta: hasta,
       });
       if (error) throw error;
-      const conciliados = (data as { conciliados: number })?.conciliados ?? 0;
-      setMensaje({
-        tipo: 'ok',
-        texto: `${conciliados} gasto(s) vinculado(s) con su movimiento bancario.`,
-      });
+      const res = data as { conciliados: number; por_pagos: number; por_gasto: number };
+      const total = res?.conciliados ?? 0;
       qc.invalidateQueries({ queryKey: ['conciliacion'] });
       qc.invalidateQueries({ queryKey: ['gastos_conciliados_ids'] });
       qc.invalidateQueries({ queryKey: ['gastos_listado'] });
+      if (total > 0) {
+        const detalles: string[] = [];
+        if ((res?.por_pagos ?? 0) > 0) detalles.push(`${res.por_pagos} por N° de op de pago`);
+        if ((res?.por_gasto ?? 0) > 0) detalles.push(`${res.por_gasto} por N° de comprobante`);
+        setMensaje({
+          tipo: 'ok',
+          texto: `${total} gasto(s) vinculado(s) con su movimiento bancario${
+            detalles.length ? ` (${detalles.join(', ')})` : ''
+          }.`,
+        });
+      } else if (pendientesAntes > 0) {
+        setMensaje({
+          tipo: 'ok',
+          texto: `Ningún match. Los ${pendientesAntes} N° de op pendientes no aparecen en el extracto del período. Si los pagos son recientes, importá un extracto más actualizado.`,
+        });
+      } else {
+        setMensaje({ tipo: 'ok', texto: 'No hay pagos pendientes de matchear.' });
+      }
     } catch (e: unknown) {
       console.error('[Conciliacion] error:', e);
       setMensaje({ tipo: 'err', texto: `Error: ${formatError(e)}` });
@@ -990,21 +1006,15 @@ export function ConciliacionTab() {
       <ImportarExtractoModal
         open={importModalOpen}
         onClose={() => setImportModalOpen(false)}
-        onSuccess={async () => {
-          // Después de cada import, aplicamos reglas de etiquetado automático
-          // (Ley 25.413, comisiones, IVA bancario, sellos, etc.) sobre los nuevos movs.
-          try {
-            const { data } = await supabase.rpc('aplicar_reglas_sugerencia');
-            const n = (data as { etiquetados: number })?.etiquetados ?? 0;
-            qc.invalidateQueries({ queryKey: ['conciliacion'] });
-            setMensaje({
-              tipo: 'ok',
-              texto: `Extracto importado. ${n > 0 ? `${n} cargo(s) bancarios etiquetados automáticamente.` : 'Sin nuevos cargos para etiquetar.'}`,
-            });
-          } catch {
-            qc.invalidateQueries({ queryKey: ['conciliacion'] });
-            setMensaje({ tipo: 'ok', texto: 'Extracto importado. Las vistas se actualizaron.' });
-          }
+        onSuccess={() => {
+          // El modal ya corrió aplicar_reglas_sugerencia + auto_match + crear_cargos
+          // y muestra el resumen ahí mismo. Acá solo invalidamos las vistas.
+          qc.invalidateQueries({ queryKey: ['conciliacion'] });
+          qc.invalidateQueries({ queryKey: ['gastos'] });
+          qc.invalidateQueries({ queryKey: ['gastos_listado'] });
+          qc.invalidateQueries({ queryKey: ['gastos_conciliados_ids'] });
+          qc.invalidateQueries({ queryKey: ['gastos_resumen_kpis'] });
+          setMensaje({ tipo: 'ok', texto: 'Extracto importado y clasificado.' });
         }}
       />
 
