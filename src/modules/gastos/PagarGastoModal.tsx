@@ -232,18 +232,55 @@ export function PagarGastoModal({ open, gasto, onClose }: Props) {
 
       // 3) Insertar pago. numero_operacion va al campo dedicado para que el
       //    matcher de import concilie por igualdad exacta con el extracto.
-      const { error: errInsert } = await supabase.from('pagos_gastos').insert({
-        gasto_id: gasto.id,
-        fecha_pago: fechaPago,
-        monto: importeNum,
-        descuento: descuentoNum,
-        medio_pago: medioPago,
-        numero_operacion: nOperacion.trim() || null,
-        comprobante_pago_path: pathComprobantePago,
-        notas: notas.trim() || null,
-        creado_por: user?.id ?? null,
-      });
+      const { data: pagoInsertado, error: errInsert } = await supabase
+        .from('pagos_gastos')
+        .insert({
+          gasto_id: gasto.id,
+          fecha_pago: fechaPago,
+          monto: importeNum,
+          descuento: descuentoNum,
+          medio_pago: medioPago,
+          numero_operacion: nOperacion.trim() || null,
+          comprobante_pago_path: pathComprobantePago,
+          notas: notas.trim() || null,
+          creado_por: user?.id ?? null,
+        })
+        .select('id')
+        .single();
       if (errInsert) throw errInsert;
+
+      // 3.5) Auto-conciliar con el mov del extracto si hay N° de op cargado.
+      //   Antes había que ir a Conciliación y correr "Auto-match N° op" para
+      //   que el pago se vinculara con su mov. Ahora lo hacemos en línea.
+      //   Match: dígitos del numero_operacion === dígitos de referencia (>=6 chars).
+      if (nOperacion.trim() && pagoInsertado?.id) {
+        const opDigits = nOperacion.replace(/\D/g, '');
+        if (opDigits.length >= 6) {
+          // Filtramos por ILIKE para reducir candidatos, después validamos en
+          // cliente que los dígitos coinciden exactos (descarta falsos positivos).
+          const { data: movs } = await supabase
+            .from('movimientos_bancarios')
+            .select('id, referencia')
+            .is('gasto_id', null)
+            .gt('debito', 0)
+            .ilike('referencia', `%${opDigits}%`)
+            .limit(10);
+          const match = (movs ?? []).find((m) => {
+            const ref = ((m.referencia as string | null) ?? '').replace(/\D/g, '');
+            return ref === opDigits;
+          });
+          if (match) {
+            await supabase
+              .from('pagos_gastos')
+              .update({ conciliado_movimiento_id: match.id })
+              .eq('id', pagoInsertado.id);
+            await supabase
+              .from('movimientos_bancarios')
+              .update({ gasto_id: gasto.id })
+              .eq('id', match.id);
+          }
+        }
+      }
 
       // 4) Actualizar el gasto: estado + (eventualmente) factura/comprobante/medio
       const updateGasto: Record<string, unknown> = {
@@ -280,6 +317,7 @@ export function PagarGastoModal({ open, gasto, onClose }: Props) {
       qc.invalidateQueries({ queryKey: ['gastos_pagos_rango'] });
       qc.invalidateQueries({ queryKey: ['gastos_pagos'] });
       qc.invalidateQueries({ queryKey: ['pagos_gastos_compras'] });
+      qc.invalidateQueries({ queryKey: ['conciliacion'] });
 
       onClose();
     } catch (e) {

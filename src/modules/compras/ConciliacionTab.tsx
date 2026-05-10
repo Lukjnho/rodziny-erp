@@ -101,6 +101,7 @@ interface MovimientoSinConciliar {
   debito: number;
   cuenta: string;
   referencia: string | null;
+  sugerencia: string | null; // si tiene → cargo automático listo para procesar con el bulk
 }
 
 interface MovBancario {
@@ -395,21 +396,24 @@ export function ConciliacionTab() {
     }
   }
 
-  // ---- Vista 3: egresos sin patrón ni vinculación ----
-  const { data: sinConciliar, isLoading: loadingSinConc } = useQuery({
-    queryKey: ['conciliacion', 'sin_conciliar', desde, hasta, bancoFiltro],
+  // ---- Tabla unificada: TODOS los movs pendientes de procesar ----
+  // Egresos del extracto sin gasto vinculado, no marcados como transferencia interna.
+  // Incluye los que tienen `sugerencia` (cargos automáticos del banco) — la columna
+  // "Estado" en el render decide el badge según si tiene sugerencia, match con
+  // gasto candidato, o nada.
+  const { data: movsPendientes, isLoading: loadingMovs } = useQuery({
+    queryKey: ['conciliacion', 'movs_pendientes', desde, hasta, bancoFiltro],
     queryFn: async () => {
       let q = supabase
         .from('movimientos_bancarios')
-        .select('id, fecha, descripcion, debito, cuenta, referencia')
+        .select('id, fecha, descripcion, debito, cuenta, referencia, sugerencia')
         .is('gasto_id', null)
-        .is('sugerencia', null)
         .gt('debito', 0)
         .gte('fecha', desde)
         .lte('fecha', hasta)
         .or('es_transferencia_interna.is.null,es_transferencia_interna.eq.false')
         .order('fecha', { ascending: false })
-        .limit(200);
+        .limit(500);
       if (bancoFiltro !== 'todos') q = q.eq('cuenta', bancoFiltro);
       const { data, error } = await q;
       if (error) throw error;
@@ -868,60 +872,56 @@ export function ConciliacionTab() {
         )}
       </div>
 
-      {/* Vista 1: Auto-match por N° op */}
-      <SeccionConciliacion
-        numero={1}
-        titulo="Auto-match por N° de operación"
-        subtitulo="Vincula automáticamente cada pago cargado con su movimiento del extracto cuando coincide el N° de operación bancaria (limpia prefijos como 'Nro. Op. MP'). Si falla, suele ser porque el extracto del banco aún no llega hasta esa fecha — importá el último extracto y volvé a correr."
-        cargando={loadingMatch}
-        cantidad={pendientesMatch?.sinConciliar.length ?? 0}
-        textoCantidad="pago(s) con N° de op pendientes de matchear"
-        montoTotal={pendientesMatch?.total}
-        accion={
-          <button
-            onClick={handleAutoMatch}
-            disabled={procesando !== null || (pendientesMatch?.sinConciliar.length ?? 0) === 0}
-            className="rounded bg-rodziny-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-rodziny-800 disabled:bg-gray-300"
-          >
-            {procesando === 'match' ? 'Conciliando…' : 'Conciliar ahora'}
-          </button>
-        }
-      />
-
-      {/* Vista 2: Cargos automáticos */}
-      <SeccionConciliacion
-        numero={2}
-        titulo="Cargos automáticos del banco"
-        subtitulo="Genera gastos en categoría 'Impuestos y comisiones bancarias' (local Rodziny S.A.S.) para los movimientos identificados como Ley 25.413 (débito y crédito), comisiones MP, IVA bancario, percepciones y otros cargos del banco."
-        cargando={loadingCargos}
-        cantidad={cargosAuto?.movs.length ?? 0}
-        textoCantidad="movimiento(s) listos para crear gasto"
-        montoTotal={cargosAuto?.total}
-        accion={
-          <button
-            onClick={handleCrearCargosAutomaticos}
-            disabled={procesando !== null || (cargosAuto?.movs.length ?? 0) === 0}
-            className="rounded bg-rodziny-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-rodziny-800 disabled:bg-gray-300"
-          >
-            {procesando === 'cargos' ? 'Creando…' : 'Crear gastos automáticos'}
-          </button>
-        }
-      />
-
-      {/* Vista 3: Sin conciliar */}
+      {/* Tabla unificada de movimientos del extracto por procesar */}
       <div className="rounded-lg border border-gray-200 bg-white p-4">
-        <h4 className="text-sm font-semibold text-gray-800">3. Egresos sin conciliar</h4>
-        <p className="mb-3 mt-1 text-xs text-gray-500">
-          Movimientos del extracto que aún no están asociados a un gasto.
-          La columna <strong>"Gasto cargado"</strong> busca coincidencias por monto + fecha (±2 días):
-          si el sistema encuentra un único match, podés vincularlo con un click. Si no hay match, el
-          gasto no está cargado todavía — cargalo desde Compras &gt; Gastos. Mostramos los 200 más recientes.
-        </p>
-        <div className="max-h-96 space-y-1 overflow-y-auto rounded border border-gray-100">
-          {loadingSinConc ? (
+        <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h4 className="text-sm font-semibold text-gray-800">Movimientos por procesar</h4>
+            <p className="mt-1 text-xs text-gray-500">
+              Egresos del extracto que aún no están vinculados a un gasto.
+              La columna <strong>Estado</strong> dice qué hacer con cada uno:{' '}
+              🔵 cargo bancario auto (procesalo con el botón global) ·{' '}
+              🟡 hay un gasto cargado que matchea (vincular) ·{' '}
+              ⚪ sin match (cargar gasto, pagar facturas o marcar interna).
+              Mostramos los 500 más recientes.
+            </p>
+          </div>
+          {/* Toolbar global: 2 acciones masivas */}
+          <div className="flex shrink-0 flex-col gap-2">
+            <button
+              onClick={handleAutoMatch}
+              disabled={procesando !== null || (pendientesMatch?.sinConciliar.length ?? 0) === 0}
+              title="Vincula los pagos cargados con N° de operación contra los movs del extracto. Si no hay match, el extracto del banco no cubre la fecha del pago."
+              className="whitespace-nowrap rounded border border-rodziny-300 bg-rodziny-50 px-3 py-1.5 text-xs font-medium text-rodziny-800 hover:bg-rodziny-100 disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-50 disabled:text-gray-400"
+            >
+              {procesando === 'match'
+                ? 'Conciliando…'
+                : `🔗 Auto-match N° op${
+                    loadingMatch ? '' : ` (${pendientesMatch?.sinConciliar.length ?? 0})`
+                  }`}
+            </button>
+            <button
+              onClick={handleCrearCargosAutomaticos}
+              disabled={procesando !== null || (cargosAuto?.movs.length ?? 0) === 0}
+              title="Crea gastos automáticos en categoría 'Impuestos y comisiones bancarias' (Rodziny S.A.S.) para todos los movs etiquetados (Ley 25.413, Comisión MP, IVA bancario, etc.)"
+              className="whitespace-nowrap rounded border border-rodziny-300 bg-rodziny-50 px-3 py-1.5 text-xs font-medium text-rodziny-800 hover:bg-rodziny-100 disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-50 disabled:text-gray-400"
+            >
+              {procesando === 'cargos'
+                ? 'Creando…'
+                : `💸 Crear cargos auto${
+                    loadingCargos ? '' : ` (${cargosAuto?.movs.length ?? 0})`
+                  }`}
+            </button>
+          </div>
+        </div>
+
+        <div className="max-h-[36rem] space-y-1 overflow-y-auto rounded border border-gray-100">
+          {loadingMovs ? (
             <div className="py-4 text-center text-xs text-gray-400">Cargando…</div>
-          ) : (sinConciliar?.length ?? 0) === 0 ? (
-            <div className="py-4 text-center text-xs text-gray-400">No hay egresos sin conciliar.</div>
+          ) : (movsPendientes?.length ?? 0) === 0 ? (
+            <div className="py-4 text-center text-xs text-gray-400">
+              No hay movimientos pendientes de procesar en este período.
+            </div>
           ) : (
             <table className="w-full text-xs">
               <thead className="sticky top-0 border-b border-gray-200 bg-gray-50 text-gray-500">
@@ -931,67 +931,80 @@ export function ConciliacionTab() {
                   <th className="px-2 py-1.5 text-left font-medium">Descripción</th>
                   <th className="px-2 py-1.5 text-left font-medium">Ref.</th>
                   <th className="px-2 py-1.5 text-right font-medium">Débito</th>
-                  <th className="px-2 py-1.5 text-left font-medium">Gasto cargado</th>
+                  <th className="px-2 py-1.5 text-left font-medium">Estado / Acción</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {(sinConciliar ?? []).map((m) => {
+                {(movsPendientes ?? []).map((m) => {
                   const candidatos = buscarCandidatos(m);
+                  const tieneSugerencia = !!m.sugerencia;
                   return (
                     <tr key={m.id} className="hover:bg-gray-50">
                       <td className="px-2 py-1.5 text-gray-600 tabular-nums">{m.fecha}</td>
                       <td className="px-2 py-1.5 uppercase text-gray-500">{m.cuenta}</td>
                       <td className="px-2 py-1.5 text-gray-800">{m.descripcion}</td>
-                      <td className="px-2 py-1.5 font-mono text-[10px] text-gray-400">{m.referencia ?? ''}</td>
+                      <td className="px-2 py-1.5 font-mono text-[10px] text-gray-400">
+                        {m.referencia ?? ''}
+                      </td>
                       <td className="px-2 py-1.5 text-right font-semibold tabular-nums text-red-700">
                         {formatARS(Number(m.debito))}
                       </td>
                       <td className="px-2 py-1.5">
-                        <div className="flex flex-wrap items-center gap-1">
-                          {candidatos.length === 0 ? (
-                            <span className="text-[10px] text-gray-400">— sin match exacto</span>
-                          ) : candidatos.length === 1 ? (
+                        {tieneSugerencia ? (
+                          <span
+                            className="inline-block rounded border border-blue-300 bg-blue-50 px-2 py-0.5 text-[11px] font-medium text-blue-800"
+                            title="Cargo automático del banco. Se procesa con 'Crear cargos auto' arriba."
+                          >
+                            🔵 {m.sugerencia}
+                          </span>
+                        ) : (
+                          <div className="flex flex-wrap items-center gap-1">
+                            {candidatos.length === 0 ? (
+                              <span className="text-[10px] text-gray-400">⚪ sin match</span>
+                            ) : candidatos.length === 1 ? (
+                              <button
+                                type="button"
+                                onClick={() => handleVincular(m.id, candidatos[0].id)}
+                                className="rounded border border-amber-300 bg-amber-50 px-2 py-0.5 text-[11px] text-amber-900 hover:bg-amber-100"
+                                title={`Vincular este movimiento al gasto: ${candidatos[0].proveedor ?? '(sin proveedor)'} · ${formatARS(Number(candidatos[0].importe_total))} · ${candidatos[0].fecha}`}
+                              >
+                                🟡 {candidatos[0].proveedor ?? 'gasto'} · Vincular
+                              </button>
+                            ) : (
+                              <select
+                                onChange={(e) => {
+                                  if (e.target.value) handleVincular(m.id, e.target.value);
+                                }}
+                                defaultValue=""
+                                className="rounded border border-amber-300 bg-amber-50 px-1 py-0.5 text-[11px] text-amber-900"
+                              >
+                                <option value="">🟡 {candidatos.length} matches…</option>
+                                {candidatos.map((c) => (
+                                  <option key={c.id} value={c.id}>
+                                    {c.proveedor ?? '(sin proveedor)'} · {c.fecha} ·{' '}
+                                    {formatARS(Number(c.importe_total))}
+                                  </option>
+                                ))}
+                              </select>
+                            )}
                             <button
                               type="button"
-                              onClick={() => handleVincular(m.id, candidatos[0].id)}
-                              className="rounded border border-green-300 bg-green-50 px-2 py-0.5 text-[11px] text-green-800 hover:bg-green-100"
-                              title={`Vincular este movimiento al gasto: ${candidatos[0].proveedor ?? '(sin proveedor)'} · ${formatARS(Number(candidatos[0].importe_total))} · ${candidatos[0].fecha}`}
+                              onClick={() => setMovParaVincular(m)}
+                              className="rounded border border-blue-300 bg-blue-50 px-2 py-0.5 text-[11px] text-blue-800 hover:bg-blue-100"
+                              title="Vincular este movimiento a una o varias facturas pendientes (1 transferencia → N facturas)"
                             >
-                              ✓ {candidatos[0].proveedor ?? 'gasto'} · Vincular
+                              💸 Pagar facturas…
                             </button>
-                          ) : (
-                            <select
-                              onChange={(e) => {
-                                if (e.target.value) handleVincular(m.id, e.target.value);
-                              }}
-                              defaultValue=""
-                              className="rounded border border-amber-300 bg-amber-50 px-1 py-0.5 text-[11px] text-amber-900"
+                            <button
+                              type="button"
+                              onClick={() => handleMarcarInterna(m.id)}
+                              className="rounded border border-purple-300 bg-purple-50 px-2 py-0.5 text-[11px] text-purple-800 hover:bg-purple-100"
+                              title="Marcar como transferencia interna (entre cuentas propias). Lo saca del listado de egresos."
                             >
-                              <option value="">⚠ {candidatos.length} candidatos…</option>
-                              {candidatos.map((c) => (
-                                <option key={c.id} value={c.id}>
-                                  {c.proveedor ?? '(sin proveedor)'} · {c.fecha} · {formatARS(Number(c.importe_total))}
-                                </option>
-                              ))}
-                            </select>
-                          )}
-                          <button
-                            type="button"
-                            onClick={() => setMovParaVincular(m)}
-                            className="rounded border border-blue-300 bg-blue-50 px-2 py-0.5 text-[11px] text-blue-800 hover:bg-blue-100"
-                            title="Vincular este movimiento a una o varias facturas pendientes (1 transferencia → N facturas)"
-                          >
-                            💸 Pagar facturas…
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleMarcarInterna(m.id)}
-                            className="rounded border border-purple-300 bg-purple-50 px-2 py-0.5 text-[11px] text-purple-800 hover:bg-purple-100"
-                            title="Marcar como transferencia interna (entre cuentas propias). Lo saca del listado de egresos."
-                          >
-                            ↔ Interna
-                          </button>
-                        </div>
+                              ↔ Interna
+                            </button>
+                          </div>
+                        )}
                       </td>
                     </tr>
                   );
@@ -1036,53 +1049,3 @@ export function ConciliacionTab() {
   );
 }
 
-// ---- Subcomponente ----
-
-function SeccionConciliacion({
-  numero,
-  titulo,
-  subtitulo,
-  cargando,
-  cantidad,
-  textoCantidad,
-  montoTotal,
-  accion,
-}: {
-  numero: number;
-  titulo: string;
-  subtitulo: string;
-  cargando: boolean;
-  cantidad: number;
-  textoCantidad: string;
-  montoTotal?: number;
-  accion: React.ReactNode;
-}) {
-  return (
-    <div className="rounded-lg border border-gray-200 bg-white p-4">
-      <h4 className="text-sm font-semibold text-gray-800">
-        {numero}. {titulo}
-      </h4>
-      <p className="mt-1 text-xs text-gray-500">{subtitulo}</p>
-      <div className="mt-3 flex items-center gap-3">
-        <div className="flex-1">
-          {cargando ? (
-            <div className="h-8 w-20 animate-pulse rounded bg-gray-200" />
-          ) : (
-            <>
-              <div className="text-2xl font-bold text-gray-900 tabular-nums">
-                {cantidad.toLocaleString('es-AR')}
-              </div>
-              <div className="text-xs text-gray-500">{textoCantidad}</div>
-              {typeof montoTotal === 'number' && montoTotal > 0 && (
-                <div className="mt-1 text-xs text-gray-600">
-                  Monto total: <strong className="tabular-nums">{formatARS(montoTotal)}</strong>
-                </div>
-              )}
-            </>
-          )}
-        </div>
-        {accion}
-      </div>
-    </div>
-  );
-}
