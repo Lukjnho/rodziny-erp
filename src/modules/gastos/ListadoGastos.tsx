@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { formatARS, formatFecha, cn } from '@/lib/utils';
 import type { Gasto } from './types';
-import { TIPO_COMPROBANTE_LABEL } from './types';
+import { TIPO_COMPROBANTE_LABEL, MEDIO_PAGO_LABEL } from './types';
 import { NuevoGastoModal } from './NuevoGastoModal';
 
 // Normaliza el estado_pago para evitar mismatches por capitalización
@@ -56,6 +56,7 @@ export function ListadoGastos({
   };
   const [filtroProveedor, setFiltroProveedor] = useState('');
   const [filtroCategoria, setFiltroCategoria] = useState('');
+  const [filtroMedioPago, setFiltroMedioPago] = useState('');
   const [filtroSinFactura, setFiltroSinFactura] = useState(false);
   const [busqueda, setBusqueda] = useState('');
 
@@ -143,6 +144,9 @@ export function ListadoGastos({
         (g.categoria ?? '').toLowerCase().includes(filtroCategoria.toLowerCase()),
       );
     }
+    if (filtroMedioPago) {
+      lista = lista.filter((g) => (g.medio_pago ?? '') === filtroMedioPago);
+    }
     if (busqueda.trim()) {
       const b = busqueda.toLowerCase();
       lista = lista.filter(
@@ -156,7 +160,7 @@ export function ListadoGastos({
       lista = lista.filter(requiereFactura);
     }
     return lista;
-  }, [gastos, filtroEstado, filtroProveedor, filtroCategoria, busqueda, filtroSinFactura]);
+  }, [gastos, filtroEstado, filtroProveedor, filtroCategoria, filtroMedioPago, busqueda, filtroSinFactura]);
 
   // Conteo total de gastos que exigen factura y no la tienen — KPI clickeable
   const sinFacturaCount = useMemo(() => (gastos ?? []).filter(requiereFactura).length, [gastos]);
@@ -190,6 +194,10 @@ export function ListadoGastos({
   }, [gastos]);
   const categoriasUnicas = useMemo(() => {
     return [...new Set((gastos ?? []).map((g) => g.categoria).filter(Boolean) as string[])].sort();
+  }, [gastos]);
+  // Solo mostramos en el dropdown los medios que aparecen en el período cargado
+  const mediosPagoUnicos = useMemo(() => {
+    return [...new Set((gastos ?? []).map((g) => g.medio_pago).filter(Boolean) as string[])].sort();
   }, [gastos]);
 
   async function abrirComprobante(g: Gasto, tipo: 'pago' | 'factura' = 'pago') {
@@ -267,6 +275,19 @@ export function ListadoGastos({
           {categoriasUnicas.map((c) => (
             <option key={c} value={c}>
               {c}
+            </option>
+          ))}
+        </select>
+        <select
+          value={filtroMedioPago}
+          onChange={(e) => setFiltroMedioPago(e.target.value)}
+          className="max-w-[180px] rounded border border-gray-300 bg-white px-2 py-1.5 text-xs"
+          title="Filtrar por medio de pago (solo gastos pagados/parciales)"
+        >
+          <option value="">Todos los medios</option>
+          {mediosPagoUnicos.map((m) => (
+            <option key={m} value={m}>
+              {MEDIO_PAGO_LABEL[m as keyof typeof MEDIO_PAGO_LABEL] ?? m}
             </option>
           ))}
         </select>
