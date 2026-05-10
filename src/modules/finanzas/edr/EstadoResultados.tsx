@@ -85,7 +85,45 @@ const FILAS: FilaEdR[] = [
     depth: 1,
     formato: 'moneda',
   },
-  { key: '__cmv_total', label: 'TOTAL CMV', tipo: 'calculada', depth: 0, formato: 'moneda' },
+  { key: '__cmv_total', label: 'TOTAL COMPRAS', tipo: 'calculada', depth: 0, formato: 'moneda' },
+  // ── Inventario valorizado (cierres aprobados) ──
+  // Si no hay cierre del mes y del anterior, Δ queda en 0 y CMV REAL = TOTAL COMPRAS
+  // (comportamiento previo, sin romper).
+  {
+    key: 'stock_final_alimentos',
+    label: 'Stock final alimentos',
+    tipo: 'auto',
+    depth: 1,
+    formato: 'moneda',
+  },
+  {
+    key: 'stock_final_bebidas',
+    label: 'Stock final bebidas',
+    tipo: 'auto',
+    depth: 1,
+    formato: 'moneda',
+  },
+  {
+    key: 'stock_final_indirectos',
+    label: 'Stock final indirectos',
+    tipo: 'auto',
+    depth: 1,
+    formato: 'moneda',
+  },
+  {
+    key: '__delta_inventario',
+    label: 'Δ Inventario (vs mes anterior)',
+    tipo: 'calculada',
+    depth: 1,
+    formato: 'moneda',
+  },
+  {
+    key: '__cmv_real',
+    label: 'TOTAL CMV REAL',
+    tipo: 'calculada',
+    depth: 0,
+    formato: 'moneda',
+  },
   { key: '__margen_bruto', label: 'MARGEN BRUTO', tipo: 'calculada', depth: 0, formato: 'moneda' },
   {
     key: '_kpi_food',
@@ -196,6 +234,16 @@ interface AutoMes {
   amortizaciones: number;
   difArqueo: number;
   arca: number;
+  // Cierres de inventario aprobados — fin de mes actual y mes anterior.
+  // Si no hay cierres, todos en 0 → Δ = 0 → CMV REAL = TOTAL COMPRAS.
+  stockFinalAlimentos: number;
+  stockFinalBebidas: number;
+  stockFinalIndirectos: number;
+  stockInicialAlimentos: number;
+  stockInicialBebidas: number;
+  stockInicialIndirectos: number;
+  hayCierreMes: boolean;
+  hayCierreAnterior: boolean;
 }
 
 function computarMes(manual: Map<string, number>, auto: AutoMes): Map<string, number> {
@@ -223,8 +271,21 @@ function computarMes(manual: Map<string, number>, auto: AutoMes): Map<string, nu
   // de arqueo. El IVA es deuda fiscal, no ingreso del giro — se compensa con
   // crédito fiscal en la DDJJ y se paga aparte (impacta solo en flujo).
   const ingNeto = ingBruto - ivaDebito + difArqueo;
-  const cmvTotal = cmvAlimentos + cmvBebidas + cmvIndirectos;
-  const margenBruto = ingNeto - cmvTotal;
+  const cmvTotal = cmvAlimentos + cmvBebidas + cmvIndirectos; // total compras
+  // CMV REAL = compras − Δ inventario, donde Δ = stock_final - stock_inicial.
+  // Si stock subió: consumiste menos de lo que compraste → CMV real < compras.
+  // Si stock bajó: consumiste más → CMV real > compras.
+  // Cuando no hay cierres aprobados, todos los stocks valen 0 y CMV real = compras.
+  const stockFinalTotal =
+    auto.stockFinalAlimentos + auto.stockFinalBebidas + auto.stockFinalIndirectos;
+  const stockInicialTotal =
+    auto.stockInicialAlimentos + auto.stockInicialBebidas + auto.stockInicialIndirectos;
+  const deltaInventario = stockFinalTotal - stockInicialTotal;
+  // Solo aplicamos el ajuste si hay cierre del mes actual Y del anterior.
+  // Sin uno de los dos extremos, no podemos calcular Δ confiable → fallback a compras.
+  const aplicarDelta = auto.hayCierreMes && auto.hayCierreAnterior;
+  const cmvReal = aplicarDelta ? cmvTotal - deltaInventario : cmvTotal;
+  const margenBruto = ingNeto - cmvReal;
   const persTotal = persSueldos + persCargas;
   const primeCost = cmvTotal + persTotal;
   const amortizaciones = manual.has('amortizaciones') ? m('amortizaciones') : auto.amortizaciones;
@@ -248,8 +309,14 @@ function computarMes(manual: Map<string, number>, auto: AutoMes): Map<string, nu
   result.set('cmv_bebidas', cmvBebidas);
   result.set('cmv_indirectos', cmvIndirectos);
   result.set('__cmv_total', cmvTotal);
+  result.set('stock_final_alimentos', auto.stockFinalAlimentos);
+  result.set('stock_final_bebidas', auto.stockFinalBebidas);
+  result.set('stock_final_indirectos', auto.stockFinalIndirectos);
+  result.set('__delta_inventario', aplicarDelta ? deltaInventario : 0);
+  result.set('__cmv_real', cmvReal);
   result.set('__margen_bruto', margenBruto);
-  result.set('_kpi_food', ingNeto > 0 ? cmvTotal / ingNeto : 0);
+  // Food Cost % usa CMV REAL para reflejar el consumo real, no las compras.
+  result.set('_kpi_food', ingNeto > 0 ? cmvReal / ingNeto : 0);
   result.set('pers_sueldos', persSueldos);
   result.set('pers_cargas', persCargas);
   result.set('__pers_total', persTotal);
@@ -309,6 +376,11 @@ const SENTIDO_FILA: Record<string, 1 | -1 | 0> = {
   // (faltantes/sobrantes de caja), comparar mes a mes no aporta señal.
   __ticket_prom: 0, __cortesias_info: 0, __otros_desc: 0,
   cmv_alimentos: -1, cmv_bebidas: -1, cmv_indirectos: -1, __cmv_total: -1,
+  // Stock final: subir es bueno para el dueño (más activo) pero los Δ% mes a mes
+  // tienen poca señal — se quedan neutros para no ruido.
+  stock_final_alimentos: 0, stock_final_bebidas: 0, stock_final_indirectos: 0,
+  // Δ Inventario y CMV REAL: subir el CMV real es malo (consumiste más).
+  __delta_inventario: 0, __cmv_real: -1,
   __margen_bruto: 1,
   pers_sueldos: -1, pers_cargas: -1, __pers_total: -1, __prime_cost: -1,
   gastos_op: -1, impuestos_op: -1,
@@ -549,6 +621,40 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
     },
   });
 
+  // Cierres de inventario aprobados — para Δ Inventario y CMV REAL.
+  // Trae también el último mes del año anterior para que enero pueda calcular Δ.
+  const { data: cierresInventarioRaw } = useQuery({
+    queryKey: ['edr_stock_inventario', año, localEdr],
+    queryFn: async () => {
+      const desde = `${Number(año) - 1}-12`;
+      const hasta = `${año}-12`;
+      const results = await Promise.all(
+        locales.map(async (loc) => {
+          const { data, error } = await supabase
+            .from('edr_cierres_inventario')
+            .select('periodo, monto_alimentos, monto_bebidas, monto_indirectos')
+            .eq('local', loc)
+            .eq('estado', 'aprobado')
+            .gte('periodo', desde)
+            .lte('periodo', hasta);
+          if (error) {
+            console.error('[edr_cierres_inventario]', error);
+            return [];
+          }
+          return (data ?? []) as Array<{
+            periodo: string;
+            monto_alimentos: number;
+            monto_bebidas: number;
+            monto_indirectos: number;
+          }>;
+        }),
+      );
+      return esConsolidado
+        ? mergeByPeriodo(results, ['monto_alimentos', 'monto_bebidas', 'monto_indirectos'])
+        : results[0];
+    },
+  });
+
   const { data: arqueosRaw } = useQuery({
     queryKey: ['edr_arqueos', año, localEdr],
     queryFn: async () => {
@@ -665,6 +771,14 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
     amortizaciones: 0,
     difArqueo: 0,
     arca: 0,
+    stockFinalAlimentos: 0,
+    stockFinalBebidas: 0,
+    stockFinalIndirectos: 0,
+    stockInicialAlimentos: 0,
+    stockInicialBebidas: 0,
+    stockInicialIndirectos: 0,
+    hayCierreMes: false,
+    hayCierreAnterior: false,
   };
 
   const autoMap = useMemo(() => {
@@ -682,6 +796,7 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
     for (const t of ticketsRaw ?? []) {
       const g = gastosMap.get(t.periodo);
       map.set(t.periodo, {
+        ...EMPTY_AUTO,
         ingBruto: Number(t.ing_bruto),
         ivaDebito: Number(t.iva_debito ?? 0),
         ticketCount: Number(t.ticket_count),
@@ -695,8 +810,6 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
         intereses: Number(g?.intereses ?? 0),
         sueldos: Number(g?.sueldos ?? 0),
         cargasSociales: Number(g?.cargas_sociales ?? 0),
-        amortizaciones: 0,
-        difArqueo: 0,
         arca: Number(g?.arca ?? 0),
       });
     }
@@ -759,8 +872,57 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
         map.set(c.periodo, { ...EMPTY_AUTO, intereses: Number(c.total) });
       }
     }
+    // Cierres de inventario aprobados → stock final del mes y stock inicial del siguiente.
+    // Indexamos por periodo para look-up rápido al setear el mes que viene.
+    const cierresPorPeriodo = new Map<
+      string,
+      { alimentos: number; bebidas: number; indirectos: number }
+    >();
+    for (const c of cierresInventarioRaw ?? []) {
+      cierresPorPeriodo.set(c.periodo, {
+        alimentos: Number(c.monto_alimentos),
+        bebidas: Number(c.monto_bebidas),
+        indirectos: Number(c.monto_indirectos),
+      });
+    }
+    // Aplicar a cada mes del año del EdR.
+    for (let i = 1; i <= 12; i++) {
+      const periodo = `${año}-${String(i).padStart(2, '0')}`;
+      // Periodo anterior (puede ser dic del año anterior si i=1).
+      let prevPeriodo: string;
+      if (i === 1) prevPeriodo = `${Number(año) - 1}-12`;
+      else prevPeriodo = `${año}-${String(i - 1).padStart(2, '0')}`;
+
+      const cierreMes = cierresPorPeriodo.get(periodo);
+      const cierrePrev = cierresPorPeriodo.get(prevPeriodo);
+      if (!cierreMes && !cierrePrev) continue; // nada que setear
+
+      const existing = map.get(periodo) ?? { ...EMPTY_AUTO };
+      if (cierreMes) {
+        existing.stockFinalAlimentos = cierreMes.alimentos;
+        existing.stockFinalBebidas = cierreMes.bebidas;
+        existing.stockFinalIndirectos = cierreMes.indirectos;
+        existing.hayCierreMes = true;
+      }
+      if (cierrePrev) {
+        existing.stockInicialAlimentos = cierrePrev.alimentos;
+        existing.stockInicialBebidas = cierrePrev.bebidas;
+        existing.stockInicialIndirectos = cierrePrev.indirectos;
+        existing.hayCierreAnterior = true;
+      }
+      map.set(periodo, existing);
+    }
     return map;
-  }, [ticketsRaw, gastosResumen, amortRaw, arqueosRaw, sueldosPagadosRaw, cargosMPRaw]);
+  }, [
+    ticketsRaw,
+    gastosResumen,
+    amortRaw,
+    arqueosRaw,
+    sueldosPagadosRaw,
+    cargosMPRaw,
+    cierresInventarioRaw,
+    año,
+  ]);
 
   const manualMap = useMemo(() => {
     const map = new Map<string, Map<string, number>>();
@@ -799,7 +961,7 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
     // recalcular KPIs del acumulado
     const ingNeto = acum.get('__ing_netos') ?? 0;
     if (ingNeto > 0) {
-      acum.set('_kpi_food', (acum.get('__cmv_total') ?? 0) / ingNeto);
+      acum.set('_kpi_food', (acum.get('__cmv_real') ?? 0) / ingNeto);
       acum.set('_kpi_labor', (acum.get('__pers_total') ?? 0) / ingNeto);
       acum.set('_kpi_prime', (acum.get('__prime_cost') ?? 0) / ingNeto);
       acum.set('_kpi_gastosop', (acum.get('gastos_op') ?? 0) / ingNeto);

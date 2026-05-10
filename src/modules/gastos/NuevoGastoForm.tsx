@@ -714,6 +714,26 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
     }
   }, [step, tipoGasto]);
 
+  // Aviso retroactivo: ¿el local + periodo derivado de la fecha tiene cierre de
+  // inventario aprobado? Si sí, modificar/agregar gastos puede desfasar el snapshot.
+  // No bloquea — solo avisa, igual que pidió Lucas.
+  const periodoFecha = fecha ? fecha.slice(0, 7) : null;
+  const { data: cierreAprobadoMes } = useQuery({
+    queryKey: ['cierre_aprobado_mes', local, periodoFecha],
+    queryFn: async () => {
+      if (!periodoFecha || local === 'sas') return null;
+      const { data } = await supabase
+        .from('edr_cierres_inventario')
+        .select('periodo, aprobado_at')
+        .eq('local', local)
+        .eq('periodo', periodoFecha)
+        .eq('estado', 'aprobado')
+        .maybeSingle();
+      return data;
+    },
+    enabled: !!periodoFecha && local !== 'sas',
+  });
+
   // Cuando se tilda "Pagado" en flujo físico, defaultear fecha de pago = fecha del comprobante
   useEffect(() => {
     if (pagado && !fechaPago && fecha) {
@@ -1672,6 +1692,13 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
                   onChange={(e) => setFecha(e.target.value)}
                   className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
                 />
+                {cierreAprobadoMes && (
+                  <div className="mt-1 rounded bg-amber-100 px-2 py-1 text-xs text-amber-900">
+                    ⚠ El mes <strong>{cierreAprobadoMes.periodo}</strong> ya tiene cierre de
+                    inventario aprobado. Si esto modifica las compras, el CMV REAL del EdR puede
+                    quedar desactualizado — considerá pedir re-cierre.
+                  </div>
+                )}
               </Field>
 
               {/* Toggle Pagado / Pendiente — solo en flujo "fisico" (en cuenta_corriente es siempre Pendiente) */}

@@ -14,6 +14,8 @@ import NuevoGastoForm from '@/modules/gastos/NuevoGastoForm';
 import { ProveedoresPanel } from '@/modules/gastos/ProveedoresPanel';
 import { ListadoGastos } from '@/modules/gastos/ListadoGastos';
 import { ExtractosAlerta } from '@/modules/finanzas/components/ExtractosAlerta';
+import { CierreInventarioBanner } from './components/CierreInventarioBanner';
+import { CierreInventarioModal } from './components/CierreInventarioModal';
 import { PastasTerminadasPanel } from './components/PastasTerminadasPanel';
 import { ConciliacionTab } from './ConciliacionTab';
 import type { MedioPago, Gasto } from '@/modules/gastos/types';
@@ -351,6 +353,9 @@ export function ComprasPage() {
 
   // Modal único de pago — delegado a PagarGastoModal (canónico)
   const [gastoAPagar, setGastoAPagar] = useState<Gasto | null>(null);
+
+  // Modal del cierre de inventario (botón en tab Stock — Martín lo dispara)
+  const [cierreInventarioModalAbierto, setCierreInventarioModalAbierto] = useState(false);
 
   function abrirModalPagoCompra(g: Gasto) {
     setGastoAPagar(g);
@@ -1045,6 +1050,9 @@ export function ComprasPage() {
       {/* Banner: avisa si hace >15 días que no importás algún extracto */}
       <ExtractosAlerta variant="banner" to="/compras" />
 
+      {/* Banner del cierre mensual de inventario (en ventana del cierre o feedback aprobado) */}
+      <CierreInventarioBanner local={local} />
+
       {/* Filtros */}
       <div className="mb-4 flex flex-wrap items-center gap-4">
         <LocalSelector
@@ -1333,6 +1341,13 @@ export function ComprasPage() {
                   className="rounded bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-700"
                 >
                   Conteo de inventario
+                </button>
+                <button
+                  onClick={() => setCierreInventarioModalAbierto(true)}
+                  className="rounded bg-emerald-700 px-3 py-1.5 text-sm text-white hover:bg-emerald-800"
+                  title="Genera el cierre mensual de inventario para que entre al EdR"
+                >
+                  🔒 Cierre de mes
                 </button>
               </div>
             ) : (
@@ -3186,6 +3201,13 @@ export function ComprasPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {cierreInventarioModalAbierto && (
+        <CierreInventarioModal
+          local={local}
+          onClose={() => setCierreInventarioModalAbierto(false)}
+        />
       )}
     </PageContainer>
   );
