@@ -23,7 +23,7 @@ const MESES_LABEL = [
 ];
 
 type TipoFila = 'seccion' | 'auto' | 'manual' | 'calculada' | 'kpi' | 'espacio';
-type Formato = 'moneda' | 'porcentaje' | 'cantidad';
+type Formato = 'moneda' | 'porcentaje' | 'cantidad' | 'rotacion';
 
 interface FilaEdR {
   key: string;
@@ -132,6 +132,13 @@ const FILAS: FilaEdR[] = [
     depth: 1,
     formato: 'porcentaje',
     benchmark: '25-32%',
+  },
+  {
+    key: '_kpi_rotacion',
+    label: '↸ Rotación de inventario',
+    tipo: 'kpi',
+    depth: 1,
+    formato: 'rotacion',
   },
   { key: '_esp2', label: '', tipo: 'espacio', depth: 0 },
 
@@ -317,6 +324,13 @@ function computarMes(manual: Map<string, number>, auto: AutoMes): Map<string, nu
   result.set('__margen_bruto', margenBruto);
   // Food Cost % usa CMV REAL para reflejar el consumo real, no las compras.
   result.set('_kpi_food', ingNeto > 0 ? cmvReal / ingNeto : 0);
+  // Rotación = CMV real / stock promedio. Solo calculable si hay cierre del
+  // mes y del anterior. Más alto = stock rota más rápido = menos plata atada.
+  const stockPromedio = (stockFinalTotal + stockInicialTotal) / 2;
+  result.set(
+    '_kpi_rotacion',
+    aplicarDelta && stockPromedio > 0 ? cmvReal / stockPromedio : 0,
+  );
   result.set('pers_sueldos', persSueldos);
   result.set('pers_cargas', persCargas);
   result.set('__pers_total', persTotal);
@@ -362,6 +376,7 @@ function formatValor(v: number, formato?: Formato): string {
   if (formato === 'porcentaje') return v !== 0 ? `${(v * 100).toFixed(1)}%` : '—';
   if (formato === 'cantidad')
     return v !== 0 ? v.toLocaleString('es-AR', { maximumFractionDigits: 0 }) : '—';
+  if (formato === 'rotacion') return v > 0 ? `${v.toFixed(1)}x` : '—';
   return v !== 0 ? formatARS(v) : '—';
 }
 
