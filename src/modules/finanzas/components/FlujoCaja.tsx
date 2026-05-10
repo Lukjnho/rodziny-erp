@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import { Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { formatARS, formatFecha, cn } from '@/lib/utils';
@@ -915,14 +916,12 @@ export function FlujoCaja({ onNavigateToTab }: { onNavigateToTab?: (tab: string)
               </span>
             ))}
           </span>
-          {onNavigateToTab && (
-            <button
-              onClick={() => onNavigateToTab('importar')}
-              className="ml-auto rounded bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-900 hover:bg-amber-200"
-            >
-              Importar →
-            </button>
-          )}
+          <Link
+            to="/compras"
+            className="ml-auto rounded bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-900 hover:bg-amber-200"
+          >
+            Importar →
+          </Link>
           <button
             onClick={() => setBannerCerrado(true)}
             className="text-amber-600 hover:text-amber-800"

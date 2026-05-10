@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import { Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { LocalSelector } from '@/components/ui/LocalSelector';
@@ -26,6 +27,7 @@ interface Checkpoint {
   pasos?: string[]; // pasos para resolver
   ctaLabel?: string;
   ctaTab?: TabFinanzas;
+  ctaUrl?: string; // ruta externa (ej. '/compras') — alternativa a ctaTab
 }
 
 interface Override {
@@ -320,11 +322,11 @@ export function CierreMesPanel({ onNavigateToTab }: Props) {
             : `Sin movimientos cargados para el mes — verificá si subiste el extracto o si efectivamente no hubo movimiento`,
         pasos: [
           `Descargar extracto ${label} del mes desde el home banking`,
-          'Ir al tab "Importar" del ERP',
-          'Arrastrar el archivo (CSV/TXT) — el sistema autodetecta el banco',
+          'Ir a Compras-Gastos > Conciliación',
+          'Hacer click en "Importar extracto" — el sistema autodetecta el banco',
         ],
-        ctaLabel: 'Ir a Importar',
-        ctaTab: 'importar',
+        ctaLabel: 'Ir a Conciliación',
+        ctaUrl: '/compras',
       });
     }
 
@@ -750,6 +752,7 @@ export function CierreMesPanel({ onNavigateToTab }: Props) {
                   onMarkOverride={() => setOverrideModal({ key: c.key, titulo: c.titulo })}
                   onQuitarOverride={() => quitarOverride.mutate(c.key)}
                   onCta={c.ctaTab && onNavigateToTab ? () => onNavigateToTab(c.ctaTab!) : undefined}
+                  ctaUrl={c.ctaUrl}
                 />
               ))}
             </div>
@@ -883,12 +886,14 @@ function CheckpointRow({
   onMarkOverride,
   onQuitarOverride,
   onCta,
+  ctaUrl,
 }: {
   checkpoint: Checkpoint;
   override?: Override;
   onMarkOverride: () => void;
   onQuitarOverride: () => void;
   onCta?: () => void;
+  ctaUrl?: string;
 }) {
   const [expanded, setExpanded] = useState(false);
   const c = checkpoint;
@@ -969,14 +974,21 @@ function CheckpointRow({
 
         {/* Acciones */}
         <div className="flex shrink-0 flex-col gap-1.5">
-          {onCta && c.ctaLabel && (
+          {ctaUrl && c.ctaLabel ? (
+            <Link
+              to={ctaUrl}
+              className="whitespace-nowrap rounded border border-rodziny-300 bg-rodziny-50 px-2.5 py-1 text-center text-[11px] font-medium text-rodziny-700 hover:bg-rodziny-100"
+            >
+              → {c.ctaLabel}
+            </Link>
+          ) : onCta && c.ctaLabel ? (
             <button
               onClick={onCta}
               className="whitespace-nowrap rounded border border-rodziny-300 bg-rodziny-50 px-2.5 py-1 text-[11px] font-medium text-rodziny-700 hover:bg-rodziny-100"
             >
               → {c.ctaLabel}
             </button>
-          )}
+          ) : null}
           {puedeMostrarOverride && (
             <button
               onClick={onMarkOverride}

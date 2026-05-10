@@ -7,7 +7,9 @@ import { conciliarPorIdOperacion } from './conciliarPorIdOperacion';
 interface ResultadoArchivo {
   nombre: string;
   cuenta: string | null;
-  procesados: number;
+  parseados: number;
+  nuevos: number;
+  duplicados: number;
   error: string | null;
 }
 
@@ -41,37 +43,51 @@ export function ImportarExtractoModal({ open, onClose, onSuccess }: Props) {
           acc.push({
             nombre: file.name,
             cuenta: null,
-            procesados: 0,
+            parseados: 0,
+            nuevos: 0,
+            duplicados: 0,
             error: 'Formato no detectado (MP / Galicia / ICBC)',
           });
           continue;
         }
         const cuenta = movimientos[0]?.cuenta ?? null;
-        const { error } = await supabase.from('movimientos_bancarios').upsert(
-          movimientos.map((m) => ({ ...m, fuente: file.name })),
-          {
-            onConflict: 'cuenta,fecha,referencia,debito,credito',
-            ignoreDuplicates: true,
-          },
-        );
+        // upsert + .select() devuelve solo las filas insertadas (las descartadas
+        // por `ignoreDuplicates` no se incluyen). Con eso sabemos cuántos eran nuevos.
+        const { data: insertados, error } = await supabase
+          .from('movimientos_bancarios')
+          .upsert(
+            movimientos.map((m) => ({ ...m, fuente: file.name })),
+            {
+              onConflict: 'cuenta,fecha,referencia,debito,credito',
+              ignoreDuplicates: true,
+            },
+          )
+          .select('id');
+        const nuevos = insertados?.length ?? 0;
         acc.push({
           nombre: file.name,
           cuenta,
-          procesados: movimientos.length,
+          parseados: movimientos.length,
+          nuevos,
+          duplicados: movimientos.length - nuevos,
           error: error ? error.message : null,
         });
       } catch (e) {
         acc.push({
           nombre: file.name,
           cuenta: null,
-          procesados: 0,
+          parseados: 0,
+          nuevos: 0,
+          duplicados: 0,
           error: e instanceof Error ? e.message : 'Error desconocido',
         });
       }
     }
     setResultados(acc);
 
-    const huboImports = acc.some((r) => r.procesados > 0 && !r.error);
+    // Solo dispara conciliación si hay filas nuevas — si todo eran duplicados,
+    // los movs ya estaban procesados de un import previo.
+    const huboImports = acc.some((r) => r.nuevos > 0 && !r.error);
     if (huboImports) {
       // Conciliación automática por igualdad EXACTA de N° de operación.
       // Sin scoring, sin tolerancia, sin sugerencias parciales: si el N°
@@ -134,24 +150,37 @@ export function ImportarExtractoModal({ open, onClose, onSuccess }: Props) {
 
         {resultados.length > 0 && (
           <div className="mt-4 space-y-2">
-            {resultados.map((r, i) => (
-              <div
-                key={i}
-                className={cn(
-                  'rounded-md border p-3 text-xs',
-                  r.error ? 'border-red-200 bg-red-50' : 'border-green-200 bg-green-50',
-                )}
-              >
-                <div className="font-medium text-gray-800">{r.nombre}</div>
-                {r.error ? (
-                  <div className="mt-1 text-red-700">❌ {r.error}</div>
-                ) : (
-                  <div className="mt-1 text-green-700">
-                    ✅ {r.procesados} movimientos · {r.cuenta ?? '?'}
-                  </div>
-                )}
-              </div>
-            ))}
+            {resultados.map((r, i) => {
+              const todoDuplicado = !r.error && r.nuevos === 0 && r.parseados > 0;
+              return (
+                <div
+                  key={i}
+                  className={cn(
+                    'rounded-md border p-3 text-xs',
+                    r.error
+                      ? 'border-red-200 bg-red-50'
+                      : todoDuplicado
+                        ? 'border-blue-200 bg-blue-50'
+                        : 'border-green-200 bg-green-50',
+                  )}
+                >
+                  <div className="font-medium text-gray-800">{r.nombre}</div>
+                  {r.error ? (
+                    <div className="mt-1 text-red-700">❌ {r.error}</div>
+                  ) : todoDuplicado ? (
+                    <div className="mt-1 text-blue-700">
+                      ℹ {r.parseados} movimientos · {r.cuenta ?? '?'} — todos duplicados (ya estaban
+                      cargados). Bajá un extracto más reciente del banco.
+                    </div>
+                  ) : (
+                    <div className="mt-1 text-green-700">
+                      ✅ {r.parseados} parseados · <strong>{r.nuevos} nuevos</strong>
+                      {r.duplicados > 0 && ` · ${r.duplicados} ya existían`} · {r.cuenta ?? '?'}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
 

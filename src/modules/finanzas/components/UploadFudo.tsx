@@ -1,11 +1,13 @@
 import { useState, useRef } from 'react';
+import { Link } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { parseFudoVentas } from '../parsers/parseFudoVentas';
 import { parseFudoGastos } from '../parsers/parseFudoGastos';
-import { parseExtracto } from '../parsers/parseExtractos';
 import { cn } from '@/lib/utils';
 
-type TipoArchivo = 'ventas' | 'gastos' | 'extracto';
+// Solo Fudo (ventas / gastos). Extractos bancarios se importan únicamente desde
+// Compras-Gastos > Conciliación para evitar puntos de entrada duplicados.
+type TipoArchivo = 'ventas' | 'gastos';
 type LocalFudo = 'vedia' | 'saavedra';
 
 interface UploadResult {
@@ -16,6 +18,7 @@ interface Detectado {
   tipo: TipoArchivo;
   local: LocalFudo;
   confianza: 'alta' | 'baja';
+  esExtracto?: boolean; // si true, mostramos aviso para redirigir a Conciliación
 }
 
 // ── auto-detección desde nombre de archivo ────────────────────────────────────
@@ -26,18 +29,18 @@ function normalizar(s: string) {
     .replace(/[\u0300-\u036f]/g, '');
 }
 
-function detectarDesdeNombre(filename: string): Detectado {
+function detectarDesdeNombre(filename: string): Detectado & { esExtracto: boolean } {
   const f = normalizar(filename);
 
-  let tipo: TipoArchivo = 'ventas';
-  if (f.includes('gasto') || f.includes('egreso')) tipo = 'gastos';
-  else if (
+  // Si parece un extracto bancario, lo marcamos para redirigir a Conciliación.
+  const esExtracto =
     f.includes('extracto') ||
     f.includes('galicia') ||
     f.includes('icbc') ||
-    f.includes('mercado')
-  )
-    tipo = 'extracto';
+    f.includes('mercadopago');
+
+  let tipo: TipoArchivo = 'ventas';
+  if (f.includes('gasto') || f.includes('egreso')) tipo = 'gastos';
 
   let local: LocalFudo = 'vedia';
   const esSaavedra =
@@ -49,12 +52,11 @@ function detectarDesdeNombre(filename: string): Detectado {
   else if (f.includes('vedia') || f.includes('pasta')) local = 'vedia';
 
   const confianza: 'alta' | 'baja' =
-    (f.includes('vedia') || esSaavedra) &&
-    (f.includes('venta') || f.includes('gasto') || f.includes('extracto'))
+    (f.includes('vedia') || esSaavedra) && (f.includes('venta') || f.includes('gasto'))
       ? 'alta'
       : 'baja';
 
-  return { tipo, local, confianza };
+  return { tipo, local, confianza, esExtracto };
 }
 
 // ── componente ────────────────────────────────────────────────────────────────
@@ -78,14 +80,9 @@ export function UploadFudo({ onSuccess }: { onSuccess?: () => void }) {
     setLoading(true);
     setError(null);
     try {
-      if (tipo === 'ventas' || tipo === 'gastos') {
-        const buffer = await file.arrayBuffer();
-        if (tipo === 'ventas') await importarVentas(buffer, local);
-        else await importarGastos(buffer, local);
-      } else {
-        const text = await file.text();
-        await importarExtracto(text, file.name);
-      }
+      const buffer = await file.arrayBuffer();
+      if (tipo === 'ventas') await importarVentas(buffer, local);
+      else await importarGastos(buffer, local);
       onSuccess?.();
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Error desconocido');
@@ -263,32 +260,23 @@ export function UploadFudo({ onSuccess }: { onSuccess?: () => void }) {
     setResult({ insertados: rows.length, errores: error ? [error.message] : [] });
   }
 
-  async function importarExtracto(text: string, filename: string) {
-    const movimientos = parseExtracto(text, filename);
-    if (!movimientos.length) throw new Error('No se detectó formato válido (MP / Galicia / ICBC)');
-    const { error } = await supabase.from('movimientos_bancarios').upsert(
-      movimientos.map((m) => ({ ...m, fuente: filename })),
-      {
-        onConflict: 'cuenta,fecha,referencia,debito,credito',
-        ignoreDuplicates: true,
-      },
-    );
-    setResult({ insertados: movimientos.length, errores: error ? [error.message] : [] });
-  }
-
   const tipoLabel: Record<TipoArchivo, string> = {
     ventas: '📈 Ventas',
     gastos: '📋 Gastos',
-    extracto: '🏦 Extracto bancario',
   };
 
   return (
     <div className="max-w-xl rounded-lg border border-surface-border bg-white p-6">
-      <h3 className="mb-1 font-semibold text-gray-900">Importar datos</h3>
+      <h3 className="mb-1 font-semibold text-gray-900">Importar Fudo (ventas / gastos)</h3>
       <p className="mb-5 text-xs text-gray-400">
-        El archivo se detecta automáticamente. Nombrá los archivos como:{' '}
+        Subí los exports XLS de Fudo. Nombrá los archivos como:{' '}
         <span className="font-medium text-gray-600">Ventas Vedia Marzo</span> o{' '}
         <span className="font-medium text-gray-600">Gastos Saavedra Enero</span>.
+        <br />
+        <span className="text-amber-700">
+          Los extractos bancarios (MP / Galicia / ICBC) se importan desde Compras-Gastos &gt;
+          Conciliación.
+        </span>
       </p>
 
       {/* Drop zone */}
@@ -328,8 +316,26 @@ export function UploadFudo({ onSuccess }: { onSuccess?: () => void }) {
         />
       </div>
 
-      {/* Detección: muestra qué detectó y permite corregir */}
-      {detectado && !result && !loading && (
+      {/* Si parece un extracto bancario, redirigir a Conciliación */}
+      {detectado && detectado.esExtracto && !result && !loading && (
+        <div className="mt-4 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
+          <p className="font-semibold">🏦 Parece un extracto bancario</p>
+          <p className="mt-1 text-xs">
+            Los extractos (MercadoPago / Galicia / ICBC) se importan desde{' '}
+            <strong>Compras-Gastos &gt; Conciliación</strong> para que se vinculen automáticamente
+            con los gastos cargados.
+          </p>
+          <Link
+            to="/compras"
+            className="mt-3 inline-block rounded bg-amber-800 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-700"
+          >
+            Ir a Conciliación →
+          </Link>
+        </div>
+      )}
+
+      {/* Detección de archivo Fudo (ventas/gastos): muestra qué detectó y permite corregir */}
+      {detectado && !detectado.esExtracto && !result && !loading && (
         <div className="mt-4 space-y-3 rounded-lg border border-gray-200 bg-gray-50 p-4">
           <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
             Detección automática{' '}
@@ -342,7 +348,7 @@ export function UploadFudo({ onSuccess }: { onSuccess?: () => void }) {
           <div>
             <p className="mb-1 text-xs text-gray-500">Tipo</p>
             <div className="flex gap-2">
-              {(['ventas', 'gastos', 'extracto'] as TipoArchivo[]).map((t) => (
+              {(['ventas', 'gastos'] as TipoArchivo[]).map((t) => (
                 <button
                   key={t}
                   onClick={() => setDetectado((d) => (d ? { ...d, tipo: t } : d))}
@@ -359,41 +365,37 @@ export function UploadFudo({ onSuccess }: { onSuccess?: () => void }) {
             </div>
           </div>
 
-          {/* Local (solo para ventas/gastos) */}
-          {detectado.tipo !== 'extracto' && (
-            <div>
-              <p className="mb-1 text-xs text-gray-500">Local</p>
-              <div className="flex gap-2">
-                {(['vedia', 'saavedra'] as LocalFudo[]).map((l) => (
-                  <button
-                    key={l}
-                    onClick={() => setDetectado((d) => (d ? { ...d, local: l } : d))}
-                    className={cn(
-                      'rounded px-3 py-1 text-xs font-medium capitalize transition-colors',
-                      detectado.local === l
-                        ? 'bg-rodziny-800 text-white'
-                        : 'border border-gray-300 bg-white text-gray-600 hover:bg-gray-50',
-                    )}
-                  >
-                    {l === 'vedia' ? 'Rodziny Vedia' : 'Rodziny Saavedra'}
-                  </button>
-                ))}
-              </div>
+          {/* Local */}
+          <div>
+            <p className="mb-1 text-xs text-gray-500">Local</p>
+            <div className="flex gap-2">
+              {(['vedia', 'saavedra'] as LocalFudo[]).map((l) => (
+                <button
+                  key={l}
+                  onClick={() => setDetectado((d) => (d ? { ...d, local: l } : d))}
+                  className={cn(
+                    'rounded px-3 py-1 text-xs font-medium capitalize transition-colors',
+                    detectado.local === l
+                      ? 'bg-rodziny-800 text-white'
+                      : 'border border-gray-300 bg-white text-gray-600 hover:bg-gray-50',
+                  )}
+                >
+                  {l === 'vedia' ? 'Rodziny Vedia' : 'Rodziny Saavedra'}
+                </button>
+              ))}
             </div>
-          )}
+          </div>
 
           {/* Botón importar */}
           <button
             onClick={async () => {
-              // re-leer el archivo desde el input
               const file = inputRef.current?.files?.[0];
               if (!file) return;
               await importar(file, detectado.tipo, detectado.local);
             }}
             className="w-full rounded-md bg-rodziny-800 py-2 text-sm font-medium text-white transition-colors hover:bg-rodziny-700"
           >
-            Importar como {tipoLabel[detectado.tipo]}
-            {detectado.tipo !== 'extracto' ? ` · ${detectado.local}` : ''}
+            Importar como {tipoLabel[detectado.tipo]} · {detectado.local}
           </button>
         </div>
       )}
