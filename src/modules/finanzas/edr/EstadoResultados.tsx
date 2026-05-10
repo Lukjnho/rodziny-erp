@@ -120,7 +120,9 @@ const FILAS: FilaEdR[] = [
   },
   { key: '_esp3', label: '', tipo: 'espacio', depth: 0 },
 
-  { key: 'gastos_op', label: 'GASTOS OPERATIVOS', tipo: 'auto', depth: 0, formato: 'moneda' },
+  { key: '_gastos', label: 'GASTOS OPERATIVOS', tipo: 'seccion', depth: 0 },
+  { key: 'gastos_op', label: 'Gastos operativos', tipo: 'auto', depth: 1, formato: 'moneda' },
+  { key: 'impuestos_op', label: 'Impuestos y Tasas', tipo: 'auto', depth: 1, formato: 'moneda' },
   {
     key: '_kpi_gastosop',
     label: '↸ Gastos Op. %',
@@ -129,7 +131,6 @@ const FILAS: FilaEdR[] = [
     formato: 'porcentaje',
     benchmark: '10-18%',
   },
-  { key: 'impuestos_op', label: 'Impuestos y Tasas', tipo: 'auto', depth: 1, formato: 'moneda' },
   { key: '_esp4', label: '', tipo: 'espacio', depth: 0 },
 
   { key: '__ebitda', label: 'EBITDA', tipo: 'calculada', depth: 0, formato: 'moneda' },
@@ -147,7 +148,7 @@ const FILAS: FilaEdR[] = [
 
   { key: '_fin', label: 'RESULTADO FINANCIERO', tipo: 'seccion', depth: 0 },
   { key: 'fin_intereses', label: 'Intereses', tipo: 'auto', depth: 1, formato: 'moneda' },
-  { key: 'fin_arca', label: 'Regularización ARCA', tipo: 'manual', depth: 1, formato: 'moneda' },
+  { key: 'fin_arca', label: 'Regularización ARCA', tipo: 'auto', depth: 1, formato: 'moneda' },
   { key: 'fin_prestamo', label: 'Préstamo', tipo: 'manual', depth: 1, formato: 'moneda' },
   { key: '__fin_total', label: 'TOTAL FINANCIERO', tipo: 'calculada', depth: 0, formato: 'moneda' },
   { key: '_esp7', label: '', tipo: 'espacio', depth: 0 },
@@ -194,6 +195,7 @@ interface AutoMes {
   cargasSociales: number;
   amortizaciones: number;
   difArqueo: number;
+  arca: number;
 }
 
 function computarMes(manual: Map<string, number>, auto: AutoMes): Map<string, number> {
@@ -207,6 +209,8 @@ function computarMes(manual: Map<string, number>, auto: AutoMes): Map<string, nu
   const gastosOp = manual.has('gastos_op') ? m('gastos_op') : auto.gastosOp;
   const impuestosOp = manual.has('impuestos_op') ? m('impuestos_op') : auto.impuestosOp;
   const finIntereses = manual.has('fin_intereses') ? m('fin_intereses') : auto.intereses;
+  // ARCA: solo desde gastos cargados con subcat "Regularización de impuestos".
+  const finArca = auto.arca;
 
   // Personal: auto desde gastos Fudo, override manual
   const persSueldos = manual.has('pers_sueldos') ? m('pers_sueldos') : auto.sueldos;
@@ -226,7 +230,7 @@ function computarMes(manual: Map<string, number>, auto: AutoMes): Map<string, nu
   const amortizaciones = manual.has('amortizaciones') ? m('amortizaciones') : auto.amortizaciones;
   const ebitda = margenBruto - persTotal - gastosOp - impuestosOp;
   const ebit = ebitda - amortizaciones;
-  const finTotal = -(finIntereses + m('fin_arca') + m('fin_prestamo'));
+  const finTotal = -(finIntereses + finArca + m('fin_prestamo'));
   const rdoAntes = ebit + finTotal;
   const rdoNeto = rdoAntes - m('anticipo_gcias');
 
@@ -255,6 +259,7 @@ function computarMes(manual: Map<string, number>, auto: AutoMes): Map<string, nu
   result.set('gastos_op', gastosOp);
   result.set('impuestos_op', impuestosOp);
   result.set('fin_intereses', finIntereses);
+  result.set('fin_arca', finArca);
   result.set('_kpi_gastosop', ingNeto > 0 ? gastosOp / ingNeto : 0);
   result.set('__ebitda', ebitda);
   result.set('_kpi_ebitda', ingNeto > 0 ? ebitda / ingNeto : 0);
@@ -299,7 +304,9 @@ function formatValor(v: number, formato?: Formato): string {
 //   -1 → subir el valor numérico es malo (costos, impuestos, anticipos)
 //    0 → neutro (informativos, ticket promedio): muestra el delta en gris
 const SENTIDO_FILA: Record<string, 1 | -1 | 0> = {
-  ing_bruto: 1, iva_debito: 1, dif_arqueo: 1, __ing_netos: 1,
+  ing_bruto: 1, iva_debito: 1, __ing_netos: 1,
+  // dif_arqueo: deliberadamente sin sentido — son montos chicos puntuales
+  // (faltantes/sobrantes de caja), comparar mes a mes no aporta señal.
   __ticket_prom: 0, __cortesias_info: 0, __otros_desc: 0,
   cmv_alimentos: -1, cmv_bebidas: -1, cmv_indirectos: -1, __cmv_total: -1,
   __margen_bruto: 1,
@@ -443,6 +450,7 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
     intereses: number;
     sueldos: number;
     cargas_sociales: number;
+    arca: number;
   };
   type AmortRow = { periodo: string; total_amort: number };
   type PartidaRow = { periodo: string; concepto: string; monto: number };
@@ -515,6 +523,7 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
             'intereses',
             'sueldos',
             'cargas_sociales',
+            'arca',
           ])
         : results[0];
     },
@@ -655,6 +664,7 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
     cargasSociales: 0,
     amortizaciones: 0,
     difArqueo: 0,
+    arca: 0,
   };
 
   const autoMap = useMemo(() => {
@@ -687,6 +697,7 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
         cargasSociales: Number(g?.cargas_sociales ?? 0),
         amortizaciones: 0,
         difArqueo: 0,
+        arca: Number(g?.arca ?? 0),
       });
     }
     // Periodos solo con gastos (sin tickets)
@@ -704,6 +715,7 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
           intereses: Number(g.intereses),
           sueldos: Number(g.sueldos),
           cargasSociales: Number(g.cargas_sociales),
+          arca: Number(g.arca ?? 0),
         });
       }
     }
@@ -1052,7 +1064,7 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
                               placeholder="0"
                             />
                           ) : (
-                            <span className="text-xs">
+                            <span className={esKpi ? 'text-xs' : 'text-sm'}>
                               {valor !== 0 ? (
                                 formatValor(valor, fila.formato)
                               ) : esManual ? (
@@ -1088,7 +1100,8 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
                           return (
                             <span
                               className={cn(
-                                'text-xs font-medium',
+                                'font-medium',
+                                esKpi ? 'text-xs' : 'text-sm',
                                 esKpi && color === 'verde' && 'text-green-700',
                                 esKpi && color === 'amarillo' && 'text-yellow-600',
                                 esKpi && color === 'rojo' && 'text-red-600',
