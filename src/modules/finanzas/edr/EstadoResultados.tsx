@@ -111,13 +111,6 @@ const FILAS: FilaEdR[] = [
     formato: 'moneda',
   },
   {
-    key: '__delta_inventario',
-    label: 'Δ Inventario (vs mes anterior)',
-    tipo: 'calculada',
-    depth: 1,
-    formato: 'moneda',
-  },
-  {
     key: '__cmv_real',
     label: 'TOTAL CMV REAL',
     tipo: 'calculada',
@@ -319,7 +312,6 @@ function computarMes(manual: Map<string, number>, auto: AutoMes): Map<string, nu
   result.set('stock_final_alimentos', auto.stockFinalAlimentos);
   result.set('stock_final_bebidas', auto.stockFinalBebidas);
   result.set('stock_final_indirectos', auto.stockFinalIndirectos);
-  result.set('__delta_inventario', aplicarDelta ? deltaInventario : 0);
   result.set('__cmv_real', cmvReal);
   result.set('__margen_bruto', margenBruto);
   // Food Cost % usa CMV REAL para reflejar el consumo real, no las compras.
@@ -394,8 +386,8 @@ const SENTIDO_FILA: Record<string, 1 | -1 | 0> = {
   // Stock final: subir es bueno para el dueño (más activo) pero los Δ% mes a mes
   // tienen poca señal — se quedan neutros para no ruido.
   stock_final_alimentos: 0, stock_final_bebidas: 0, stock_final_indirectos: 0,
-  // Δ Inventario y CMV REAL: subir el CMV real es malo (consumiste más).
-  __delta_inventario: 0, __cmv_real: -1,
+  // CMV REAL: subir es malo (consumiste más).
+  __cmv_real: -1,
   __margen_bruto: 1,
   pers_sueldos: -1, pers_cargas: -1, __pers_total: -1, __prime_cost: -1,
   gastos_op: -1, impuestos_op: -1,
