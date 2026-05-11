@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
-import { cn } from '@/lib/utils';
+import { cn, fmtCantidad } from '@/lib/utils';
 
 interface LoteStock {
   id: string;
@@ -22,6 +22,7 @@ interface LoteStock {
     tipo: string;
     gramos_por_porcion: number | null;
     fudo_productos: string[] | null;
+    es_subreceta: boolean;
   } | null;
 }
 
@@ -63,7 +64,9 @@ export function StockProduccionSection({
     queryFn: async () => {
       let q = supabase
         .from('cocina_lotes_produccion')
-        .select('*, receta:cocina_recetas(id, nombre, tipo, gramos_por_porcion, fudo_productos)')
+        .select(
+          '*, receta:cocina_recetas(id, nombre, tipo, gramos_por_porcion, fudo_productos, es_subreceta)',
+        )
         .eq('en_stock', true)
         .order('receta_id')
         .order('created_at');
@@ -100,6 +103,8 @@ export function StockProduccionSection({
     if (!lotes) return [];
     const porReceta = new Map<string, LoteStock[]>();
     for (const l of lotes) {
+      // Subrecetas (ej. Pomodoro Base) son insumos internos, no se muestran como producto final
+      if (l.receta?.es_subreceta) continue;
       const key = l.receta_id ?? `libre:${l.nombre_libre ?? '—'}`;
       if (!porReceta.has(key)) porReceta.set(key, []);
       porReceta.get(key)!.push(l);
@@ -364,7 +369,7 @@ export function StockProduccionSection({
                           )}
                           <span className="ml-auto flex items-center gap-2 text-xs">
                             <span className={cn('font-bold tabular-nums', semaforo)}>
-                              {g.totalRestante.toFixed(2)} {g.unidadBatch}
+                              {fmtCantidad(g.totalRestante)} {g.unidadBatch}
                             </span>
                             <span className="text-[10px] text-gray-300">
                               {expandido ? '▾' : '▸'}
@@ -394,7 +399,7 @@ export function StockProduccionSection({
                       Ventas Fudo asociadas:{' '}
                       <strong className="text-gray-700">{g.ventasAsociadas} porciones</strong>
                       {g.gramosPorcion &&
-                        ` × ${g.gramosPorcion}g = ${g.consumoTotalEnUnidad.toFixed(2)} ${g.unidadBatch}`}
+                        ` × ${g.gramosPorcion}g = ${fmtCantidad(g.consumoTotalEnUnidad)} ${g.unidadBatch}`}
                       · Productos: {g.fudoNombres.join(', ')}
                     </p>
                   )}
@@ -430,17 +435,17 @@ export function StockProduccionSection({
                           >
                             <td className="px-4 py-1.5 text-gray-600">{fechaLabel}</td>
                             <td className="px-4 py-1.5 text-right tabular-nums">
-                              {b.cantidad_producida} {b.unidad}
+                              {fmtCantidad(b.cantidad_producida, 3)} {b.unidad}
                             </td>
                             <td className="px-4 py-1.5 text-right tabular-nums text-gray-600">
-                              {b.consumidoFifo.toFixed(2)}
+                              {fmtCantidad(b.consumidoFifo)}
                             </td>
                             <td className="px-4 py-1.5 text-right tabular-nums text-gray-600">
-                              {b.restanteCalc.toFixed(2)}
+                              {fmtCantidad(b.restanteCalc)}
                             </td>
                             <td className="px-4 py-1.5 text-right tabular-nums">
                               <span className={esManual ? 'font-semibold text-blue-700' : ''}>
-                                {b.restanteReal.toFixed(2)} {b.unidad}
+                                {fmtCantidad(b.restanteReal)} {b.unidad}
                               </span>
                               {esManual && (
                                 <span className="ml-1 text-[9px] text-blue-500">manual</span>

@@ -11,6 +11,18 @@ export function formatARS(value: number, decimals?: number): string {
   }).format(value);
 }
 
+/** Formatea una cantidad (kg/unid/lt) en formato es-AR: coma decimal, punto miles.
+ *  Acepta number o string (del DB viene como string en numeric). Devuelve '—' si vacío. */
+export function fmtCantidad(n: number | string | null | undefined, decimals = 2): string {
+  if (n == null || n === '') return '—';
+  const num = typeof n === 'number' ? n : parseFloat(String(n));
+  if (isNaN(num)) return '—';
+  return new Intl.NumberFormat('es-AR', {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  }).format(num);
+}
+
 /** Formatea una fecha DD/MM/YYYY */
 export function formatFecha(date: string | Date): string {
   const d = typeof date === 'string' ? new Date(date) : date;

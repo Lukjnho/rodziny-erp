@@ -6,7 +6,7 @@ import { StockProduccionSection } from './components/StockProduccionSection';
 import { PlanProduccionEditor } from './components/PlanProduccionEditor';
 import { PlanSemanal } from './components/PlanSemanal';
 import { EditarLoteModal } from './components/EditarLoteModal';
-import { cn } from '@/lib/utils';
+import { cn, fmtCantidad } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
 
 // Badge que muestra si un lote tiene ingredientes reales guardados y un popover con el detalle
@@ -427,7 +427,7 @@ export function ProduccionTab() {
         tipo: 'relleno',
         tabla: 'cocina_lotes_relleno',
         nombre: l.receta?.nombre ?? '—',
-        cantidadStr: `${l.peso_total_kg} kg`,
+        cantidadStr: `${fmtCantidad(l.peso_total_kg)} kg`,
         detalleExtra: detalle,
         local: l.local,
         responsable: l.responsable,
@@ -442,7 +442,7 @@ export function ProduccionTab() {
       const disp = Math.max(0, +(l.kg_producidos - usado).toFixed(3));
       const partes: string[] = [];
       if (l.kg_sobrante == null) {
-        partes.push(`${disp} kg disp · ${+usado.toFixed(3)} kg usados`);
+        partes.push(`${fmtCantidad(disp)} kg disp · ${fmtCantidad(usado)} kg usados`);
       } else {
         const destino =
           l.destino_sobrante === 'fideos'
@@ -450,14 +450,14 @@ export function ProduccionTab() {
             : l.destino_sobrante === 'merma'
               ? 'merma (descartar)'
               : 'próxima masa';
-        partes.push(`Sobrante ${l.kg_sobrante} kg → ${destino}`);
+        partes.push(`Sobrante ${fmtCantidad(l.kg_sobrante)} kg → ${destino}`);
       }
       out.push({
         id: l.id,
         tipo: 'masa',
         tabla: 'cocina_lotes_masa',
         nombre: l.receta?.nombre ?? '—',
-        cantidadStr: `${l.kg_producidos} kg`,
+        cantidadStr: `${fmtCantidad(l.kg_producidos)} kg`,
         detalleExtra: partes.join(' · '),
         local: l.local,
         responsable: l.responsable,
@@ -470,16 +470,17 @@ export function ProduccionTab() {
 
     for (const l of lotesProduccion ?? []) {
       const u = fmtUnidad(l.unidad);
+      const esEntero = l.unidad === 'unid';
       const merma =
         l.merma_cantidad && l.merma_cantidad > 0
-          ? `Merma ${l.merma_cantidad} ${u}${l.merma_motivo ? ` · ${l.merma_motivo}` : ''}`
+          ? `Merma ${fmtCantidad(l.merma_cantidad, esEntero ? 0 : 2)} ${u}${l.merma_motivo ? ` · ${l.merma_motivo}` : ''}`
           : null;
       out.push({
         id: l.id,
         tipo: l.categoria,
         tabla: 'cocina_lotes_produccion',
         nombre: l.receta?.nombre ?? l.nombre_libre ?? '—',
-        cantidadStr: `${l.cantidad_producida} ${u}`,
+        cantidadStr: `${fmtCantidad(l.cantidad_producida, esEntero ? 0 : 2)} ${u}`,
         detalleExtra: merma,
         local: l.local,
         responsable: l.responsable,
@@ -1136,7 +1137,7 @@ function ModalCerrarMasa({
         <h3 className="mb-4 text-lg font-bold text-gray-800">Cerrar lote de masa</h3>
         <div className="mb-4 text-sm text-gray-600">
           <span className="font-medium">{lote.receta?.nombre ?? 'Masa'}</span> —{' '}
-          {lote.kg_producidos} kg producidos
+          {fmtCantidad(lote.kg_producidos)} kg producidos
         </div>
         <div className="space-y-3">
           <div>
