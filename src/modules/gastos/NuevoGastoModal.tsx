@@ -562,6 +562,22 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
       return;
     }
 
+    // Archivo comprobante de pago: también obligatorio para medios distintos
+    // de efectivo. Regla uniforme con PagarGastoModal, ChecklistPagos y
+    // Dividendos. Si está editando un gasto que ya tenía path, se permite.
+    if (
+      !gastoEditando &&
+      form.estado_pago === 'pagado' &&
+      form.medio_pago !== 'efectivo' &&
+      !comprobante &&
+      !comprobantePath
+    ) {
+      setError(
+        'Comprobante de pago obligatorio para transferencias, cheques y tarjeta. Subí la captura o PDF.',
+      );
+      return;
+    }
+
     setGuardando(true);
     try {
       // 1) Subir comprobante de pago si hay uno nuevo

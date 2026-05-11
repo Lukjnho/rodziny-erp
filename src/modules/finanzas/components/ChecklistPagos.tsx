@@ -288,11 +288,14 @@ export function ChecklistPagos() {
 
   // Marcar como pagado: crea gasto + pago_gasto. Si llega numeroOperacion, se
   // guarda en pagos_gastos.referencia para que el matcher por id concilie
-  // automaticamente al sincronizar MP / importar extractos.
+  // automaticamente al sincronizar MP / importar extractos. Si llega archivo
+  // del comprobante, se sube a Storage y se referencia en gastos.comprobante_path
+  // + pagos_gastos.comprobante_pago_path.
   async function marcarPagado(
     pago: PagoFijo,
     medioPago: string,
     numeroOperacion: string | null = null,
+    archivoComprobante: File | null = null,
   ) {
     const fechaPago = hoy();
     const local = derivarLocal(pago.concepto);
@@ -300,6 +303,25 @@ export function ChecklistPagos() {
     // Buscar nombre de categoría padre para el campo 'categoria' de gastos
     const subcat = subcategorias.find((c) => c.id === pago.categoria_gasto_id);
     const catPadre = subcat?.parent_id ? (padres.get(subcat.parent_id) ?? '') : '';
+
+    // 0. Subir archivo del comprobante (si vino)
+    let pathComprobante: string | null = null;
+    if (archivoComprobante) {
+      const ext = archivoComprobante.name.split('.').pop()?.toLowerCase() || 'pdf';
+      const carpeta = `${local}/${fechaPago.substring(0, 7)}`;
+      const path = `${carpeta}/pago_fijo_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
+      const { error: errUp } = await supabase.storage
+        .from('gastos-comprobantes')
+        .upload(path, archivoComprobante, {
+          contentType: archivoComprobante.type || 'application/octet-stream',
+        });
+      if (errUp) {
+        console.error('Error subiendo comprobante:', errUp);
+        window.alert(`No se pudo subir el comprobante: ${errUp.message}`);
+        return;
+      }
+      pathComprobante = path;
+    }
 
     // 1. Crear gasto
     const { data: gastoData, error: e1 } = await supabase
@@ -319,6 +341,7 @@ export function ChecklistPagos() {
         estado_pago: 'Pagado',
         medio_pago: medioPago,
         comentario: `Pago fijo: ${pago.concepto}`,
+        comprobante_path: pathComprobante,
         creado_manual: true,
         cancelado: false,
         periodo,
@@ -338,6 +361,8 @@ export function ChecklistPagos() {
       monto: pago.monto ?? 0,
       medio_pago: medioPago,
       referencia: numeroOperacion,
+      numero_operacion: numeroOperacion,
+      comprobante_pago_path: pathComprobante,
     });
 
     // 3. Actualizar pago_fijo
@@ -879,9 +904,9 @@ export function ChecklistPagos() {
         <ModalMedioPago
           concepto={medioPagoModal.concepto}
           medioInicial={medioPagoModal.medioInicial}
-          onConfirmar={(medio, numeroOperacion) => {
+          onConfirmar={(medio, numeroOperacion, archivo) => {
             const pago = (pagos ?? []).find((p) => p.id === medioPagoModal.pagoId);
-            if (pago) marcarPagado(pago, medio, numeroOperacion);
+            if (pago) marcarPagado(pago, medio, numeroOperacion, archivo);
             setMedioPagoModal(null);
           }}
           onClose={() => setMedioPagoModal(null)}
@@ -1209,7 +1234,7 @@ function ModalAgregarPago({
   );
 }
 
-// ── modal confirmar pago (medio + N° operacion opcional) ─────────────────────
+// ── modal confirmar pago (medio + N° operacion + comprobante) ────────────────
 function ModalMedioPago({
   concepto,
   medioInicial,
@@ -1218,11 +1243,33 @@ function ModalMedioPago({
 }: {
   concepto: string;
   medioInicial: string | null;
-  onConfirmar: (medio: string, numeroOperacion: string | null) => void;
+  onConfirmar: (medio: string, numeroOperacion: string | null, archivo: File | null) => void;
   onClose: () => void;
 }) {
   const [medio, setMedio] = useState<string>(medioInicial ?? '');
   const [numeroOp, setNumeroOp] = useState<string>('');
+  const [archivo, setArchivo] = useState<File | null>(null);
+  const [errorLocal, setErrorLocal] = useState<string | null>(null);
+
+  // Para transferencias/cheque/tarjeta: N° op + archivo son obligatorios — son
+  // las dos piezas que necesitamos para conciliar contra el extracto bancario.
+  const requiereComprobante = !!medio && medio !== 'efectivo';
+
+  function confirmar() {
+    setErrorLocal(null);
+    if (!medio) return;
+    if (requiereComprobante) {
+      if (!numeroOp.trim()) {
+        setErrorLocal('N° de operación obligatorio para transferencias, cheques y tarjeta.');
+        return;
+      }
+      if (!archivo) {
+        setErrorLocal('Comprobante de pago obligatorio para transferencias, cheques y tarjeta.');
+        return;
+      }
+    }
+    onConfirmar(medio, numeroOp.trim() || null, archivo);
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
@@ -1250,7 +1297,7 @@ function ModalMedioPago({
           </div>
           <div>
             <label className="mb-1 block text-xs text-gray-500">
-              N° de operación <span className="text-gray-400">(opcional)</span>
+              N° de operación{requiereComprobante ? ' *' : ' (opcional)'}
             </label>
             <input
               type="text"
@@ -1260,10 +1307,29 @@ function ModalMedioPago({
               className="w-full rounded border border-gray-200 px-3 py-2 text-sm focus:border-rodziny-500 focus:outline-none"
             />
             <p className="mt-1 text-[11px] text-gray-400">
-              Si lo cargás, el sistema reconcilia automáticamente este pago contra el movimiento
-              bancario al sincronizar MP / importar extracto.
+              Se concilia automáticamente contra el movimiento bancario al sincronizar MP /
+              importar extracto.
             </p>
           </div>
+          {requiereComprobante && (
+            <div>
+              <label className="mb-1 block text-xs text-gray-500">Comprobante de pago *</label>
+              <input
+                type="file"
+                accept="image/*,application/pdf"
+                onChange={(e) => setArchivo(e.target.files?.[0] ?? null)}
+                className="block w-full text-xs file:mr-2 file:rounded file:border file:border-gray-300 file:bg-gray-50 file:px-2 file:py-1 file:text-xs file:text-gray-700"
+              />
+              {archivo && (
+                <p className="mt-1 truncate text-[11px] text-green-700">📎 {archivo.name}</p>
+              )}
+            </div>
+          )}
+          {errorLocal && (
+            <div className="rounded border border-red-200 bg-red-50 px-2 py-1.5 text-[11px] text-red-700">
+              {errorLocal}
+            </div>
+          )}
         </div>
         <div className="flex justify-end gap-2 border-t px-6 py-3">
           <button
@@ -1273,7 +1339,7 @@ function ModalMedioPago({
             Cancelar
           </button>
           <button
-            onClick={() => medio && onConfirmar(medio, numeroOp.trim() || null)}
+            onClick={confirmar}
             disabled={!medio}
             className="rounded-md bg-rodziny-800 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-rodziny-700 disabled:opacity-50"
           >

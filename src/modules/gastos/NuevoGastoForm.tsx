@@ -159,6 +159,11 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
   const [facturaFile, setFacturaFile] = useState<File | null>(null);
   const facturaInputRef = useRef<HTMLInputElement>(null);
 
+  // Comprobante de pago manual (obligatorio en flujo físico + pagado + medio ≠ efectivo).
+  // Captura/PDF de la transferencia o cheque. En digital ya vino en el paso de upload.
+  const [pagoComprobanteFile, setPagoComprobanteFile] = useState<File | null>(null);
+  const pagoComprobanteInputRef = useRef<HTMLInputElement>(null);
+
   // Importe como string formateado (asi se muestra "285.453,50" mientras se edita)
   const [importeTexto, setImporteTexto] = useState<string>('');
 
@@ -780,6 +785,13 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
         setError('Falta la fecha de pago');
         return;
       }
+      // En flujo "físico" el comprobante de pago se carga acá (en digital ya vino
+      // del paso de upload del OCR). Si el medio no es efectivo, lo exigimos
+      // para mantener la regla uniforme con PagarGastoModal y ChecklistPagos.
+      if (tipoGasto === 'fisico' && medioPago !== 'efectivo' && !pagoComprobanteFile) {
+        setError('Comprobante de pago obligatorio para transferencias, cheques y tarjeta. Subí la captura o PDF.');
+        return;
+      }
     }
     // Si es cuenta corriente (no pagado), la fecha de vencimiento es obligatoria
     if (tipoGasto === 'cuenta_corriente' && !fechaVencimiento) {
@@ -804,6 +816,19 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
             contentType: facturaFile.type || 'application/octet-stream',
           });
         if (errFac) throw errFac;
+      }
+
+      // Comprobante de pago manual (flujo físico). En digital ya vino con OCR.
+      let pagoComprobantePath: string | null = filePath;
+      if (pagoComprobanteFile) {
+        const ext = pagoComprobanteFile.name.split('.').pop()?.toLowerCase() ?? 'bin';
+        pagoComprobantePath = `${local}/${periodo}/pago_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
+        const { error: errPago } = await supabase.storage
+          .from('gastos-comprobantes')
+          .upload(pagoComprobantePath, pagoComprobanteFile, {
+            contentType: pagoComprobanteFile.type || 'application/octet-stream',
+          });
+        if (errPago) throw errPago;
       }
 
       // Builder de payload para 1 fila de gasto. Total se prorratea cuando hay split.
@@ -833,7 +858,7 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
           nro_comprobante: pagado ? (nOperacion || null) : null,
           estado_pago: pagado ? 'Pagado' : 'Pendiente',
           fecha_vencimiento: !pagado ? (fechaVencimiento || null) : null,
-          comprobante_path: filePath, // null en flujo fisico
+          comprobante_path: pagoComprobantePath, // OCR en digital, manual en físico
           comprobante_id: comprobanteId, // null en flujo fisico
           factura_path: facturaPath,
           comentario: com,
@@ -890,6 +915,7 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
             monto: importeTotal,
             medio_pago: medioPago,
             numero_operacion: nOperacion || null,
+            comprobante_pago_path: pagoComprobantePath,
             creado_por: user?.id ?? null,
           });
         } else {
@@ -900,6 +926,7 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
             monto: splitPorSubcat[i].total,
             medio_pago: medioPago,
             numero_operacion: nOperacion || null,
+            comprobante_pago_path: pagoComprobantePath,
             creado_por: user?.id ?? null,
           }));
           await supabase.from('pagos_gastos').insert(filasPagos);
@@ -1786,6 +1813,43 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
                       placeholder="Ref. bancaria / N° de transferencia"
                     />
                   </Field>
+
+                  {/* Comprobante de pago — obligatorio en flujo físico cuando medio≠efectivo.
+                      En digital ya vino del paso de upload con OCR. */}
+                  {tipoGasto === 'fisico' && medioPago !== 'efectivo' && (
+                    <Field label="Comprobante de pago *">
+                      <input
+                        ref={pagoComprobanteInputRef}
+                        type="file"
+                        accept="image/*,application/pdf"
+                        className="hidden"
+                        onChange={(e) => {
+                          const f = e.target.files?.[0];
+                          if (f) setPagoComprobanteFile(f);
+                        }}
+                      />
+                      {pagoComprobanteFile ? (
+                        <div className="flex items-center justify-between rounded border border-green-200 bg-green-50 px-3 py-2 text-sm">
+                          <span className="truncate text-green-800">📎 {pagoComprobanteFile.name}</span>
+                          <button
+                            type="button"
+                            onClick={() => setPagoComprobanteFile(null)}
+                            className="ml-2 text-xs text-red-600 hover:underline"
+                          >
+                            Quitar
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => pagoComprobanteInputRef.current?.click()}
+                          className="w-full rounded border border-dashed border-amber-300 bg-amber-50 px-3 py-3 text-sm text-amber-800 hover:bg-amber-100"
+                        >
+                          + Adjuntar captura / PDF del comprobante de pago
+                        </button>
+                      )}
+                    </Field>
+                  )}
                 </>
               )}
 

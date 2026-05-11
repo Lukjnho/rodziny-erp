@@ -104,6 +104,8 @@ interface Dividendo {
   concepto: string | null;
   local: string | null;
   periodo: string;
+  numero_operacion: string | null;
+  comprobante_path: string | null;
 }
 
 interface PagoMP {
@@ -224,6 +226,10 @@ export function FlujoCaja({ onNavigateToTab }: { onNavigateToTab?: (tab: string)
   const [divMedio, setDivMedio] = useState('efectivo');
   const [divConcepto, setDivConcepto] = useState('');
   const [divLocal, setDivLocal] = useState<string>('');
+  // N° de operación + comprobante de pago. Obligatorios cuando medio ≠ efectivo
+  // para que cada retiro tenga trazabilidad bancaria igual que el resto de pagos.
+  const [divNumOp, setDivNumOp] = useState('');
+  const [divComprobante, setDivComprobante] = useState<File | null>(null);
 
   // ── queries ──────────────────────────────────────────────────────────────────
 
@@ -371,6 +377,31 @@ export function FlujoCaja({ onNavigateToTab }: { onNavigateToTab?: (tab: string)
     mutationFn: async () => {
       const monto = parseFloat(divMonto.replace(/\./g, '').replace(',', '.'));
       if (!monto || monto <= 0) throw new Error('Monto inválido');
+      // Validación uniforme: para medios distintos de efectivo, exigimos N° op
+      // y archivo del comprobante. Permite conciliar contra el extracto.
+      if (divMedio !== 'efectivo') {
+        if (!divNumOp.trim()) {
+          throw new Error('N° de operación obligatorio para transferencias y cheques.');
+        }
+        if (!divComprobante) {
+          throw new Error('Comprobante de pago obligatorio para transferencias y cheques.');
+        }
+      }
+
+      // Subir comprobante si vino
+      let comprobantePath: string | null = null;
+      if (divComprobante) {
+        const ext = divComprobante.name.split('.').pop()?.toLowerCase() || 'pdf';
+        const carpeta = `dividendos/${divFecha.substring(0, 7)}`;
+        comprobantePath = `${carpeta}/${divSocio}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
+        const { error: errUp } = await supabase.storage
+          .from('gastos-comprobantes')
+          .upload(comprobantePath, divComprobante, {
+            contentType: divComprobante.type || 'application/octet-stream',
+          });
+        if (errUp) throw errUp;
+      }
+
       const { error } = await supabase.from('dividendos').insert({
         socio: divSocio,
         fecha: divFecha,
@@ -378,6 +409,8 @@ export function FlujoCaja({ onNavigateToTab }: { onNavigateToTab?: (tab: string)
         medio_pago: divMedio,
         concepto: divConcepto || null,
         local: divLocal || null,
+        numero_operacion: divNumOp.trim() || null,
+        comprobante_path: comprobantePath,
         periodo,
         creado_por: 'Admin',
       });
@@ -388,6 +421,8 @@ export function FlujoCaja({ onNavigateToTab }: { onNavigateToTab?: (tab: string)
       setShowDivForm(false);
       setDivMonto('');
       setDivConcepto('');
+      setDivNumOp('');
+      setDivComprobante(null);
     },
   });
 
@@ -1310,6 +1345,36 @@ export function FlujoCaja({ onNavigateToTab }: { onNavigateToTab?: (tab: string)
                   />
                 </div>
               </div>
+              {divMedio !== 'efectivo' && (
+                <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-gray-600">
+                      N° de operación *
+                    </label>
+                    <input
+                      type="text"
+                      value={divNumOp}
+                      onChange={(e) => setDivNumOp(e.target.value)}
+                      placeholder="Ej: 157737647098"
+                      className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-gray-600">
+                      Comprobante de pago *
+                    </label>
+                    <input
+                      type="file"
+                      accept="image/*,application/pdf"
+                      onChange={(e) => setDivComprobante(e.target.files?.[0] ?? null)}
+                      className="block w-full text-xs file:mr-2 file:rounded file:border file:border-gray-300 file:bg-white file:px-2 file:py-1 file:text-xs file:text-gray-700"
+                    />
+                    {divComprobante && (
+                      <p className="mt-1 truncate text-[11px] text-green-700">📎 {divComprobante.name}</p>
+                    )}
+                  </div>
+                </div>
+              )}
               <div className="mt-3 flex justify-end gap-2">
                 <button
                   onClick={() => setShowDivForm(false)}
