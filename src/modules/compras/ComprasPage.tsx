@@ -476,10 +476,15 @@ export function ComprasPage() {
     else if (filtroPagos === 'pagados') {
       // Filtrar por el mes en que efectivamente se pagó (fecha del pago real,
       // no la fecha del gasto), para que coincida con el flujo de caja.
+      // Además se restringe a cuenta corriente: solo pagos donde el gasto se
+      // registró antes y se pagó después (fecha_pago > fecha). Pagos fijos y
+      // compras al contado del mismo día quedan fuera de este tab y solo
+      // aparecen en el listado de gastos.
       lista = lista.filter((g) => {
         if (g.estado_pago?.toLowerCase() !== 'pagado') return false;
         const pago = pagosGastosMap.get(g.id);
         if (!pago) return false;
+        if (pago.fecha_pago <= g.fecha) return false;
         return pago.fecha_pago.startsWith(mesPagos);
       });
       // Ordenar por fecha de pago descendente (último pago arriba); cuando
@@ -791,13 +796,20 @@ export function ComprasPage() {
     // Total gastado del mes seleccionado (todos los gastos, pagados o no)
     const delMes = todos.filter((g) => g.fecha?.startsWith(mesPagos));
     // Pagados del mes: filtra por la FECHA DEL PAGO REAL (cuando salió la
-    // plata), no por la fecha del gasto. Coherente con el flujo de caja y
-    // con el listado del filtro "pagados".
+    // plata), no por la fecha del gasto. Coherente con el flujo de caja.
     const pagadosDelMes = todos.filter((g) => {
       if (g.estado_pago?.toLowerCase() !== 'pagado') return false;
       const pago = pagosGastosMap.get(g.id);
       if (!pago) return false;
       return pago.fecha_pago.startsWith(mesPagos);
+    });
+    // Pagados cta cte del mes: solo los pagos donde el gasto se registró
+    // antes y se pagó después (fecha_pago > fecha). Excluye pagos fijos y
+    // compras al contado del mismo día. Alimenta el card y el listado del
+    // tab Pagos para que muestren solo proveedores con cuenta corriente.
+    const pagadosCtaCteDelMes = pagadosDelMes.filter((g) => {
+      const pago = pagosGastosMap.get(g.id);
+      return !!pago && pago.fecha_pago > g.fecha;
     });
 
     return {
@@ -811,6 +823,8 @@ export function ComprasPage() {
       cantMes: delMes.length,
       pagadoMes: pagadosDelMes.reduce((s, g) => s + g.importe_total, 0),
       cantPagadoMes: pagadosDelMes.length,
+      pagadoCtaCteMes: pagadosCtaCteDelMes.reduce((s, g) => s + g.importe_total, 0),
+      cantPagadoCtaCteMes: pagadosCtaCteDelMes.length,
     };
   }, [gastosPagos, mesPagos, pagosGastosMap]);
 
@@ -2506,10 +2520,13 @@ export function ComprasPage() {
                   ? 'border-green-500 bg-green-50 ring-1 ring-green-200'
                   : 'border-surface-border hover:border-gray-300',
               )}
+              title="Solo pagos a proveedores con cuenta corriente (fecha_pago posterior al gasto). Excluye pagos fijos y compras al contado."
             >
-              <p className="mb-1 text-xs text-gray-500">Pagados ({pagosKpis.cantPagadoMes})</p>
+              <p className="mb-1 text-xs text-gray-500">
+                Pagados cta cte ({pagosKpis.cantPagadoCtaCteMes})
+              </p>
               <p className="text-lg font-semibold text-green-600">
-                {formatARS(pagosKpis.pagadoMes)}
+                {formatARS(pagosKpis.pagadoCtaCteMes)}
               </p>
             </button>
           </div>
