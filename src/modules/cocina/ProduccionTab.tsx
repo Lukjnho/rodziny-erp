@@ -229,7 +229,60 @@ interface LoteUnificado {
   masaRow?: LoteMasa;
 }
 
+// ── Tipos para vista semanal ───────────────────────────────────────────────────
+
+type TipoLoteSemanal = TipoLote | 'pasta';
+
+interface LoteDetalleSemana {
+  id: string;
+  tabla: 'cocina_lotes_relleno' | 'cocina_lotes_masa' | 'cocina_lotes_produccion' | 'cocina_lotes_pasta';
+  fecha: string; // YYYY-MM-DD
+  hora: string; // HH:mm
+  local: string;
+  responsable: string | null;
+  cantidadStr: string;
+  detalleExtra: string | null;
+  notas: string | null;
+  ingredientes: IngredienteRealRow[] | null;
+  pastaRow?: LotePasta;
+  masaRow?: LoteMasa;
+}
+
+interface LoteSemanalGrupo {
+  tipo: TipoLoteSemanal;
+  nombre: string;
+  lotes: LoteDetalleSemana[];
+  lotesCount: number;
+  recetasTotal: number;
+  kgTotal: number;
+  unidadesTotal: number;
+  ltTotal: number;
+  porcionesTotal: number;
+}
+
+const TIPO_LOTE_SEMANAL_ORDEN: TipoLoteSemanal[] = [
+  'pasta',
+  'relleno',
+  'masa',
+  'salsa',
+  'postre',
+  'pasteleria',
+  'panaderia',
+  'prueba',
+];
+
+const TIPO_LOTE_SEMANAL_LABEL: Record<TipoLoteSemanal, string> = {
+  ...TIPO_LOTE_LABEL,
+  pasta: 'Pastas',
+};
+
+const TIPO_LOTE_SEMANAL_COLOR: Record<TipoLoteSemanal, string> = {
+  ...TIPO_LOTE_COLOR,
+  pasta: 'bg-blue-100 text-blue-700',
+};
+
 type FiltroLocal = 'todos' | 'vedia' | 'saavedra';
+type VistaLotes = 'dia' | 'semana';
 
 function matchLocal(itemLocal: string | null, filtro: string): boolean {
   if (filtro === 'todos' || !itemLocal) return true;
@@ -243,6 +296,34 @@ function hoy() {
 function formatDDMM(fecha: string) {
   const [, m, d] = fecha.split('-');
   return `${d}${m}`;
+}
+
+// Lunes a domingo calendario de la fecha activa. Si la fecha cae domingo, devuelve la semana
+// que TERMINA ese domingo (no la siguiente que arranca el lunes posterior).
+function rangoSemana(fechaIso: string): { desde: string; hasta: string } {
+  const d = new Date(fechaIso + 'T12:00:00');
+  const dow = d.getDay(); // 0=dom, 1=lun, ..., 6=sab
+  const offsetLunes = dow === 0 ? -6 : 1 - dow;
+  const lun = new Date(d);
+  lun.setDate(d.getDate() + offsetLunes);
+  const dom = new Date(lun);
+  dom.setDate(lun.getDate() + 6);
+  return {
+    desde: lun.toISOString().slice(0, 10),
+    hasta: dom.toISOString().slice(0, 10),
+  };
+}
+
+function formatRangoLabel(desde: string, hasta: string): string {
+  const [, mD, dD] = desde.split('-');
+  const [, mH, dH] = hasta.split('-');
+  return `${dD}/${mD} al ${dH}/${mH}`;
+}
+
+const DIA_CORTO = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+function diaCorto(fecha: string): string {
+  const d = new Date(fecha + 'T12:00:00');
+  return DIA_CORTO[d.getDay()];
 }
 
 // ── Componente principal ──────────────────────────────────────────────────────
@@ -260,6 +341,16 @@ export function ProduccionTab() {
     'todos',
   );
   const [filtroTipoLote, setFiltroTipoLote] = useState<'todos' | TipoLote>('todos');
+  const [filtroTipoSemanal, setFiltroTipoSemanal] = useState<'todos' | TipoLoteSemanal>('todos');
+  const [vistaLotes, setVistaLotes] = useState<VistaLotes>(() => {
+    if (typeof window === 'undefined') return 'dia';
+    const guardado = localStorage.getItem('cocina-vista-lotes');
+    return guardado === 'semana' ? 'semana' : 'dia';
+  });
+  useEffect(() => {
+    if (typeof window !== 'undefined') localStorage.setItem('cocina-vista-lotes', vistaLotes);
+  }, [vistaLotes]);
+  const semana = useMemo(() => rangoSemana(fecha), [fecha]);
 
   // Modales
   const [modalCerrarMasa, setModalCerrarMasa] = useState<LoteMasa | null>(null);
@@ -370,6 +461,92 @@ export function ProduccionTab() {
         .order('created_at', { ascending: false });
       if (error) throw error;
       return data as unknown as LoteProduccion[];
+    },
+  });
+
+  // ── Queries semanales (solo se ejecutan cuando la vista es 'semana') ────────
+  const semanaEnabled = vistaLotes === 'semana';
+
+  const { data: lotesRellenoSemana, isLoading: cargandoRSemana } = useQuery({
+    queryKey: ['cocina-lotes-relleno-semana', semana.desde, semana.hasta],
+    enabled: semanaEnabled,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('cocina_lotes_relleno')
+        .select('*, receta:cocina_recetas(nombre)')
+        .gte('fecha', semana.desde)
+        .lte('fecha', semana.hasta)
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      return data as LoteRelleno[];
+    },
+  });
+
+  const { data: lotesMasaSemana, isLoading: cargandoMSemana } = useQuery({
+    queryKey: ['cocina-lotes-masa-semana', semana.desde, semana.hasta],
+    enabled: semanaEnabled,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('cocina_lotes_masa')
+        .select('*, receta:cocina_recetas(nombre)')
+        .gte('fecha', semana.desde)
+        .lte('fecha', semana.hasta)
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      return data as unknown as LoteMasa[];
+    },
+  });
+
+  const { data: lotesProduccionSemana, isLoading: cargandoProdSemana } = useQuery({
+    queryKey: ['cocina-lotes-produccion-semana', semana.desde, semana.hasta],
+    enabled: semanaEnabled,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('cocina_lotes_produccion')
+        .select('*, receta:cocina_recetas(nombre)')
+        .gte('fecha', semana.desde)
+        .lte('fecha', semana.hasta)
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      return data as unknown as LoteProduccion[];
+    },
+  });
+
+  // Lotes de pasta ARMADOS en la semana (para contar lotes/recetas).
+  const { data: lotesPastaSemana, isLoading: cargandoPSemana } = useQuery({
+    queryKey: ['cocina-lotes-pasta-semana', semana.desde, semana.hasta],
+    enabled: semanaEnabled,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('cocina_lotes_pasta')
+        .select(
+          '*, producto:cocina_productos(nombre, codigo), lote_relleno:cocina_lotes_relleno(peso_total_kg, receta:cocina_recetas(nombre)), receta_masa:cocina_recetas(nombre)',
+        )
+        .gte('fecha', semana.desde)
+        .lte('fecha', semana.hasta)
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      return data as LotePasta[];
+    },
+  });
+
+  // Lotes de pasta PORCIONADOS en la semana — fuente única de "porciones por relleno".
+  // Puede solapar con lotesPastaSemana (armado y porcionado en la misma semana) pero
+  // también incluir lotes armados en semanas previas que se porcionaron esta semana.
+  const { data: lotesPastaPorcionadosSemana, isLoading: cargandoPPSemana } = useQuery({
+    queryKey: ['cocina-lotes-pasta-porcionados-semana', semana.desde, semana.hasta],
+    enabled: semanaEnabled,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('cocina_lotes_pasta')
+        .select(
+          '*, producto:cocina_productos(nombre, codigo), lote_relleno:cocina_lotes_relleno(peso_total_kg, receta:cocina_recetas(nombre)), receta_masa:cocina_recetas(nombre)',
+        )
+        .gte('fecha_porcionado', semana.desde)
+        .lte('fecha_porcionado', semana.hasta)
+        .not('porciones', 'is', null);
+      if (error) throw error;
+      return data as LotePasta[];
     },
   });
 
@@ -519,6 +696,224 @@ export function ProduccionTab() {
     return { total: base.length, porTipo: m };
   }, [lotesUnificados, filtroLocal]);
 
+  // ── Agrupamiento semanal: una fila por (tipo, nombre) ───────────────────────
+  // Suma kg/recetas/lotes desde lotes_relleno/masa/produccion/pasta de la semana.
+  // Las porciones del relleno SOLO se cuentan desde lotes_pasta porcionados en la
+  // semana (única fuente de verdad), agrupadas por nombre de receta de relleno.
+  const lotesSemanalesAgrupados = useMemo<LoteSemanalGrupo[]>(() => {
+    if (vistaLotes !== 'semana') return [];
+
+    const fmtHora = (iso: string | null | undefined) => {
+      if (!iso) return '—';
+      const d = new Date(iso);
+      return d.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+    };
+    const fmtUnidad = (u: string | null | undefined) =>
+      u === 'l' || u === 'lt' ? 'L' : u === 'unidad' || u === 'unid' ? 'unid' : 'kg';
+
+    const gruposMap = new Map<string, LoteSemanalGrupo>();
+    const getGrupo = (tipo: TipoLoteSemanal, nombre: string): LoteSemanalGrupo => {
+      const key = `${tipo}::${nombre}`;
+      let g = gruposMap.get(key);
+      if (!g) {
+        g = {
+          tipo,
+          nombre,
+          lotes: [],
+          lotesCount: 0,
+          recetasTotal: 0,
+          kgTotal: 0,
+          unidadesTotal: 0,
+          ltTotal: 0,
+          porcionesTotal: 0,
+        };
+        gruposMap.set(key, g);
+      }
+      return g;
+    };
+
+    // Rellenos
+    for (const l of lotesRellenoSemana ?? []) {
+      if (!matchLocal(l.local, filtroLocal)) continue;
+      const nombre = l.receta?.nombre ?? 'Sin nombre';
+      const g = getGrupo('relleno', nombre);
+      g.lotesCount++;
+      g.recetasTotal += l.cantidad_recetas ?? 0;
+      g.kgTotal += l.peso_total_kg ?? 0;
+      const cantPartes: string[] = [`${fmtCantidad(l.peso_total_kg)} kg`];
+      if (l.cantidad_recetas > 1) cantPartes.push(`${l.cantidad_recetas} recetas`);
+      g.lotes.push({
+        id: l.id,
+        tabla: 'cocina_lotes_relleno',
+        fecha: l.fecha,
+        hora: fmtHora(l.created_at),
+        local: l.local,
+        responsable: l.responsable,
+        cantidadStr: cantPartes.join(' · '),
+        detalleExtra: null,
+        notas: l.notas,
+        ingredientes: l.ingredientes_reales,
+      });
+    }
+
+    // Masas
+    for (const l of lotesMasaSemana ?? []) {
+      if (!matchLocal(l.local, filtroLocal)) continue;
+      const nombre = l.receta?.nombre ?? 'Sin nombre';
+      const g = getGrupo('masa', nombre);
+      g.lotesCount++;
+      g.kgTotal += l.kg_producidos ?? 0;
+      const detalle =
+        l.kg_sobrante == null
+          ? 'pendiente cerrar'
+          : `sobrante ${fmtCantidad(l.kg_sobrante)}kg → ${l.destino_sobrante ?? 'fideos'}`;
+      g.lotes.push({
+        id: l.id,
+        tabla: 'cocina_lotes_masa',
+        fecha: l.fecha,
+        hora: fmtHora(l.created_at),
+        local: l.local,
+        responsable: l.responsable,
+        cantidadStr: `${fmtCantidad(l.kg_producidos)} kg`,
+        detalleExtra: detalle,
+        notas: l.notas,
+        ingredientes: l.ingredientes_reales,
+        masaRow: l,
+      });
+    }
+
+    // Producción (salsa/postre/pasteleria/panaderia/prueba)
+    for (const l of lotesProduccionSemana ?? []) {
+      if (!matchLocal(l.local, filtroLocal)) continue;
+      const nombre = l.receta?.nombre ?? l.nombre_libre ?? 'Sin nombre';
+      const g = getGrupo(l.categoria as TipoLoteSemanal, nombre);
+      g.lotesCount++;
+      const u = fmtUnidad(l.unidad);
+      if (u === 'kg') g.kgTotal += l.cantidad_producida ?? 0;
+      else if (u === 'unid') g.unidadesTotal += l.cantidad_producida ?? 0;
+      else g.ltTotal += l.cantidad_producida ?? 0;
+      const esEntero = l.unidad === 'unid';
+      const merma =
+        l.merma_cantidad && l.merma_cantidad > 0
+          ? `merma ${fmtCantidad(l.merma_cantidad, esEntero ? 0 : 2)} ${u}`
+          : null;
+      g.lotes.push({
+        id: l.id,
+        tabla: 'cocina_lotes_produccion',
+        fecha: l.fecha,
+        hora: fmtHora(l.created_at),
+        local: l.local,
+        responsable: l.responsable,
+        cantidadStr: `${fmtCantidad(l.cantidad_producida, esEntero ? 0 : 2)} ${u}`,
+        detalleExtra: merma,
+        notas: l.notas,
+        ingredientes: l.ingredientes_reales,
+      });
+    }
+
+    // Pastas: unión de armadas en la semana + porcionadas en la semana (dedup por id)
+    const pastasUnidas = new Map<string, LotePasta>();
+    for (const l of lotesPastaSemana ?? []) pastasUnidas.set(l.id, l);
+    for (const l of lotesPastaPorcionadosSemana ?? []) {
+      if (!pastasUnidas.has(l.id)) pastasUnidas.set(l.id, l);
+    }
+    for (const l of pastasUnidas.values()) {
+      if (!matchLocal(l.local, filtroLocal)) continue;
+      const nombre = l.producto?.nombre ?? 'Pasta';
+      const g = getGrupo('pasta', nombre);
+      g.lotesCount++;
+      const porcionadoEnSemana =
+        l.fecha_porcionado != null &&
+        l.fecha_porcionado >= semana.desde &&
+        l.fecha_porcionado <= semana.hasta;
+      if (porcionadoEnSemana && l.porciones != null) g.porcionesTotal += l.porciones;
+      const detallePartes: string[] = [];
+      if (l.codigo_lote) detallePartes.push(`lote ${l.codigo_lote}`);
+      if (l.lote_relleno?.receta?.nombre) detallePartes.push(`relleno: ${l.lote_relleno.receta.nombre}`);
+      if (l.receta_masa?.nombre) detallePartes.push(`masa: ${l.receta_masa.nombre}`);
+      if (l.cantidad_cajones) detallePartes.push(`${l.cantidad_cajones} band.`);
+      if (l.ubicacion === 'freezer_produccion') detallePartes.push('⏳ fresco');
+      g.lotes.push({
+        id: l.id,
+        tabla: 'cocina_lotes_pasta',
+        fecha: l.fecha,
+        hora: fmtHora(l.created_at),
+        local: l.local,
+        responsable: l.responsable,
+        cantidadStr: l.porciones != null ? `${l.porciones} porc.` : 'pendiente porcionar',
+        detalleExtra: detallePartes.length > 0 ? detallePartes.join(' · ') : null,
+        notas: l.notas,
+        ingredientes: null,
+        pastaRow: l,
+      });
+    }
+
+    // Porciones por nombre de relleno (única fuente: lote_pasta porcionados en la semana)
+    for (const l of lotesPastaPorcionadosSemana ?? []) {
+      if (!matchLocal(l.local, filtroLocal)) continue;
+      const nombreRelleno = l.lote_relleno?.receta?.nombre;
+      if (!nombreRelleno) continue;
+      const g = getGrupo('relleno', nombreRelleno);
+      g.porcionesTotal += l.porciones ?? 0;
+    }
+
+    // Ordenar lotes dentro de cada grupo por fecha+hora descendente
+    for (const g of gruposMap.values()) {
+      g.lotes.sort((a, b) => {
+        if (a.fecha !== b.fecha) return a.fecha > b.fecha ? -1 : 1;
+        return a.hora < b.hora ? 1 : a.hora > b.hora ? -1 : 0;
+      });
+    }
+
+    const ordenTipo: Record<TipoLoteSemanal, number> = {
+      pasta: 0,
+      relleno: 1,
+      masa: 2,
+      salsa: 3,
+      postre: 4,
+      pasteleria: 5,
+      panaderia: 6,
+      prueba: 7,
+    };
+    return Array.from(gruposMap.values()).sort((a, b) => {
+      if (a.tipo !== b.tipo) return ordenTipo[a.tipo] - ordenTipo[b.tipo];
+      return a.nombre.localeCompare(b.nombre);
+    });
+  }, [
+    vistaLotes,
+    filtroLocal,
+    semana.desde,
+    semana.hasta,
+    lotesRellenoSemana,
+    lotesMasaSemana,
+    lotesProduccionSemana,
+    lotesPastaSemana,
+    lotesPastaPorcionadosSemana,
+  ]);
+
+  const conteoSemanalPorTipo = useMemo(() => {
+    const m: Record<TipoLoteSemanal, number> = {
+      pasta: 0,
+      relleno: 0,
+      masa: 0,
+      salsa: 0,
+      postre: 0,
+      pasteleria: 0,
+      panaderia: 0,
+      prueba: 0,
+    };
+    for (const g of lotesSemanalesAgrupados) m[g.tipo] += g.lotesCount;
+    const total = lotesSemanalesAgrupados.reduce((s, g) => s + g.lotesCount, 0);
+    return { total, porTipo: m };
+  }, [lotesSemanalesAgrupados]);
+
+  const cargandoSemana =
+    cargandoRSemana ||
+    cargandoMSemana ||
+    cargandoProdSemana ||
+    cargandoPSemana ||
+    cargandoPPSemana;
+
   // Frescos pendientes de OTRAS fechas (las del día seleccionado ya aparecen en la tabla principal).
   // Solo se muestran acá para no perder de vista bandejas armadas días anteriores que siguen en freezer.
   const frescosFiltrados = useMemo(() => {
@@ -649,27 +1044,79 @@ export function ProduccionTab() {
         )}
       </div>
 
-      {/* ── Sección: Lotes registrados (relleno + masa + producción adicional) ── */}
-      <LotesRegistradosSection
-        lotes={lotesUnificadosFiltrados}
-        conteo={conteoPorTipo}
-        fechaLabel={fechaLabel}
-        fecha={fecha}
-        filtroLocal={filtroLocal}
-        filtroTipoLote={filtroTipoLote}
-        setFiltroTipoLote={setFiltroTipoLote}
-        cargando={cargandoR || cargandoM || cargandoProd}
-        onCerrarMasa={(m) => setModalCerrarMasa(m)}
-        onEditar={(l) =>
-          setModalEditarLote({ id: l.id, tabla: l.tabla, nombre: l.nombre })
-        }
-        onEliminar={(l) => {
-          if (!window.confirm('¿Eliminar este lote?')) return;
-          if (l.tabla === 'cocina_lotes_relleno') eliminarRelleno.mutate(l.id);
-          else if (l.tabla === 'cocina_lotes_masa') eliminarMasa.mutate(l.id);
-          else eliminarProduccion.mutate(l.id);
-        }}
-      />
+      {/* ── Sección: Lotes registrados (toggle Día / Semana) ──────────────────── */}
+      <div>
+        <div className="mb-3 flex justify-end">
+          <div className="inline-flex overflow-hidden rounded-md border border-gray-200">
+            <button
+              onClick={() => setVistaLotes('dia')}
+              className={cn(
+                'px-3 py-1 text-xs font-medium transition-colors',
+                vistaLotes === 'dia'
+                  ? 'bg-rodziny-600 text-white'
+                  : 'bg-white text-gray-600 hover:bg-gray-50',
+              )}
+            >
+              Día
+            </button>
+            <button
+              onClick={() => setVistaLotes('semana')}
+              className={cn(
+                'border-l border-gray-200 px-3 py-1 text-xs font-medium transition-colors',
+                vistaLotes === 'semana'
+                  ? 'bg-rodziny-600 text-white'
+                  : 'bg-white text-gray-600 hover:bg-gray-50',
+              )}
+            >
+              Semana
+            </button>
+          </div>
+        </div>
+        {vistaLotes === 'dia' ? (
+          <LotesRegistradosSection
+            lotes={lotesUnificadosFiltrados}
+            conteo={conteoPorTipo}
+            fechaLabel={fechaLabel}
+            fecha={fecha}
+            filtroLocal={filtroLocal}
+            filtroTipoLote={filtroTipoLote}
+            setFiltroTipoLote={setFiltroTipoLote}
+            cargando={cargandoR || cargandoM || cargandoProd}
+            onCerrarMasa={(m) => setModalCerrarMasa(m)}
+            onEditar={(l) =>
+              setModalEditarLote({ id: l.id, tabla: l.tabla, nombre: l.nombre })
+            }
+            onEliminar={(l) => {
+              if (!window.confirm('¿Eliminar este lote?')) return;
+              if (l.tabla === 'cocina_lotes_relleno') eliminarRelleno.mutate(l.id);
+              else if (l.tabla === 'cocina_lotes_masa') eliminarMasa.mutate(l.id);
+              else eliminarProduccion.mutate(l.id);
+            }}
+          />
+        ) : (
+          <LotesSemanalesSection
+            grupos={lotesSemanalesAgrupados}
+            conteo={conteoSemanalPorTipo}
+            semana={semana}
+            filtroLocal={filtroLocal}
+            filtroTipoSemanal={filtroTipoSemanal}
+            setFiltroTipoSemanal={setFiltroTipoSemanal}
+            cargando={cargandoSemana}
+            onCerrarMasa={(m) => setModalCerrarMasa(m)}
+            onPorcionarPasta={(p) => setModalPorcionar(p)}
+            onEditar={(l, nombre) =>
+              setModalEditarLote({ id: l.id, tabla: l.tabla, nombre })
+            }
+            onEliminar={(l) => {
+              if (!window.confirm('¿Eliminar este lote?')) return;
+              if (l.tabla === 'cocina_lotes_relleno') eliminarRelleno.mutate(l.id);
+              else if (l.tabla === 'cocina_lotes_masa') eliminarMasa.mutate(l.id);
+              else if (l.tabla === 'cocina_lotes_pasta') eliminarPasta.mutate(l.id);
+              else eliminarProduccion.mutate(l.id);
+            }}
+          />
+        )}
+      </div>
 
 
       {/* ── Sección: Pastas del día ──────────────────────────────────────────── */}
@@ -1351,6 +1798,249 @@ function LotesRegistradosSection({
                               Eliminar
                             </button>
                           </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+              );
+            })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Vista semanal: agrupada por nombre de receta ──────────────────────────────
+
+interface LotesSemanalesSectionProps {
+  grupos: LoteSemanalGrupo[];
+  conteo: { total: number; porTipo: Record<TipoLoteSemanal, number> };
+  semana: { desde: string; hasta: string };
+  filtroLocal: FiltroLocal;
+  filtroTipoSemanal: 'todos' | TipoLoteSemanal;
+  setFiltroTipoSemanal: (t: 'todos' | TipoLoteSemanal) => void;
+  cargando: boolean;
+  onCerrarMasa: (m: LoteMasa) => void;
+  onPorcionarPasta: (p: LotePasta) => void;
+  onEditar: (l: LoteDetalleSemana, nombre: string) => void;
+  onEliminar: (l: LoteDetalleSemana) => void;
+}
+
+function metricasGrupo(g: LoteSemanalGrupo): string[] {
+  const partes: string[] = [];
+  if (g.tipo === 'relleno') {
+    if (g.recetasTotal > 0) partes.push(`${g.recetasTotal} receta${g.recetasTotal === 1 ? '' : 's'}`);
+    if (g.kgTotal > 0) partes.push(`${fmtCantidad(g.kgTotal)} kg`);
+    partes.push(`${g.lotesCount} lote${g.lotesCount === 1 ? '' : 's'}`);
+    if (g.porcionesTotal > 0)
+      partes.push(`${g.porcionesTotal} porción${g.porcionesTotal === 1 ? '' : 'es'}`);
+  } else if (g.tipo === 'pasta') {
+    partes.push(`${g.lotesCount} lote${g.lotesCount === 1 ? '' : 's'}`);
+    partes.push(`${g.porcionesTotal} porción${g.porcionesTotal === 1 ? '' : 'es'}`);
+  } else if (g.tipo === 'masa') {
+    partes.push(`${fmtCantidad(g.kgTotal)} kg`);
+    partes.push(`${g.lotesCount} lote${g.lotesCount === 1 ? '' : 's'}`);
+  } else {
+    // salsa / postre / pasteleria / panaderia / prueba
+    if (g.kgTotal > 0) partes.push(`${fmtCantidad(g.kgTotal)} kg`);
+    if (g.unidadesTotal > 0) partes.push(`${g.unidadesTotal} unid`);
+    if (g.ltTotal > 0) partes.push(`${fmtCantidad(g.ltTotal)} L`);
+    partes.push(`${g.lotesCount} lote${g.lotesCount === 1 ? '' : 's'}`);
+  }
+  return partes;
+}
+
+function LotesSemanalesSection({
+  grupos,
+  conteo,
+  semana,
+  filtroLocal,
+  filtroTipoSemanal,
+  setFiltroTipoSemanal,
+  cargando,
+  onCerrarMasa,
+  onPorcionarPasta,
+  onEditar,
+  onEliminar,
+}: LotesSemanalesSectionProps) {
+  const [expandidos, setExpandidos] = useState<Set<string>>(new Set());
+  const toggleExpand = (key: string) => {
+    setExpandidos((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const tiposConDatos = TIPO_LOTE_SEMANAL_ORDEN.filter((t) => conteo.porTipo[t] > 0);
+  const localLabel =
+    filtroLocal === 'todos' ? 'ambos locales' : filtroLocal === 'vedia' ? 'Vedia' : 'Saavedra';
+
+  return (
+    <div>
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h3 className="text-base font-semibold text-gray-800">Lotes registrados</h3>
+          <p className="mt-0.5 text-xs text-gray-500">
+            Semana del {formatRangoLabel(semana.desde, semana.hasta)} · {localLabel} · {conteo.total}{' '}
+            {conteo.total === 1 ? 'lote' : 'lotes'}
+          </p>
+        </div>
+        {tiposConDatos.length > 0 && (
+          <div className="flex flex-wrap gap-1">
+            <PillBtn
+              active={filtroTipoSemanal === 'todos'}
+              onClick={() => setFiltroTipoSemanal('todos')}
+            >
+              Todos · {conteo.total}
+            </PillBtn>
+            {tiposConDatos.map((t) => (
+              <PillBtn
+                key={t}
+                active={filtroTipoSemanal === t}
+                onClick={() => setFiltroTipoSemanal(filtroTipoSemanal === t ? 'todos' : t)}
+              >
+                {TIPO_LOTE_SEMANAL_LABEL[t]} · {conteo.porTipo[t]}
+              </PillBtn>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {grupos.length === 0 ? (
+        <div className="rounded-lg border border-dashed border-gray-200 px-4 py-8 text-center text-sm text-gray-400">
+          {cargando ? 'Cargando...' : 'No hay lotes registrados esta semana'}
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {tiposConDatos
+            .filter((t) => filtroTipoSemanal === 'todos' || filtroTipoSemanal === t)
+            .map((tipo) => {
+              const gruposDelTipo = grupos.filter((g) => g.tipo === tipo);
+              if (gruposDelTipo.length === 0) return null;
+              return (
+                <section key={tipo}>
+                  <h4
+                    className={cn(
+                      'mb-2 inline-flex items-center gap-2 rounded-md px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide',
+                      TIPO_LOTE_SEMANAL_COLOR[tipo],
+                    )}
+                  >
+                    {TIPO_LOTE_SEMANAL_LABEL[tipo]}
+                    <span className="font-normal opacity-70">· {conteo.porTipo[tipo]}</span>
+                  </h4>
+                  <div className="divide-y divide-surface-border overflow-hidden rounded-lg border border-surface-border bg-white">
+                    {gruposDelTipo.map((g) => {
+                      const key = `${g.tipo}::${g.nombre}`;
+                      const abierto = expandidos.has(key);
+                      const metricas = metricasGrupo(g);
+                      return (
+                        <div key={key}>
+                          <button
+                            type="button"
+                            onClick={() => toggleExpand(key)}
+                            className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-gray-50"
+                          >
+                            <div className="flex items-center gap-2">
+                              <span
+                                className={cn(
+                                  'inline-block text-gray-400 transition-transform',
+                                  abierto && 'rotate-90',
+                                )}
+                              >
+                                ▸
+                              </span>
+                              <span className="text-sm font-semibold text-gray-900">
+                                {g.nombre}
+                              </span>
+                            </div>
+                            <span className="text-xs tabular-nums text-gray-600">
+                              {metricas.join(' · ')}
+                            </span>
+                          </button>
+                          {abierto && (
+                            <div className="divide-y divide-gray-100 border-t border-gray-100 bg-gray-50/40">
+                              {g.lotes.map((l) => {
+                                const masaPendiente =
+                                  l.tabla === 'cocina_lotes_masa' &&
+                                  l.masaRow != null &&
+                                  l.masaRow.kg_sobrante == null;
+                                const pastaFresca =
+                                  l.tabla === 'cocina_lotes_pasta' &&
+                                  l.pastaRow?.ubicacion === 'freezer_produccion';
+                                return (
+                                  <div
+                                    key={`${l.tabla}-${l.id}`}
+                                    className="flex flex-wrap items-start gap-3 px-4 py-2.5"
+                                  >
+                                    <div className="min-w-[88px] tabular-nums">
+                                      <p className="text-xs font-medium text-gray-700">
+                                        {diaCorto(l.fecha)} {formatDDMM(l.fecha)} · {l.hora}
+                                      </p>
+                                    </div>
+                                    <div className="min-w-[160px] flex-1">
+                                      <p className="text-sm text-gray-800">
+                                        <span className="font-medium tabular-nums">
+                                          {l.cantidadStr}
+                                        </span>
+                                        {l.detalleExtra && (
+                                          <span className="text-gray-500"> · {l.detalleExtra}</span>
+                                        )}
+                                      </p>
+                                      <p className="mt-0.5 text-[11px] text-gray-500">
+                                        {l.responsable || 'Sin responsable'}
+                                        {filtroLocal === 'todos' && (
+                                          <>
+                                            {' · '}
+                                            <span className="capitalize">{l.local}</span>
+                                          </>
+                                        )}
+                                      </p>
+                                      {l.notas && (
+                                        <p className="mt-0.5 text-[11px] italic text-gray-400">
+                                          "{l.notas}"
+                                        </p>
+                                      )}
+                                    </div>
+                                    <div className="flex items-center gap-3 self-center">
+                                      <IngredientesRealesBadge ingredientes={l.ingredientes} />
+                                      {masaPendiente && l.masaRow && (
+                                        <button
+                                          onClick={() => onCerrarMasa(l.masaRow!)}
+                                          className="text-xs font-medium text-blue-600 hover:text-blue-800"
+                                        >
+                                          Cerrar
+                                        </button>
+                                      )}
+                                      {pastaFresca && l.pastaRow && (
+                                        <button
+                                          onClick={() => onPorcionarPasta(l.pastaRow!)}
+                                          className="text-xs text-gray-600 hover:text-gray-800"
+                                          title="Corregir porciones"
+                                        >
+                                          Corregir
+                                        </button>
+                                      )}
+                                      <button
+                                        onClick={() => onEditar(l, g.nombre)}
+                                        className="text-xs text-rodziny-600 hover:text-rodziny-800"
+                                      >
+                                        Editar
+                                      </button>
+                                      <button
+                                        onClick={() => onEliminar(l)}
+                                        className="text-xs text-red-500 hover:text-red-700"
+                                      >
+                                        Eliminar
+                                      </button>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
                         </div>
                       );
                     })}
