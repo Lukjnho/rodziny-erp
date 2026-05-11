@@ -325,9 +325,13 @@ export function ProduccionQRPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cocina_pasta_recetas')
-        .select('pasta_id, receta_id');
+        .select('pasta_id, receta_id, receta:cocina_recetas(tipo)');
       if (error) throw error;
-      return (data ?? []) as { pasta_id: string; receta_id: string }[];
+      return (data ?? []) as unknown as {
+        pasta_id: string;
+        receta_id: string;
+        receta: { tipo: string } | { tipo: string }[] | null;
+      }[];
     },
   });
 
@@ -960,7 +964,11 @@ function FormPasta({
   productos: Producto[];
   lotesRelleno: LoteRelleno[];
   lotesMasa: LoteMasa[];
-  pastaRecetas: { pasta_id: string; receta_id: string }[];
+  pastaRecetas: {
+    pasta_id: string;
+    receta_id: string;
+    receta: { tipo: string } | { tipo: string }[] | null;
+  }[];
   onGuardado: (msg: string) => void;
   onVolver: () => void;
 }) {
@@ -999,6 +1007,29 @@ function FormPasta({
     }
     return m;
   }, [pastaRecetas]);
+
+  // Pastas que admiten relleno: tienen al menos una receta tipo='relleno' mapeada.
+  // Las demás (tagliatelles, fettuccine, spaghetti) son fideos y NO permiten elegir
+  // relleno — al seleccionarlas se resetea el dropdown.
+  const pastasConRelleno = useMemo(() => {
+    const s = new Set<string>();
+    for (const pr of pastaRecetas) {
+      // Supabase devuelve el join como objeto o array según la cardinalidad detectada
+      const r = Array.isArray(pr.receta) ? pr.receta[0] : pr.receta;
+      if (r?.tipo === 'relleno') s.add(pr.pasta_id);
+    }
+    return s;
+  }, [pastaRecetas]);
+
+  const productoSel = productos.find((p) => p.id === productoId);
+  const productoAdmiteRelleno = productoSel ? pastasConRelleno.has(productoSel.id) : true;
+
+  // Si elegí una pasta que NO admite relleno, limpiar el relleno seleccionado.
+  useEffect(() => {
+    if (productoId && !pastasConRelleno.has(productoId) && loteRellenoId) {
+      setLoteRellenoId('');
+    }
+  }, [productoId, pastasConRelleno, loteRellenoId]);
 
   // Pastas candidatas según el relleno elegido
   const pastasCandidatas = useMemo<Producto[]>(() => {
@@ -1111,9 +1142,9 @@ function FormPasta({
       muzzarella_gramos: esConMuzzarella && muzzarellaGramos ? Number(muzzarellaGramos) : null,
       semolin_gramos: requiereSemolinHuevo && semolinGramos ? Number(semolinGramos) : null,
       huevo_gramos: requiereSemolinHuevo && huevoGramos ? Number(huevoGramos) : null,
-      // Sin relleno: el campo ingresado son porciones (bolsitas 200g) y va
-      // directo a cámara. Con relleno: el campo son bandejas pendientes de
-      // porcionar al día siguiente.
+      // Sin relleno (fideos): el campo ingresado son porciones (bolsitas 140g)
+      // y va directo a cámara. Con relleno: el campo son bandejas pendientes
+      // de porcionar al día siguiente (bolsitas 200g).
       porciones: esPastaSinRelleno ? cantidad : null,
       cantidad_cajones: esPastaSinRelleno ? null : cantidad,
       ubicacion: esPastaSinRelleno ? 'camara_congelado' : 'freezer_produccion',
@@ -1147,7 +1178,7 @@ function FormPasta({
 
       <div className="rounded border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">
         {esPastaSinRelleno
-          ? 'Fideos (sin relleno): cargá las porciones (bolsitas 200g) que armaste. Van directo a la cámara de congelado.'
+          ? 'Fideos (sin relleno): cargá las porciones (bolsitas 140g) que armaste. Van directo a la cámara de congelado.'
           : 'Las pastas armadas quedan en bandejas en el freezer de producción. Al día siguiente las porcionás en bolsitas de 200g y pasan a la cámara de congelado (cajones).'}
       </div>
 
@@ -1159,6 +1190,7 @@ function FormPasta({
           </label>
           <select
             value={loteRellenoId}
+            disabled={!productoAdmiteRelleno}
             onChange={(e) => {
               const id = e.target.value;
               setLoteRellenoId(id);
@@ -1174,9 +1206,14 @@ function FormPasta({
                 setRellenoKg('');
               }
             }}
-            className="w-full rounded border border-gray-300 px-3 py-2.5 text-sm"
+            className={cn(
+              'w-full rounded border border-gray-300 px-3 py-2.5 text-sm',
+              !productoAdmiteRelleno && 'cursor-not-allowed bg-gray-100 text-gray-400',
+            )}
           >
-            <option value="">Sin relleno (pasta simple)</option>
+            <option value="">
+              {productoAdmiteRelleno ? 'Sin relleno (pasta simple)' : 'No aplica para fideos'}
+            </option>
             {lotesRelleno.map((l) => {
               const esDeHoy = l.fecha === hoy();
               const fechaSufijo = esDeHoy ? '' : ` (${formatDDMM(l.fecha)})`;
@@ -1454,7 +1491,7 @@ function FormPasta({
 
         <div>
           <label className="mb-1 block text-xs font-medium text-gray-700">
-            {esPastaSinRelleno ? 'Porciones (bolsitas 200g)' : 'Bandejas armadas'}
+            {esPastaSinRelleno ? 'Porciones (bolsitas 140g)' : 'Bandejas armadas'}
           </label>
           <input
             type="number"
