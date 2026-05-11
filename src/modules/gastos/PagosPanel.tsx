@@ -107,27 +107,31 @@ export function PagosPanel({ local, desde, hasta }: Props) {
   async function revertirPago(g: Gasto) {
     if (
       !window.confirm(
-        `¿Revertir el pago de ${g.proveedor || 'sin proveedor'} por ${formatARS(g.importe_total)}?`,
+        `¿Revertir el pago de ${g.proveedor || 'sin proveedor'} por ${formatARS(g.importe_total)}?\n\nEl gasto vuelve a Pendiente para poder pagarlo de nuevo con el medio correcto.`,
       )
     )
       return;
+    // Volver a Pendiente manteniendo la fecha_vencimiento original. Antes la
+    // reseteábamos a null y el gasto caía al final del query (orden venc ASC)
+    // y desaparecía del listado.
     const { error } = await supabase
       .from('gastos')
-      .update({
-        estado_pago: 'Pendiente',
-        fecha_vencimiento: null,
-      })
+      .update({ estado_pago: 'Pendiente' })
       .eq('id', g.id);
     if (error) {
       window.alert(error.message);
       return;
     }
+    // Liberar el movimiento bancario conciliado para que pueda matchearse
+    // contra el pago correcto cuando se vuelva a registrar.
+    await supabase.from('movimientos_bancarios').update({ gasto_id: null }).eq('gasto_id', g.id);
     await supabase.from('pagos_gastos').delete().eq('gasto_id', g.id);
     qc.invalidateQueries({ queryKey: ['gastos_pagos_pendientes'] });
     qc.invalidateQueries({ queryKey: ['gastos_pagos_rango'] });
     qc.invalidateQueries({ queryKey: ['gastos_listado'] });
     qc.invalidateQueries({ queryKey: ['pagos_gastos'] });
     qc.invalidateQueries({ queryKey: ['gastos_resumen_kpis'] });
+    qc.invalidateQueries({ queryKey: ['movimientos_bancarios'] });
   }
 
   return (

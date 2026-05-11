@@ -255,13 +255,19 @@ export function ComprasPage() {
   const { data: gastosPagos } = useQuery({
     queryKey: ['gastos_pagos', local],
     queryFn: async () => {
+      // Ordenamos por venc ASC con nulls al final (los pendientes urgentes
+      // arriba), y como tie-breaker created_at DESC para que entre los gastos
+      // sin venc los más recientes aparezcan primero. Subimos el limit a 1500
+      // para evitar que pendientes recientes queden truncados (Vedia tiene
+      // ~700 gastos activos al cierre de mes).
       const { data } = await supabase
         .from('gastos')
         .select('*')
         .eq('local', local)
         .eq('cancelado', false)
         .order('fecha_vencimiento', { ascending: true, nullsFirst: false })
-        .limit(500);
+        .order('created_at', { ascending: false })
+        .limit(1500);
       return (data ?? []) as Gasto[];
     },
     enabled: tab === 'pagos',
@@ -2774,18 +2780,31 @@ export function ComprasPage() {
                                 onClick={async () => {
                                   if (
                                     !window.confirm(
-                                      `¿Revertir el pago de ${g.proveedor || 'sin proveedor'} por ${formatARS(g.importe_total)}?`,
+                                      `¿Revertir el pago de ${g.proveedor || 'sin proveedor'} por ${formatARS(g.importe_total)}?\n\nEl gasto vuelve a Pendiente para poder pagarlo de nuevo con el medio correcto.`,
                                     )
                                   )
                                     return;
+                                  // Volver el gasto a Pendiente, manteniendo la fecha_vencimiento
+                                  // original (si la tenía). Resetearla a null hacía que el gasto
+                                  // cayera al final del query (ordenado por venc ASC, limit 500)
+                                  // y "desapareciera" del listado.
                                   await supabase
                                     .from('gastos')
-                                    .update({ estado_pago: 'pendiente', fecha_vencimiento: null })
+                                    .update({ estado_pago: 'Pendiente' })
                                     .eq('id', g.id);
+                                  // Liberar el movimiento bancario que se haya auto-conciliado
+                                  // con este pago para que pueda matchearse contra el pago
+                                  // correcto cuando se vuelva a registrar.
+                                  await supabase
+                                    .from('movimientos_bancarios')
+                                    .update({ gasto_id: null })
+                                    .eq('gasto_id', g.id);
                                   await supabase.from('pagos_gastos').delete().eq('gasto_id', g.id);
                                   qc.invalidateQueries({ queryKey: ['gastos_pagos'] });
                                   qc.invalidateQueries({ queryKey: ['pagos_gastos_compras'] });
                                   qc.invalidateQueries({ queryKey: ['pagos_gastos'] });
+                                  qc.invalidateQueries({ queryKey: ['gastos_listado'] });
+                                  qc.invalidateQueries({ queryKey: ['movimientos_bancarios'] });
                                 }}
                                 className="rounded border border-red-200 px-2 py-1 text-xs text-red-600 transition-colors hover:bg-red-50"
                               >
