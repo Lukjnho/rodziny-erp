@@ -189,7 +189,7 @@ export function ProduccionQRPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cocina_pizarron_items')
-        .select('tipo, receta_id, estado')
+        .select('tipo, receta_id, cantidad_recetas, estado')
         .eq('local', local)
         .eq('fecha_objetivo', hoy())
         .neq('estado', 'cancelado');
@@ -197,6 +197,7 @@ export function ProduccionQRPage() {
       return data as Array<{
         tipo: 'relleno' | 'masa' | 'salsa' | 'postre' | 'pasteleria' | 'panaderia';
         receta_id: string | null;
+        cantidad_recetas: number | null;
         estado: string;
       }>;
     },
@@ -412,20 +413,23 @@ export function ProduccionQRPage() {
     [recetas, local],
   );
 
-  // Receta IDs planificados hoy, agrupados por tipo. Se usa para ofrecer por
-  // default solo las recetas planificadas en el QR de los chicos.
+  // Plan del día: por receta acumulamos cuántas recetas pidió el chef
+  // (si hay varios items para la misma receta, se suman). Se usa para
+  // filtrar el dropdown y mostrar "N recetas planificadas" en cada opción.
   const planPorTipo = useMemo(() => {
-    const m: Record<'relleno' | 'salsa' | 'postre' | 'pasteleria' | 'panaderia', Set<string>> = {
-      relleno: new Set(),
-      salsa: new Set(),
-      postre: new Set(),
-      pasteleria: new Set(),
-      panaderia: new Set(),
+    const m: Record<'relleno' | 'salsa' | 'postre' | 'pasteleria' | 'panaderia', Map<string, number>> = {
+      relleno: new Map(),
+      salsa: new Map(),
+      postre: new Map(),
+      pasteleria: new Map(),
+      panaderia: new Map(),
     };
     for (const it of planHoy ?? []) {
       if (!it.receta_id) continue;
       if (it.tipo in m) {
-        m[it.tipo as keyof typeof m].add(it.receta_id);
+        const map = m[it.tipo as keyof typeof m];
+        const cant = Number(it.cantidad_recetas) || 1;
+        map.set(it.receta_id, (map.get(it.receta_id) ?? 0) + cant);
       }
     }
     return m;
@@ -742,7 +746,7 @@ function FormRelleno({
 }: {
   local: string;
   recetas: Receta[];
-  recetaIdsPlan?: Set<string>;
+  recetaIdsPlan?: Map<string, number>;
   onGuardado: (msg: string) => void;
   onVolver: () => void;
 }) {
@@ -754,7 +758,11 @@ function FormRelleno({
   }, [recetas, recetaIdsPlan, verTodas]);
 
   const [recetaId, setRecetaId] = useState(recetasVisibles[0]?.id ?? '');
-  const [cantRecetas, setCantRecetas] = useState('1');
+  const [cantRecetas, setCantRecetas] = useState(() => {
+    const id = recetasVisibles[0]?.id;
+    const planeada = id ? recetaIdsPlan?.get(id) : undefined;
+    return planeada ? String(planeada) : '1';
+  });
   const [pesoKg, setPesoKg] = useState('');
   const [responsable, setResponsable] = useState('');
   const [notas, setNotas] = useState('');
@@ -769,6 +777,14 @@ function FormRelleno({
       setRecetaId(recetasVisibles[0]?.id ?? '');
     }
   }, [recetasVisibles, recetaId]);
+
+  // Al cambiar de receta, si está en el plan auto-rellena cantRecetas con la
+  // cantidad que pidió el chef (ej. si planeó 2 recetas, arranca con 2).
+  useEffect(() => {
+    if (!recetaId) return;
+    const planeada = recetaIdsPlan?.get(recetaId);
+    if (planeada) setCantRecetas(String(planeada));
+  }, [recetaId, recetaIdsPlan]);
 
   const recetaSel = recetas.find((r) => r.id === recetaId);
   const onGrillaChange = useCallback((ings: IngredienteReal[]) => setIngredientesReales(ings), []);
@@ -843,13 +859,20 @@ function FormRelleno({
             className="w-full rounded border border-gray-300 px-3 py-2.5 text-sm"
           >
             {recetasVisibles.length === 0 && <option value="">No hay recetas cargadas</option>}
-            {recetasVisibles.map((r) => (
-              <option key={r.id} value={r.id}>
-                {recetaIdsPlan?.has(r.id) ? '📋 ' : ''}
-                {r.nombre}
-                {r.rendimiento_kg ? ` (${r.rendimiento_kg} ${unidadReceta(r)}/receta)` : ''}
-              </option>
-            ))}
+            {recetasVisibles.map((r) => {
+              const planeada = recetaIdsPlan?.get(r.id);
+              return (
+                <option key={r.id} value={r.id}>
+                  {planeada ? '📋 ' : ''}
+                  {r.nombre}
+                  {planeada
+                    ? ` · ${planeada} receta${planeada === 1 ? '' : 's'} planificada${planeada === 1 ? '' : 's'}`
+                    : r.rendimiento_kg
+                      ? ` (${r.rendimiento_kg} ${unidadReceta(r)}/receta)`
+                      : ''}
+                </option>
+              );
+            })}
           </select>
         </div>
 
@@ -2102,7 +2125,7 @@ function FormGenerico({
   local: string;
   categoria: CategoriaGenerica;
   recetas: Receta[];
-  recetaIdsPlan?: Set<string>;
+  recetaIdsPlan?: Map<string, number>;
   permitirLibre?: boolean;
   permitirLitros?: boolean;
   onGuardado: (msg: string) => void;
@@ -2235,12 +2258,18 @@ function FormGenerico({
               className="w-full rounded border border-gray-300 px-3 py-2.5 text-sm"
             >
               <option value="">— Elegir receta —</option>
-              {recetasVisibles.map((r) => (
-                <option key={r.id} value={r.id}>
-                  {recetaIdsPlan?.has(r.id) ? '📋 ' : ''}
-                  {r.nombre}
-                </option>
-              ))}
+              {recetasVisibles.map((r) => {
+                const planeada = recetaIdsPlan?.get(r.id);
+                return (
+                  <option key={r.id} value={r.id}>
+                    {planeada ? '📋 ' : ''}
+                    {r.nombre}
+                    {planeada
+                      ? ` · ${planeada} receta${planeada === 1 ? '' : 's'} planificada${planeada === 1 ? '' : 's'}`
+                      : ''}
+                  </option>
+                );
+              })}
             </select>
           </div>
         )}
