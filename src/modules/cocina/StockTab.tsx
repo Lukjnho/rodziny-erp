@@ -149,7 +149,11 @@ export function StockTab() {
     guardando: boolean;
   } | null>(null);
 
-  const { data: productos } = useQuery({
+  const {
+    data: productos,
+    isError: productosError,
+    refetch: refetchProductos,
+  } = useQuery({
     queryKey: ['cocina-productos'],
     queryFn: async () => {
       const { data, error } = await supabase
@@ -160,6 +164,7 @@ export function StockTab() {
       if (error) throw error;
       return data as Producto[];
     },
+    refetchOnMount: 'always',
   });
 
   const { data: lotesPasta } = useQuery({
@@ -171,6 +176,7 @@ export function StockTab() {
       if (error) throw error;
       return data as LotePasta[];
     },
+    refetchOnMount: 'always',
   });
 
   const { data: traspasos } = useQuery({
@@ -740,11 +746,23 @@ export function StockTab() {
             {stockRowsFiltrados.length === 0 && (
               <tr>
                 <td colSpan={10} className="px-4 py-8 text-center text-gray-400">
-                  {isLoading
-                    ? 'Cargando...'
-                    : filtroEstado !== 'todos'
-                      ? 'No hay productos con ese estado en el filtro actual'
-                      : 'No hay datos de stock aún'}
+                  {isLoading || productos === undefined || lotesPasta === undefined ? (
+                    'Cargando…'
+                  ) : productosError ? (
+                    <div className="space-y-2">
+                      <p className="text-red-500">No se pudieron cargar los productos.</p>
+                      <button
+                        onClick={() => refetchProductos()}
+                        className="rounded border border-gray-300 px-3 py-1 text-xs text-gray-700 hover:bg-gray-50"
+                      >
+                        Reintentar
+                      </button>
+                    </div>
+                  ) : filtroEstado !== 'todos' ? (
+                    'No hay productos con ese estado en el filtro actual'
+                  ) : (
+                    'No hay datos de stock aún'
+                  )}
                 </td>
               </tr>
             )}

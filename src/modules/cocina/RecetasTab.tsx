@@ -94,13 +94,20 @@ export function RecetasTab() {
   const [duplicando, setDuplicando] = useState<Receta | null>(null);
   const [fichaAbierta, setFichaAbierta] = useState<string | null>(null); // receta_id expandida
 
-  const { data: recetas, isLoading } = useQuery({
+  const {
+    data: recetas,
+    isLoading,
+    isFetching,
+    isError,
+    refetch,
+  } = useQuery({
     queryKey: ['cocina-recetas'],
     queryFn: async () => {
       const { data, error } = await supabase.from('cocina_recetas').select('*').order('nombre');
       if (error) throw error;
       return data as Receta[];
     },
+    refetchOnMount: 'always',
   });
 
   const { costos } = useCostosRecetas();
@@ -580,7 +587,21 @@ export function RecetasTab() {
             {filtrados.length === 0 && (
               <tr>
                 <td colSpan={11} className="px-4 py-8 text-center text-gray-400">
-                  {isLoading ? 'Cargando...' : 'No hay recetas'}
+                  {isLoading || isFetching || recetas === undefined ? (
+                    'Cargando…'
+                  ) : isError ? (
+                    <div className="space-y-2">
+                      <p className="text-red-500">No se pudieron cargar las recetas.</p>
+                      <button
+                        onClick={() => refetch()}
+                        className="rounded border border-gray-300 px-3 py-1 text-xs text-gray-700 hover:bg-gray-50"
+                      >
+                        Reintentar
+                      </button>
+                    </div>
+                  ) : (
+                    'No hay recetas'
+                  )}
                 </td>
               </tr>
             )}
