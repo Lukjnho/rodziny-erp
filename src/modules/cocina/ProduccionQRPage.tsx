@@ -782,6 +782,10 @@ function FormRelleno({
       setError('Indicá el peso total');
       return;
     }
+    if (!responsable.trim()) {
+      setError('Indicá tu nombre (responsable)');
+      return;
+    }
     setGuardando(true);
     setError('');
 
@@ -790,7 +794,7 @@ function FormRelleno({
       fecha: hoy(),
       cantidad_recetas: Number(cantRecetas) || 1,
       peso_total_kg: parseDecimal(pesoKg),
-      responsable: responsable.trim() || null,
+      responsable: responsable.trim(),
       local,
       notas: notas.trim() || null,
       ingredientes_reales: ingredientesReales.length > 0 ? ingredientesReales : null,
@@ -1064,6 +1068,10 @@ function FormPasta({
         return;
       }
     }
+    if (!responsable.trim()) {
+      setError('Indicá tu nombre (responsable)');
+      return;
+    }
     setGuardando(true);
     setError('');
 
@@ -1087,8 +1095,8 @@ function FormPasta({
       cantidad_cajones: esPastaSinRelleno ? null : cantidad,
       ubicacion: esPastaSinRelleno ? 'camara_congelado' : 'freezer_produccion',
       fecha_porcionado: esPastaSinRelleno ? hoy() : null,
-      responsable_porcionado: esPastaSinRelleno ? responsable.trim() || null : null,
-      responsable: responsable.trim() || null,
+      responsable_porcionado: esPastaSinRelleno ? responsable.trim() : null,
+      responsable: responsable.trim(),
       local,
       notas: notas.trim() || null,
     });
@@ -1533,6 +1541,10 @@ function FormPorcionar({
       setError('Indicá las porciones reales obtenidas');
       return;
     }
+    if (!responsable.trim()) {
+      setError('Indicá tu nombre (responsable)');
+      return;
+    }
     setGuardando(true);
     setError('');
 
@@ -1543,7 +1555,7 @@ function FormPorcionar({
     const { error: err } = await supabase.rpc('porcionar_pasta_lote', {
       p_lote_id: loteId,
       p_porciones: reales,
-      p_responsable: responsable.trim() || null,
+      p_responsable: responsable.trim(),
       p_sobrante_gramos: sobrante && sobrante > 0 ? sobrante : null,
       p_sobrante_origen_lote_id: usarSobranteId,
       p_merma_porcionado: merma,
@@ -1766,6 +1778,10 @@ function FormMasa({
       setError('Indicá los kg producidos');
       return;
     }
+    if (!responsable.trim()) {
+      setError('Indicá tu nombre (responsable)');
+      return;
+    }
     setGuardando(true);
     setError('');
 
@@ -1773,7 +1789,7 @@ function FormMasa({
       receta_id: recetaId,
       fecha: hoy(),
       kg_producidos: parseDecimal(kgProducidos),
-      responsable: responsable.trim() || null,
+      responsable: responsable.trim(),
       local,
       notas: notas.trim() || null,
       ingredientes_reales: ingredientesReales.length > 0 ? ingredientesReales : null,
@@ -2138,6 +2154,10 @@ function FormGenerico({
       setError('Indicá la cantidad producida');
       return;
     }
+    if (!responsable.trim()) {
+      setError('Indicá tu nombre (responsable)');
+      return;
+    }
     setGuardando(true);
     setError('');
 
@@ -2151,7 +2171,7 @@ function FormGenerico({
       unidad,
       merma_cantidad: merma ? parseDecimal(merma) : null,
       merma_motivo: mermaMotivo.trim() || null,
-      responsable: responsable.trim() || null,
+      responsable: responsable.trim(),
       notas: notas.trim() || null,
       ingredientes_reales: ingredientesReales.length > 0 ? ingredientesReales : null,
       en_stock: enStock,
