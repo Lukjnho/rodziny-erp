@@ -1021,6 +1021,10 @@ function FormPasta({
   const codigoLote = prodSel ? `${prodSel.codigo}-${formatDDMM(hoy())}` : '';
   const esConMuzzarella = prodSel ? PASTAS_CON_MUZZARELLA.has(prodSel.codigo) : false;
   const rellenoSel = lotesRelleno.find((l) => l.id === loteRellenoId);
+  // Pastas sin relleno (tagliatelles, fettuccine, spaghetti...) no llevan
+  // paso de porcionado posterior — el equipo arma y guarda en bolsitas en una
+  // sola pasada. Entra directo a cámara con porciones cargadas.
+  const esPastaSinRelleno = !loteRellenoId;
 
   // Si la receta del relleno define ratios (ej: puré de papa para ñoquis →
   // 350g semolín + 180g huevo por kg), sugerir los gramos a partir del
@@ -1063,6 +1067,7 @@ function FormPasta({
     setGuardando(true);
     setError('');
 
+    const cantidad = cantidadCajones ? Number(cantidadCajones) : null;
     const { error: err } = await supabase.from('cocina_lotes_pasta').insert({
       producto_id: productoId,
       lote_relleno_id: loteRellenoId || null,
@@ -1075,9 +1080,14 @@ function FormPasta({
       muzzarella_gramos: esConMuzzarella && muzzarellaGramos ? Number(muzzarellaGramos) : null,
       semolin_gramos: requiereSemolinHuevo && semolinGramos ? Number(semolinGramos) : null,
       huevo_gramos: requiereSemolinHuevo && huevoGramos ? Number(huevoGramos) : null,
-      porciones: null,
-      cantidad_cajones: cantidadCajones ? Number(cantidadCajones) : null,
-      ubicacion: 'freezer_produccion',
+      // Sin relleno: el campo ingresado son porciones (bolsitas 200g) y va
+      // directo a cámara. Con relleno: el campo son bandejas pendientes de
+      // porcionar al día siguiente.
+      porciones: esPastaSinRelleno ? cantidad : null,
+      cantidad_cajones: esPastaSinRelleno ? null : cantidad,
+      ubicacion: esPastaSinRelleno ? 'camara_congelado' : 'freezer_produccion',
+      fecha_porcionado: esPastaSinRelleno ? hoy() : null,
+      responsable_porcionado: esPastaSinRelleno ? responsable.trim() || null : null,
       responsable: responsable.trim() || null,
       local,
       notas: notas.trim() || null,
@@ -1089,7 +1099,9 @@ function FormPasta({
       return;
     }
     onGuardado(
-      `${prodSel?.nombre ?? 'Pasta'} armada — ${cantidadCajones || '?'} bandejas en freezer (${codigoLote})`,
+      esPastaSinRelleno
+        ? `${prodSel?.nombre ?? 'Pasta'} — ${cantidadCajones || '?'} porciones en cámara (${codigoLote})`
+        : `${prodSel?.nombre ?? 'Pasta'} armada — ${cantidadCajones || '?'} bandejas en freezer (${codigoLote})`,
     );
   }
 
@@ -1103,8 +1115,9 @@ function FormPasta({
       </div>
 
       <div className="rounded border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">
-        Las pastas armadas quedan en bandejas en el freezer de producción. Al día siguiente las
-        porcionás en bolsitas de 200g y pasan a la cámara de congelado (cajones).
+        {esPastaSinRelleno
+          ? 'Fideos (sin relleno): cargá las porciones (bolsitas 200g) que armaste. Van directo a la cámara de congelado.'
+          : 'Las pastas armadas quedan en bandejas en el freezer de producción. Al día siguiente las porcionás en bolsitas de 200g y pasan a la cámara de congelado (cajones).'}
       </div>
 
       <div className="space-y-3 rounded-lg border border-gray-200 bg-white p-4">
@@ -1409,17 +1422,21 @@ function FormPasta({
         )}
 
         <div>
-          <label className="mb-1 block text-xs font-medium text-gray-700">Bandejas armadas</label>
+          <label className="mb-1 block text-xs font-medium text-gray-700">
+            {esPastaSinRelleno ? 'Porciones (bolsitas 200g)' : 'Bandejas armadas'}
+          </label>
           <input
             type="number"
             inputMode="numeric"
             value={cantidadCajones}
             onChange={(e) => setCantidadCajones(e.target.value)}
             className="w-full rounded border border-gray-300 px-3 py-2.5 text-sm"
-            placeholder="3"
+            placeholder={esPastaSinRelleno ? '60' : '3'}
           />
           <p className="mt-1 text-[11px] text-gray-500">
-            Las porciones finales se registran al porcionar las pastas al día siguiente.
+            {esPastaSinRelleno
+              ? 'Va directo a la cámara — no requiere porcionado posterior.'
+              : 'Las porciones finales se registran al porcionar las pastas al día siguiente.'}
           </p>
         </div>
 
@@ -1450,7 +1467,11 @@ function FormPasta({
         disabled={guardando}
         className="w-full rounded-lg bg-rodziny-700 py-3.5 text-sm font-semibold text-white shadow transition-transform hover:bg-rodziny-800 active:scale-[0.98] disabled:opacity-50"
       >
-        {guardando ? 'Guardando...' : 'Registrar armado en freezer'}
+        {guardando
+          ? 'Guardando...'
+          : esPastaSinRelleno
+            ? 'Registrar en cámara'
+            : 'Registrar armado en freezer'}
       </button>
     </div>
   );

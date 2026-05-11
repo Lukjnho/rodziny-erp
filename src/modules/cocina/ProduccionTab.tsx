@@ -649,121 +649,27 @@ export function ProduccionTab() {
       </div>
 
       {/* ── Sección: Lotes registrados (relleno + masa + producción adicional) ── */}
-      <div>
-        <div className="mb-3 flex items-center justify-between">
-          <h3 className="text-base font-semibold text-gray-800">Lotes registrados</h3>
-          <span className="text-xs text-gray-500">Cargados desde el QR por el equipo</span>
-        </div>
+      <LotesRegistradosSection
+        lotes={lotesUnificadosFiltrados}
+        conteo={conteoPorTipo}
+        fechaLabel={fechaLabel}
+        fecha={fecha}
+        filtroLocal={filtroLocal}
+        filtroTipoLote={filtroTipoLote}
+        setFiltroTipoLote={setFiltroTipoLote}
+        cargando={cargandoR || cargandoM || cargandoProd}
+        onCerrarMasa={(m) => setModalCerrarMasa(m)}
+        onEditar={(l) =>
+          setModalEditarLote({ id: l.id, tabla: l.tabla, nombre: l.nombre })
+        }
+        onEliminar={(l) => {
+          if (!window.confirm('¿Eliminar este lote?')) return;
+          if (l.tabla === 'cocina_lotes_relleno') eliminarRelleno.mutate(l.id);
+          else if (l.tabla === 'cocina_lotes_masa') eliminarMasa.mutate(l.id);
+          else eliminarProduccion.mutate(l.id);
+        }}
+      />
 
-        <div className="mb-3 grid grid-cols-2 gap-2 md:grid-cols-4 xl:grid-cols-8">
-          <KPICard
-            label="Total"
-            value={String(conteoPorTipo.total)}
-            color="green"
-            loading={cargandoR || cargandoM || cargandoProd}
-            active={filtroTipoLote === 'todos'}
-            onClick={() => setFiltroTipoLote('todos')}
-          />
-          {TIPO_LOTE_ORDEN.map((t) => (
-            <KPICard
-              key={t}
-              label={TIPO_LOTE_LABEL[t]}
-              value={String(conteoPorTipo.porTipo[t])}
-              color="neutral"
-              active={filtroTipoLote === t}
-              onClick={() => setFiltroTipoLote(filtroTipoLote === t ? 'todos' : t)}
-            />
-          ))}
-        </div>
-
-        <div className="overflow-x-auto rounded-lg border border-surface-border bg-white">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-surface-border bg-gray-50 text-left text-xs uppercase text-gray-500">
-                <th className="px-4 py-2">Hora</th>
-                <th className="px-4 py-2">Tipo</th>
-                <th className="px-4 py-2">Receta</th>
-                <th className="px-4 py-2">Cantidad</th>
-                <th className="px-4 py-2">Detalle</th>
-                <th className="px-4 py-2">Ing.</th>
-                <th className="px-4 py-2">Local</th>
-                <th className="px-4 py-2">Responsable</th>
-                <th className="px-4 py-2">Notas</th>
-                <th className="px-4 py-2">Acciones</th>
-              </tr>
-            </thead>
-            <tbody>
-              {lotesUnificadosFiltrados.map((l) => {
-                const masaPendiente = l.tipo === 'masa' && l.masaRow?.kg_sobrante == null;
-                return (
-                  <tr key={`${l.tabla}-${l.id}`} className="border-b border-surface-border hover:bg-gray-50">
-                    <td className="px-4 py-2 tabular-nums text-xs text-gray-500">{l.hora}</td>
-                    <td className="px-4 py-2">
-                      <span
-                        className={cn(
-                          'rounded-full px-2 py-0.5 text-[10px] font-medium',
-                          TIPO_LOTE_COLOR[l.tipo],
-                        )}
-                      >
-                        {TIPO_LOTE_LABEL[l.tipo].replace(/s$/, '')}
-                      </span>
-                    </td>
-                    <td className="px-4 py-2 font-medium">{l.nombre}</td>
-                    <td className="px-4 py-2 tabular-nums">{l.cantidadStr}</td>
-                    <td className="px-4 py-2 text-[11px] text-gray-500">
-                      {l.detalleExtra ?? '—'}
-                    </td>
-                    <td className="px-4 py-2">
-                      <IngredientesRealesBadge ingredientes={l.ingredientes} />
-                    </td>
-                    <td className="px-4 py-2 capitalize">{l.local}</td>
-                    <td className="px-4 py-2">{l.responsable || '—'}</td>
-                    <td className="max-w-xs truncate px-4 py-2 text-gray-500">{l.notas || '—'}</td>
-                    <td className="space-x-2 px-4 py-2">
-                      {masaPendiente && l.masaRow && (
-                        <button
-                          onClick={() => setModalCerrarMasa(l.masaRow!)}
-                          className="text-xs text-blue-600 hover:text-blue-800"
-                        >
-                          Cerrar
-                        </button>
-                      )}
-                      <button
-                        onClick={() =>
-                          setModalEditarLote({ id: l.id, tabla: l.tabla, nombre: l.nombre })
-                        }
-                        className="text-xs text-rodziny-600 hover:text-rodziny-800"
-                      >
-                        Editar
-                      </button>
-                      <button
-                        onClick={() => {
-                          if (!window.confirm('¿Eliminar este lote?')) return;
-                          if (l.tabla === 'cocina_lotes_relleno') eliminarRelleno.mutate(l.id);
-                          else if (l.tabla === 'cocina_lotes_masa') eliminarMasa.mutate(l.id);
-                          else eliminarProduccion.mutate(l.id);
-                        }}
-                        className="text-xs text-red-500 hover:text-red-700"
-                      >
-                        Eliminar
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-              {lotesUnificadosFiltrados.length === 0 && (
-                <tr>
-                  <td colSpan={10} className="px-4 py-6 text-center text-gray-400">
-                    {cargandoR || cargandoM || cargandoProd
-                      ? 'Cargando...'
-                      : 'No hay lotes registrados'}
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
 
       {/* ── Sección: Pastas del día ──────────────────────────────────────────── */}
       <div>
@@ -1278,5 +1184,205 @@ function ModalCerrarMasa({
         </div>
       </div>
     </div>
+  );
+}
+
+// ── Sección de Lotes registrados ──────────────────────────────────────────────
+// Agrupada por tipo, solo muestra secciones con lotes (sin cards de 0). Filtro
+// por pills compactas en lugar de KPI grid. Cada fila tiene jerarquía visual
+// (receta+cantidad grandes, responsable/detalle gris chico) y muestra
+// tiempo relativo si la fecha activa es hoy.
+
+interface LotesRegistradosSectionProps {
+  lotes: LoteUnificado[];
+  conteo: { total: number; porTipo: Record<TipoLote, number> };
+  fechaLabel: string;
+  fecha: string;
+  filtroLocal: FiltroLocal;
+  filtroTipoLote: 'todos' | TipoLote;
+  setFiltroTipoLote: (t: 'todos' | TipoLote) => void;
+  cargando: boolean;
+  onCerrarMasa: (m: LoteMasa) => void;
+  onEditar: (l: LoteUnificado) => void;
+  onEliminar: (l: LoteUnificado) => void;
+}
+
+function LotesRegistradosSection({
+  lotes,
+  conteo,
+  fechaLabel,
+  fecha,
+  filtroLocal,
+  filtroTipoLote,
+  setFiltroTipoLote,
+  cargando,
+  onCerrarMasa,
+  onEditar,
+  onEliminar,
+}: LotesRegistradosSectionProps) {
+  const tiposConDatos = TIPO_LOTE_ORDEN.filter((t) => conteo.porTipo[t] > 0);
+  const esHoy = fecha === hoy();
+
+  // Tiempo relativo solo para hoy (no rota para fechas pasadas).
+  function tiempoRelativo(hora: string): string | null {
+    if (!esHoy || hora === '—') return null;
+    const [h, m] = hora.split(':').map(Number);
+    const ahora = new Date();
+    const minutosLote = h * 60 + m;
+    const minutosAhora = ahora.getHours() * 60 + ahora.getMinutes();
+    const diff = minutosAhora - minutosLote;
+    if (diff < 1) return 'recién';
+    if (diff < 60) return `hace ${diff} min`;
+    const horas = Math.floor(diff / 60);
+    return `hace ${horas}h`;
+  }
+
+  const localLabel =
+    filtroLocal === 'todos' ? 'ambos locales' : filtroLocal === 'vedia' ? 'Vedia' : 'Saavedra';
+
+  return (
+    <div>
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h3 className="text-base font-semibold text-gray-800">Lotes registrados</h3>
+          <p className="mt-0.5 text-xs text-gray-500">
+            <span className="capitalize">{fechaLabel}</span> · {localLabel} · {conteo.total}{' '}
+            {conteo.total === 1 ? 'lote' : 'lotes'}
+          </p>
+        </div>
+        {tiposConDatos.length > 0 && (
+          <div className="flex flex-wrap gap-1">
+            <PillBtn
+              active={filtroTipoLote === 'todos'}
+              onClick={() => setFiltroTipoLote('todos')}
+            >
+              Todos · {conteo.total}
+            </PillBtn>
+            {tiposConDatos.map((t) => (
+              <PillBtn
+                key={t}
+                active={filtroTipoLote === t}
+                onClick={() => setFiltroTipoLote(filtroTipoLote === t ? 'todos' : t)}
+              >
+                {TIPO_LOTE_LABEL[t]} · {conteo.porTipo[t]}
+              </PillBtn>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {lotes.length === 0 ? (
+        <div className="rounded-lg border border-dashed border-gray-200 px-4 py-8 text-center text-sm text-gray-400">
+          {cargando ? 'Cargando...' : 'No hay lotes registrados este día'}
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {tiposConDatos
+            .filter((t) => filtroTipoLote === 'todos' || filtroTipoLote === t)
+            .map((tipo) => {
+              const lotesDelTipo = lotes.filter((l) => l.tipo === tipo);
+              if (lotesDelTipo.length === 0) return null;
+              return (
+                <section key={tipo}>
+                  <h4
+                    className={cn(
+                      'mb-2 inline-flex items-center gap-2 rounded-md px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide',
+                      TIPO_LOTE_COLOR[tipo],
+                    )}
+                  >
+                    {TIPO_LOTE_LABEL[tipo]}
+                    <span className="font-normal opacity-70">· {lotesDelTipo.length}</span>
+                  </h4>
+                  <div className="divide-y divide-surface-border overflow-hidden rounded-lg border border-surface-border bg-white">
+                    {lotesDelTipo.map((l) => {
+                      const rel = tiempoRelativo(l.hora);
+                      const masaPendiente = l.tipo === 'masa' && l.masaRow?.kg_sobrante == null;
+                      return (
+                        <div
+                          key={`${l.tabla}-${l.id}`}
+                          className="flex flex-wrap items-start gap-3 px-4 py-3 hover:bg-gray-50"
+                        >
+                          <div className="min-w-[64px] tabular-nums">
+                            <p className="text-sm font-medium text-gray-700">{l.hora}</p>
+                            {rel && <p className="text-[10px] text-gray-400">{rel}</p>}
+                          </div>
+                          <div className="min-w-[200px] flex-1">
+                            <p className="text-sm font-semibold text-gray-900">
+                              {l.nombre}
+                              <span className="ml-2 font-medium tabular-nums text-gray-700">
+                                {l.cantidadStr}
+                              </span>
+                            </p>
+                            <p className="mt-0.5 text-[11px] text-gray-500">
+                              {l.responsable || 'Sin responsable'}
+                              {filtroLocal === 'todos' && (
+                                <>
+                                  {' · '}
+                                  <span className="capitalize">{l.local}</span>
+                                </>
+                              )}
+                              {l.detalleExtra && <> · {l.detalleExtra}</>}
+                            </p>
+                            {l.notas && (
+                              <p className="mt-0.5 text-[11px] italic text-gray-400">"{l.notas}"</p>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-3 self-center">
+                            <IngredientesRealesBadge ingredientes={l.ingredientes} />
+                            {masaPendiente && l.masaRow && (
+                              <button
+                                onClick={() => onCerrarMasa(l.masaRow!)}
+                                className="text-xs font-medium text-blue-600 hover:text-blue-800"
+                              >
+                                Cerrar
+                              </button>
+                            )}
+                            <button
+                              onClick={() => onEditar(l)}
+                              className="text-xs text-rodziny-600 hover:text-rodziny-800"
+                            >
+                              Editar
+                            </button>
+                            <button
+                              onClick={() => onEliminar(l)}
+                              className="text-xs text-red-500 hover:text-red-700"
+                            >
+                              Eliminar
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+              );
+            })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PillBtn({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        'rounded-full border px-3 py-1 text-xs transition-colors',
+        active
+          ? 'border-rodziny-600 bg-rodziny-50 font-medium text-rodziny-700'
+          : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300 hover:bg-gray-50',
+      )}
+    >
+      {children}
+    </button>
   );
 }
