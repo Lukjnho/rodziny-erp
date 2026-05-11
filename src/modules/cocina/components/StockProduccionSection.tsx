@@ -35,19 +35,21 @@ interface FudoDataResp {
 }
 
 const CAT_LABEL: Record<string, string> = {
-  salsa: 'Salsa',
-  postre: 'Postre',
+  salsa: 'Salsas',
+  postre: 'Postres',
   pasteleria: 'Pastelería',
   panaderia: 'Panadería',
-  prueba: 'Prueba',
+  prueba: 'Pruebas',
 };
 const CAT_COLOR: Record<string, string> = {
   salsa: 'bg-orange-100 text-orange-700',
   postre: 'bg-pink-100 text-pink-700',
-  pasteleria: 'bg-pink-100 text-pink-700',
+  pasteleria: 'bg-rose-100 text-rose-700',
   panaderia: 'bg-yellow-100 text-yellow-700',
   prueba: 'bg-purple-100 text-purple-700',
 };
+const CAT_ORDEN = ['salsa', 'postre', 'pasteleria', 'panaderia', 'prueba'] as const;
+type Categoria = (typeof CAT_ORDEN)[number];
 
 export function StockProduccionSection({
   filtroLocal,
@@ -229,6 +231,23 @@ export function StockProduccionSection({
     [grupos],
   );
 
+  // Conteo por categoría para los pills y para decidir qué secciones renderizar.
+  const conteoPorCat = useMemo(() => {
+    const m: Record<Categoria, number> = {
+      salsa: 0,
+      postre: 0,
+      pasteleria: 0,
+      panaderia: 0,
+      prueba: 0,
+    };
+    for (const g of grupos) {
+      if (g.tipo in m) m[g.tipo as Categoria]++;
+    }
+    return m;
+  }, [grupos]);
+  const catsConDatos = CAT_ORDEN.filter((c) => conteoPorCat[c] > 0);
+  const [filtroCat, setFiltroCat] = useState<'todos' | Categoria>('todos');
+
   if (filtroLocal === 'todos') {
     return (
       <div>
@@ -244,18 +263,36 @@ export function StockProduccionSection({
 
   return (
     <div>
-      <div className="mb-3 flex items-center justify-between">
-        <h3 className="text-base font-semibold text-gray-800">Proyección de producción</h3>
-        <span className="text-[10px] text-gray-500">
-          Consumo estimado = ventas Fudo × g/porción · FIFO por fecha · override manual si se pesó
-          la batea
-        </span>
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h3 className="text-base font-semibold text-gray-800">Proyección de producción</h3>
+          <p className="mt-0.5 text-[11px] text-gray-500">
+            Consumo estimado = ventas Fudo × g/porción · FIFO por fecha · override manual si se
+            pesó la batea
+          </p>
+        </div>
+        {catsConDatos.length > 0 && (
+          <div className="flex flex-wrap gap-1">
+            <PillBtn active={filtroCat === 'todos'} onClick={() => setFiltroCat('todos')}>
+              Todos · {grupos.length}
+            </PillBtn>
+            {catsConDatos.map((c) => (
+              <PillBtn
+                key={c}
+                active={filtroCat === c}
+                onClick={() => setFiltroCat(filtroCat === c ? 'todos' : c)}
+              >
+                {CAT_LABEL[c]} · {conteoPorCat[c]}
+              </PillBtn>
+            ))}
+          </div>
+        )}
       </div>
 
       {isLoading && <p className="text-xs text-gray-400">Cargando stock…</p>}
 
       {!isLoading && grupos.length === 0 && (
-        <div className="rounded-lg border border-surface-border bg-white p-4 text-center text-sm text-gray-400">
+        <div className="rounded-lg border border-dashed border-gray-200 px-4 py-8 text-center text-sm text-gray-400">
           No hay lotes activos en stock. Cuando el equipo cargue una salsa/postre con "Cargar a
           stock" ON, aparecerá acá.
         </div>
@@ -273,54 +310,69 @@ export function StockProduccionSection({
         </div>
       )}
 
-      <div className="space-y-1.5">
-        {grupos.map((g) => {
-          const expandido = expandidas.has(g.key);
-          const semaforo =
-            g.totalRestante <= 0
-              ? 'text-red-600'
-              : g.totalRestante < g.totalProducido * 0.2
-                ? 'text-amber-600'
-                : 'text-green-700';
-          const sinFudoCard = g.fudoNombres.length === 0;
-
-          return (
-            <div
-              key={g.key}
-              className="overflow-hidden rounded-lg border border-surface-border bg-white"
-            >
-              {/* Header colapsado: clickeable para expandir */}
-              <button
-                onClick={() => toggleExpandida(g.key)}
-                className="flex w-full flex-wrap items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-gray-50"
-              >
-                <span
-                  className={
-                    'rounded-full px-2 py-0.5 text-[10px] font-medium ' +
-                    (CAT_COLOR[g.tipo] ?? 'bg-gray-100 text-gray-600')
-                  }
+      <div className="space-y-4">
+        {catsConDatos
+          .filter((c) => filtroCat === 'todos' || filtroCat === c)
+          .map((cat) => {
+            const recetasDelTipo = grupos.filter((g) => g.tipo === cat);
+            if (recetasDelTipo.length === 0) return null;
+            return (
+              <section key={cat}>
+                <h4
+                  className={cn(
+                    'mb-2 inline-flex items-center gap-2 rounded-md px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide',
+                    CAT_COLOR[cat] ?? 'bg-gray-100 text-gray-600',
+                  )}
                 >
-                  {CAT_LABEL[g.tipo] ?? g.tipo}
-                </span>
-                <span className="text-sm font-semibold text-gray-800">{g.nombre}</span>
-                <span className="text-[11px] text-gray-500">
-                  {g.batches.length} batch{g.batches.length > 1 ? 'es' : ''}
-                </span>
-                {sinFudoCard && (
-                  <span className="rounded bg-amber-100 px-1.5 py-0 text-[9px] font-semibold text-amber-700">
-                    sin Fudo
-                  </span>
-                )}
-                <span className="ml-auto flex items-center gap-2 text-xs">
-                  <span className={cn('font-bold', semaforo)}>
-                    {g.totalRestante.toFixed(2)} {g.unidadBatch}
-                  </span>
-                  <span className="text-[10px] text-gray-300">{expandido ? '▾' : '▸'}</span>
-                </span>
-              </button>
+                  {CAT_LABEL[cat] ?? cat}
+                  <span className="font-normal opacity-70">· {recetasDelTipo.length}</span>
+                </h4>
+                <div className="divide-y divide-surface-border overflow-hidden rounded-lg border border-surface-border bg-white">
+                  {recetasDelTipo.map((g) => {
+                    const expandido = expandidas.has(g.key);
+                    const agotado = g.totalRestante <= 0;
+                    const bajo =
+                      !agotado && g.totalRestante < g.totalProducido * 0.2;
+                    const semaforo = agotado
+                      ? 'text-red-600'
+                      : bajo
+                        ? 'text-amber-600'
+                        : 'text-green-700';
+                    const sinFudoCard = g.fudoNombres.length === 0;
+                    return (
+                      <div key={g.key}>
+                        <button
+                          onClick={() => toggleExpandida(g.key)}
+                          className={cn(
+                            'flex w-full flex-wrap items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-gray-50',
+                            agotado && 'bg-red-50/40',
+                          )}
+                        >
+                          <span className="text-sm font-semibold text-gray-800">{g.nombre}</span>
+                          <span className="text-[11px] text-gray-500">
+                            {g.batches.length} batch{g.batches.length > 1 ? 'es' : ''}
+                          </span>
+                          {sinFudoCard && (
+                            <span className="rounded bg-amber-100 px-1.5 py-0 text-[9px] font-semibold text-amber-700">
+                              sin Fudo
+                            </span>
+                          )}
+                          {agotado && (
+                            <span className="rounded bg-red-100 px-1.5 py-0 text-[9px] font-semibold text-red-700">
+                              agotado
+                            </span>
+                          )}
+                          <span className="ml-auto flex items-center gap-2 text-xs">
+                            <span className={cn('font-bold tabular-nums', semaforo)}>
+                              {g.totalRestante.toFixed(2)} {g.unidadBatch}
+                            </span>
+                            <span className="text-[10px] text-gray-300">
+                              {expandido ? '▾' : '▸'}
+                            </span>
+                          </span>
+                        </button>
 
-              {/* Detalle expandido */}
-              {expandido && (
+                        {expandido && (
                 <div className="border-t border-gray-100">
                   {sinFudoCard ? (
                     <p className="bg-amber-50 px-4 py-2 text-[11px] text-amber-700">
@@ -436,12 +488,40 @@ export function StockProduccionSection({
                       })}
                     </tbody>
                   </table>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
-              )}
-            </div>
-          );
-        })}
+              </section>
+            );
+          })}
       </div>
     </div>
+  );
+}
+
+function PillBtn({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        'rounded-full border px-3 py-1 text-xs transition-colors',
+        active
+          ? 'border-rodziny-600 bg-rodziny-50 font-medium text-rodziny-700'
+          : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300 hover:bg-gray-50',
+      )}
+    >
+      {children}
+    </button>
   );
 }
