@@ -514,8 +514,8 @@ export const PRODUCTOS_COCINA: ProductoCocina[] = [
 
 // Orden fijo de categorías para mostrar
 const ORDEN_CATEGORIAS = [
-  'Salsas',
   'Pastas',
+  'Salsas',
   'Pizzas',
   'Postres',
   'Helados',
@@ -1383,85 +1383,6 @@ export function DashboardTab() {
     .filter((f) => f.producirCantidad > 0 && (f.stockCantidad !== null || f.stockEsFallback))
     .sort((a, b) => (a.diasRestantes ?? 0) - (b.diasRestantes ?? 0));
 
-  // ── Pizarrón ──
-  const [pizarronAbierto, setPizarronAbierto] = useState(false);
-  const [copiado, setCopiado] = useState(false);
-
-  function generarPizarron(): string {
-    const hoyFmt = new Date().toLocaleDateString('es-AR', {
-      weekday: 'long',
-      day: 'numeric',
-      month: 'long',
-    });
-    const localLabel = local === 'vedia' ? 'Vedia' : 'Saavedra';
-
-    let txt = `COCINA ${localLabel.toUpperCase()} — ${hoyFmt.charAt(0).toUpperCase() + hoyFmt.slice(1)}\n`;
-    txt += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
-
-    // Urgentes primero
-    const criticos = filas.filter((f) => f.estado === 'critico');
-    if (criticos.length > 0) {
-      txt += 'URGENTE:\n';
-      for (const f of criticos) {
-        txt += `  !! ${f.nombre} — ${f.diasRestantes !== null ? f.diasRestantes + ' días' : 'sin stock'}\n`;
-      }
-      txt += '\n';
-    }
-
-    // Producir hoy — agrupado por categoría
-    if (planProduccion.length > 0) {
-      txt += `PRODUCIR PARA ${diaManana.toUpperCase()}:\n`;
-      let lastCat = '';
-      for (const f of planProduccion) {
-        if (f.categoria !== lastCat) {
-          txt += `  [${f.categoria}]\n`;
-          lastCat = f.categoria;
-        }
-        const urgencia = f.estado === 'critico' ? ' !!' : '';
-        const verbo = f.rendPorciones && f.rendPorciones > 0 ? 'Hacer' : 'Producir';
-        txt += `    * ${verbo} ${f.producirLabel} de ${f.nombre}${urgencia}\n`;
-      }
-      txt += '\n';
-    }
-
-    // Stock por categoría
-    for (const cat of categorias) {
-      const okEnCat = cat.filas.filter((f) => f.estado === 'ok');
-      const bajoEnCat = cat.filas.filter((f) => f.estado === 'bajo');
-      if (okEnCat.length === 0 && bajoEnCat.length === 0) continue;
-
-      txt += `${cat.nombre.toUpperCase()}:\n`;
-      const fmtStock = (f: FilaDashboard) =>
-        f.stockCantidad !== null
-          ? `${f.stockCantidad} ${f.unidadstock}`
-          : f.stockEsFallback
-            ? `~${f.porcionesStock} porc.`
-            : '—';
-      for (const f of okEnCat) {
-        txt += `  OK  ${f.nombre} — ${f.diasRestantes}d (${fmtStock(f)})\n`;
-      }
-      for (const f of bajoEnCat) {
-        txt += `  *   ${f.nombre} — ${f.diasRestantes}d (${fmtStock(f)})\n`;
-      }
-      txt += '\n';
-    }
-
-    // Nota mañana
-    const factorPct = Math.round((factorManana - 1) * 100);
-    if (factorPct !== 0) {
-      txt += `NOTA: Mañana ${diaManana} (${factorPct >= 0 ? '+' : ''}${factorPct}% ventas vs promedio)\n`;
-    }
-
-    return txt;
-  }
-
-  function copiarPizarron() {
-    const txt = generarPizarron();
-    navigator.clipboard.writeText(txt);
-    setCopiado(true);
-    setTimeout(() => setCopiado(false), 2000);
-  }
-
   return (
     <div className="space-y-4">
       {cierresFaltantes.length > 0 && (
@@ -1491,12 +1412,6 @@ export function DashboardTab() {
         {!localRestringido && (
           <LocalSelector value={local} onChange={(v) => setLocal(v as 'vedia' | 'saavedra')} />
         )}
-        <button
-          onClick={() => setPizarronAbierto(true)}
-          className="rounded-lg bg-gray-800 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-gray-700"
-        >
-          Pizarron
-        </button>
         <div className="flex items-center gap-1 rounded-lg border border-gray-200 bg-white p-0.5">
           <span className="px-2 text-[10px] text-gray-500">Comparar:</span>
           {([1, 3, 7] as const).map((n) => (
@@ -1633,45 +1548,6 @@ export function DashboardTab() {
         />
       ))}
 
-      {/* ── MODAL PIZARRÓN ── */}
-      {pizarronAbierto && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center"
-          onClick={() => setPizarronAbierto(false)}
-        >
-          <div className="absolute inset-0 bg-black/40" />
-          <div
-            className="relative max-h-[80vh] w-full max-w-lg overflow-y-auto rounded-xl bg-gray-900 p-6 font-mono text-green-400 shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="mb-4 flex items-center justify-between">
-              <h3 className="text-sm font-bold uppercase tracking-wider text-white">
-                Pizarron del dia
-              </h3>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={copiarPizarron}
-                  className={cn(
-                    'rounded px-3 py-1 text-xs font-medium transition-colors',
-                    copiado
-                      ? 'bg-green-700 text-white'
-                      : 'bg-gray-700 text-gray-300 hover:bg-gray-600',
-                  )}
-                >
-                  {copiado ? 'Copiado!' : 'Copiar texto'}
-                </button>
-                <button
-                  onClick={() => setPizarronAbierto(false)}
-                  className="text-lg text-gray-500 hover:text-gray-300"
-                >
-                  x
-                </button>
-              </div>
-            </div>
-            <pre className="whitespace-pre-wrap text-xs leading-relaxed">{generarPizarron()}</pre>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -1756,11 +1632,9 @@ function CategoriaAccordion({
                 <th className="px-4 py-2.5 text-left">Producto</th>
                 <th className="px-4 py-2.5 text-center">Estado</th>
                 <th className="px-4 py-2.5 text-right">Stock actual</th>
-                <th className="px-4 py-2.5 text-right">Porc. aprox</th>
                 <th className="px-4 py-2.5 text-right">
                   {ventanaDias === 1 ? 'Ventas ayer' : `Ventas/día (${ventanaDias}d)`}
                 </th>
-                <th className="px-4 py-2.5 text-right">Ventas/día (14d)</th>
                 <th className="px-4 py-2.5 text-right">Días restantes</th>
                 <th className="px-4 py-2.5 text-right">{'Producir (' + diaManana + ')'}</th>
                 <th className="w-24 px-4 py-2.5 text-center">Actualizar</th>
@@ -1840,9 +1714,6 @@ function CategoriaAccordion({
                         <span className="text-gray-300">—</span>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-right text-xs text-gray-400">
-                      {f.porcionesStock > 0 ? `~${f.porcionesStock} porc.` : '—'}
-                    </td>
                     <td className="px-4 py-3 text-right">
                       {f.ventasReciente > 0 ? (
                         <div>
@@ -1867,13 +1738,6 @@ function CategoriaAccordion({
                               </span>
                             )}
                         </div>
-                      ) : (
-                        <span className="text-gray-300">—</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      {f.ventasDiariasPromedio > 0 ? (
-                        <span className="text-gray-700">{f.ventasDiariasPromedio} porc.</span>
                       ) : (
                         <span className="text-gray-300">—</span>
                       )}
