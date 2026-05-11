@@ -629,6 +629,20 @@ function CierreSimple({
         </p>
       </div>
 
+      {tipo === 'salsa' && (
+        <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-[11px] text-blue-800">
+          <p className="font-semibold">⚖ Cómo pesar al cierre</p>
+          <p className="mt-1">
+            Pesá <strong>TODA la salsa que sobró</strong>: los potes que quedaron en mostrador{' '}
+            <em>+</em> el recipiente grande en cámara. Sumá los dos pesos y cargá el total acá.
+          </p>
+          <p className="mt-1 text-blue-700">
+            Este número reemplaza el stock anterior. Si te olvidás de pesar la cámara, mañana vas
+            a tener stock fantasma.
+          </p>
+        </div>
+      )}
+
       <div className="rounded-lg border border-gray-200 bg-white">
         {productos.map((p, idx) => (
           <div
