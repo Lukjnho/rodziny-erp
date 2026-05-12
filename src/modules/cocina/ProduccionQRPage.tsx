@@ -2205,6 +2205,54 @@ function FormGenerico({
   const unidades = unidadesDisponibles(categoria, permitirLitros);
   const titulo = `Cargar ${CATEGORIA_LABEL[categoria]}`;
 
+  // Salsa es overwrite: avisar al cocinero si ya cargó esa receta hoy,
+  // así no se duplican filas en el detalle ni hay sorpresa de stock pisado.
+  const { data: cargasHoy } = useQuery({
+    queryKey: ['cocina-lotes-produccion-qr', local, categoria, hoy()],
+    queryFn: async () => {
+      const { data, error: qerr } = await supabase
+        .from('cocina_lotes_produccion')
+        .select('receta_id, cantidad_producida, unidad, created_at')
+        .eq('fecha', hoy())
+        .eq('local', local)
+        .eq('categoria', categoria)
+        .not('receta_id', 'is', null)
+        .order('created_at', { ascending: true });
+      if (qerr) throw qerr;
+      return (data ?? []) as {
+        receta_id: string;
+        cantidad_producida: number;
+        unidad: string;
+        created_at: string;
+      }[];
+    },
+    enabled: categoria === 'salsa',
+  });
+
+  const cargasPorReceta = useMemo(() => {
+    const m = new Map<
+      string,
+      { hora: string; cantidad: number; unidad: string; cargas: number }
+    >();
+    for (const c of cargasHoy ?? []) {
+      if (!c.receta_id) continue;
+      const prev = m.get(c.receta_id);
+      const hora = new Date(c.created_at).toLocaleTimeString('es-AR', {
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+      m.set(c.receta_id, {
+        hora,
+        cantidad: Number(c.cantidad_producida),
+        unidad: c.unidad,
+        cargas: (prev?.cargas ?? 0) + 1,
+      });
+    }
+    return m;
+  }, [cargasHoy]);
+
+  const cargaPrevia = recetaId ? cargasPorReceta.get(recetaId) : undefined;
+
   async function guardar() {
     if (!recetaId && !(permitirLibre && nombreLibre.trim())) {
       setError('Seleccioná una receta o escribí el nombre');
@@ -2297,13 +2345,21 @@ function FormGenerico({
               <option value="">— Elegir receta —</option>
               {recetasVisibles.map((r) => {
                 const planeada = recetaIdsPlan?.get(r.id);
+                const carga = cargasPorReceta.get(r.id);
+                const prefix = carga ? '✓ ' : planeada ? '📋 ' : '';
+                const sufijoCarga = carga
+                  ? ` · ya cargada ${carga.hora} (${carga.cantidad}${carga.unidad})`
+                  : '';
+                const sufijoPlan =
+                  planeada && !carga
+                    ? ` · ${planeada} receta${planeada === 1 ? '' : 's'} planificada${planeada === 1 ? '' : 's'}`
+                    : '';
                 return (
                   <option key={r.id} value={r.id}>
-                    {planeada ? '📋 ' : ''}
+                    {prefix}
                     {r.nombre}
-                    {planeada
-                      ? ` · ${planeada} receta${planeada === 1 ? '' : 's'} planificada${planeada === 1 ? '' : 's'}`
-                      : ''}
+                    {sufijoCarga}
+                    {sufijoPlan}
                   </option>
                 );
               })}
@@ -2323,6 +2379,20 @@ function FormGenerico({
               className="w-full rounded border border-gray-300 px-3 py-2.5 text-sm"
               disabled={!!recetaId}
             />
+          </div>
+        )}
+
+        {categoria === 'salsa' && cargaPrevia && (
+          <div className="rounded border border-amber-300 bg-amber-50 p-3 text-xs">
+            <p className="font-semibold text-amber-900">
+              ⚠️ Ya cargaste {recetaSel?.nombre} hoy
+            </p>
+            <p className="mt-0.5 text-amber-800">
+              {cargaPrevia.cargas === 1
+                ? `A las ${cargaPrevia.hora} (${cargaPrevia.cantidad}${cargaPrevia.unidad}).`
+                : `${cargaPrevia.cargas} veces · última a las ${cargaPrevia.hora} (${cargaPrevia.cantidad}${cargaPrevia.unidad}).`}{' '}
+              Si guardás de nuevo, el stock se <strong>reemplaza</strong> por el nuevo valor.
+            </p>
           </div>
         )}
 
