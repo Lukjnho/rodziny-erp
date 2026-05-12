@@ -86,15 +86,19 @@ export function AlertasOperativasCard() {
         ultimas[c] = row?.fecha ?? null;
       }
 
-      // Egresos pendientes de conciliar: débitos del banco sin gasto asociado,
-      // ignorando transferencias internas (esas se aparean entre cuentas).
-      // Los ingresos por venta MP NO entran a Conciliación por diseño.
+      // Egresos pendientes de conciliar en el MES ACTUAL: débitos del banco
+      // sin gasto asociado, ignorando transferencias internas. El número
+      // coincide con lo que Lucas ve al entrar al tab Conciliación (que
+      // filtra al mes actual por defecto). Los movs históricos de meses
+      // pasados se revisan cambiando el filtro de fecha en la pantalla.
+      const inicioMes = ymd(new Date(new Date().getFullYear(), new Date().getMonth(), 1));
       const { count: movsPendientes } = await supabase
         .from('movimientos_bancarios')
         .select('*', { count: 'exact', head: true })
         .is('gasto_id', null)
         .gt('debito', 0)
         .or('es_transferencia_interna.is.null,es_transferencia_interna.eq.false')
+        .gte('fecha', inicioMes)
         .lte('fecha', hoy);
 
       // Gastos vencidos sin pagar
@@ -224,7 +228,7 @@ export function AlertasOperativasCard() {
         id: 'movs_pendientes',
         severidad: data.movsPendientes > 50 ? 'warning' : 'info',
         icono: '🏦',
-        titulo: `${data.movsPendientes.toLocaleString('es-AR')} egreso${data.movsPendientes > 1 ? 's' : ''} sin conciliar`,
+        titulo: `${data.movsPendientes.toLocaleString('es-AR')} egreso${data.movsPendientes > 1 ? 's' : ''} sin conciliar este mes`,
         detalle: 'Débitos del extracto que todavía no están vinculados a un gasto.',
         link: '/compras?tab=conciliacion',
         cta: 'Conciliar',
