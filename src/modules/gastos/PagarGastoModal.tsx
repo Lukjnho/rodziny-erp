@@ -250,24 +250,28 @@ export function PagarGastoModal({ open, gasto, onClose }: Props) {
       if (errInsert) throw errInsert;
 
       // 3.5) Auto-conciliar con el mov del extracto si hay N° de op cargado.
-      //   Antes había que ir a Conciliación y correr "Auto-match N° op" para
-      //   que el pago se vinculara con su mov. Ahora lo hacemos en línea.
-      //   Match: dígitos del numero_operacion === dígitos de referencia (>=6 chars).
+      //   Match: dígitos de numero_operacion coinciden exactos con dígitos
+      //   de referencia, O la referencia es sufijo de los dígitos del N° op
+      //   con diferencia máxima de 1 dígito (caso Galicia: el extracto
+      //   trunca el primer dígito de los TRANSF. AFIP).
       if (nOperacion.trim() && pagoInsertado?.id) {
         const opDigits = nOperacion.replace(/\D/g, '');
         if (opDigits.length >= 6) {
-          // Filtramos por ILIKE para reducir candidatos, después validamos en
-          // cliente que los dígitos coinciden exactos (descarta falsos positivos).
+          // Candidato más amplio: buscamos los últimos N-1 dígitos también
+          // para cubrir el caso Galicia (perdió el primer dígito).
+          const opTail = opDigits.slice(1);
           const { data: movs } = await supabase
             .from('movimientos_bancarios')
             .select('id, referencia')
             .is('gasto_id', null)
             .gt('debito', 0)
-            .ilike('referencia', `%${opDigits}%`)
-            .limit(10);
+            .or(`referencia.ilike.%${opDigits}%,referencia.ilike.%${opTail}%`)
+            .limit(20);
           const match = (movs ?? []).find((m) => {
             const ref = ((m.referencia as string | null) ?? '').replace(/\D/g, '');
-            return ref === opDigits;
+            if (ref.length < 6) return false;
+            // Acepta exacto o sufijo con diff <= 1
+            return opDigits === ref || (opDigits.endsWith(ref) && opDigits.length - ref.length <= 1);
           });
           if (match) {
             await supabase
@@ -482,10 +486,20 @@ export function PagarGastoModal({ open, gasto, onClose }: Props) {
                 value={nOperacion}
                 onChange={(e) => setNOperacion(e.target.value)}
                 className="w-full rounded border border-gray-300 px-3 py-2 text-sm font-mono"
-                placeholder="Ref. bancaria / N° transferencia / N° cheque"
+                placeholder={
+                  medioPago === 'transferencia_galicia' || medioPago === 'cheque_galicia'
+                    ? 'Leyenda adicional (ej: 5034490189) o N° de cheque'
+                    : medioPago === 'transferencia_mp'
+                      ? 'N° de operación MP (ej: 156905408879)'
+                      : 'Ref. bancaria / N° de transferencia / cheque'
+                }
               />
               <p className="mt-1 text-[11px] text-gray-500">
-                Copialo del comprobante. Se usa para conciliar con el extracto bancario.
+                {medioPago === 'transferencia_galicia' || medioPago === 'cheque_galicia'
+                  ? 'Copiá la "Leyenda adicional" del comprobante Galicia (10 dígitos). En el extracto aparece sin el primer dígito.'
+                  : medioPago === 'transferencia_mp'
+                    ? 'Copialo del comprobante MercadoPago.'
+                    : 'Copialo del comprobante. Se usa para conciliar con el extracto bancario.'}
               </p>
             </Field>
           )}

@@ -1810,8 +1810,20 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
                       value={nOperacion}
                       onChange={(e) => setNOperacion(e.target.value)}
                       className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
-                      placeholder="Ref. bancaria / N° de transferencia"
+                      placeholder={
+                        medioPago === 'transferencia_galicia' || medioPago === 'cheque_galicia'
+                          ? 'Leyenda adicional (ej: 5034490189) o N° de cheque'
+                          : medioPago === 'transferencia_mp'
+                            ? 'N° de op MP (ej: 156905408879)'
+                            : 'Ref. bancaria / N° de transferencia'
+                      }
                     />
+                    {(medioPago === 'transferencia_galicia' || medioPago === 'cheque_galicia') && (
+                      <p className="mt-1 text-[11px] text-gray-500">
+                        En el PDF del Galicia copiá la "Leyenda adicional" (10 dígitos).
+                        En el extracto aparece sin el primer dígito.
+                      </p>
+                    )}
                   </Field>
 
                   {/* Comprobante de pago — obligatorio en flujo físico cuando medio≠efectivo.

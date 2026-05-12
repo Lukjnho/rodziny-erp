@@ -1303,12 +1303,19 @@ function ModalMedioPago({
               type="text"
               value={numeroOp}
               onChange={(e) => setNumeroOp(e.target.value)}
-              placeholder="Ej: 157737647098"
+              placeholder={
+                medio === 'transferencia_galicia' || medio === 'cheque_galicia'
+                  ? 'Leyenda adicional (ej: 5034490189) o N° de cheque'
+                  : medio === 'transferencia_mp'
+                    ? 'N° op MP (ej: 157737647098)'
+                    : 'Ej: 157737647098'
+              }
               className="w-full rounded border border-gray-200 px-3 py-2 text-sm focus:border-rodziny-500 focus:outline-none"
             />
             <p className="mt-1 text-[11px] text-gray-400">
-              Se concilia automáticamente contra el movimiento bancario al sincronizar MP /
-              importar extracto.
+              {medio === 'transferencia_galicia' || medio === 'cheque_galicia'
+                ? 'Del PDF Galicia: copiá la "Leyenda adicional" (10 dígitos). Concilia aunque el extracto trunque el primer dígito.'
+                : 'Se concilia automáticamente contra el movimiento bancario al sincronizar MP / importar extracto.'}
             </p>
           </div>
           {requiereComprobante && (
