@@ -1,4 +1,4 @@
-import { useState, useRef, useMemo, useCallback } from 'react';
+import { useState, useRef, useMemo, useCallback, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
@@ -187,10 +187,19 @@ export function ComprasPage() {
   const [gastosPeriodo, setGastosPeriodo] = useState(() =>
     new Date().toISOString().substring(0, 7),
   );
-  // Filtro de local específico para el tab Gastos (independiente del selector
-  // global de la página). "ambos" suma Vedia+Saavedra; "sas" muestra solo
-  // gastos de la razón social.
-  const [gastosLocal, setGastosLocal] = useState<'vedia' | 'saavedra' | 'sas' | 'ambos'>('ambos');
+  // Filtro de local específico para el tab Gastos. Se inicializa en "empresa"
+  // (todos los locales) y se sincroniza con el LocalSelector global: cuando
+  // cambiás el global a Vedia/Saavedra, este filtro se mueve también. El
+  // listado interno acepta el modelo legacy ('ambos'), así que mapeamos
+  // 'empresa' → 'ambos' al pasarlo (ambos = no filtra por local).
+  type GastosLocal = 'vedia' | 'saavedra' | 'empresa';
+  const [gastosLocal, setGastosLocal] = useState<GastosLocal>('empresa');
+  // Sincronizar con el selector global: si cambiás arriba, se replica acá.
+  // Si querés ver "Empresa" tenés que clickearlo manualmente en el filtro
+  // del listado (no hay equivalente en el global).
+  useEffect(() => {
+    setGastosLocal(local);
+  }, [local]);
   const { gastosDesde, gastosHasta } = useMemo(() => {
     const [y, m] = gastosPeriodo.split('-').map(Number);
     const last = new Date(y, m, 0).getDate();
@@ -201,8 +210,7 @@ export function ComprasPage() {
   }, [gastosPeriodo]);
 
   // KPIs del listado de gastos: agregados rápidos del período + local seleccionado.
-  // Cuando local='ambos' suma Vedia+Saavedra (excluye sas para que ese caso requiera
-  // selección explícita).
+  // "empresa" = todos los gastos (vedia + saavedra + sas / razón social).
   const { data: gastosKpis } = useQuery({
     queryKey: ['gastos_kpis', gastosLocal, gastosDesde, gastosHasta],
     queryFn: async () => {
@@ -212,8 +220,7 @@ export function ComprasPage() {
         .gte('fecha', gastosDesde)
         .lte('fecha', gastosHasta)
         .neq('cancelado', true);
-      if (gastosLocal === 'ambos') q = q.in('local', ['vedia', 'saavedra']);
-      else q = q.eq('local', gastosLocal);
+      if (gastosLocal !== 'empresa') q = q.eq('local', gastosLocal);
       const { data } = await q;
       const rows = data ?? [];
       const total = rows.length;
@@ -1187,14 +1194,15 @@ export function ComprasPage() {
               Cargá un gasto sacando una foto del comprobante. La IA lee automáticamente proveedor, monto, fecha y N° de operación.
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              {/* Filtro de local específico del tab Gastos */}
+              {/* Filtro de local del tab Gastos. "Empresa" = todos los gastos
+                  sin filtrar por local (incluye los cargados con local='sas',
+                  o sea de la razón social — afectan a ambos locales por igual). */}
               <div className="flex gap-1 rounded-md border border-gray-300 bg-white p-0.5">
                 {(
                   [
-                    { id: 'ambos', label: 'Ambos' },
+                    { id: 'empresa', label: 'Empresa' },
                     { id: 'vedia', label: 'Vedia' },
                     { id: 'saavedra', label: 'Saavedra' },
-                    { id: 'sas', label: 'SAS' },
                   ] as const
                 ).map((o) => (
                   <button
@@ -1285,7 +1293,11 @@ export function ComprasPage() {
             </div>
           </div>
 
-          <ListadoGastos local={gastosLocal} desde={gastosDesde} hasta={gastosHasta} />
+          <ListadoGastos
+            local={gastosLocal === 'empresa' ? 'ambos' : gastosLocal}
+            desde={gastosDesde}
+            hasta={gastosHasta}
+          />
         </>
       )}
 
