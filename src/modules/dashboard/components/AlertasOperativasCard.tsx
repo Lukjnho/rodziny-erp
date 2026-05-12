@@ -86,11 +86,15 @@ export function AlertasOperativasCard() {
         ultimas[c] = row?.fecha ?? null;
       }
 
-      // Movimientos pendientes de clasificar
+      // Egresos pendientes de conciliar: débitos del banco sin gasto asociado,
+      // ignorando transferencias internas (esas se aparean entre cuentas).
+      // Los ingresos por venta MP NO entran a Conciliación por diseño.
       const { count: movsPendientes } = await supabase
         .from('movimientos_bancarios')
         .select('*', { count: 'exact', head: true })
-        .is('tipo', null)
+        .is('gasto_id', null)
+        .gt('debito', 0)
+        .or('es_transferencia_interna.is.null,es_transferencia_interna.eq.false')
         .lte('fecha', hoy);
 
       // Gastos vencidos sin pagar
@@ -218,12 +222,12 @@ export function AlertasOperativasCard() {
     if (data.movsPendientes > 0) {
       alertas.push({
         id: 'movs_pendientes',
-        severidad: data.movsPendientes > 100 ? 'warning' : 'info',
+        severidad: data.movsPendientes > 50 ? 'warning' : 'info',
         icono: '🏦',
-        titulo: `${data.movsPendientes.toLocaleString('es-AR')} movimientos sin clasificar`,
-        detalle: 'Vinculá a gastos, marcá transferencia interna o ignorá.',
+        titulo: `${data.movsPendientes.toLocaleString('es-AR')} egreso${data.movsPendientes > 1 ? 's' : ''} sin conciliar`,
+        detalle: 'Débitos del extracto que todavía no están vinculados a un gasto.',
         link: '/compras?tab=conciliacion',
-        cta: 'Clasificar',
+        cta: 'Conciliar',
       });
     }
   }
