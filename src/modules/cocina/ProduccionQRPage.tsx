@@ -42,6 +42,14 @@ function parseDecimal(v: string | number | null | undefined): number {
   const n = parseFloat(String(v).replace(',', '.'));
   return isNaN(n) ? 0 : n;
 }
+
+const NUM_FMT = new Intl.NumberFormat('es-AR', {
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 3,
+});
+function formatNum(n: number): string {
+  return NUM_FMT.format(n);
+}
 interface LoteRelleno {
   id: string;
   receta_id: string;
@@ -2253,6 +2261,20 @@ function FormGenerico({
 
   const cargaPrevia = recetaId ? cargasPorReceta.get(recetaId) : undefined;
 
+  // Validación de sanidad: si la cantidad cargada supera 3× el rendimiento teórico
+  // de la receta, casi seguro hubo un error de tipeo (1.67 → 16700, 1,8 → 1800).
+  // Sólo aplica cuando la receta tiene rendimiento_kg cargado y las unidades son
+  // comparables (kg/l). Postres en unidades no tienen referencia, se ignoran.
+  const cantNum = parseDecimal(cantidad);
+  const unidadesComparables =
+    (unidad === 'kg' || unidad === 'lt') &&
+    (recetaSel?.rendimiento_unidad === 'kg' || recetaSel?.rendimiento_unidad === 'l');
+  const valorAnomalo =
+    !!recetaSel?.rendimiento_kg &&
+    unidadesComparables &&
+    cantNum > 0 &&
+    cantNum > recetaSel.rendimiento_kg * 3;
+
   async function guardar() {
     if (!recetaId && !(permitirLibre && nombreLibre.trim())) {
       setError('Seleccioná una receta o escribí el nombre');
@@ -2265,6 +2287,15 @@ function FormGenerico({
     if (!responsable.trim()) {
       setError('Indicá tu nombre (responsable)');
       return;
+    }
+    if (valorAnomalo && recetaSel) {
+      const ok = window.confirm(
+        `Estás por guardar ${formatNum(cantNum)} ${unidad} de ${recetaSel.nombre}, ` +
+          `pero la receta suele rendir ${formatNum(recetaSel.rendimiento_kg ?? 0)} ${unidadReceta(recetaSel)}. ` +
+          `¿Es correcto?\n\n` +
+          `Si quisiste poner 1,8 (un kilo ochocientos), usá la coma como separador decimal.`,
+      );
+      if (!ok) return;
     }
     setGuardando(true);
     setError('');
@@ -2398,32 +2429,54 @@ function FormGenerico({
 
         <IngredientesGrilla recetaId={recetaId || null} onChange={onGrillaChange} />
 
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="mb-1 block text-xs font-medium text-gray-700">Cantidad</label>
-            <input
-              type="text"
-              inputMode="decimal"
-              pattern="[0-9]*[.,]?[0-9]*"
-              value={cantidad}
-              onChange={(e) => setCantidad(e.target.value)}
-              className="w-full rounded border border-gray-300 px-3 py-2.5 text-sm"
-            />
+        <div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="mb-1 block text-xs font-medium text-gray-700">Cantidad</label>
+              <input
+                type="text"
+                inputMode="decimal"
+                pattern="[0-9]*[.,]?[0-9]*"
+                value={cantidad}
+                onChange={(e) => setCantidad(e.target.value)}
+                placeholder="Ej: 1,8"
+                className={cn(
+                  'w-full rounded border px-3 py-2.5 text-sm',
+                  valorAnomalo ? 'border-red-500 bg-red-50' : 'border-gray-300',
+                )}
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-gray-700">Unidad</label>
+              <select
+                value={unidad}
+                onChange={(e) => setUnidad(e.target.value as 'kg' | 'unid' | 'lt')}
+                className="w-full rounded border border-gray-300 px-3 py-2.5 text-sm"
+              >
+                {unidades.map((u) => (
+                  <option key={u.value} value={u.value}>
+                    {u.label}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
-          <div>
-            <label className="mb-1 block text-xs font-medium text-gray-700">Unidad</label>
-            <select
-              value={unidad}
-              onChange={(e) => setUnidad(e.target.value as 'kg' | 'unid' | 'lt')}
-              className="w-full rounded border border-gray-300 px-3 py-2.5 text-sm"
+          {cantNum > 0 && (
+            <p
+              className={cn(
+                'mt-1.5 text-[11px]',
+                valorAnomalo ? 'font-semibold text-red-700' : 'text-gray-600',
+              )}
             >
-              {unidades.map((u) => (
-                <option key={u.value} value={u.value}>
-                  {u.label}
-                </option>
-              ))}
-            </select>
-          </div>
+              {valorAnomalo ? '⚠️ ' : '📦 '}
+              Vas a registrar: <strong>
+                {formatNum(cantNum)} {unidad}
+              </strong>
+              {valorAnomalo && recetaSel?.rendimiento_kg
+                ? ` · la receta rinde típicamente ${formatNum(recetaSel.rendimiento_kg)} ${unidadReceta(recetaSel)}. Usá coma para decimales (1,8 = un kilo ochocientos).`
+                : ''}
+            </p>
+          )}
         </div>
 
         <div className="grid grid-cols-2 gap-3">
