@@ -308,29 +308,33 @@ export function ComprasPage() {
     created_at: string;
   }
 
+  // Query independiente: trae TODOS los pagos cuyos gastos son del local,
+  // sin depender de la lista de gastosPagos (que tenía un problema de
+  // sincronización entre dos queries que dejaba pagosGastosMap vacío y por
+  // eso el KPI "Pagado" salía siempre en $0). Usa PostgREST embedding con
+  // !inner para forzar el filtro por local del gasto.
   const { data: pagosGastosData } = useQuery({
-    // Incluimos length en el queryKey para que la query se REFETCH cuando
-    // gastosPagos cambia (sino React Query se queda con la versión vieja
-    // donde ids podía estar vacío y cachea [] para siempre).
-    queryKey: ['pagos_gastos_compras', local, gastosPagos?.length ?? 0],
+    queryKey: ['pagos_gastos_compras', local],
     queryFn: async () => {
-      const ids = (gastosPagos ?? []).map((g) => g.id);
-      if (!ids.length) return [];
-      // PostgREST tiene un default max-rows; paginamos por las dudas para
-      // que con muchos gastos (Vedia >680) no se trunque la respuesta.
-      const out: PagoGastoRow[] = [];
-      const PAGE = 800;
-      for (let i = 0; i < ids.length; i += PAGE) {
-        const batch = ids.slice(i, i + PAGE);
-        const { data } = await supabase
-          .from('pagos_gastos')
-          .select('id,gasto_id,fecha_pago,monto,medio_pago,created_at')
-          .in('gasto_id', batch);
-        if (data) out.push(...(data as PagoGastoRow[]));
-      }
-      return out;
+      const { data, error } = await supabase
+        .from('pagos_gastos')
+        .select(
+          'id, gasto_id, fecha_pago, monto, medio_pago, created_at, gasto:gastos!inner(local, cancelado)',
+        )
+        .eq('gasto.local', local)
+        .eq('gasto.cancelado', false)
+        .limit(5000);
+      if (error) throw error;
+      return (data ?? []).map((p) => ({
+        id: p.id as string,
+        gasto_id: p.gasto_id as string,
+        fecha_pago: p.fecha_pago as string,
+        monto: Number(p.monto),
+        medio_pago: p.medio_pago as string,
+        created_at: p.created_at as string,
+      })) as PagoGastoRow[];
     },
-    enabled: tab === 'pagos' && !!(gastosPagos && gastosPagos.length > 0),
+    enabled: tab === 'pagos',
   });
 
   // Map gasto_id → pago más reciente (por fecha_pago).
