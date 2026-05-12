@@ -309,15 +309,26 @@ export function ComprasPage() {
   }
 
   const { data: pagosGastosData } = useQuery({
-    queryKey: ['pagos_gastos_compras', local],
+    // Incluimos length en el queryKey para que la query se REFETCH cuando
+    // gastosPagos cambia (sino React Query se queda con la versión vieja
+    // donde ids podía estar vacío y cachea [] para siempre).
+    queryKey: ['pagos_gastos_compras', local, gastosPagos?.length ?? 0],
     queryFn: async () => {
       const ids = (gastosPagos ?? []).map((g) => g.id);
       if (!ids.length) return [];
-      const { data } = await supabase
-        .from('pagos_gastos')
-        .select('id,gasto_id,fecha_pago,monto,medio_pago,created_at')
-        .in('gasto_id', ids);
-      return (data ?? []) as PagoGastoRow[];
+      // PostgREST tiene un default max-rows; paginamos por las dudas para
+      // que con muchos gastos (Vedia >680) no se trunque la respuesta.
+      const out: PagoGastoRow[] = [];
+      const PAGE = 800;
+      for (let i = 0; i < ids.length; i += PAGE) {
+        const batch = ids.slice(i, i + PAGE);
+        const { data } = await supabase
+          .from('pagos_gastos')
+          .select('id,gasto_id,fecha_pago,monto,medio_pago,created_at')
+          .in('gasto_id', batch);
+        if (data) out.push(...(data as PagoGastoRow[]));
+      }
+      return out;
     },
     enabled: tab === 'pagos' && !!(gastosPagos && gastosPagos.length > 0),
   });
@@ -588,7 +599,9 @@ export function ComprasPage() {
     };
   }, [gastosPagos, filtroProveedor, vistaResumenProv, mesPagos]);
 
-  // Agrupación de PENDIENTES por proveedor para vista bulk
+  // Agrupación de PENDIENTES por proveedor para vista bulk.
+  // También adjunta los gastos PAGADOS del mes seleccionado por proveedor,
+  // así el expand muestra el historial reciente sin perderlos.
   const pendientesPorProveedor = useMemo(() => {
     const hoy = new Date().toISOString().split('T')[0];
     const en7dias = new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0];
@@ -617,6 +630,18 @@ export function ComprasPage() {
       );
     }
 
+    // Pagados del mes seleccionado: por proveedor, filtrados por la fecha
+    // del pago real (no la del gasto). Mismo criterio que el KPI Pagado.
+    const pagadosMesPorProveedor = new Map<string, Gasto[]>();
+    for (const g of gastosPagos ?? []) {
+      if (g.estado_pago?.toLowerCase() !== 'pagado') continue;
+      const pago = pagosGastosMap.get(g.id);
+      if (!pago || !pago.fecha_pago.startsWith(mesPagos)) continue;
+      const key = g.proveedor || '(Sin proveedor)';
+      if (!pagadosMesPorProveedor.has(key)) pagadosMesPorProveedor.set(key, []);
+      pagadosMesPorProveedor.get(key)!.push(g);
+    }
+
     const grupos = new Map<string, Gasto[]>();
     for (const g of lista) {
       const key = g.proveedor || '(Sin proveedor)';
@@ -624,38 +649,87 @@ export function ComprasPage() {
       grupos.get(key)!.push(g);
     }
 
-    return [...grupos.entries()]
-      .map(([proveedor, gastos]) => {
-        const total = gastos.reduce((s, g) => s + g.importe_total, 0);
-        const venc = gastos.filter(
-          (g) => g.fecha_vencimiento && g.fecha_vencimiento < hoy,
-        );
-        const totalVencido = venc.reduce((s, g) => s + g.importe_total, 0);
-        const proxVenc =
-          gastos
-            .map((g) => g.fecha_vencimiento)
-            .filter((f): f is string => !!f)
-            .sort()[0] ?? null;
-        const sortedGastos = [...gastos].sort((a, b) => {
-          const fa = a.fecha_vencimiento ?? '9999-99-99';
-          const fb = b.fecha_vencimiento ?? '9999-99-99';
-          return fa.localeCompare(fb);
-        });
-        return {
-          proveedor,
-          gastos: sortedGastos,
-          total,
-          cantPendientes: gastos.length,
-          cantVencidos: venc.length,
-          totalVencido,
-          proxVenc,
-        };
-      })
+    interface GrupoProveedor {
+      proveedor: string;
+      gastos: Gasto[];
+      total: number;
+      cantPendientes: number;
+      cantVencidos: number;
+      totalVencido: number;
+      proxVenc: string | null;
+      pagadosMes: Gasto[];
+      cantPagadosMes: number;
+      totalPagadoMes: number;
+    }
+    const grupoMain: GrupoProveedor[] = [...grupos.entries()].map(([proveedor, gastos]) => {
+      const total = gastos.reduce((s, g) => s + g.importe_total, 0);
+      const venc = gastos.filter(
+        (g) => g.fecha_vencimiento && g.fecha_vencimiento < hoy,
+      );
+      const totalVencido = venc.reduce((s, g) => s + g.importe_total, 0);
+      const proxVenc =
+        gastos
+          .map((g) => g.fecha_vencimiento)
+          .filter((f): f is string => !!f)
+          .sort()[0] ?? null;
+      const sortedGastos = [...gastos].sort((a, b) => {
+        const fa = a.fecha_vencimiento ?? '9999-99-99';
+        const fb = b.fecha_vencimiento ?? '9999-99-99';
+        return fa.localeCompare(fb);
+      });
+      const pagadosMes = (pagadosMesPorProveedor.get(proveedor) ?? []).sort((a, b) => {
+        const pa = pagosGastosMap.get(a.id)?.fecha_pago ?? '';
+        const pb = pagosGastosMap.get(b.id)?.fecha_pago ?? '';
+        return pb.localeCompare(pa); // más recientes primero
+      });
+      const totalPagadoMes = pagadosMes.reduce((s, g) => s + g.importe_total, 0);
+      // Una vez que usamos los pagados de este proveedor, los removemos del map
+      // para que al final podamos saber qué proveedores SOLO tienen pagos y
+      // no aparecen como pendientes (los agregamos como grupos extras).
+      pagadosMesPorProveedor.delete(proveedor);
+      return {
+        proveedor,
+        gastos: sortedGastos,
+        total,
+        cantPendientes: gastos.length,
+        cantVencidos: venc.length,
+        totalVencido,
+        proxVenc,
+        pagadosMes,
+        cantPagadosMes: pagadosMes.length,
+        totalPagadoMes,
+      };
+    });
+    return grupoMain
+      // Sumar los proveedores que SOLO tienen pagos del mes (no tienen pendientes)
+      // como grupos sin gastos pendientes pero con historial visible.
+      .concat(
+        [...pagadosMesPorProveedor.entries()].map(([proveedor, pagados]) => {
+          const sorted = [...pagados].sort((a, b) => {
+            const pa = pagosGastosMap.get(a.id)?.fecha_pago ?? '';
+            const pb = pagosGastosMap.get(b.id)?.fecha_pago ?? '';
+            return pb.localeCompare(pa);
+          });
+          return {
+            proveedor,
+            gastos: [] as Gasto[],
+            total: 0,
+            cantPendientes: 0,
+            cantVencidos: 0,
+            totalVencido: 0,
+            proxVenc: null as string | null,
+            pagadosMes: sorted,
+            cantPagadosMes: sorted.length,
+            totalPagadoMes: sorted.reduce((s, g) => s + g.importe_total, 0),
+          };
+        }),
+      )
       .sort((a, b) => {
         if (a.totalVencido !== b.totalVencido) return b.totalVencido - a.totalVencido;
-        return b.total - a.total;
+        if (a.total !== b.total) return b.total - a.total;
+        return b.totalPagadoMes - a.totalPagadoMes;
       });
-  }, [gastosPagos, filtroPagos, filtroProveedor]);
+  }, [gastosPagos, filtroPagos, filtroProveedor, pagosGastosMap, mesPagos]);
 
   // Selección bulk: cálculos derivados
   const seleccionInfo = useMemo(() => {
@@ -2934,14 +3008,22 @@ export function ComprasPage() {
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="text-gray-400">{expandido ? '▼' : '▶'}</span>
                           <span className="font-medium text-gray-900">{grupo.proveedor}</span>
-                          <span className="rounded bg-gray-100 px-1.5 py-0.5 text-xs text-gray-600">
-                            {grupo.cantPendientes} pago
-                            {grupo.cantPendientes !== 1 ? 's' : ''}
-                          </span>
+                          {grupo.cantPendientes > 0 && (
+                            <span className="rounded bg-gray-100 px-1.5 py-0.5 text-xs text-gray-600">
+                              {grupo.cantPendientes} pendiente
+                              {grupo.cantPendientes !== 1 ? 's' : ''}
+                            </span>
+                          )}
                           {grupo.cantVencidos > 0 && (
                             <span className="rounded bg-red-100 px-1.5 py-0.5 text-xs font-medium text-red-700">
                               {grupo.cantVencidos} vencido
                               {grupo.cantVencidos !== 1 ? 's' : ''}
+                            </span>
+                          )}
+                          {grupo.cantPagadosMes > 0 && (
+                            <span className="rounded bg-green-100 px-1.5 py-0.5 text-xs font-medium text-green-700">
+                              {grupo.cantPagadosMes} pagado
+                              {grupo.cantPagadosMes !== 1 ? 's' : ''} en el mes
                             </span>
                           )}
                           {grupo.proxVenc && (
@@ -2972,6 +3054,7 @@ export function ComprasPage() {
 
                     {expandido && (
                       <div className="border-t border-gray-100 bg-gray-50/50">
+                        {grupo.cantPendientes > 0 && (
                         <table className="w-full text-sm">
                           <thead>
                             <tr className="border-b border-gray-100 text-xs text-gray-500">
@@ -3072,6 +3155,67 @@ export function ComprasPage() {
                             })}
                           </tbody>
                         </table>
+                        )}
+
+                        {/* Historial: pagados del mes de este proveedor.
+                            No desaparecen al pagarse, quedan visibles para
+                            control. Para revertir un pago se usa el botón
+                            "Revertir" desde el listado de Gastos. */}
+                        {grupo.cantPagadosMes > 0 && (
+                          <div className={cn(grupo.cantPendientes > 0 && 'border-t border-gray-200')}>
+                            <div className="flex items-center justify-between bg-green-50/50 px-4 py-1.5 text-xs">
+                              <span className="font-medium text-green-800">
+                                ✓ Pagados del mes ({grupo.cantPagadosMes})
+                              </span>
+                              <span className="tabular-nums font-semibold text-green-900">
+                                {formatARS(grupo.totalPagadoMes)}
+                              </span>
+                            </div>
+                            <table className="w-full text-sm">
+                              <thead>
+                                <tr className="border-b border-gray-100 text-xs text-gray-500">
+                                  <th className="w-10 px-4 py-1.5"></th>
+                                  <th className="px-3 py-1.5 text-left font-medium">Fecha pago</th>
+                                  <th className="px-3 py-1.5 text-left font-medium">Categoría</th>
+                                  <th className="px-3 py-1.5 text-right font-medium">Importe</th>
+                                  <th className="px-3 py-1.5 text-center font-medium">Medio</th>
+                                  <th className="w-28 px-3 py-1.5"></th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {grupo.pagadosMes.map((g) => {
+                                  const pago = pagosGastosMap.get(g.id);
+                                  return (
+                                    <tr key={g.id} className="border-b border-gray-100 bg-green-50/20 last:border-0">
+                                      <td className="px-4 py-1.5"></td>
+                                      <td className="px-3 py-1.5 text-gray-700">
+                                        {pago
+                                          ? new Date(pago.fecha_pago + 'T12:00:00').toLocaleDateString('es-AR', {
+                                              day: '2-digit',
+                                              month: 'short',
+                                            })
+                                          : '—'}
+                                      </td>
+                                      <td className="px-3 py-1.5 text-xs text-gray-600">
+                                        {g.subcategoria || g.categoria}
+                                      </td>
+                                      <td className="px-3 py-1.5 text-right font-medium text-gray-700 tabular-nums">
+                                        {formatARS(g.importe_total)}
+                                      </td>
+                                      <td className="px-3 py-1.5 text-center text-xs text-gray-600">
+                                        {pago
+                                          ? (MEDIO_PAGO_LABEL[pago.medio_pago as MedioPago] ??
+                                            pago.medio_pago)
+                                          : '—'}
+                                      </td>
+                                      <td className="px-3 py-1.5"></td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
