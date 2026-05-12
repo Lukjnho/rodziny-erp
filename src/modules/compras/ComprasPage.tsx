@@ -761,14 +761,17 @@ export function ComprasPage() {
         pathFactura = path;
       }
 
-      // Insertar 1 fila en pagos_gastos por cada gasto seleccionado
+      // Insertar 1 fila en pagos_gastos por cada gasto seleccionado.
+      // IMPORTANTE: el N° de operación va a numero_operacion (no referencia,
+      // que es el campo legacy). Es el que usa la conciliación para matchear
+      // contra el extracto.
       const filasPago = seleccionInfo.gastos.map((g) => ({
         gasto_id: g.id,
         fecha_pago: bulkFecha,
         monto: g.importe_total,
         descuento: 0,
         medio_pago: bulkMedio,
-        referencia: bulkReferencia.trim() || null,
+        numero_operacion: bulkReferencia.trim() || null,
         notas: bulkNotas.trim() || null,
         comprobante_pago_path: pathComprobantePago,
       }));
@@ -794,6 +797,36 @@ export function ComprasPage() {
             .in('id', idsSinFactura);
           if (errUpd2) throw errUpd2;
         }
+      }
+
+      // Sincronizar el comprobante de pago al gasto si éste no tenía uno.
+      // El listado de Gastos lee gasto.comprobante_path, así que sin esto el
+      // pago bulk queda invisible desde la vista de gastos (aunque sí esté
+      // en pagos_gastos.comprobante_pago_path).
+      if (pathComprobantePago) {
+        const idsSinComprob = seleccionInfo.gastos
+          .filter((g) => !g.comprobante_path)
+          .map((g) => g.id);
+        if (idsSinComprob.length > 0) {
+          const { error: errUpd3 } = await supabase
+            .from('gastos')
+            .update({ comprobante_path: pathComprobantePago })
+            .in('id', idsSinComprob);
+          if (errUpd3) throw errUpd3;
+        }
+      }
+
+      // También fijar el medio_pago en el gasto si no lo tenía (para que el
+      // tab Gastos muestre "Transferencia MP" en vez de "—").
+      const idsSinMedio = seleccionInfo.gastos
+        .filter((g) => !g.medio_pago)
+        .map((g) => g.id);
+      if (idsSinMedio.length > 0) {
+        const { error: errUpd4 } = await supabase
+          .from('gastos')
+          .update({ medio_pago: bulkMedio })
+          .in('id', idsSinMedio);
+        if (errUpd4) throw errUpd4;
       }
 
       setSeleccionados(new Set());
