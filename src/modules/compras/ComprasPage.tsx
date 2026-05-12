@@ -938,21 +938,23 @@ export function ComprasPage() {
 
     // Total gastado del mes seleccionado (todos los gastos, pagados o no)
     const delMes = todos.filter((g) => g.fecha?.startsWith(mesPagos));
-    // Pagados del mes: filtra por la FECHA DEL PAGO REAL (cuando salió la
-    // plata), no por la fecha del gasto. Coherente con el flujo de caja.
-    const pagadosDelMes = todos.filter((g) => {
+    // Pagados del mes: de los gastos DEL mes (fecha del gasto en el mes),
+    // cuántos ya están pagados. Así "Comprado - Pagado = Resta pagar"
+    // siempre cierra positivo y el corte es coherente con el período.
+    const pagadosDelMes = delMes.filter(
+      (g) => g.estado_pago?.toLowerCase() === 'pagado',
+    );
+    // Pagados cta cte: pagos hechos en el mes sobre gastos cargados antes
+    // (cuenta corriente real). Filtra por la fecha del PAGO en el mes y
+    // que el pago haya sido posterior al gasto. Sirve para ver cuánta
+    // plata real salió en el mes por cta cte, independiente de cuándo se
+    // compró.
+    const pagadosCtaCteDelMes = todos.filter((g) => {
       if (g.estado_pago?.toLowerCase() !== 'pagado') return false;
       const pago = pagosGastosMap.get(g.id);
       if (!pago) return false;
-      return pago.fecha_pago.startsWith(mesPagos);
-    });
-    // Pagados cta cte del mes: solo los pagos donde el gasto se registró
-    // antes y se pagó después (fecha_pago > fecha). Excluye pagos fijos y
-    // compras al contado del mismo día. Alimenta el card y el listado del
-    // tab Pagos para que muestren solo proveedores con cuenta corriente.
-    const pagadosCtaCteDelMes = pagadosDelMes.filter((g) => {
-      const pago = pagosGastosMap.get(g.id);
-      return !!pago && pago.fecha_pago > g.fecha;
+      if (!pago.fecha_pago.startsWith(mesPagos)) return false;
+      return pago.fecha_pago > g.fecha;
     });
 
     return {
