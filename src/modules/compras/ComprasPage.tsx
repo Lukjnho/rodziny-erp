@@ -1134,14 +1134,19 @@ export function ComprasPage() {
 
       {/* Filtros */}
       <div className="mb-4 flex flex-wrap items-center gap-4">
-        <LocalSelector
-          value={local}
-          onChange={(v) => {
-            const l = v as 'vedia' | 'saavedra';
-            setLocal(l);
-            if (l === 'vedia' && tab === 'recepcion') setTab('stock');
-          }}
-        />
+        {/* El tab Gastos tiene su propio filtro con opción "Empresa"
+            (vedia + saavedra + sas), que el global no puede expresar.
+            Para evitar dos filtros que se pisan, escondemos el global acá. */}
+        {tab !== 'gastos' && (
+          <LocalSelector
+            value={local}
+            onChange={(v) => {
+              const l = v as 'vedia' | 'saavedra';
+              setLocal(l);
+              if (l === 'vedia' && tab === 'recepcion') setTab('stock');
+            }}
+          />
+        )}
 
         <div className="flex gap-1 border-b border-gray-200">
           {(
