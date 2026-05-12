@@ -294,7 +294,12 @@ export function ComprasPage() {
         .order('fecha_vencimiento', { ascending: true, nullsFirst: false })
         .order('created_at', { ascending: false })
         .limit(1500);
-      return (data ?? []) as Gasto[];
+      // Excluir pagos fijos del tab Pagos. Esos tienen su propio flujo en
+      // Finanzas > Pagos Fijos y aparecen acá como ruido. Se identifican
+      // por el prefijo "Pago fijo:" que pone el checklist al generarlos.
+      return ((data ?? []) as Gasto[]).filter(
+        (g) => !(g.comentario ?? '').startsWith('Pago fijo:'),
+      );
     },
     enabled: tab === 'pagos',
   });
