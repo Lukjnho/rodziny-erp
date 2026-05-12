@@ -1,4 +1,5 @@
 import { useState, useRef, useMemo, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { PageContainer } from '@/components/layout/PageContainer';
@@ -161,9 +162,27 @@ function AyudaPanel({ tab, onClose }: { tab: Tab; onClose: () => void }) {
   );
 }
 
+const TAB_IDS: Tab[] = [
+  'gastos',
+  'stock',
+  'movimientos',
+  'recepcion',
+  'pagos',
+  'proveedores',
+  'conciliacion',
+];
+
 export function ComprasPage() {
   const [local, setLocal] = useState<'vedia' | 'saavedra'>('vedia');
-  const [tab, setTab] = useState<Tab>('gastos');
+  // Tab activo sincronizado con ?tab=... para linkear desde las alertas del Dashboard.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabFromUrl = searchParams.get('tab') as Tab | null;
+  const tab: Tab = tabFromUrl && TAB_IDS.includes(tabFromUrl) ? tabFromUrl : 'gastos';
+  const setTab = (nuevo: Tab) => {
+    const sp = new URLSearchParams(searchParams);
+    sp.set('tab', nuevo);
+    setSearchParams(sp, { replace: true });
+  };
   // Período del listado de gastos (mes en formato YYYY-MM). Default: mes actual.
   const [gastosPeriodo, setGastosPeriodo] = useState(() =>
     new Date().toISOString().substring(0, 7),

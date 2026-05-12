@@ -133,8 +133,8 @@ export function AlertasOperativasCard() {
           icono: '🔄',
           titulo: 'Falta sincronizar MercadoPago',
           detalle: `Último movimiento: ${data.ultimas.mercadopago} (hace ${dias} días)`,
-          link: '/finanzas',
-          cta: 'Ir a Finanzas',
+          link: '/finanzas?tab=flujo',
+          cta: 'Ir a Flujo de caja',
         });
       }
     } else {
@@ -144,8 +144,8 @@ export function AlertasOperativasCard() {
         icono: '🔄',
         titulo: 'Sin datos de MercadoPago',
         detalle: 'No hay movimientos cargados todavía.',
-        link: '/finanzas',
-        cta: 'Ir a Finanzas',
+        link: '/finanzas?tab=flujo',
+        cta: 'Ir a Flujo de caja',
       });
     }
 
@@ -186,7 +186,7 @@ export function AlertasOperativasCard() {
         detalle: maxDate
           ? `Último movimiento cargado: ${max} (${diasAtraso} día${diasAtraso !== 1 ? 's' : ''} de atraso)`
           : 'No hay movimientos cargados.',
-        link: '/compras',
+        link: '/compras?tab=conciliacion',
         cta: 'Importar extracto',
       });
     }
@@ -198,7 +198,7 @@ export function AlertasOperativasCard() {
         icono: '💸',
         titulo: `${data.gastosVencidos} gasto${data.gastosVencidos > 1 ? 's' : ''} vencido${data.gastosVencidos > 1 ? 's' : ''} sin pagar`,
         detalle: 'Fecha de vencimiento ya pasó.',
-        link: '/compras',
+        link: '/compras?tab=pagos',
         cta: 'Ver pagos',
       });
     }
@@ -210,7 +210,7 @@ export function AlertasOperativasCard() {
         icono: '🧾',
         titulo: `${data.pagosFijosVencidos} pago${data.pagosFijosVencidos > 1 ? 's' : ''} fijo${data.pagosFijosVencidos > 1 ? 's' : ''} vencido${data.pagosFijosVencidos > 1 ? 's' : ''}`,
         detalle: 'Pendientes de marcar como pagados.',
-        link: '/finanzas',
+        link: '/finanzas?tab=checklist',
         cta: 'Ir a checklist',
       });
     }
@@ -222,7 +222,7 @@ export function AlertasOperativasCard() {
         icono: '🏦',
         titulo: `${data.movsPendientes.toLocaleString('es-AR')} movimientos sin clasificar`,
         detalle: 'Vinculá a gastos, marcá transferencia interna o ignorá.',
-        link: '/compras',
+        link: '/compras?tab=conciliacion',
         cta: 'Clasificar',
       });
     }

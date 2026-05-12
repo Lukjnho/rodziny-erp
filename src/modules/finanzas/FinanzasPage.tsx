@@ -1,4 +1,5 @@
-import { useState, useMemo } from 'react';
+import { useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { PageContainer } from '@/components/layout/PageContainer';
 import { UploadFudo } from './components/UploadFudo';
 import { CierreCaja } from './components/CierreCaja';
@@ -120,7 +121,19 @@ export function FinanzasPage() {
 
   const tabsVisibles = useMemo(() => TABS.filter((t) => tienePermiso(t.modulo)), [tienePermiso]);
 
-  const [tab, setTab] = useState<Tab>(tabsVisibles[0]?.id ?? 'flujo');
+  // Sincronizamos el tab activo con el query param ?tab=... para que las alertas
+  // del dashboard puedan linkear directo al tab correcto (checklist, flujo, etc.).
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabFromUrl = searchParams.get('tab') as Tab | null;
+  const tab: Tab =
+    tabFromUrl && tabsVisibles.some((t) => t.id === tabFromUrl)
+      ? tabFromUrl
+      : (tabsVisibles[0]?.id ?? 'flujo');
+  const setTab = (nuevo: Tab) => {
+    const sp = new URLSearchParams(searchParams);
+    sp.set('tab', nuevo);
+    setSearchParams(sp, { replace: true });
+  };
 
   const tabActual = tabsVisibles.find((t) => t.id === tab) ?? tabsVisibles[0];
 
