@@ -4,7 +4,13 @@ import { supabase } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
 
 type TipoPlan = 'relleno' | 'masa' | 'salsa' | 'postre' | 'pasteleria' | 'panaderia';
-type EstadoItem = 'pendiente' | 'en_produccion' | 'en_bandejas' | 'ciclo_completo';
+type EstadoItem =
+  | 'pendiente'
+  | 'en_produccion'
+  | 'en_bandejas'
+  | 'ciclo_completo'
+  | 'en_mostrador_parcial'
+  | 'en_mostrador';
 
 interface PlanItem {
   id: string;
@@ -46,6 +52,16 @@ interface PastaRecetaMap {
   pasta_id: string;
   receta_id: string;
   receta?: { tipo: string } | null;
+}
+
+interface TrazabilidadRow {
+  pizarron_id: string;
+  pastas_total_iniciales: number;
+  pastas_a_mostrador: number;
+  pastas_saldo_camara: number;
+  pastas_merma: number;
+  pastas_cantidad_lotes: number;
+  estado_trazabilidad: EstadoItem;
 }
 
 const TIPO_LABEL: Record<TipoPlan, string> = {
@@ -114,6 +130,10 @@ function normNombre(s: string): string {
 
 function nivelEstado(e: EstadoItem): number {
   switch (e) {
+    case 'en_mostrador':
+      return 6;
+    case 'en_mostrador_parcial':
+      return 5;
     case 'ciclo_completo':
       return 4;
     case 'en_bandejas':
@@ -163,6 +183,10 @@ interface ItemAgrupado {
   detalle: ItemPlanDetalle[];
   masasUsadas: MasaUsada[]; // solo para relleno
   pastasArmadas: PastaArmada[]; // solo para relleno
+  // Trazabilidad agregada (solo relleno/masa): qué pasó con la pasta derivada.
+  porcionesIniciales: number;
+  porcionesAMostrador: number;
+  porcionesSaldoCamara: number;
 }
 
 export function PlanSemanal({
@@ -248,6 +272,29 @@ export function PlanSemanal({
     staleTime: 30 * 60 * 1000,
   });
 
+  // Vista de trazabilidad: para cada item del plan con lote ya cargado, devuelve
+  // cuántas porciones de pasta hay en cámara / mostrador y el estado_trazabilidad
+  // extendido (en_mostrador_parcial / en_mostrador) que va más allá de ciclo_completo.
+  const { data: trazabilidad } = useQuery({
+    queryKey: ['plan-semanal-trazabilidad', local, desde, hasta],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('v_cocina_pizarron_trazabilidad')
+        .select(
+          'pizarron_id, pastas_total_iniciales, pastas_a_mostrador, pastas_saldo_camara, pastas_merma, pastas_cantidad_lotes, estado_trazabilidad',
+        )
+        .eq('local', local)
+        .gte('fecha_objetivo', desde)
+        .lte('fecha_objetivo', hasta);
+      if (error) throw error;
+      const map = new Map<string, TrazabilidadRow>();
+      for (const row of (data ?? []) as unknown as TrazabilidadRow[]) {
+        map.set(row.pizarron_id, row);
+      }
+      return map;
+    },
+  });
+
   // Maps invertidos para acelerar lookups.
   const maps = useMemo(() => {
     const rellenoAPastas = new Map<string, Set<string>>(); // receta_id (relleno) → set pasta_id
@@ -304,28 +351,44 @@ export function PlanSemanal({
           detalle: [],
           masasUsadas: [],
           pastasArmadas: [],
+          porcionesIniciales: 0,
+          porcionesAMostrador: 0,
+          porcionesSaldoCamara: 0,
         };
         data.grupos.push(g);
       }
       return g;
     }
 
-    // 1) Items del plan (omitir tipo 'masa', no se planifican)
+    // 1) Items del plan (omitir tipo 'masa', no se planifican).
+    //    El estado real del item se toma de la vista de trazabilidad si existe
+    //    (extiende ciclo_completo → en_mostrador_parcial / en_mostrador). Si no
+    //    hay registro en la vista (item pendiente o sin lote derivado todavía),
+    //    se usa el estado del pizarrón.
     for (const it of items ?? []) {
       if (!TIPOS_VISIBLES.includes(it.tipo)) continue;
       const nombre = it.receta?.nombre ?? it.texto_libre ?? '(sin receta)';
       const g = getGrupo(it.fecha_objetivo, it.tipo, nombre, it.receta_id);
       if (!g) continue;
-      const estado: EstadoItem = it.estado === 'cancelado' ? 'pendiente' : it.estado;
+      const traza = trazabilidad?.get(it.id);
+      const estadoBase: EstadoItem = it.estado === 'cancelado' ? 'pendiente' : it.estado;
+      const estado: EstadoItem = (traza?.estado_trazabilidad as EstadoItem) ?? estadoBase;
       g.totalCantidad += Number(it.cantidad_recetas ?? 0);
       g.cuentaPlan += 1;
-      if (estado === 'ciclo_completo') g.hechosPlan += 1;
+      if (estado === 'ciclo_completo' || estado === 'en_mostrador_parcial' || estado === 'en_mostrador') {
+        g.hechosPlan += 1;
+      }
       g.detalle.push({
         cantidad: it.cantidad_recetas,
         estado,
         turno: it.turno,
       });
       if (nivelEstado(estado) > nivelEstado(g.estado)) g.estado = estado;
+      if (traza) {
+        g.porcionesIniciales += Number(traza.pastas_total_iniciales ?? 0);
+        g.porcionesAMostrador += Number(traza.pastas_a_mostrador ?? 0);
+        g.porcionesSaldoCamara += Number(traza.pastas_saldo_camara ?? 0);
+      }
     }
 
     // 2) Pastas armadas: solo se muestran si su relleno está planificado en el día.
@@ -395,7 +458,7 @@ export function PlanSemanal({
     }
 
     return map;
-  }, [items, lotesMasa, lotesPasta, fechas, maps]);
+  }, [items, lotesMasa, lotesPasta, fechas, maps, trazabilidad]);
 
   const kpi = useMemo(() => {
     let hechos = 0;
@@ -537,15 +600,21 @@ function ItemAgrupadoCard({
   onToggle: () => void;
 }) {
   const cantidadLabel = grupo.totalCantidad > 0 ? grupo.totalCantidad : null;
-  const colapsadoTachado = grupo.estado === 'ciclo_completo';
+  const colapsadoTachado = grupo.estado === 'en_mostrador';
   const totalPorciones = grupo.pastasArmadas.reduce((s, p) => s + p.porciones, 0);
   const tieneFlujo = grupo.tipo === 'relleno';
+  const hayTrazabilidad = grupo.porcionesIniciales > 0;
+  const pctEnMostrador = hayTrazabilidad
+    ? Math.min(100, Math.round((grupo.porcionesAMostrador / grupo.porcionesIniciales) * 100))
+    : 0;
 
   return (
     <button
       onClick={onToggle}
       className={cn(
         'block w-full rounded border-l-2 bg-white px-1.5 py-1 text-left text-[11px] transition-colors hover:bg-gray-50',
+        grupo.estado === 'en_mostrador' && 'border-emerald-500',
+        grupo.estado === 'en_mostrador_parcial' && 'border-emerald-400',
         grupo.estado === 'ciclo_completo' && 'border-green-400',
         grupo.estado === 'en_bandejas' && 'border-blue-400',
         grupo.estado === 'en_produccion' && 'border-amber-400',
@@ -567,13 +636,17 @@ function ItemAgrupadoCard({
       <div
         className={cn(
           'mt-0.5 text-[9px] font-semibold uppercase',
+          grupo.estado === 'en_mostrador' && 'text-emerald-700',
+          grupo.estado === 'en_mostrador_parcial' && 'text-emerald-600',
           grupo.estado === 'ciclo_completo' && 'text-green-700',
           grupo.estado === 'en_bandejas' && 'text-blue-700',
           grupo.estado === 'en_produccion' && 'text-amber-700',
           grupo.estado === 'pendiente' && 'text-gray-500',
         )}
       >
-        {grupo.estado === 'ciclo_completo' && '✅ Ciclo completo'}
+        {grupo.estado === 'en_mostrador' && '🛒 En mostrador'}
+        {grupo.estado === 'en_mostrador_parcial' && '🛒 Saliendo al mostrador'}
+        {grupo.estado === 'ciclo_completo' && '✅ En cámara'}
         {grupo.estado === 'en_bandejas' && '🧊 En bandejas'}
         {grupo.estado === 'en_produccion' && '🥣 En producción'}
         {grupo.estado === 'pendiente' && '⏳ A terminar'}
@@ -588,6 +661,20 @@ function ItemAgrupadoCard({
           </span>
         )}
       </div>
+
+      {hayTrazabilidad && grupo.porcionesAMostrador > 0 && (
+        <div className="mt-1 space-y-0.5">
+          <div className="h-1 w-full overflow-hidden rounded-full bg-gray-100">
+            <div
+              className="h-full bg-emerald-500 transition-all"
+              style={{ width: `${pctEnMostrador}%` }}
+            />
+          </div>
+          <div className="text-[9px] text-gray-500">
+            {grupo.porcionesAMostrador} mostrador · {grupo.porcionesSaldoCamara} en cámara
+          </div>
+        </div>
+      )}
 
       {expandido && (
         <div className="mt-1 space-y-1 border-t border-gray-100 pt-1">
@@ -606,13 +693,17 @@ function ItemAgrupadoCard({
                     <span
                       className={cn(
                         'font-medium',
+                        d.estado === 'en_mostrador' && 'text-emerald-700',
+                        d.estado === 'en_mostrador_parcial' && 'text-emerald-600',
                         d.estado === 'ciclo_completo' && 'text-green-700',
                         d.estado === 'en_bandejas' && 'text-blue-700',
                         d.estado === 'en_produccion' && 'text-amber-700',
                         d.estado === 'pendiente' && 'text-gray-500',
                       )}
                     >
-                      {d.estado === 'ciclo_completo' && 'completo'}
+                      {d.estado === 'en_mostrador' && 'en mostrador'}
+                      {d.estado === 'en_mostrador_parcial' && 'saliendo al mostrador'}
+                      {d.estado === 'ciclo_completo' && 'en cámara'}
                       {d.estado === 'en_bandejas' && 'en bandejas'}
                       {d.estado === 'en_produccion' && 'en producción'}
                       {d.estado === 'pendiente' && 'pendiente'}
@@ -683,6 +774,21 @@ function ItemAgrupadoCard({
           {tieneFlujo && grupo.masasUsadas.length === 0 && grupo.pastasArmadas.length === 0 && (
             <div className="text-[10px] italic text-gray-400">
               Sin masa ni pastas registradas todavía.
+            </div>
+          )}
+
+          {hayTrazabilidad && (
+            <div>
+              <div className="text-[9px] font-medium uppercase text-gray-400">Recorrido</div>
+              <div className="text-[10px] text-gray-600">
+                {grupo.porcionesIniciales} porciones armadas
+              </div>
+              <div className="text-[10px] text-emerald-700">
+                🛒 {grupo.porcionesAMostrador} ya en mostrador
+              </div>
+              <div className="text-[10px] text-blue-700">
+                ❄️ {grupo.porcionesSaldoCamara} todavía en cámara
+              </div>
             </div>
           )}
         </div>

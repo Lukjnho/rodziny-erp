@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
 import { PRODUCTOS_COCINA, normNombre } from './DashboardTab';
 import { StockProduccionSection } from './components/StockProduccionSection';
+import { StockPorLoteSection } from './components/StockPorLoteSection';
 
 interface Producto {
   id: string;
@@ -777,6 +778,8 @@ export function StockTab() {
         </h3>
         <StockProduccionSection filtroLocal={filtroLocal} />
       </div>
+
+      <StockPorLoteSection filtroLocal={filtroLocal} />
 
       {/* ── Modal de ajuste de stock ─────────────────────────────────────── */}
       {ajusteModal && (
