@@ -692,9 +692,9 @@ export function CierreMesPanel({ onNavigateToTab }: Props) {
       {/* Filtros */}
       <div className="flex flex-wrap items-center gap-4">
         <LocalSelector
-          value={local}
+          value={local === 'sas' ? 'ambos' : local}
           onChange={(v) => setLocal(v as LocalSel)}
-          options={['vedia', 'saavedra', 'sas', 'ambos']}
+          options={['vedia', 'saavedra', 'ambos']}
         />
         <div className="flex items-center gap-2">
           <label className="text-xs font-medium text-gray-500">Período</label>
