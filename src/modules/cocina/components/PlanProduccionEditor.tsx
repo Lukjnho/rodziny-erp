@@ -60,6 +60,22 @@ function sumarDias(fecha: string, dias: number) {
   return d.toISOString().slice(0, 10);
 }
 
+// Lunes de la semana que contiene `fecha`. Usa convención ISO (lunes = inicio).
+function lunesDeLaSemana(fecha: string): string {
+  const d = new Date(fecha + 'T12:00:00');
+  const day = d.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  d.setDate(d.getDate() + diff);
+  return d.toISOString().slice(0, 10);
+}
+
+const DIAS_CORTOS = ['DOM', 'LUN', 'MAR', 'MIE', 'JUE', 'VIE', 'SAB'];
+
+function diaCorto(fecha: string): string {
+  const d = new Date(fecha + 'T12:00:00');
+  return DIAS_CORTOS[d.getDay()];
+}
+
 function formatFecha(fecha: string) {
   const d = new Date(fecha + 'T12:00:00');
   return d.toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'short' });
@@ -77,8 +93,22 @@ export function PlanProduccionEditor({
   onClose: () => void;
 }) {
   const qc = useQueryClient();
-  const fechas = useMemo(() => [hoy(), sumarDias(hoy(), 1), sumarDias(hoy(), 2)], []);
-  const [fechaActiva, setFechaActiva] = useState(fechas[0]);
+  // Semana completa lun→dom que contiene "hoy". Permite editar planes pasados
+  // (items con estado pendiente/cancelado siguen siendo editables; los ya
+  // iniciados quedan intactos por la lógica de guardado) y planificar para
+  // el resto de la semana de un saque.
+  const fechas = useMemo(() => {
+    const lunes = lunesDeLaSemana(hoy());
+    return Array.from({ length: 7 }, (_, i) => sumarDias(lunes, i));
+  }, []);
+  const fechaHoy = hoy();
+  const [fechaActiva, setFechaActiva] = useState(() => {
+    // Si la semana actual contiene hoy, abrimos en hoy. Si no (caso borde si se
+    // abre justo a medianoche), abrimos en el primer día disponible.
+    const lunes = lunesDeLaSemana(hoy());
+    const fechasSemana = Array.from({ length: 7 }, (_, i) => sumarDias(lunes, i));
+    return fechasSemana.includes(hoy()) ? hoy() : fechasSemana[0];
+  });
 
   const tipos = local === 'vedia' ? TIPOS_VEDIA : TIPOS_SAAVEDRA;
 
@@ -97,9 +127,9 @@ export function PlanProduccionEditor({
     },
   });
 
-  // Items existentes del plan (3 días)
+  // Items existentes del plan (semana completa)
   const { data: itemsExistentes } = useQuery({
-    queryKey: ['cocina-pizarron-editor', local, fechas[0], fechas[2]],
+    queryKey: ['cocina-pizarron-editor', local, fechas[0], fechas[6]],
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cocina_pizarron_items')
@@ -108,7 +138,7 @@ export function PlanProduccionEditor({
         )
         .eq('local', local)
         .gte('fecha_objetivo', fechas[0])
-        .lte('fecha_objetivo', fechas[2]);
+        .lte('fecha_objetivo', fechas[6]);
       if (error) throw error;
       return data ?? [];
     },
@@ -217,11 +247,8 @@ export function PlanProduccionEditor({
   // Hidratar estado cuando carga itemsExistentes
   useEffect(() => {
     if (!itemsExistentes) return;
-    const porFecha: Record<string, PlanItem[]> = {
-      [fechas[0]]: [],
-      [fechas[1]]: [],
-      [fechas[2]]: [],
-    };
+    const porFecha: Record<string, PlanItem[]> = {};
+    for (const f of fechas) porFecha[f] = [];
     for (const row of itemsExistentes) {
       const r = row as {
         id: string;
@@ -469,7 +496,7 @@ export function PlanProduccionEditor({
           <div>
             <h2 className="text-lg font-bold text-gray-900">Definir plan de producción</h2>
             <p className="text-xs text-gray-500 capitalize">
-              Local: {local} · Cargá lo que hay que hacer en los próximos 3 días
+              Local: {local} · Editá la planificación de toda la semana
             </p>
           </div>
           <button onClick={onClose} className="text-2xl text-gray-400 hover:text-gray-600">
@@ -479,25 +506,35 @@ export function PlanProduccionEditor({
 
         {/* Tabs por día */}
         <div className="flex border-b border-gray-200 bg-gray-50">
-          {fechas.map((f, i) => {
+          {fechas.map((f) => {
             const cant = (items[f] ?? []).length;
+            const esHoy = f === fechaHoy;
+            const esPasado = f < fechaHoy;
+            const activo = fechaActiva === f;
             return (
               <button
                 key={f}
                 onClick={() => setFechaActiva(f)}
                 className={cn(
-                  'flex-1 px-4 py-3 text-sm font-medium transition',
-                  fechaActiva === f
+                  'flex-1 px-2 py-2 text-xs font-medium transition',
+                  activo
                     ? 'border-b-2 border-rodziny-600 bg-white text-rodziny-700'
-                    : 'text-gray-500 hover:text-gray-700',
+                    : esPasado
+                      ? 'text-gray-400 hover:text-gray-600'
+                      : 'text-gray-600 hover:text-gray-800',
                 )}
               >
-                <div className="capitalize">
-                  {i === 0 ? 'Hoy' : i === 1 ? 'Mañana' : 'Pasado'}
+                <div className={cn('font-semibold', esHoy && 'text-rodziny-700')}>
+                  {esHoy ? 'HOY' : diaCorto(f)}
                 </div>
-                <div className="text-[10px] capitalize text-gray-400">{formatFecha(f)}</div>
+                <div className="text-[10px] text-gray-400">{formatFecha(f)}</div>
                 {cant > 0 && (
-                  <span className="ml-1 inline-block rounded-full bg-rodziny-100 px-1.5 text-[10px] text-rodziny-700">
+                  <span
+                    className={cn(
+                      'mt-0.5 inline-block rounded-full px-1.5 text-[10px]',
+                      activo ? 'bg-rodziny-100 text-rodziny-700' : 'bg-gray-200 text-gray-600',
+                    )}
+                  >
                     {cant}
                   </span>
                 )}
