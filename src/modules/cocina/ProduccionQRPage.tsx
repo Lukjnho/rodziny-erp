@@ -191,23 +191,39 @@ export function ProduccionQRPage() {
 
   // Plan del día: items vigentes del pizarrón para hoy + local (incluye hechos
   // así el QR sigue priorizando lo planificado aunque ya esté cumplido).
-  // Se descartan solo los cancelados.
+  // Además trae carry-overs de días previos que quedaron sin cerrar (estado
+  // pendiente / en_produccion) — caso típico: se planifica relleno para hoy
+  // pero se lo termina mañana, y mañana el cocinero necesita verlo en el QR
+  // para registrar el lote contra ese plan.
   const { data: planHoy } = useQuery({
-    queryKey: ['cocina-plan-hoy-qr', local],
+    queryKey: ['cocina-plan-hoy-qr', local, hoy()],
     queryFn: async () => {
+      const fHoy = hoy();
+      const fDesde = fechaHaceDias(DIAS_VENTANA_LOTES_ABIERTOS);
       const { data, error } = await supabase
         .from('cocina_pizarron_items')
-        .select('tipo, receta_id, cantidad_recetas, estado')
+        .select('tipo, receta_id, cantidad_recetas, estado, fecha_objetivo')
         .eq('local', local)
-        .eq('fecha_objetivo', hoy())
+        .gte('fecha_objetivo', fDesde)
+        .lte('fecha_objetivo', fHoy)
         .neq('estado', 'cancelado');
       if (error) throw error;
-      return data as Array<{
+      const rows = data as Array<{
         tipo: 'relleno' | 'masa' | 'salsa' | 'postre' | 'pasteleria' | 'panaderia';
         receta_id: string | null;
         cantidad_recetas: number | null;
         estado: string;
+        fecha_objetivo: string;
       }>;
+      // Hoy: cualquier estado != cancelado. Días previos: solo si todavía
+      // está abierto (pendiente / en_produccion). Los ciclo_completo y
+      // en_bandejas ya dejaron lote en DB y no necesitan re-aparecer.
+      return rows.filter(
+        (it) =>
+          it.fecha_objetivo === fHoy ||
+          it.estado === 'pendiente' ||
+          it.estado === 'en_produccion',
+      );
     },
   });
 
