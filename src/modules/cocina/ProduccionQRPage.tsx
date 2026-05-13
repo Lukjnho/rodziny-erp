@@ -43,12 +43,36 @@ function parseDecimal(v: string | number | null | undefined): number {
   return isNaN(n) ? 0 : n;
 }
 
+// Normaliza el input que tipea el operario: cualquier "." se transforma en "," al
+// instante, deja solo una coma decimal y descarta caracteres no numéricos. El
+// cocinero ve siempre formato es-AR ("8,9") aunque haya tipeado "8.9" con teclado
+// internacional — elimina la ambigüedad punto-decimal / punto-de-miles.
+function normalizarDecimal(v: string): string {
+  let s = v.replace(/\./g, ',').replace(/[^0-9,]/g, '');
+  const i = s.indexOf(',');
+  if (i !== -1) s = s.slice(0, i + 1) + s.slice(i + 1).replace(/,/g, '');
+  return s;
+}
+
 const NUM_FMT = new Intl.NumberFormat('es-AR', {
   minimumFractionDigits: 0,
   maximumFractionDigits: 3,
 });
 function formatNum(n: number): string {
   return NUM_FMT.format(n);
+}
+
+// Equivalente "humano" para kg: "8,9 kg = 8 kilos 900 g". Útil como sanity check
+// visual cuando el operario tipea con decimales — si quiso 8,9 y puso 8,993, el
+// "= 8 kilos 993 g" hace evidente el typo antes de guardar.
+function equivalenteKgGramos(n: number): string | null {
+  if (!isFinite(n) || n <= 0) return null;
+  const totalG = Math.round(n * 1000);
+  const kilos = Math.floor(totalG / 1000);
+  const gramos = totalG - kilos * 1000;
+  if (kilos === 0) return `${gramos} g`;
+  if (gramos === 0) return `${kilos} ${kilos === 1 ? 'kilo' : 'kilos'} justos`;
+  return `${kilos} ${kilos === 1 ? 'kilo' : 'kilos'} ${gramos} g`;
 }
 interface LoteRelleno {
   id: string;
@@ -923,9 +947,9 @@ function FormRelleno({
               inputMode="decimal"
               pattern="[0-9]*[.,]?[0-9]*"
               value={pesoKg}
-              onChange={(e) => setPesoKg(e.target.value)}
+              onChange={(e) => setPesoKg(normalizarDecimal(e.target.value))}
               className="w-full rounded border border-gray-300 px-3 py-2.5 text-sm"
-              placeholder="5.0"
+              placeholder="Ej: 5,2"
             />
           </div>
         </div>
@@ -1330,7 +1354,7 @@ function FormPasta({
                   inputMode="decimal"
                   pattern="[0-9]*[.,]?[0-9]*"
                   value={masaKg}
-                  onChange={(e) => setMasaKg(e.target.value)}
+                  onChange={(e) => setMasaKg(normalizarDecimal(e.target.value))}
                   className="w-full rounded border border-gray-300 px-3 py-2.5 text-sm"
                 />
                 {(() => {
@@ -1356,7 +1380,7 @@ function FormPasta({
                   inputMode="decimal"
                   pattern="[0-9]*[.,]?[0-9]*"
                   value={rellenoKg}
-                  onChange={(e) => setRellenoKg(e.target.value)}
+                  onChange={(e) => setRellenoKg(normalizarDecimal(e.target.value))}
                   className="w-full rounded border border-gray-300 px-3 py-2.5 text-sm"
                   disabled={!loteRellenoId}
                 />
@@ -1390,7 +1414,7 @@ function FormPasta({
               inputMode="decimal"
               pattern="[0-9]*[.,]?[0-9]*"
               value={rellenoKg}
-              onChange={(e) => setRellenoKg(e.target.value)}
+              onChange={(e) => setRellenoKg(normalizarDecimal(e.target.value))}
               className="w-full rounded border border-gray-300 px-3 py-2.5 text-sm"
               placeholder={
                 rellenoSel?.disponible_kg != null
@@ -1933,9 +1957,9 @@ function FormMasa({
               inputMode="decimal"
               pattern="[0-9]*[.,]?[0-9]*"
               value={kgProducidos}
-              onChange={(e) => setKgProducidos(e.target.value)}
+              onChange={(e) => setKgProducidos(normalizarDecimal(e.target.value))}
               className="w-full rounded border border-gray-300 px-3 py-2.5 text-sm"
-              placeholder="10.0"
+              placeholder="Ej: 10,5"
             />
           </div>
         </div>
@@ -2089,7 +2113,7 @@ function FormCerrarMasa({
             inputMode="decimal"
             pattern="[0-9]*[.,]?[0-9]*"
             value={kgSobrante}
-            onChange={(e) => setKgSobrante(e.target.value)}
+            onChange={(e) => setKgSobrante(normalizarDecimal(e.target.value))}
             className="w-full rounded border border-gray-300 px-3 py-2.5 text-sm"
             placeholder="0"
           />
@@ -2454,7 +2478,7 @@ function FormGenerico({
                 inputMode="decimal"
                 pattern="[0-9]*[.,]?[0-9]*"
                 value={cantidad}
-                onChange={(e) => setCantidad(e.target.value)}
+                onChange={(e) => setCantidad(normalizarDecimal(e.target.value))}
                 placeholder="Ej: 1,8"
                 className={cn(
                   'w-full rounded border px-3 py-2.5 text-sm',
@@ -2488,6 +2512,9 @@ function FormGenerico({
               Vas a registrar: <strong>
                 {formatNum(cantNum)} {unidad}
               </strong>
+              {unidad === 'kg' && equivalenteKgGramos(cantNum)
+                ? ` = ${equivalenteKgGramos(cantNum)}`
+                : ''}
               {valorAnomalo && recetaSel?.rendimiento_kg
                 ? ` · la receta rinde típicamente ${formatNum(recetaSel.rendimiento_kg)} ${unidadReceta(recetaSel)}. Usá coma para decimales (1,8 = un kilo ochocientos).`
                 : ''}
@@ -2503,7 +2530,7 @@ function FormGenerico({
               inputMode="decimal"
               pattern="[0-9]*[.,]?[0-9]*"
               value={merma}
-              onChange={(e) => setMerma(e.target.value)}
+              onChange={(e) => setMerma(normalizarDecimal(e.target.value))}
               placeholder={`0 ${unidad}`}
               className="w-full rounded border border-gray-300 px-3 py-2.5 text-sm"
             />
@@ -2772,7 +2799,7 @@ function FormMerma({
           type="text"
           inputMode="decimal"
           value={cantidad}
-          onChange={(e) => setCantidad(e.target.value)}
+          onChange={(e) => setCantidad(normalizarDecimal(e.target.value))}
           placeholder={unidad === 'kg' ? 'Ej: 1,5' : 'Ej: 10'}
           className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
         />
