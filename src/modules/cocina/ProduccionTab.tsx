@@ -5,6 +5,7 @@ import { KPICard } from '@/components/ui/KPICard';
 import { StockProduccionSection } from './components/StockProduccionSection';
 import { PlanProduccionEditor } from './components/PlanProduccionEditor';
 import { PlanSemanal } from './components/PlanSemanal';
+import { ResumenSemanalCard } from './components/ResumenSemanalCard';
 import { EditarLoteModal } from './components/EditarLoteModal';
 import { cn, fmtCantidad } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
@@ -1029,18 +1030,24 @@ export function ProduccionTab() {
           lotes registrados sin estar planeados (fuera del plan) y pastas armadas. */}
       <div className="space-y-3">
         {(filtroLocal === 'todos' || filtroLocal === 'vedia') && (
-          <PlanSemanal
-            fechaActiva={fecha}
-            local="vedia"
-            onAbrirEditor={() => setEditorPlanLocal('vedia')}
-          />
+          <>
+            <PlanSemanal
+              fechaActiva={fecha}
+              local="vedia"
+              onAbrirEditor={() => setEditorPlanLocal('vedia')}
+            />
+            <ResumenSemanalCard local="vedia" fechaReferencia={fecha} />
+          </>
         )}
         {(filtroLocal === 'todos' || filtroLocal === 'saavedra') && (
-          <PlanSemanal
-            fechaActiva={fecha}
-            local="saavedra"
-            onAbrirEditor={() => setEditorPlanLocal('saavedra')}
-          />
+          <>
+            <PlanSemanal
+              fechaActiva={fecha}
+              local="saavedra"
+              onAbrirEditor={() => setEditorPlanLocal('saavedra')}
+            />
+            <ResumenSemanalCard local="saavedra" fechaReferencia={fecha} />
+          </>
         )}
       </div>
 
