@@ -591,7 +591,7 @@ export function CierreCaja() {
             {formatARS(resumen.totalContado)}
           </p>
           <p className="mt-0.5 text-[10px] text-gray-400">
-            Cambio inicial + Recaudado − Retirado
+            Efectivo físico contado al cerrar (incluye el cambio inicial)
           </p>
         </div>
         <div className="rounded-lg border border-surface-border bg-white p-4">
