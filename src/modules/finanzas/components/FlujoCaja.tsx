@@ -39,7 +39,10 @@ interface CierreVerificado {
   fondo_siguiente: number;
   verificado: boolean;
   verificado_por: string | null;
+  monto_llevado_caja_fuerte: number | null;
 }
+
+const FONDO_CAMBIO_DEFAULT = 12000;
 
 // Ingreso real en efectivo del turno = lo que entró por ventas, no lo que
 // quedó al final. monto_contado refleja lo que QUEDA en el cajón después de
@@ -540,6 +543,20 @@ export function FlujoCaja({ onNavigateToTab }: { onNavigateToTab?: (tab: string)
       .reduce((s, c) => s + efectivoTurno(c), 0);
     const cantPendientes = cierresFiltrados.filter((c) => !c.verificado).length;
 
+    // Custodia del efectivo: separamos lo que está en los locales (caja chica)
+    // de lo que ya fue retirado y está en casa (caja fuerte). La suma de ambos
+    // NO es el ingreso total — es solo la porción que aún se rastrea como
+    // custodia física. Sirve como referencia operativa, no contable.
+    let cajaChica = 0;
+    let cajaFuerte = 0;
+    for (const c of cierresFiltrados) {
+      if (c.verificado) {
+        cajaFuerte += Number(c.monto_llevado_caja_fuerte ?? 0);
+      } else {
+        cajaChica += Math.max(0, (c.monto_contado ?? 0) - FONDO_CAMBIO_DEFAULT);
+      }
+    }
+
     // Ventas MP — cuenta única SAS, no se desglosa por local
     const ventasMPBruto = pagosMPFiltrados.reduce((s, p) => s + Number(p.monto), 0);
     const ventasMPPorMedio = new Map<string, number>();
@@ -561,6 +578,8 @@ export function FlujoCaja({ onNavigateToTab }: { onNavigateToTab?: (tab: string)
       efectivoVedia,
       efectivoSaavedra,
       cantPendientes,
+      cajaChica,
+      cajaFuerte,
       ventasMPBruto,
       ventasMPPorMedio,
       otrosIngresos,
@@ -1070,12 +1089,35 @@ export function FlujoCaja({ onNavigateToTab }: { onNavigateToTab?: (tab: string)
           <LineaDetalle
             label="Efectivo Saavedra (cierres de caja)"
             monto={ingresos.efectivoSaavedra}
-            nota={
-              ingresos.cantPendientes > 0
-                ? `⚠️ ${ingresos.cantPendientes} cierre${ingresos.cantPendientes > 1 ? 's' : ''} sin verificar — los datos pueden no estar revisados todavía`
-                : undefined
-            }
           />
+
+          {/* Custodia del efectivo (informativo — no suma al total) */}
+          <div className="px-3 py-2 text-xs bg-rodziny-50/40 border-y border-rodziny-100">
+            <div className="mb-1 text-[10px] uppercase tracking-wide text-gray-500">
+              Custodia del efectivo
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              <div>
+                <div className="text-[10px] text-gray-500">💵 Caja chica (locales)</div>
+                <div className="font-semibold text-amber-700">{formatARS(ingresos.cajaChica)}</div>
+                {ingresos.cantPendientes > 0 && (
+                  <div className="text-[10px] text-amber-600">
+                    {ingresos.cantPendientes} pendiente{ingresos.cantPendientes !== 1 ? 's' : ''}
+                  </div>
+                )}
+              </div>
+              <div>
+                <div className="text-[10px] text-gray-500">🏦 Caja fuerte (casa)</div>
+                <div className="font-semibold text-green-700">{formatARS(ingresos.cajaFuerte)}</div>
+              </div>
+              <div>
+                <div className="text-[10px] text-gray-500">Total custodia</div>
+                <div className="font-semibold text-gray-800">
+                  {formatARS(ingresos.cajaChica + ingresos.cajaFuerte)}
+                </div>
+              </div>
+            </div>
+          </div>
           <GrupoEgreso
             label={`Ventas digitales — MercadoPago (${pagosMPFiltrados.length} pagos)`}
             total={ingresos.ventasMPBruto}

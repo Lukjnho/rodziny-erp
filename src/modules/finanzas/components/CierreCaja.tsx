@@ -77,7 +77,14 @@ interface CierreRow {
   verificado: boolean;
   verificado_por: string | null;
   verificado_at: string | null;
+  monto_llevado_caja_fuerte: number | null;
+  nota_caja_fuerte: string | null;
 }
+
+// Fondo de cambio que se deja al cierre del turno para que el próximo arranque.
+// Default operativo: $12.000. Si Lucas lo cambia en algún cierre, el sugerido
+// del modal usa monto_contado - este valor (editable manualmente).
+const FONDO_CAMBIO_DEFAULT = 12000;
 
 // ── componente ───────────────────────────────────────────────────────────────
 export function CierreCaja() {
@@ -308,21 +315,66 @@ export function CierreCaja() {
     },
   });
 
-  // ── mutation: verificar cierre ─────────────────────────────────────────────
+  // ── mutation: verificar cierre (= recibido en caja fuerte) ─────────────────
   const verificarMut = useMutation({
-    mutationFn: async ({ id, verificado }: { id: string; verificado: boolean }) => {
+    mutationFn: async ({
+      id,
+      verificado,
+      monto,
+      nota,
+    }: {
+      id: string;
+      verificado: boolean;
+      monto?: number | null;
+      nota?: string | null;
+    }) => {
       const { error } = await supabase
         .from('cierres_caja')
         .update({
           verificado,
           verificado_por: verificado ? 'Admin' : null,
           verificado_at: verificado ? new Date().toISOString() : null,
+          monto_llevado_caja_fuerte: verificado ? (monto ?? null) : null,
+          nota_caja_fuerte: verificado ? (nota ?? null) : null,
         })
         .eq('id', id);
       if (error) throw error;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['cierres_mes'] }),
   });
+
+  // Estado del modal de confirmación al "recibir en caja fuerte"
+  const [cajaFuerteModal, setCajaFuerteModal] = useState<{
+    cierre: CierreRow;
+    monto: string;
+    nota: string;
+  } | null>(null);
+
+  function abrirModalCajaFuerte(c: CierreRow) {
+    // Sugerido: monto contado - fondo de cambio para el próximo turno
+    const sugerido = Math.max(0, (c.monto_contado ?? 0) - FONDO_CAMBIO_DEFAULT);
+    setCajaFuerteModal({
+      cierre: c,
+      monto: sugerido > 0 ? String(Math.round(sugerido)) : '0',
+      nota: '',
+    });
+  }
+  function cerrarModalCajaFuerte() {
+    setCajaFuerteModal(null);
+  }
+  function confirmarCajaFuerte() {
+    if (!cajaFuerteModal) return;
+    const monto = parseFloat(cajaFuerteModal.monto.replace(/\./g, '').replace(',', '.')) || 0;
+    verificarMut.mutate(
+      {
+        id: cajaFuerteModal.cierre.id,
+        verificado: true,
+        monto,
+        nota: cajaFuerteModal.nota.trim() || null,
+      },
+      { onSuccess: () => setCajaFuerteModal(null) },
+    );
+  }
 
   function resetForm() {
     setFFecha(hoy);
@@ -402,6 +454,8 @@ export function CierreCaja() {
         totalFudo: 0,
         totalFudoEfectivo: 0,
         totalFondoApertura: 0,
+        cajaChica: 0,
+        cajaFuerte: 0,
       };
     let total = 0,
       positivos = 0,
@@ -411,7 +465,9 @@ export function CierreCaja() {
       totalOtrosRetiros = 0,
       totalFudo = 0,
       totalFudoEfectivo = 0,
-      totalFondoApertura = 0;
+      totalFondoApertura = 0,
+      cajaChica = 0,
+      cajaFuerte = 0;
     for (const c of cierres) {
       const dif = calcDif(c);
       total += dif;
@@ -427,6 +483,15 @@ export function CierreCaja() {
         Number(c.fudo_efectivo) > 0
           ? Number(c.fudo_efectivo)
           : (c.monto_contado ?? 0) + (c.otros_retiros ?? 0) - (c.fondo_apertura ?? 0);
+      // Caja chica = efectivo aún en el local (cierres no verificados).
+      // Usamos el sugerido (monto_contado - fondo cambio) como aproximación de
+      // lo que Lucas se llevaría. Si quedó en cajón menos que el fondo, suma 0.
+      // Caja fuerte = monto efectivamente registrado al verificar.
+      if (c.verificado) {
+        cajaFuerte += Number(c.monto_llevado_caja_fuerte ?? 0);
+      } else {
+        cajaChica += Math.max(0, (c.monto_contado ?? 0) - FONDO_CAMBIO_DEFAULT);
+      }
     }
     return {
       total,
@@ -440,6 +505,8 @@ export function CierreCaja() {
       totalFudo,
       totalFudoEfectivo,
       totalFondoApertura,
+      cajaChica,
+      cajaFuerte,
     };
   }, [cierres]);
 
@@ -562,6 +629,33 @@ export function CierreCaja() {
               {resumen.pendientes} pendiente{resumen.pendientes > 1 ? 's' : ''}
             </p>
           )}
+        </div>
+      </div>
+
+      {/* Banda de custodia de efectivo */}
+      <div className="grid grid-cols-1 gap-3 rounded-lg border border-rodziny-200 bg-rodziny-50/30 p-3 md:grid-cols-3">
+        <div>
+          <p className="mb-0.5 text-xs text-gray-500">💵 Caja chica (en locales)</p>
+          <p className="text-lg font-semibold text-amber-700">{formatARS(resumen.cajaChica)}</p>
+          <p className="mt-0.5 text-[10px] text-gray-400">
+            {resumen.pendientes} turno{resumen.pendientes !== 1 ? 's' : ''} pendiente
+            {resumen.pendientes !== 1 ? 's' : ''} de retirar
+          </p>
+        </div>
+        <div>
+          <p className="mb-0.5 text-xs text-gray-500">🏦 Caja fuerte (en casa)</p>
+          <p className="text-lg font-semibold text-green-700">{formatARS(resumen.cajaFuerte)}</p>
+          <p className="mt-0.5 text-[10px] text-gray-400">
+            {resumen.verificados} turno{resumen.verificados !== 1 ? 's' : ''} retirado
+            {resumen.verificados !== 1 ? 's' : ''}
+          </p>
+        </div>
+        <div>
+          <p className="mb-0.5 text-xs text-gray-500">💰 Efectivo del mes</p>
+          <p className="text-lg font-semibold text-gray-800">
+            {formatARS(resumen.cajaChica + resumen.cajaFuerte)}
+          </p>
+          <p className="mt-0.5 text-[10px] text-gray-400">Chica + Fuerte</p>
         </div>
       </div>
 
@@ -1077,9 +1171,16 @@ export function CierreCaja() {
                       </td>
                       <td className="px-4 py-2 text-center">
                         <button
-                          onClick={() =>
-                            verificarMut.mutate({ id: c.id, verificado: !c.verificado })
-                          }
+                          onClick={() => {
+                            if (c.verificado) {
+                              // Desmarcar: confirmación rápida
+                              if (window.confirm('¿Desmarcar como recibido en caja fuerte?')) {
+                                verificarMut.mutate({ id: c.id, verificado: false });
+                              }
+                            } else {
+                              abrirModalCajaFuerte(c);
+                            }
+                          }}
                           disabled={verificarMut.isPending}
                           className={cn(
                             'inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs font-medium transition-colors',
@@ -1089,11 +1190,11 @@ export function CierreCaja() {
                           )}
                           title={
                             c.verificado
-                              ? `Verificado por ${c.verificado_por}`
-                              : 'Marcar como verificado'
+                              ? `Recibido en caja fuerte${c.monto_llevado_caja_fuerte ? ' — ' + formatARS(c.monto_llevado_caja_fuerte) : ''}${c.verificado_por ? ' · por ' + c.verificado_por : ''}${c.nota_caja_fuerte ? '\n' + c.nota_caja_fuerte : ''}`
+                              : 'Marcar como recibido en caja fuerte'
                           }
                         >
-                          {c.verificado ? '✓ Verificado' : '○ Pendiente'}
+                          {c.verificado ? '🏦 En caja fuerte' : '○ Pendiente'}
                         </button>
                       </td>
                       <td className="px-2 py-2 text-center">
@@ -1124,6 +1225,105 @@ export function CierreCaja() {
           </div>
         )}
       </div>
+
+      {/* Modal: confirmar retiro a caja fuerte */}
+      {cajaFuerteModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div
+            className="w-full max-w-md rounded-xl bg-white shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-gray-100 px-5 py-3">
+              <h3 className="text-sm font-semibold text-gray-900">
+                🏦 Recibido en caja fuerte
+              </h3>
+              <button
+                onClick={cerrarModalCajaFuerte}
+                className="text-xl text-gray-400 hover:text-gray-600"
+              >
+                &times;
+              </button>
+            </div>
+            <div className="space-y-3 px-5 py-4 text-sm">
+              <div className="rounded bg-gray-50 px-3 py-2 text-xs text-gray-600">
+                <div>
+                  <span className="text-gray-400">Cierre: </span>
+                  <span className="font-medium text-gray-700">
+                    {cajaFuerteModal.cierre.fecha} · {cajaFuerteModal.cierre.caja} ·{' '}
+                    {turnoLabel(cajaFuerteModal.cierre.turno)}
+                  </span>
+                </div>
+                <div className="mt-1 flex justify-between">
+                  <span className="text-gray-400">Quedó en cajón:</span>
+                  <span className="font-medium text-gray-700">
+                    {formatARS(cajaFuerteModal.cierre.monto_contado ?? 0)}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-400">Fondo cambio (próximo turno):</span>
+                  <span className="text-gray-700">− {formatARS(FONDO_CAMBIO_DEFAULT)}</span>
+                </div>
+                <div className="mt-1 flex justify-between border-t border-gray-200 pt-1">
+                  <span className="font-semibold text-gray-600">Sugerido a retirar:</span>
+                  <span className="font-semibold text-gray-800">
+                    {formatARS(
+                      Math.max(
+                        0,
+                        (cajaFuerteModal.cierre.monto_contado ?? 0) - FONDO_CAMBIO_DEFAULT,
+                      ),
+                    )}
+                  </span>
+                </div>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-600">
+                  Monto retirado (editable)
+                </label>
+                <input
+                  type="text"
+                  value={cajaFuerteModal.monto}
+                  onChange={(e) =>
+                    setCajaFuerteModal({ ...cajaFuerteModal, monto: e.target.value })
+                  }
+                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500"
+                  autoFocus
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-600">
+                  Nota (opcional)
+                </label>
+                <textarea
+                  value={cajaFuerteModal.nota}
+                  onChange={(e) =>
+                    setCajaFuerteModal({ ...cajaFuerteModal, nota: e.target.value })
+                  }
+                  rows={2}
+                  placeholder="Ej: dejé $20.000 para apertura Saavedra"
+                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-rodziny-500"
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 border-t border-gray-100 px-5 py-3">
+              <button
+                onClick={cerrarModalCajaFuerte}
+                className="rounded-md border border-gray-300 px-4 py-1.5 text-xs hover:bg-gray-50"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={confirmarCajaFuerte}
+                disabled={verificarMut.isPending}
+                className="rounded-md bg-rodziny-600 px-4 py-1.5 text-xs font-medium text-white hover:bg-rodziny-700 disabled:opacity-50"
+              >
+                {verificarMut.isPending ? 'Guardando…' : 'Confirmar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
