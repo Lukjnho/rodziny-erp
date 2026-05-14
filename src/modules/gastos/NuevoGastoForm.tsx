@@ -196,6 +196,9 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
   const [medioPago, setMedioPago] = useState<MedioPago>('transferencia_mp');
   const [comentario, setComentario] = useState<string>('');
   const [tipoComprobante, setTipoComprobante] = useState<string>('recibo');
+  // N° de la factura/remito (ej: "0008-00001260"). Se guarda en gastos.nro_comprobante.
+  // Es distinto del N° de operación del PAGO (nOperacion), que va a pagos_gastos.
+  const [nroComprobante, setNroComprobante] = useState<string>('');
 
   // Discriminación de IVA — opcional, auto-activado para Factura A/B.
   // Cuando está activo: Neto e IVA se calculan a partir de Total + alícuota,
@@ -251,6 +254,7 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
       setMedioPago('transferencia_mp');
       setComentario('');
       setTipoComprobante('recibo');
+      setNroComprobante('');
       setPagado(true);
       setFechaPago('');
       setFechaVencimiento('');
@@ -776,10 +780,12 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
     if (datos.tipo_comprobante && tipoComprobante === 'recibo') {
       setTipoComprobante(datos.tipo_comprobante);
     }
-    if (datos.nro_completo && !nOperacion) {
-      setNOperacion(datos.nro_completo);
-    } else if (datos.numero_comprobante && !nOperacion) {
-      setNOperacion(datos.numero_comprobante);
+    // N° de la factura/remito → nroComprobante (gastos.nro_comprobante).
+    // NO confundir con nOperacion (que es del pago, va a pagos_gastos).
+    if (datos.nro_completo && !nroComprobante) {
+      setNroComprobante(datos.nro_completo);
+    } else if (datos.numero_comprobante && !nroComprobante) {
+      setNroComprobante(datos.numero_comprobante);
     }
     if (datos.fecha_emision && !fecha) {
       setFecha(datos.fecha_emision);
@@ -989,7 +995,10 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
           iibb: null,
           medio_pago: pagado ? medioPago : null,
           tipo_comprobante: tipoComprobante,
-          nro_comprobante: pagado ? (nOperacion || null) : null,
+          // N° de la factura/remito (independiente del estado de pago).
+          // Si no se cargó, fallback a nOperacion del pago (cuando hay) para compatibilidad
+          // con flujos viejos donde no se diferenciaba.
+          nro_comprobante: nroComprobante || (pagado ? nOperacion : null) || null,
           estado_pago: pagado ? 'Pagado' : 'Pendiente',
           fecha_vencimiento: !pagado ? (fechaVencimiento || null) : null,
           comprobante_path: pagoComprobantePath, // OCR en digital, manual en físico
@@ -2056,6 +2065,19 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
                     </option>
                   ))}
                 </select>
+              </Field>
+
+              <Field label="N° de comprobante (factura / remito)">
+                <input
+                  type="text"
+                  value={nroComprobante}
+                  onChange={(e) => setNroComprobante(e.target.value)}
+                  placeholder="ej: 0008-00001260"
+                  className="w-full rounded border border-gray-300 px-3 py-2 text-sm font-mono"
+                />
+                <p className="mt-1 text-[11px] text-gray-500">
+                  Es el N° impreso en la factura del proveedor. Diferente del N° de operación del pago.
+                </p>
               </Field>
 
               <Field label="Comentario (opcional)">
