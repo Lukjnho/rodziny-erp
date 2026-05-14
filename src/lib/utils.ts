@@ -23,10 +23,24 @@ export function fmtCantidad(n: number | string | null | undefined, decimals = 2)
   }).format(num);
 }
 
-/** Formatea una fecha DD/MM/YYYY */
+/** Formatea una fecha DD/MM/YYYY.
+ *
+ * IMPORTANTE: `new Date("2026-05-12")` interpreta el string como UTC midnight,
+ * y en Argentina (UTC-3) se renderiza como 11/05 → bug clásico de timezone.
+ * Cuando el input es un string YYYY-MM-DD (sin hora), parseamos manualmente
+ * los componentes para evitar el desplazamiento. Si tiene hora completa (ISO
+ * timestamptz) usamos `new Date` normal porque ya trae la zona.
+ */
 export function formatFecha(date: string | Date): string {
-  const d = typeof date === 'string' ? new Date(date) : date;
-  return d.toLocaleDateString('es-AR');
+  if (typeof date === 'string') {
+    const m = date.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (m) {
+      // Local — sin pasar por Date para no perder el día por timezone
+      return `${parseInt(m[3], 10)}/${parseInt(m[2], 10)}/${m[1]}`;
+    }
+    return new Date(date).toLocaleDateString('es-AR');
+  }
+  return date.toLocaleDateString('es-AR');
 }
 
 /** Número de serie Excel → fecha JS */
