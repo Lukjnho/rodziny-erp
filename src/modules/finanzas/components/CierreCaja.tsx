@@ -5,6 +5,7 @@ import { formatARS } from '@/lib/utils';
 import { cn } from '@/lib/utils';
 import { LocalSelector } from '@/components/ui/LocalSelector';
 import { obtenerVentasFudo, CAJA_FUDO_ID, type VentasFudoResumen } from '@/lib/fudoApi';
+import { useAuth } from '@/lib/auth';
 
 // ── config por local ─────────────────────────────────────────────────────────
 const CAJAS: Record<string, string[]> = {
@@ -88,6 +89,8 @@ const FONDO_CAMBIO_DEFAULT = 12000;
 
 // ── componente ───────────────────────────────────────────────────────────────
 export function CierreCaja() {
+  const { perfil } = useAuth();
+  const esAdmin = perfil?.es_admin ?? false;
   const [local, setLocal] = useState<'vedia' | 'saavedra'>('vedia');
   const [periodo, setPeriodo] = useState(() => new Date().toISOString().substring(0, 7));
   const [formOpen, setFormOpen] = useState(false);
@@ -632,7 +635,8 @@ export function CierreCaja() {
         </div>
       </div>
 
-      {/* Banda de custodia de efectivo */}
+      {/* Banda de custodia de efectivo (solo admins — info sensible) */}
+      {esAdmin && (
       <div className="grid grid-cols-1 gap-3 rounded-lg border border-rodziny-200 bg-rodziny-50/30 p-3 md:grid-cols-3">
         <div>
           <p className="mb-0.5 text-xs text-gray-500">💵 Caja chica (en locales)</p>
@@ -658,6 +662,7 @@ export function CierreCaja() {
           <p className="mt-0.5 text-[10px] text-gray-400">Chica + Fuerte</p>
         </div>
       </div>
+      )}
 
       {/* Form nuevo/editar cierre (expandible) */}
       {formOpen && (
