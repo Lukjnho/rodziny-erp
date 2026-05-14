@@ -63,7 +63,7 @@ const TABS: TabDef[] = [
     label: 'Flujo de caja',
     icon: '💰',
     subtitle: 'Movimientos bancarios y efectivo',
-    modulo: 'finanzas',
+    modulo: 'flujo_caja',
   },
   {
     id: 'cierre_mes',

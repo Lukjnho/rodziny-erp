@@ -765,24 +765,17 @@ export function CierreCaja() {
                 className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500"
               />
             </div>
-            <div className="col-span-2 md:col-span-3">
-              <label className="mb-1 flex items-center gap-2 text-xs font-medium text-gray-600">
-                <span>💰 MP Lucas (Fudo)</span>
-                <span className="rounded bg-yellow-100 px-1.5 py-0.5 text-[10px] font-normal text-yellow-700">
-                  No es ingreso del negocio
-                </span>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-gray-600">
+                MP Lucas (Fudo)
               </label>
               <input
                 type="text"
                 value={fFudoMpLucas}
                 onChange={(e) => setFFudoMpLucas(e.target.value)}
                 placeholder="0"
-                className="w-full rounded-md border border-yellow-300 bg-yellow-50/50 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-yellow-500"
+                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500"
               />
-              <p className="mt-0.5 text-[10px] text-yellow-700">
-                Cobros via POSnet personal (PM 7 Fudo). Al guardar se registra automáticamente como
-                dividendo de Lucas.
-              </p>
             </div>
             <div>
               <label className="mb-1 block text-xs font-medium text-gray-600">

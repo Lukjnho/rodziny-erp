@@ -7,6 +7,7 @@ export type Modulo =
   | 'dashboard'
   | 'ventas'
   | 'finanzas'
+  | 'flujo_caja'
   | 'edr'
   | 'gastos'
   | 'amortizaciones'
@@ -23,6 +24,7 @@ export interface Perfil {
   puede_ver_dashboard: boolean;
   puede_ver_ventas: boolean;
   puede_ver_finanzas: boolean;
+  puede_ver_flujo_caja: boolean;
   puede_ver_edr: boolean;
   puede_ver_gastos: boolean;
   puede_ver_amortizaciones: boolean;
@@ -131,6 +133,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return perfil.puede_ver_ventas;
       case 'finanzas':
         return perfil.puede_ver_finanzas;
+      case 'flujo_caja':
+        return perfil.puede_ver_flujo_caja;
       case 'edr':
         return perfil.puede_ver_edr;
       case 'gastos':

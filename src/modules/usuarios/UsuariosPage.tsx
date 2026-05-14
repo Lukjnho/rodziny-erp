@@ -8,6 +8,7 @@ const MODULOS: { key: Modulo; label: string; campo: keyof Perfil }[] = [
   { key: 'dashboard', label: 'Dashboard', campo: 'puede_ver_dashboard' },
   { key: 'ventas', label: 'Ventas', campo: 'puede_ver_ventas' },
   { key: 'finanzas', label: 'Finanzas', campo: 'puede_ver_finanzas' },
+  { key: 'flujo_caja', label: 'Flujo de caja', campo: 'puede_ver_flujo_caja' },
   { key: 'edr', label: 'EdR', campo: 'puede_ver_edr' },
   { key: 'gastos', label: 'Gastos', campo: 'puede_ver_gastos' },
   { key: 'amortizaciones', label: 'Amortizaciones', campo: 'puede_ver_amortizaciones' },
