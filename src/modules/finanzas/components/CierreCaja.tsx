@@ -65,6 +65,8 @@ interface CierreRow {
   fudo_debito: number;
   fudo_credito: number;
   fudo_transferencia: number;
+  fudo_mp_lucas: number;
+  dividendo_id: string | null;
   fondo_apertura: number;
   fondo_siguiente: number;
   retiro: number;
@@ -97,6 +99,7 @@ export function CierreCaja() {
   const [fFudoDebito, setFFudoDebito] = useState('');
   const [fFudoCredito, setFFudoCredito] = useState('');
   const [fFudoTransf, setFFudoTransf] = useState('');
+  const [fFudoMpLucas, setFFudoMpLucas] = useState('');
   const [fContado, setFContado] = useState('');
   const [fFondoAp, setFFondoAp] = useState('');
   // fFondoSig removido — retiros se manejan en un solo campo
@@ -141,6 +144,9 @@ export function CierreCaja() {
       setFFudoDebito(resumen.debito > 0 ? String(Math.round(resumen.debito)) : '');
       setFFudoCredito(resumen.credito > 0 ? String(Math.round(resumen.credito)) : '');
       setFFudoTransf(resumen.transferencia > 0 ? String(Math.round(resumen.transferencia)) : '');
+      // MP Lucas: PM 7 de Fudo. NO es ingreso del negocio — pasa por el POSnet
+      // personal de Lucas, se registra como dividendo automáticamente al guardar.
+      setFFudoMpLucas(resumen.mpLucas > 0 ? String(Math.round(resumen.mpLucas)) : '');
       const turnoLabel = turnoConfig ? ` (${turnoConfig.label})` : '';
       setFudoProgreso(
         `${resumen.cantidadTickets} tickets del ${fFecha}${turnoLabel} — Total: ${new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(resumen.totalVentas)}`,
@@ -190,11 +196,60 @@ export function CierreCaja() {
       const fudoDebito = parse(fFudoDebito);
       const fudoCredito = parse(fFudoCredito);
       const fudoTransf = parse(fFudoTransf);
+      const fudoMpLucas = parse(fFudoMpLucas);
 
       // monto_esperado = solo efectivo que debería estar en la caja físicamente
-      // (fondo + efectivo Fudo - retiros). QR/débito/crédito/transferencia NO van
-      // acá porque no son efectivo: la diferencia siempre daría negativa por error.
+      // (fondo + efectivo Fudo - retiros). QR/débito/crédito/transferencia/MP Lucas
+      // NO van acá porque no son efectivo: la diferencia siempre daría negativa.
       const efectivoEsperado = fondoAp + fudoEfvo - otrosRet;
+
+      // Si estamos editando, recuperamos el dividendo_id previo para reutilizarlo
+      const cierrePrev = editandoId ? cierres?.find((c) => c.id === editandoId) : null;
+      const dividendoPrevId = cierrePrev?.dividendo_id ?? null;
+
+      // MP Lucas (PM 7 Fudo) → dividendo automático de Lucas. NO es ingreso del negocio.
+      // Idempotente vía cierres_caja.dividendo_id.
+      let dividendoId: string | null = dividendoPrevId;
+      if (fudoMpLucas > 0) {
+        const periodoCierre = fFecha.substring(0, 7);
+        const turnoLabel = TURNOS[local]?.find((t) => t.key === fTurno)?.label ?? fTurno;
+        const concepto = `MP Lucas (Fudo) — ${fCaja || 'cierre'} · ${turnoLabel}`;
+        if (dividendoPrevId) {
+          const { error: errDiv } = await supabase
+            .from('dividendos')
+            .update({
+              fecha: fFecha,
+              monto: fudoMpLucas,
+              medio_pago: 'mp',
+              concepto,
+              local,
+              periodo: periodoCierre,
+            })
+            .eq('id', dividendoPrevId);
+          if (errDiv) throw errDiv;
+        } else {
+          const { data: divData, error: errDiv } = await supabase
+            .from('dividendos')
+            .insert({
+              socio: 'lucas',
+              fecha: fFecha,
+              monto: fudoMpLucas,
+              medio_pago: 'mp',
+              concepto,
+              local,
+              periodo: periodoCierre,
+              creado_por: 'Lucas (auto-Fudo)',
+            })
+            .select('id')
+            .single();
+          if (errDiv) throw errDiv;
+          dividendoId = divData?.id ?? null;
+        }
+      } else if (dividendoPrevId) {
+        // Tenía dividendo y ahora MP Lucas quedó en 0 → eliminamos el dividendo huérfano
+        await supabase.from('dividendos').delete().eq('id', dividendoPrevId);
+        dividendoId = null;
+      }
 
       const { error } = await supabase.from('cierres_caja').upsert(
         {
@@ -209,6 +264,8 @@ export function CierreCaja() {
           fudo_debito: fudoDebito,
           fudo_credito: fudoCredito,
           fudo_transferencia: fudoTransf,
+          fudo_mp_lucas: fudoMpLucas,
+          dividendo_id: dividendoId,
           monto_esperado: fudoEfvo > 0 || fondoAp > 0 ? efectivoEsperado : null,
           monto_contado: contado,
           fondo_apertura: fondoAp,
@@ -228,6 +285,7 @@ export function CierreCaja() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['cierres_mes'] });
+      qc.invalidateQueries({ queryKey: ['fc_dividendos'] });
       setFormOpen(false);
       setEditandoId(null);
       resetForm();
@@ -237,9 +295,17 @@ export function CierreCaja() {
   // ── mutation: eliminar cierre ──────────────────────────────────────────────
   const eliminarMut = useMutation({
     mutationFn: async (id: string) => {
+      // Si el cierre tenía un dividendo auto-generado, lo borramos también.
+      const cierre = cierres?.find((c) => c.id === id);
+      if (cierre?.dividendo_id) {
+        await supabase.from('dividendos').delete().eq('id', cierre.dividendo_id);
+      }
       await supabase.from('cierres_caja').delete().eq('id', id);
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['cierres_mes'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['cierres_mes'] });
+      qc.invalidateQueries({ queryKey: ['fc_dividendos'] });
+    },
   });
 
   // ── mutation: verificar cierre ─────────────────────────────────────────────
@@ -269,6 +335,7 @@ export function CierreCaja() {
     setFFudoDebito('');
     setFFudoCredito('');
     setFFudoTransf('');
+    setFFudoMpLucas('');
     setFContado('');
     setFFondoAp('');
     setFOtrosRetiros('');
@@ -298,6 +365,7 @@ export function CierreCaja() {
     setFFudoDebito(c.fudo_debito ? String(c.fudo_debito) : '');
     setFFudoCredito(c.fudo_credito ? String(c.fudo_credito) : '');
     setFFudoTransf(c.fudo_transferencia ? String(c.fudo_transferencia) : '');
+    setFFudoMpLucas(c.fudo_mp_lucas ? String(c.fudo_mp_lucas) : '');
     setFContado(c.monto_contado ? String(c.monto_contado) : '');
     setFFondoAp(c.fondo_apertura ? String(c.fondo_apertura) : '');
     setFOtrosRetiros(c.otros_retiros ? String(c.otros_retiros) : '');
@@ -696,6 +764,25 @@ export function CierreCaja() {
                 placeholder="0"
                 className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500"
               />
+            </div>
+            <div className="col-span-2 md:col-span-3">
+              <label className="mb-1 flex items-center gap-2 text-xs font-medium text-gray-600">
+                <span>💰 MP Lucas (Fudo)</span>
+                <span className="rounded bg-yellow-100 px-1.5 py-0.5 text-[10px] font-normal text-yellow-700">
+                  No es ingreso del negocio
+                </span>
+              </label>
+              <input
+                type="text"
+                value={fFudoMpLucas}
+                onChange={(e) => setFFudoMpLucas(e.target.value)}
+                placeholder="0"
+                className="w-full rounded-md border border-yellow-300 bg-yellow-50/50 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-yellow-500"
+              />
+              <p className="mt-0.5 text-[10px] text-yellow-700">
+                Cobros via POSnet personal (PM 7 Fudo). Al guardar se registra automáticamente como
+                dividendo de Lucas.
+              </p>
             </div>
             <div>
               <label className="mb-1 block text-xs font-medium text-gray-600">
