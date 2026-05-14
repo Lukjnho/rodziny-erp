@@ -354,6 +354,55 @@ export function ComprasPage() {
     return m;
   }, [pagosGastosData]);
 
+  // Mapa proveedor_id → datos del registro maestro (display + nombres alternativos).
+  // - `display` = nombre_comercial ?? razon_social → lo que mostramos en la fila/agrupación.
+  // - `nombres` = todos los nombres en minúsculas concatenados, para .includes().
+  // Esto agrupa "FRESH", "FRESH Dist." y "MACLAR SRL" como una sola fila
+  // "FRESH Distribuidora" cuando comparten proveedor_id.
+  const { data: proveedoresMap } = useQuery({
+    queryKey: ['compras_proveedores_display'],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('proveedores')
+        .select('id, razon_social, nombre_comercial, aliases');
+      const map = new Map<string, { display: string; nombres: string }>();
+      for (const p of data ?? []) {
+        const display = (p.nombre_comercial?.trim() || p.razon_social?.trim() || '').trim();
+        if (!display) continue;
+        const nombres = [p.razon_social, p.nombre_comercial, ...((p.aliases as string[] | null) ?? [])]
+          .filter(Boolean)
+          .map((s) => (s as string).toLowerCase())
+          .join(' | ');
+        map.set(p.id as string, { display, nombres });
+      }
+      return map;
+    },
+    staleTime: 5 * 60 * 1000,
+    enabled: tab === 'pagos',
+  });
+
+  // Display canónico: nombre del registro maestro si el gasto tiene proveedor_id,
+  // si no, el texto crudo.
+  function proveedorDisplay(g: Gasto): string {
+    if (g.proveedor_id) {
+      const canon = proveedoresMap?.get(g.proveedor_id);
+      if (canon) return canon.display;
+    }
+    return g.proveedor ?? '(Sin proveedor)';
+  }
+
+  // Espacio de búsqueda: nombre crudo + todos los nombres del registro maestro
+  // (razón social, comercial, aliases). Buscar "MACLAR" o "fresh" matchea igual.
+  function proveedorSearchSpace(g: Gasto): string {
+    const partes: string[] = [];
+    if (g.proveedor) partes.push(g.proveedor.toLowerCase());
+    if (g.proveedor_id) {
+      const canon = proveedoresMap?.get(g.proveedor_id);
+      if (canon) partes.push(canon.nombres);
+    }
+    return partes.join(' | ');
+  }
+
   interface ItemRecepcion {
     producto_id: string;
     producto_nombre: string;
@@ -577,9 +626,10 @@ export function ComprasPage() {
       .toLowerCase()
       .normalize('NFD')
       .replace(/[\u0300-\u036f]/g, '');
+    // Filtra usando todos los nombres del proveedor (raz\u00f3n social + comercial + aliases)
+    // \u2014 as\u00ed "fresh", "maclar" y aliases devuelven los mismos gastos
     const todosDelProveedor = (gastosPagos ?? []).filter((g) =>
-      g.proveedor
-        ?.toLowerCase()
+      proveedorSearchSpace(g)
         .normalize('NFD')
         .replace(/[\u0300-\u036f]/g, '')
         .includes(fp),
@@ -599,14 +649,15 @@ export function ComprasPage() {
     const pagados = delProveedor.filter((g) => g.estado_pago?.toLowerCase() === 'pagado');
 
     return {
-      nombre: todosDelProveedor[0]?.proveedor ?? filtroProveedor,
+      nombre: todosDelProveedor[0] ? proveedorDisplay(todosDelProveedor[0]) : filtroProveedor,
       totalCompras: delProveedor.reduce((s, g) => s + g.importe_total, 0),
       cantCompras: delProveedor.length,
       totalPendiente: pendientesTotal.reduce((s, g) => s + g.importe_total, 0),
       cantPendientes: pendientesTotal.length,
       totalPagado: pagados.reduce((s, g) => s + g.importe_total, 0),
     };
-  }, [gastosPagos, filtroProveedor, vistaResumenProv, mesPagos]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gastosPagos, filtroProveedor, vistaResumenProv, mesPagos, proveedoresMap]);
 
   // Agrupación de PENDIENTES por proveedor para vista bulk.
   // También adjunta los gastos PAGADOS del mes seleccionado por proveedor,
@@ -630,14 +681,18 @@ export function ComprasPage() {
         .toLowerCase()
         .normalize('NFD')
         .replace(/[̀-ͯ]/g, '');
+      // Buscar contra todos los nombres del proveedor (razón social + comercial + aliases)
       lista = lista.filter((g) =>
-        g.proveedor
-          ?.toLowerCase()
+        proveedorSearchSpace(g)
           .normalize('NFD')
           .replace(/[̀-ͯ]/g, '')
           .includes(fp),
       );
     }
+
+    // Agrupamos por el DISPLAY canónico del proveedor (nombre_comercial ?? razon_social)
+    // cuando hay proveedor_id, para que "FRESH", "FRESH Dist." y "MACLAR SRL" caigan
+    // en una sola fila "FRESH Distribuidora" si comparten el mismo registro maestro.
 
     // Pagados del mes seleccionado: por proveedor, filtrados por la fecha
     // del pago real (no la del gasto). Mismo criterio que el KPI Pagado.
@@ -646,14 +701,14 @@ export function ComprasPage() {
       if (g.estado_pago?.toLowerCase() !== 'pagado') continue;
       const pago = pagosGastosMap.get(g.id);
       if (!pago || !pago.fecha_pago.startsWith(mesPagos)) continue;
-      const key = g.proveedor || '(Sin proveedor)';
+      const key = proveedorDisplay(g) || '(Sin proveedor)';
       if (!pagadosMesPorProveedor.has(key)) pagadosMesPorProveedor.set(key, []);
       pagadosMesPorProveedor.get(key)!.push(g);
     }
 
     const grupos = new Map<string, Gasto[]>();
     for (const g of lista) {
-      const key = g.proveedor || '(Sin proveedor)';
+      const key = proveedorDisplay(g) || '(Sin proveedor)';
       if (!grupos.has(key)) grupos.set(key, []);
       grupos.get(key)!.push(g);
     }
@@ -738,7 +793,8 @@ export function ComprasPage() {
         if (a.total !== b.total) return b.total - a.total;
         return b.totalPagadoMes - a.totalPagadoMes;
       });
-  }, [gastosPagos, filtroPagos, filtroProveedor, pagosGastosMap, mesPagos]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gastosPagos, filtroPagos, filtroProveedor, pagosGastosMap, mesPagos, proveedoresMap]);
 
   // Selección bulk: cálculos derivados
   const seleccionInfo = useMemo(() => {
@@ -746,7 +802,7 @@ export function ComprasPage() {
       return { gastos: [] as Gasto[], total: 0, proveedores: [] as string[] };
     const gastos = (gastosPagos ?? []).filter((g) => seleccionados.has(g.id));
     const total = gastos.reduce((s, g) => s + g.importe_total, 0);
-    const proveedores = [...new Set(gastos.map((g) => g.proveedor || '(Sin proveedor)'))];
+    const proveedores = [...new Set(gastos.map((g) => proveedorDisplay(g) || '(Sin proveedor)'))];
     return { gastos, total, proveedores };
   }, [seleccionados, gastosPagos]);
 
