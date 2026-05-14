@@ -147,11 +147,11 @@ export function VincularPagosMovModal({ mov, open, onClose, onSuccess }: Props) 
       const top = (data as ProveedorMatch[] | null)?.[0];
       if (!top) return;
       setProveedorResuelto(top);
-      // Sobreescribir el filtro con el nombre con que está cargado en el ERP
-      const nombreERP = top.razon_social ?? top.nombre_comercial ?? '';
-      if (nombreERP && nombreERP.toLowerCase() !== busqueda.toLowerCase()) {
-        setBusqueda(nombreERP);
-      }
+      // Limpiamos `busqueda` para activar el modo "filtrar por proveedor_id":
+      // así mostramos TODAS las pendientes del proveedor (across locales) sin
+      // que el filtro por texto las descarte. Si el usuario tipea algo, vuelve
+      // al modo texto automáticamente.
+      setBusqueda('');
     })();
     return () => {
       cancelled = true;
@@ -159,11 +159,22 @@ export function VincularPagosMovModal({ mov, open, onClose, onSuccess }: Props) 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, mov.id]);
 
+  // Modo de búsqueda: si hay proveedor resuelto y el usuario no editó manualmente
+  // el buscador, filtramos por proveedor_id. Si el usuario tipea algo, pasamos al
+  // modo texto (búsqueda por nombre).
+  const usarProveedorId = proveedorResuelto !== null && busqueda.trim().length === 0;
+
   const { data: gastosPendientes, isLoading } = useQuery<GastoPendiente[]>({
-    queryKey: ['gastos_pendientes_para_vincular', busqueda],
+    queryKey: [
+      'gastos_pendientes_para_vincular',
+      usarProveedorId ? `pid:${proveedorResuelto?.id}` : `txt:${busqueda}`,
+    ],
     queryFn: async () => {
-      // Sin búsqueda → muestra TODAS las pendientes (las 120 más recientes).
-      // Con búsqueda → filtra por tokens.
+      // Modo A — Proveedor resuelto vía CUIT/alias: filtramos por proveedor_id.
+      //   Muestra TODAS las pendientes de ese proveedor (todos los locales),
+      //   sin depender de cómo se haya tipeado el nombre en `gastos.proveedor`.
+      // Modo B — Texto: filtra por tokens del nombre (el usuario editó el buscador).
+      // Modo C — Sin filtro: muestra las 120 pendientes más recientes.
       let q = supabase
         .from('gastos')
         .select('id, fecha, proveedor, importe_total, estado_pago, comentario, nro_comprobante, local')
@@ -171,7 +182,10 @@ export function VincularPagosMovModal({ mov, open, onClose, onSuccess }: Props) 
         .neq('estado_pago', 'Pagado')
         .order('fecha', { ascending: false })
         .limit(120);
-      if (busqueda.trim().length >= 2) {
+
+      if (usarProveedorId && proveedorResuelto) {
+        q = q.eq('proveedor_id', proveedorResuelto.id);
+      } else if (busqueda.trim().length >= 2) {
         // Buscar por TOKENS — si "Mashill Sas" no matchea, probar con "Mashill" sola.
         // Esto cubre casos donde el proveedor del mov tiene sufijos (Sas, SRL, S.A., etc.)
         // que no aparecen en cómo se cargó el gasto en el ERP.
@@ -196,6 +210,53 @@ export function VincularPagosMovModal({ mov, open, onClose, onSuccess }: Props) 
       else next.add(id);
       return next;
     });
+  }
+
+  // Agrupado por local SOLO cuando estamos en modo "proveedor resuelto" — ahí
+  // tiene sentido mostrar Vedia + Saavedra + SAS separados con subtotal.
+  // En modo texto la lista queda flat (como siempre).
+  const gastosAgrupados = useMemo(() => {
+    if (!usarProveedorId || !gastosPendientes) return null;
+    const grupos = new Map<string, GastoPendiente[]>();
+    for (const g of gastosPendientes) {
+      const k = g.local ?? 'sin_local';
+      if (!grupos.has(k)) grupos.set(k, []);
+      grupos.get(k)!.push(g);
+    }
+    // Orden fijo: Vedia → Saavedra → SAS/Empresa → resto
+    const ordenLocal = (l: string) => {
+      if (l === 'vedia') return 0;
+      if (l === 'saavedra') return 1;
+      if (l === 'sas') return 2;
+      return 3;
+    };
+    return Array.from(grupos.entries())
+      .sort((a, b) => ordenLocal(a[0]) - ordenLocal(b[0]))
+      .map(([local, items]) => ({
+        local,
+        items,
+        total: items.reduce((s, g) => s + Number(g.importe_total), 0),
+      }));
+  }, [usarProveedorId, gastosPendientes]);
+
+  function seleccionarTodasDeLocal(items: GastoPendiente[]) {
+    setSeleccion((prev) => {
+      const next = new Set(prev);
+      const todasSeleccionadas = items.every((g) => next.has(g.id));
+      if (todasSeleccionadas) {
+        for (const g of items) next.delete(g.id);
+      } else {
+        for (const g of items) next.add(g.id);
+      }
+      return next;
+    });
+  }
+
+  function rotuloLocal(l: string): string {
+    if (l === 'vedia') return '🍝 Vedia';
+    if (l === 'saavedra') return '🌿 Saavedra';
+    if (l === 'sas') return '🏢 Rodziny S.A.S.';
+    return '📋 Sin local';
   }
 
   const sumaSeleccion = useMemo(() => {
@@ -433,10 +494,12 @@ export function VincularPagosMovModal({ mov, open, onClose, onSuccess }: Props) 
           </div>
           {proveedorResuelto && (
             <div className="mt-1.5 text-[10px] text-emerald-700">
-              🔗 Detectado proveedor <strong>{proveedorResuelto.razon_social}</strong>
+              🔗 Detectado proveedor <strong>{proveedorResuelto.nombre_comercial ?? proveedorResuelto.razon_social}</strong>
               {proveedorResuelto.cuit ? ` (CUIT ${proveedorResuelto.cuit})` : ''}
               {' '}vía {proveedorResuelto.score >= 90 ? 'CUIT' : proveedorResuelto.score >= 70 ? 'alias' : 'razón social'}.
-              Filtramos las facturas pendientes por este nombre.
+              {usarProveedorId
+                ? ' Mostramos todas sus facturas pendientes, agrupadas por local.'
+                : ' Tipeá para filtrar por nombre, o limpiá el campo para ver todas las del proveedor.'}
             </div>
           )}
         </div>
@@ -470,6 +533,81 @@ export function VincularPagosMovModal({ mov, open, onClose, onSuccess }: Props) 
               ) : (
                 <div className="text-gray-400">No hay facturas pendientes en este momento.</div>
               )}
+            </div>
+          ) : gastosAgrupados ? (
+            // Modo proveedor resuelto: lista agrupada por local con subtotal y
+            // botón "seleccionar todas" por grupo.
+            <div className="space-y-3">
+              {gastosAgrupados.map((grupo) => {
+                const todasSel = grupo.items.every((g) => seleccion.has(g.id));
+                const algunaSel = grupo.items.some((g) => seleccion.has(g.id));
+                return (
+                  <div key={grupo.local} className="rounded-md border border-gray-200">
+                    <div className="flex items-center justify-between gap-2 border-b border-gray-200 bg-gray-50 px-2.5 py-1.5">
+                      <div className="flex items-center gap-2 text-xs">
+                        <strong className="text-gray-800">{rotuloLocal(grupo.local)}</strong>
+                        <span className="text-gray-500">
+                          · {grupo.items.length} {grupo.items.length === 1 ? 'factura' : 'facturas'}
+                        </span>
+                        <span className="tabular-nums text-red-700">· {formatARS(grupo.total)}</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => seleccionarTodasDeLocal(grupo.items)}
+                        className={cn(
+                          'rounded border px-2 py-0.5 text-[10px] font-medium transition-colors',
+                          todasSel
+                            ? 'border-rodziny-700 bg-rodziny-700 text-white hover:bg-rodziny-800'
+                            : algunaSel
+                              ? 'border-rodziny-300 bg-rodziny-50 text-rodziny-700 hover:bg-rodziny-100'
+                              : 'border-gray-300 bg-white text-gray-600 hover:bg-gray-50',
+                        )}
+                      >
+                        {todasSel ? '✓ todas' : `Seleccionar todas (${grupo.items.length})`}
+                      </button>
+                    </div>
+                    <div className="space-y-1 p-1.5">
+                      {grupo.items.map((g) => {
+                        const sel = seleccion.has(g.id);
+                        return (
+                          <button
+                            type="button"
+                            key={g.id}
+                            onClick={() => toggle(g.id)}
+                            className={cn(
+                              'w-full rounded-md border p-2 text-left text-xs transition-all',
+                              sel
+                                ? 'border-rodziny-700 bg-rodziny-50 ring-1 ring-rodziny-300'
+                                : 'border-gray-200 bg-white hover:bg-gray-50',
+                            )}
+                          >
+                            <div className="flex items-center gap-2">
+                              <input type="checkbox" checked={sel} readOnly className="h-4 w-4" />
+                              <div className="flex-1">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <strong className="text-gray-900">{g.proveedor ?? '(sin proveedor)'}</strong>
+                                  <span className="text-[10px] text-gray-500">{g.fecha}</span>
+                                  {g.nro_comprobante && (
+                                    <span className="font-mono text-[10px] text-gray-400">
+                                      #{g.nro_comprobante}
+                                    </span>
+                                  )}
+                                </div>
+                                {g.comentario && (
+                                  <div className="mt-0.5 text-[10px] text-gray-500">
+                                    {g.comentario.length > 80 ? g.comentario.slice(0, 80) + '…' : g.comentario}
+                                  </div>
+                                )}
+                              </div>
+                              <strong className="tabular-nums text-red-700">{formatARS(g.importe_total)}</strong>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           ) : (
             <div className="space-y-1">
