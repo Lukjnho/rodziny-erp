@@ -185,6 +185,12 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
   const [comentario, setComentario] = useState<string>('');
   const [tipoComprobante, setTipoComprobante] = useState<string>('recibo');
 
+  // Discriminación de IVA — opcional, auto-activado para Factura A/B.
+  // Cuando está activo: Neto e IVA se calculan a partir de Total + alícuota,
+  // y se guardan en gastos.importe_neto e gastos.iva (si no, ambos quedan null).
+  const [discriminaIVA, setDiscriminaIVA] = useState<boolean>(false);
+  const [alicuotaIVA, setAlicuotaIVA] = useState<number>(21);
+
   // Estado de pago — controla si se inserta pagos_gastos.
   //  - digital: pagado=true siempre (subió comprobante)
   //  - fisico: default pagado=true (ya lo pagué a mano)
@@ -285,6 +291,25 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
   // Derivado: el importe como numero, parseado del input texto
   const importeTotal = useMemo(() => parseNumeroAR(importeTexto) ?? 0, [importeTexto]);
   const requiereAprobacion = importeTotal >= umbralAprobacion;
+
+  // Neto/IVA derivados del Total + alícuota cuando está activa la discriminación.
+  // Neto = Total / (1 + alícuota/100); IVA = Total - Neto.
+  const { importeNetoCalc, ivaCalc } = useMemo(() => {
+    if (!discriminaIVA || importeTotal <= 0 || alicuotaIVA <= 0) {
+      return { importeNetoCalc: 0, ivaCalc: 0 };
+    }
+    const neto = Math.round((importeTotal / (1 + alicuotaIVA / 100)) * 100) / 100;
+    const iva = Math.round((importeTotal - neto) * 100) / 100;
+    return { importeNetoCalc: neto, ivaCalc: iva };
+  }, [discriminaIVA, importeTotal, alicuotaIVA]);
+
+  // Auto-activar discriminación de IVA cuando el tipo es Factura A o Factura B
+  // (en factura_c el IVA NO se discrimina porque es monotributo).
+  useEffect(() => {
+    if (tipoComprobante === 'factura_a' || tipoComprobante === 'factura_b') {
+      setDiscriminaIVA(true);
+    }
+  }, [tipoComprobante]);
 
   // Lista del dropdown: proveedores activos + proveedor recien creado por OCR (si aun no se refresco la query)
   const proveedoresParaDropdown = useMemo(() => {
@@ -850,8 +875,14 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
           proveedor: proveedor?.razon_social ?? null, // legacy mirror
           categoria_id: catId,
           importe_total: total,
-          importe_neto: null,
-          iva: null,
+          // Si discrimina IVA → guardamos neto/IVA prorrateados según el total del split.
+          // Si no → null (el EdR sigue usando importe_total como antes).
+          importe_neto: discriminaIVA && importeTotal > 0
+            ? Math.round((importeNetoCalc * (total / importeTotal)) * 100) / 100
+            : null,
+          iva: discriminaIVA && importeTotal > 0
+            ? Math.round((ivaCalc * (total / importeTotal)) * 100) / 100
+            : null,
           iibb: null,
           medio_pago: pagado ? medioPago : null,
           tipo_comprobante: tipoComprobante,
@@ -1710,6 +1741,51 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
                     pendiente de aprobacion por Lucas.
                   </div>
                 )}
+                {/* Discriminación de IVA */}
+                <div className="mt-2 rounded border border-gray-200 bg-gray-50 p-2">
+                  <label className="flex cursor-pointer items-center gap-2 text-xs text-gray-700">
+                    <input
+                      type="checkbox"
+                      checked={discriminaIVA}
+                      onChange={(e) => setDiscriminaIVA(e.target.checked)}
+                      className="h-3.5 w-3.5"
+                    />
+                    <span className="font-medium">Discriminar IVA</span>
+                    <span className="text-gray-500">
+                      (Auto para Factura A/B — se calcula desde el total)
+                    </span>
+                  </label>
+                  {discriminaIVA && (
+                    <div className="mt-2 grid grid-cols-3 gap-2 text-xs">
+                      <div>
+                        <label className="block text-gray-500">Neto</label>
+                        <div className="rounded border border-gray-300 bg-white px-2 py-1.5 text-right tabular-nums text-gray-900">
+                          $ {formatNumeroAR(importeNetoCalc)}
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-gray-500">IVA</label>
+                        <div className="rounded border border-gray-300 bg-white px-2 py-1.5 text-right tabular-nums text-gray-900">
+                          $ {formatNumeroAR(ivaCalc)}
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-gray-500">Alícuota</label>
+                        <select
+                          value={alicuotaIVA}
+                          onChange={(e) => setAlicuotaIVA(Number(e.target.value))}
+                          className="w-full rounded border border-gray-300 bg-white px-2 py-1.5"
+                        >
+                          <option value={21}>21 %</option>
+                          <option value={10.5}>10,5 %</option>
+                          <option value={27}>27 %</option>
+                          <option value={5}>5 %</option>
+                          <option value={2.5}>2,5 %</option>
+                        </select>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </Field>
 
               <Field label="Fecha del comprobante *">

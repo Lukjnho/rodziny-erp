@@ -81,6 +81,59 @@ export function ListadoGastos({
     },
   });
 
+  // Mapa proveedor_id → datos del proveedor maestro (display + todos los nombres alternativos).
+  // - `display` = nombre_comercial ?? razon_social → lo que mostramos en la columna.
+  // - `nombres` = razón social + nombre comercial + aliases → espacio de búsqueda.
+  //   Así buscar "MACLAR" devuelve también los gastos cargados como "FRESH Dist.".
+  interface ProveedorInfo {
+    display: string;
+    nombres: string;  // todos los nombres concatenados en minúsculas, para .includes()
+  }
+  const { data: proveedoresMap } = useQuery({
+    queryKey: ['gastos_proveedores_display'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('proveedores')
+        .select('id, razon_social, nombre_comercial, aliases');
+      if (error) throw error;
+      const map = new Map<string, ProveedorInfo>();
+      for (const p of data ?? []) {
+        const display = (p.nombre_comercial?.trim() || p.razon_social?.trim() || '').trim();
+        if (!display) continue;
+        const nombres = [p.razon_social, p.nombre_comercial, ...((p.aliases as string[] | null) ?? [])]
+          .filter(Boolean)
+          .map((s) => (s as string).toLowerCase())
+          .join(' | ');
+        map.set(p.id as string, { display, nombres });
+      }
+      return map;
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+
+  // Display canónico del proveedor: nombre del registro maestro si está vinculado,
+  // si no, el texto crudo del campo `gastos.proveedor`.
+  const proveedorDisplay = (g: Gasto): string => {
+    if (g.proveedor_id) {
+      const canon = proveedoresMap?.get(g.proveedor_id);
+      if (canon) return canon.display;
+    }
+    return g.proveedor ?? '';
+  };
+
+  // Espacio de búsqueda del proveedor para un gasto: todos sus nombres alternativos.
+  // Si tiene proveedor_id → incluye razón social + nombre comercial + aliases del maestro.
+  // Si no → solo el texto crudo del campo.
+  const proveedorSearchSpace = (g: Gasto): string => {
+    const partes: string[] = [];
+    if (g.proveedor) partes.push(g.proveedor.toLowerCase());
+    if (g.proveedor_id) {
+      const canon = proveedoresMap?.get(g.proveedor_id);
+      if (canon) partes.push(canon.nombres);
+    }
+    return partes.join(' | ');
+  };
+
   // IDs de gastos que ya tienen un movimiento bancario vinculado (= conciliados con extracto)
   const { data: gastosConciliadosSet } = useQuery({
     queryKey: ['gastos_conciliados_ids', local, desde, hasta, gastos?.length ?? 0],
@@ -136,8 +189,8 @@ export function ListadoGastos({
       lista = lista.filter((g) => estadoNormalizado(g) === 'pagado');
     }
     if (filtroProveedor) {
-      const f = filtroProveedor.toLowerCase();
-      lista = lista.filter((g) => (g.proveedor ?? '').toLowerCase().includes(f));
+      // Filtra por display canónico, así "FRESH Distribuidora" agrupa todos los textos
+      lista = lista.filter((g) => proveedorDisplay(g) === filtroProveedor);
     }
     if (filtroCategoria) {
       lista = lista.filter((g) =>
@@ -153,14 +206,17 @@ export function ListadoGastos({
         (g) =>
           (g.nro_comprobante ?? '').toLowerCase().includes(b) ||
           (g.comentario ?? '').toLowerCase().includes(b) ||
-          (g.proveedor ?? '').toLowerCase().includes(b),
+          // Buscar en todos los nombres del proveedor (razón social + fantasía + aliases)
+          proveedorSearchSpace(g).includes(b),
       );
     }
     if (filtroSinFactura) {
       lista = lista.filter(requiereFactura);
     }
     return lista;
-  }, [gastos, filtroEstado, filtroProveedor, filtroCategoria, filtroMedioPago, busqueda, filtroSinFactura]);
+    // proveedorDisplay depende de proveedoresMap (lo incluimos en deps)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gastos, filtroEstado, filtroProveedor, filtroCategoria, filtroMedioPago, busqueda, filtroSinFactura, proveedoresMap]);
 
   // Conteo total de gastos que exigen factura y no la tienen — KPI clickeable
   const sinFacturaCount = useMemo(() => (gastos ?? []).filter(requiereFactura).length, [gastos]);
@@ -188,10 +244,17 @@ export function ListadoGastos({
     );
   }, [filtrados]);
 
-  // Lista única de proveedores y categorías para los filtros
+  // Lista única de proveedores para el filtro — usando el display canónico, no el texto crudo.
+  // Así el dropdown muestra "FRESH Distribuidora" una sola vez en lugar de FRESH / FRESH Dist. / MACLAR SRL.
   const proveedoresUnicos = useMemo(() => {
-    return [...new Set((gastos ?? []).map((g) => g.proveedor).filter(Boolean) as string[])].sort();
-  }, [gastos]);
+    const set = new Set<string>();
+    for (const g of gastos ?? []) {
+      const nombre = proveedorDisplay(g);
+      if (nombre) set.add(nombre);
+    }
+    return [...set].sort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gastos, proveedoresMap]);
   const categoriasUnicas = useMemo(() => {
     return [...new Set((gastos ?? []).map((g) => g.categoria).filter(Boolean) as string[])].sort();
   }, [gastos]);
@@ -231,7 +294,7 @@ export function ListadoGastos({
   async function eliminarGasto(g: Gasto) {
     if (
       !window.confirm(
-        `¿Eliminar el gasto de ${g.proveedor || 's/proveedor'} por ${formatARS(g.importe_total)}?\n\nNo se puede deshacer.`,
+        `¿Eliminar el gasto de ${proveedorDisplay(g) || 's/proveedor'} por ${formatARS(g.importe_total)}?\n\nNo se puede deshacer.`,
       )
     )
       return;
@@ -393,7 +456,12 @@ export function ListadoGastos({
                     <td className="whitespace-nowrap px-3 py-2 text-gray-700">
                       {formatFecha(g.fecha)}
                     </td>
-                    <td className="px-3 py-2 font-medium text-gray-900">{g.proveedor || '—'}</td>
+                    <td className="px-3 py-2 font-medium text-gray-900" title={
+                      // Si el texto crudo difiere del display canónico, mostrarlo en tooltip
+                      g.proveedor_id && g.proveedor && g.proveedor !== proveedorDisplay(g)
+                        ? `Cargado como: ${g.proveedor}`
+                        : undefined
+                    }>{proveedorDisplay(g) || '—'}</td>
                     <td className="px-3 py-2 text-gray-600">{g.categoria || '—'}</td>
                     <td className="px-3 py-2 text-gray-600">
                       <span className="text-[10px] text-gray-400">{tipoLabel}</span>
