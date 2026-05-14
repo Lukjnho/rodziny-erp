@@ -7,6 +7,7 @@ import { StatusBadge } from '@/components/ui/StatusBadge';
 import { cn, formatARS, formatFecha } from '@/lib/utils';
 import { CronogramaTab } from './CronogramaTab';
 import { AsistenciaTab } from './AsistenciaTab';
+import { HorasTab } from './HorasTab';
 import { SueldosTab } from './SueldosTab';
 import { EvaluacionesTab } from './EvaluacionesTab';
 import { VacacionesTab } from './VacacionesTab';
@@ -16,6 +17,7 @@ type Tab =
   | 'legajos'
   | 'cronograma'
   | 'asistencia'
+  | 'horas'
   | 'sueldos'
   | 'evaluaciones'
   | 'vacaciones'
@@ -77,6 +79,19 @@ const ayudaPorTab: Record<Tab, { titulo: string; pasos: string[] }> = {
       'Si alguien se olvidó el celu, usá "+ Fichaje manual" desde la toolbar o desde dentro del día.',
       'Podés editar la hora de una fichada o eliminarla si se cargó por error.',
       'Los KPIs de arriba resumen toda la quincena: fichajes totales, asistencias completas, ausencias y tardanzas.',
+    ],
+  },
+  horas: {
+    titulo: 'Horas teóricas vs reales',
+    pasos: [
+      'Comparativo del período: horas que figuran en el Cronograma (teóricas) vs horas efectivamente fichadas (reales).',
+      'Cada fila es un empleado. Click en la fila para expandir el detalle día por día.',
+      'La diferencia se calcula como Reales − Teóricas: en verde si trabajó más, en rojo si trabajó menos.',
+      'Los días con diferencia mayor a 30 minutos quedan resaltados en amarillo dentro del drilldown.',
+      'Horas reales = suma de pares entrada→salida cronológicos del día (soporta jornadas partidas).',
+      'Si hay fichadas sin par (ej: faltó la salida), ese día no suma horas y aparece como "Fichaje incompleto".',
+      'Tildá "Solo con discrepancia" para filtrar empleados que tienen al menos un día con diferencia >30min.',
+      'Las fichadas en días no programados (francos) suman a las reales pero no a las teóricas — quedan en verde.',
     ],
   },
   sueldos: {
@@ -259,6 +274,9 @@ export function RRHHPage() {
         <TabButton activo={tab === 'asistencia'} onClick={() => setTab('asistencia')}>
           Asistencia
         </TabButton>
+        <TabButton activo={tab === 'horas'} onClick={() => setTab('horas')}>
+          Horas
+        </TabButton>
         <TabButton activo={tab === 'sueldos'} onClick={() => setTab('sueldos')}>
           Sueldos
         </TabButton>
@@ -283,6 +301,7 @@ export function RRHHPage() {
       {tab === 'legajos' && <LegajosTab />}
       {tab === 'cronograma' && <CronogramaTab />}
       {tab === 'asistencia' && <AsistenciaTab />}
+      {tab === 'horas' && <HorasTab />}
       {tab === 'sueldos' && <SueldosTab />}
       {tab === 'evaluaciones' && <EvaluacionesTab />}
       {tab === 'vacaciones' && <VacacionesTab />}
