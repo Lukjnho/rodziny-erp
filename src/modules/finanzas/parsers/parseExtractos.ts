@@ -208,6 +208,8 @@ function parseMercadoPagoNuevo(lines: string[]): MovimientoRaw[] {
   const iTaxes = colIdx('TAXES_AMOUNT');
   const iPOS = colIdx('POS_NAME');
   const iDetail = colIdx('SALE_DETAIL');
+  const iPayer = colIdx('PAYER_NAME');
+  const iSubUnit = colIdx('SUB_UNIT');
 
   if (iDate < 0 || iAmount < 0) return [];
 
@@ -224,20 +226,55 @@ function parseMercadoPagoNuevo(lines: string[]): MovimientoRaw[] {
     const txType = cols[iTxType] ?? '';
     const amount = parseFloat(cols[iAmount] ?? '0') || 0;
     const fee = parseFloat(cols[iFee] ?? '0') || 0;
-    const net = parseFloat(cols[iNet] ?? '0') || 0;
     const taxes = parseFloat(cols[iTaxes] ?? '0') || 0;
     const method = cols[iMethod] ?? '';
     const methodT = cols[iMethodT] ?? '';
     const ref = cols[iRef] ?? `mp_${i}`;
     const pos = cols[iPOS] ?? '';
-    const detail = cols[iDetail] ?? '';
+    const detail = (cols[iDetail] ?? '').replace(/^"+|"+$/g, '').trim();
+    const payer = iPayer >= 0 ? cols[iPayer] ?? '' : '';
+    const subUnit = iSubUnit >= 0 ? cols[iSubUnit] ?? '' : '';
 
     // Descripción legible
     const desc = detail || `${methodT} · ${method}` + (pos ? ` · ${pos}` : '');
 
-    // SETTLEMENT = cobro (ingreso bruto, comisiones y retenciones van como débitos separados)
-    // WITHDRAWAL/REFUND = egreso
+    // SETTLEMENT puede ser cobro (amount >= 0) o egreso/cargo directo (amount < 0)
+    // - amount >= 0 → cobro (con comisiones y retenciones como débitos separados)
+    // - amount < 0  → cargo directo MP (suscripciones, pagos QR, retenciones AFIP, Secheep…)
+    //   NOTA: los retiros bancarios NO vienen aquí como SETTLEMENT, vienen aparte en el
+    //   reporte "Retiros" con más contexto (beneficiario, CUIT, banco).
     if (txType === 'SETTLEMENT') {
+      if (amount < 0) {
+        // Egreso: cargo directo en cuenta MP (no es retiro bancario)
+        const partes = [detail || `Cargo MP · ${methodT}`];
+        if (payer && payer.toUpperCase() !== 'RODZINY PASTAS') partes.push(`a ${payer}`);
+        if (subUnit) partes.push(`(${subUnit})`);
+        result.push({
+          cuenta: 'mercadopago',
+          fecha,
+          descripcion: partes.join(' '),
+          debito: Math.abs(amount),
+          credito: 0,
+          saldo: null,
+          referencia: ref || `mp_${i}`,
+          periodo: periodoFromFecha(fecha),
+        });
+        // Retenciones aplicadas sobre el egreso (Ley 25.413, etc.)
+        if (taxes < 0) {
+          result.push({
+            cuenta: 'mercadopago',
+            fecha,
+            descripcion: `Retención sobre egreso · ${detail || methodT}`,
+            debito: Math.abs(taxes),
+            credito: 0,
+            saldo: null,
+            referencia: `mp_tax_${i}`,
+            periodo: periodoFromFecha(fecha),
+          });
+        }
+        continue;
+      }
+      // amount >= 0 → cobro
       result.push({
         cuenta: 'mercadopago',
         fecha,

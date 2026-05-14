@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { procesarComprobantePago } from '@/lib/ocrComprobantePago';
 import { formatARS, cn } from '@/lib/utils';
 import { MontoInput } from '@/components/ui/MontoInput';
 import { type MedioPago, MEDIO_PAGO_LABEL } from '@/modules/gastos/types';
@@ -296,6 +297,7 @@ export function ChecklistPagos() {
     medioPago: string,
     numeroOperacion: string | null = null,
     archivoComprobante: File | null = null,
+    comprobantePathPreSubido: string | null = null,
   ) {
     const fechaPago = hoy();
     const local = derivarLocal(pago.concepto);
@@ -304,9 +306,10 @@ export function ChecklistPagos() {
     const subcat = subcategorias.find((c) => c.id === pago.categoria_gasto_id);
     const catPadre = subcat?.parent_id ? (padres.get(subcat.parent_id) ?? '') : '';
 
-    // 0. Subir archivo del comprobante (si vino)
-    let pathComprobante: string | null = null;
-    if (archivoComprobante) {
+    // 0. Comprobante: si el modal ya lo subió al disparar OCR, reusamos ese path.
+    //    Si no, subimos el File aquí (fallback cuando el OCR no se ejecutó).
+    let pathComprobante: string | null = comprobantePathPreSubido;
+    if (!pathComprobante && archivoComprobante) {
       const ext = archivoComprobante.name.split('.').pop()?.toLowerCase() || 'pdf';
       const carpeta = `${local}/${fechaPago.substring(0, 7)}`;
       const path = `${carpeta}/pago_fijo_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
@@ -904,9 +907,10 @@ export function ChecklistPagos() {
         <ModalMedioPago
           concepto={medioPagoModal.concepto}
           medioInicial={medioPagoModal.medioInicial}
-          onConfirmar={(medio, numeroOperacion, archivo) => {
+          subfolder={`pagos-fijos/${derivarLocal(medioPagoModal.concepto)}`}
+          onConfirmar={(medio, numeroOperacion, archivo, comprobantePathPreSubido) => {
             const pago = (pagos ?? []).find((p) => p.id === medioPagoModal.pagoId);
-            if (pago) marcarPagado(pago, medio, numeroOperacion, archivo);
+            if (pago) marcarPagado(pago, medio, numeroOperacion, archivo, comprobantePathPreSubido);
             setMedioPagoModal(null);
           }}
           onClose={() => setMedioPagoModal(null)}
@@ -1238,22 +1242,64 @@ function ModalAgregarPago({
 function ModalMedioPago({
   concepto,
   medioInicial,
+  subfolder,
   onConfirmar,
   onClose,
 }: {
   concepto: string;
   medioInicial: string | null;
-  onConfirmar: (medio: string, numeroOperacion: string | null, archivo: File | null) => void;
+  subfolder: string;
+  onConfirmar: (
+    medio: string,
+    numeroOperacion: string | null,
+    archivo: File | null,
+    comprobantePathPreSubido: string | null,
+  ) => void;
   onClose: () => void;
 }) {
   const [medio, setMedio] = useState<string>(medioInicial ?? '');
   const [numeroOp, setNumeroOp] = useState<string>('');
   const [archivo, setArchivo] = useState<File | null>(null);
+  // Path del comprobante ya subido por OCR (se reusa al confirmar)
+  const [comprobantePath, setComprobantePath] = useState<string | null>(null);
+  const [ocrEjecutando, setOcrEjecutando] = useState(false);
+  const [ocrInfo, setOcrInfo] = useState<string | null>(null);
+  const [ocrWarning, setOcrWarning] = useState<string | null>(null);
   const [errorLocal, setErrorLocal] = useState<string | null>(null);
 
   // Para transferencias/cheque/tarjeta: N° op + archivo son obligatorios — son
   // las dos piezas que necesitamos para conciliar contra el extracto bancario.
   const requiereComprobante = !!medio && medio !== 'efectivo';
+
+  async function onArchivoSeleccionado(file: File | null) {
+    setErrorLocal(null);
+    setOcrInfo(null);
+    setOcrWarning(null);
+    setComprobantePath(null);
+    setArchivo(file);
+    if (!file) return;
+    setOcrEjecutando(true);
+    try {
+      const res = await procesarComprobantePago({ archivo: file, subfolder, userId: null });
+      if (!res.ok && res.error) {
+        setErrorLocal(res.error);
+        return;
+      }
+      setComprobantePath(res.file_path);
+      if (res.n_operacion && !numeroOp.trim()) {
+        setNumeroOp(res.n_operacion);
+        const pct = Math.round((res.confianza ?? 0) * 100);
+        setOcrInfo(`✓ N° detectado: ${res.n_operacion}${pct ? ` (${pct}% confianza)` : ''}`);
+      } else if (!res.n_operacion) {
+        setOcrInfo('Archivo subido. Completá el N° de operación manualmente.');
+      } else {
+        setOcrInfo(`✓ Archivo subido. N° detectado: ${res.n_operacion} (no se sobreescribió).`);
+      }
+      if (res.warning) setOcrWarning(res.warning);
+    } finally {
+      setOcrEjecutando(false);
+    }
+  }
 
   function confirmar() {
     setErrorLocal(null);
@@ -1263,12 +1309,23 @@ function ModalMedioPago({
         setErrorLocal('N° de operación obligatorio para transferencias, cheques y tarjeta.');
         return;
       }
-      if (!archivo) {
+      if (!archivo && !comprobantePath) {
         setErrorLocal('Comprobante de pago obligatorio para transferencias, cheques y tarjeta.');
         return;
       }
+      if (ocrEjecutando) {
+        setErrorLocal('Esperá a que termine el análisis del comprobante.');
+        return;
+      }
     }
-    onConfirmar(medio, numeroOp.trim() || null, archivo);
+    // Si OCR ya subió el archivo, pasamos el path y archivo=null (no resubir).
+    // Si no se ejecutó OCR (efectivo sin comprobante), pasamos el File.
+    onConfirmar(
+      medio,
+      numeroOp.trim() || null,
+      comprobantePath ? null : archivo,
+      comprobantePath,
+    );
   }
 
   return (
@@ -1315,7 +1372,7 @@ function ModalMedioPago({
             <p className="mt-1 text-[11px] text-gray-400">
               {medio === 'transferencia_galicia' || medio === 'cheque_galicia'
                 ? 'Del PDF Galicia: copiá la "Leyenda adicional" (10 dígitos). Concilia aunque el extracto trunque el primer dígito.'
-                : 'Se concilia automáticamente contra el movimiento bancario al sincronizar MP / importar extracto.'}
+                : 'Subí el comprobante y el N° de operación se completa solo. Concilia automáticamente al importar el extracto.'}
             </p>
           </div>
           {requiereComprobante && (
@@ -1324,11 +1381,26 @@ function ModalMedioPago({
               <input
                 type="file"
                 accept="image/*,application/pdf"
-                onChange={(e) => setArchivo(e.target.files?.[0] ?? null)}
-                className="block w-full text-xs file:mr-2 file:rounded file:border file:border-gray-300 file:bg-gray-50 file:px-2 file:py-1 file:text-xs file:text-gray-700"
+                disabled={ocrEjecutando}
+                onChange={(e) => onArchivoSeleccionado(e.target.files?.[0] ?? null)}
+                className="block w-full text-xs file:mr-2 file:rounded file:border file:border-gray-300 file:bg-gray-50 file:px-2 file:py-1 file:text-xs file:text-gray-700 disabled:opacity-50"
               />
               {archivo && (
                 <p className="mt-1 truncate text-[11px] text-green-700">📎 {archivo.name}</p>
+              )}
+              {ocrEjecutando && (
+                <p className="mt-1 flex items-center gap-1 text-[11px] text-blue-700">
+                  <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-blue-300 border-t-blue-700" />
+                  Leyendo comprobante…
+                </p>
+              )}
+              {ocrInfo && !ocrEjecutando && (
+                <p className="mt-1 text-[11px] text-green-700">{ocrInfo}</p>
+              )}
+              {ocrWarning && (
+                <p className="mt-1 rounded border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] text-amber-800">
+                  {ocrWarning}
+                </p>
               )}
             </div>
           )}
@@ -1347,7 +1419,7 @@ function ModalMedioPago({
           </button>
           <button
             onClick={confirmar}
-            disabled={!medio}
+            disabled={!medio || ocrEjecutando}
             className="rounded-md bg-rodziny-800 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-rodziny-700 disabled:opacity-50"
           >
             Confirmar pago

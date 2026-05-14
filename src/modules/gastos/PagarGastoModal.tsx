@@ -17,6 +17,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth';
 import { cn, formatARS } from '@/lib/utils';
+import { procesarComprobantePago } from '@/lib/ocrComprobantePago';
 import { MEDIO_PAGO_LABEL, type MedioPago, type Gasto, type PagoGasto } from './types';
 
 interface Props {
@@ -99,6 +100,11 @@ export function PagarGastoModal({ open, gasto, onClose }: Props) {
   const [descuentoTexto, setDescuentoTexto] = useState<string>('');
   const [nOperacion, setNOperacion] = useState<string>('');
   const [archivoComprobante, setArchivoComprobante] = useState<File | null>(null);
+  // Path en Storage del comprobante ya subido por OCR (se reusa al confirmar)
+  const [comprobantePagoPath, setComprobantePagoPath] = useState<string | null>(null);
+  const [ocrEjecutando, setOcrEjecutando] = useState(false);
+  const [ocrInfo, setOcrInfo] = useState<string | null>(null);
+  const [ocrWarning, setOcrWarning] = useState<string | null>(null);
   const [archivoFactura, setArchivoFactura] = useState<File | null>(null);
   const [notas, setNotas] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
@@ -144,6 +150,10 @@ export function PagarGastoModal({ open, gasto, onClose }: Props) {
       setDescuentoTexto('');
       setNOperacion('');
       setArchivoComprobante(null);
+      setComprobantePagoPath(null);
+      setOcrEjecutando(false);
+      setOcrInfo(null);
+      setOcrWarning(null);
       setArchivoFactura(null);
       setNotas('');
       setError(null);
@@ -154,11 +164,47 @@ export function PagarGastoModal({ open, gasto, onClose }: Props) {
 
   if (!open || !gasto) return null;
 
-  function handleSubirComprobante(file: File | null) {
+  async function handleSubirComprobante(file: File | null) {
     setArchivoComprobante(file);
-    if (file && !nOperacion.trim()) {
+    setComprobantePagoPath(null);
+    setOcrInfo(null);
+    setOcrWarning(null);
+    if (!file) return;
+
+    // Fallback inmediato: leer N° op del nombre del archivo (MP descarga así).
+    if (!nOperacion.trim()) {
       const detectado = extraerNroOperacion(file.name);
       if (detectado) setNOperacion(detectado);
+    }
+
+    // OCR async: sube el archivo + Claude Haiku extrae N° op real del contenido
+    setOcrEjecutando(true);
+    try {
+      const carpeta = gasto ? `${gasto.local}/${gasto.fecha.substring(0, 7)}` : 'pagos-cta-cte';
+      const res = await procesarComprobantePago({
+        archivo: file,
+        subfolder: carpeta,
+        userId: user?.id ?? null,
+      });
+      if (!res.ok && res.error) {
+        setError(res.error);
+        return;
+      }
+      setComprobantePagoPath(res.file_path);
+      if (res.n_operacion) {
+        // Solo sobreescribimos el N° op si el usuario no había tocado el campo
+        // o si el valor actual proviene del nombre del archivo (no editado a mano).
+        const actual = nOperacion.trim();
+        const provieneDelNombre = !actual || actual === extraerNroOperacion(file.name);
+        if (provieneDelNombre) setNOperacion(res.n_operacion);
+        const pct = Math.round((res.confianza ?? 0) * 100);
+        setOcrInfo(`✓ N° detectado: ${res.n_operacion}${pct ? ` (${pct}% confianza)` : ''}`);
+      } else {
+        setOcrInfo('Archivo subido. Completá el N° de operación manualmente.');
+      }
+      if (res.warning) setOcrWarning(res.warning);
+    } finally {
+      setOcrEjecutando(false);
     }
   }
 
@@ -192,8 +238,12 @@ export function PagarGastoModal({ open, gasto, onClose }: Props) {
         setError('N° de operación obligatorio para transferencias, cheques y tarjeta. Copialo del comprobante.');
         return;
       }
-      if (!archivoComprobante && !yaTieneComprobante) {
+      if (!archivoComprobante && !comprobantePagoPath && !yaTieneComprobante) {
         setError('Comprobante de pago obligatorio para transferencias, cheques y tarjeta. Subí la captura o PDF.');
+        return;
+      }
+      if (ocrEjecutando) {
+        setError('Esperá a que termine el análisis del comprobante.');
         return;
       }
     }
@@ -202,9 +252,9 @@ export function PagarGastoModal({ open, gasto, onClose }: Props) {
     try {
       const carpeta = `${gasto.local}/${gasto.fecha.substring(0, 7)}`;
 
-      // 1) Subir comprobante de pago si se cargó uno nuevo
-      let pathComprobantePago: string | null = null;
-      if (archivoComprobante) {
+      // 1) Comprobante: si OCR ya lo subió, reusamos el path. Si no, subimos ahora.
+      let pathComprobantePago: string | null = comprobantePagoPath;
+      if (!pathComprobantePago && archivoComprobante) {
         const ext = archivoComprobante.name.split('.').pop()?.toLowerCase() || 'pdf';
         const path = `${carpeta}/pago_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
         const { error: errUp } = await supabase.storage
@@ -532,6 +582,7 @@ export function PagarGastoModal({ open, gasto, onClose }: Props) {
                     <input
                       type="file"
                       accept="image/*,application/pdf"
+                      disabled={ocrEjecutando}
                       onChange={(e) => handleSubirComprobante(e.target.files?.[0] ?? null)}
                       className="hidden"
                     />
@@ -542,13 +593,28 @@ export function PagarGastoModal({ open, gasto, onClose }: Props) {
               <input
                 type="file"
                 accept="image/*,application/pdf"
+                disabled={ocrEjecutando}
                 onChange={(e) => handleSubirComprobante(e.target.files?.[0] ?? null)}
-                className="w-full text-xs file:mr-2 file:rounded file:border-0 file:bg-rodziny-700 file:px-2 file:py-1 file:text-[11px] file:text-white"
+                className="w-full text-xs file:mr-2 file:rounded file:border-0 file:bg-rodziny-700 file:px-2 file:py-1 file:text-[11px] file:text-white disabled:opacity-50"
               />
             )}
             {archivoComprobante && (
               <div className="mt-1 text-[11px] text-green-700">
                 📎 {archivoComprobante.name}
+              </div>
+            )}
+            {ocrEjecutando && (
+              <div className="mt-1 flex items-center gap-1 text-[11px] text-blue-700">
+                <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-blue-300 border-t-blue-700" />
+                Leyendo comprobante…
+              </div>
+            )}
+            {ocrInfo && !ocrEjecutando && (
+              <div className="mt-1 text-[11px] text-green-700">{ocrInfo}</div>
+            )}
+            {ocrWarning && (
+              <div className="mt-1 rounded border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] text-amber-800">
+                {ocrWarning}
               </div>
             )}
           </div>
@@ -613,7 +679,7 @@ export function PagarGastoModal({ open, gasto, onClose }: Props) {
           </button>
           <button
             onClick={handleConfirmar}
-            disabled={guardando || saldoPendiente <= 0}
+            disabled={guardando || ocrEjecutando || saldoPendiente <= 0}
             className={cn(
               'rounded px-4 py-2 text-sm font-medium text-white disabled:opacity-50',
               cubierto ? 'bg-green-600 hover:bg-green-700' : 'bg-rodziny-600 hover:bg-rodziny-700',
