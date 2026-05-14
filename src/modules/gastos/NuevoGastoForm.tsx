@@ -16,6 +16,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../lib/auth';
 import { sha256File } from '../../lib/hashFile';
+import { procesarFactura } from '../../lib/ocrFactura';
 import { formatARS, cn } from '../../lib/utils';
 import {
   MEDIO_PAGO_LABEL,
@@ -158,6 +159,17 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
   // Factura fiscal (opcional, en ambos caminos)
   const [facturaFile, setFacturaFile] = useState<File | null>(null);
   const facturaInputRef = useRef<HTMLInputElement>(null);
+  // OCR de la factura — cuando se selecciona el archivo, dispara extracción async
+  // y autocompleta tipo/nro/fecha/total/IVA/proveedor. Si falla, el archivo igual
+  // quedó subido y el usuario puede seguir manual.
+  const [facturaPathPreSubido, setFacturaPathPreSubido] = useState<string | null>(null);
+  const [ocrFacturaEjecutando, setOcrFacturaEjecutando] = useState(false);
+  const [ocrFacturaInfo, setOcrFacturaInfo] = useState<string | null>(null);
+  const [ocrFacturaWarning, setOcrFacturaWarning] = useState<string | null>(null);
+  // Proveedor sugerido por OCR cuando el CUIT NO matchea ningún proveedor existente
+  const [crearProveedorSugerido, setCrearProveedorSugerido] = useState<
+    { razon_social: string; cuit: string } | null
+  >(null);
 
   // Comprobante de pago manual (obligatorio en flujo físico + pagado + medio ≠ efectivo).
   // Captura/PDF de la transferencia o cheque. En digital ya vino en el paso de upload.
@@ -221,6 +233,11 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
       setComprobanteId(null);
       setFilePath(null);
       setFacturaFile(null);
+      setFacturaPathPreSubido(null);
+      setOcrFacturaEjecutando(false);
+      setOcrFacturaInfo(null);
+      setOcrFacturaWarning(null);
+      setCrearProveedorSugerido(null);
       setOcrData(null);
       setOcrConfianza(0);
       setDuplicados([]);
@@ -726,6 +743,91 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
     setMensajeProveedor(mensaje);
   }
 
+  // OCR de la factura: corre cuando el usuario selecciona el archivo.
+  // Auto-completa los campos que vinieron en la factura, sin pisar lo que el
+  // usuario ya hubiera editado (regla "no sobreescribir si NO está vacío").
+  async function handleSeleccionarFactura(file: File) {
+    setFacturaFile(file);
+    setOcrFacturaEjecutando(true);
+    setOcrFacturaInfo(null);
+    setOcrFacturaWarning(null);
+    setCrearProveedorSugerido(null);
+
+    const res = await procesarFactura({
+      archivo: file,
+      userId: user?.id ?? null,
+    });
+
+    setOcrFacturaEjecutando(false);
+
+    if (res.error) {
+      setOcrFacturaWarning(res.error);
+      return;
+    }
+    if (res.factura_path) setFacturaPathPreSubido(res.factura_path);
+
+    const datos = res.datos;
+    if (!datos) {
+      setOcrFacturaWarning(res.warning ?? 'No se pudo leer la factura. Completá los datos a mano.');
+      return;
+    }
+
+    // Autocompletar (solo si el campo está vacío para no pisar lo que el user editó)
+    if (datos.tipo_comprobante && tipoComprobante === 'recibo') {
+      setTipoComprobante(datos.tipo_comprobante);
+    }
+    if (datos.nro_completo && !nOperacion) {
+      setNOperacion(datos.nro_completo);
+    } else if (datos.numero_comprobante && !nOperacion) {
+      setNOperacion(datos.numero_comprobante);
+    }
+    if (datos.fecha_emision && !fecha) {
+      setFecha(datos.fecha_emision);
+    }
+    if (datos.fecha_vencimiento && !fechaVencimiento) {
+      setFechaVencimiento(datos.fecha_vencimiento);
+    }
+    if (datos.importe_total && !importeTexto) {
+      // Format AR: el helper formatNumeroAR existe, pero lo usamos via input string
+      setImporteTexto(formatNumeroAR(datos.importe_total));
+    }
+    // Discriminación de IVA: si la factura discrimina (neto + iva o alícuota presentes)
+    if (datos.alicuota_iva && datos.alicuota_iva > 0) {
+      setDiscriminaIVA(true);
+      setAlicuotaIVA(datos.alicuota_iva);
+    } else if (datos.iva && datos.iva > 0 && datos.importe_neto) {
+      // Si OCR no devolvió alícuota explícita pero sí neto e IVA, derivamos
+      const alicCalc = Math.round((datos.iva / datos.importe_neto) * 100 * 10) / 10;
+      const alicValida = [21, 10.5, 27, 5, 2.5].reduce((best, v) =>
+        Math.abs(v - alicCalc) < Math.abs(best - alicCalc) ? v : best, 21);
+      setDiscriminaIVA(true);
+      setAlicuotaIVA(alicValida);
+    }
+
+    // Proveedor: si OCR matcheó uno existente, seleccionarlo
+    if (res.proveedor_match && !proveedorId) {
+      const provExistente = proveedores.find((p) => p.id === res.proveedor_match!.id);
+      if (provExistente) {
+        aplicarProveedorMatch(provExistente, `🔗 Proveedor detectado por CUIT en la factura: ${provExistente.razon_social}`);
+      } else {
+        // El proveedor existe en DB pero no está en la cache local — usar el match directo
+        setProveedorId(res.proveedor_match.id);
+        setMensajeProveedor(`🔗 Proveedor detectado por CUIT: ${res.proveedor_match.razon_social ?? res.proveedor_match.nombre_comercial}`);
+      }
+    } else if (datos.emisor_cuit && datos.emisor_razon_social && !res.proveedor_match && !proveedorId) {
+      // CUIT detectado pero no matchea ningún proveedor → sugerir crear uno
+      setCrearProveedorSugerido({
+        razon_social: datos.emisor_razon_social,
+        cuit: datos.emisor_cuit.replace(/\D/g, ''),
+      });
+    }
+
+    setOcrFacturaWarning(res.warning);
+    if (datos.confianza >= 0.7) {
+      setOcrFacturaInfo(`✅ Factura leída con ${Math.round(datos.confianza * 100)}% de confianza. Revisá los datos antes de guardar.`);
+    }
+  }
+
   // Defaults al entrar al preview, según tipo de carga:
   //  - digital: pagado=true (subió comprobante)
   //  - fisico: pagado=true por default (lo cargás porque YA lo pagaste a mano)
@@ -830,9 +932,10 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
       const proveedor = proveedores.find((p) => p.id === proveedorId);
       const periodo = fecha.slice(0, 7);
 
-      // Si hay factura fiscal pendiente de subir, la subimos primero
-      let facturaPath: string | null = null;
-      if (facturaFile) {
+      // Factura fiscal: si el OCR ya subió el archivo, reusar ese path.
+      // Si no (OCR falló o el archivo se cargó manualmente sin OCR), subir ahora.
+      let facturaPath: string | null = facturaPathPreSubido;
+      if (facturaFile && !facturaPath) {
         const ext = facturaFile.name.split('.').pop()?.toLowerCase() ?? 'bin';
         facturaPath = `${local}/${periodo}/factura_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
         const { error: errFac } = await supabase.storage
@@ -1964,7 +2067,7 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
                 />
               </Field>
 
-              {/* Factura fiscal (opcional, en ambos caminos) */}
+              {/* Factura fiscal (opcional, en ambos caminos) — con OCR automático */}
               <Field label="Factura fiscal del proveedor (opcional)">
                 <input
                   ref={facturaInputRef}
@@ -1973,7 +2076,7 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
                   className="hidden"
                   onChange={(e) => {
                     const f = e.target.files?.[0];
-                    if (f) setFacturaFile(f);
+                    if (f) handleSeleccionarFactura(f);
                   }}
                 />
                 {facturaFile ? (
@@ -1981,8 +2084,15 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
                     <span className="truncate text-green-800">📎 {facturaFile.name}</span>
                     <button
                       type="button"
-                      onClick={() => setFacturaFile(null)}
+                      onClick={() => {
+                        setFacturaFile(null);
+                        setFacturaPathPreSubido(null);
+                        setOcrFacturaInfo(null);
+                        setOcrFacturaWarning(null);
+                        setCrearProveedorSugerido(null);
+                      }}
                       className="ml-2 text-xs text-red-600 hover:underline"
+                      disabled={ocrFacturaEjecutando}
                     >
                       Quitar
                     </button>
@@ -1993,8 +2103,57 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
                     onClick={() => facturaInputRef.current?.click()}
                     className="w-full rounded border border-dashed border-gray-300 bg-gray-50 px-3 py-3 text-sm text-gray-600 hover:bg-gray-100"
                   >
-                    + Adjuntar factura A/C/remito (si la tenés)
+                    + Adjuntar factura A/B/C / remito (la IA lee los datos automáticamente)
                   </button>
+                )}
+                {ocrFacturaEjecutando && (
+                  <div className="mt-1.5 flex items-center gap-2 rounded bg-blue-50 px-2 py-1.5 text-xs text-blue-800">
+                    <div className="h-3 w-3 animate-spin rounded-full border-2 border-blue-300 border-t-blue-700"></div>
+                    🔍 Leyendo factura con IA…
+                  </div>
+                )}
+                {ocrFacturaInfo && !ocrFacturaEjecutando && (
+                  <div className="mt-1.5 rounded bg-green-50 px-2 py-1.5 text-xs text-green-800">
+                    {ocrFacturaInfo}
+                  </div>
+                )}
+                {ocrFacturaWarning && !ocrFacturaEjecutando && (
+                  <div className="mt-1.5 rounded bg-amber-50 px-2 py-1.5 text-xs text-amber-800">
+                    {ocrFacturaWarning}
+                  </div>
+                )}
+                {crearProveedorSugerido && !proveedorId && (
+                  <div className="mt-1.5 flex items-center justify-between gap-2 rounded border border-blue-200 bg-blue-50 px-2 py-1.5 text-xs">
+                    <span className="text-blue-900">
+                      ➕ <strong>{crearProveedorSugerido.razon_social}</strong> (CUIT {crearProveedorSugerido.cuit}) no está cargado.
+                    </span>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const { data: nuevo, error: errNuevo } = await supabase
+                          .from('proveedores')
+                          .insert({
+                            razon_social: crearProveedorSugerido.razon_social,
+                            cuit: crearProveedorSugerido.cuit,
+                            activo: true,
+                          })
+                          .select('*')
+                          .single();
+                        if (errNuevo) {
+                          window.alert(`No se pudo crear: ${errNuevo.message}`);
+                          return;
+                        }
+                        const nuevoProv = nuevo as Proveedor;
+                        setProveedorRecienCreado(nuevoProv);
+                        aplicarProveedorMatch(nuevoProv, `✅ Proveedor creado: ${nuevoProv.razon_social}`);
+                        setCrearProveedorSugerido(null);
+                        qc.invalidateQueries({ queryKey: ['proveedores-activos'] });
+                      }}
+                      className="whitespace-nowrap rounded bg-blue-600 px-2 py-0.5 text-white hover:bg-blue-700"
+                    >
+                      Crear ahora
+                    </button>
+                  </div>
                 )}
               </Field>
             </div>
@@ -2062,9 +2221,11 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
               {step === 'preview' && (
                 <button
                   onClick={handleConfirmar}
-                  className="rounded bg-rodziny-600 px-4 py-2 text-sm font-medium text-white hover:bg-rodziny-700"
+                  disabled={ocrFacturaEjecutando}
+                  className="rounded bg-rodziny-600 px-4 py-2 text-sm font-medium text-white hover:bg-rodziny-700 disabled:bg-gray-300"
+                  title={ocrFacturaEjecutando ? 'Esperando que termine la lectura de la factura…' : undefined}
                 >
-                  Confirmar y guardar
+                  {ocrFacturaEjecutando ? 'Leyendo factura…' : 'Confirmar y guardar'}
                 </button>
               )}
             </div>
