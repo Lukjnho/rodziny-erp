@@ -55,8 +55,11 @@ interface ResumenEmpleado {
 }
 
 const UMBRAL_DISCREPANCIA = 0.5; // horas — diferencia significativa por día
+const MAX_HORAS_TRAMO = 16; // un par entrada→salida con diff > esto se considera salida no fichada
 
 // Pares entrada/salida ordenados cronológicamente. Si quedan impares no suman.
+// Si un par excede MAX_HORAS_TRAMO, asume que el empleado se olvidó de fichar la
+// salida y al día siguiente cerró tarde — no suma esas horas falsas.
 function calcularHorasReales(fichadasDia: Fichada[]): { horas: number; texto: string } {
   if (fichadasDia.length === 0) return { horas: 0, texto: 'Sin fichar' };
   const ordenadas = [...fichadasDia].sort(
@@ -75,8 +78,14 @@ function calcularHorasReales(fichadasDia: Fichada[]): { horas: number; texto: st
     if (next && next.tipo === 'salida') {
       const t1 = new Date(f.timestamp);
       const t2 = new Date(next.timestamp);
-      horas += Math.max(0, (t2.getTime() - t1.getTime()) / 3600000);
-      tramos.push(`${hhmmFromTs(f.timestamp)}–${hhmmFromTs(next.timestamp)}`);
+      const horasTramo = Math.max(0, (t2.getTime() - t1.getTime()) / 3600000);
+      if (horasTramo > MAX_HORAS_TRAMO) {
+        // Salida fichada al día siguiente — turno sin cierre real
+        tramos.push(`${hhmmFromTs(f.timestamp)}–⚠ sin salida`);
+      } else {
+        horas += horasTramo;
+        tramos.push(`${hhmmFromTs(f.timestamp)}–${hhmmFromTs(next.timestamp)}`);
+      }
       i += 2;
     } else {
       tramos.push(`${hhmmFromTs(f.timestamp)}–?`);
@@ -84,7 +93,6 @@ function calcularHorasReales(fichadasDia: Fichada[]): { horas: number; texto: st
     }
   }
   if (tramos.length === 0) {
-    // sin entradas (solo salidas sueltas)
     return { horas: 0, texto: 'Fichaje incompleto' };
   }
   return { horas, texto: tramos.join(' · ') };
@@ -318,9 +326,11 @@ export function HorasTab() {
     setYear(ny);
   }
 
-  // Totales del período (consolidados)
+  // Totales del período: excluye empleados sin cronograma cargado para que las
+  // reales sin teórico de referencia no inflen artificialmente la diferencia.
   const totales = useMemo(() => {
-    const t = visibles.reduce(
+    const conCrono = visibles.filter((r) => r.diasProgramados > 0);
+    const t = conCrono.reduce(
       (acc, r) => {
         acc.teoricas += r.horasTeoricas;
         acc.reales += r.horasReales;
@@ -329,7 +339,10 @@ export function HorasTab() {
       },
       { teoricas: 0, reales: 0, discrepancias: 0 },
     );
+    const sinCrono = visibles.length - conCrono.length;
     return {
+      empleadosComputados: conCrono.length,
+      sinCrono,
       teoricas: Math.round(t.teoricas * 100) / 100,
       reales: Math.round(t.reales * 100) / 100,
       diferencia: Math.round((t.reales - t.teoricas) * 100) / 100,
@@ -397,10 +410,18 @@ export function HorasTab() {
         </label>
       </div>
 
-      {/* Totales consolidados */}
+      {/* Totales consolidados (excluyen empleados sin cronograma) */}
       {!cargando && (
         <div className="grid grid-cols-2 gap-3 rounded-lg border border-surface-border bg-white p-3 md:grid-cols-4">
-          <Total label="Empleados" valor={String(visibles.length)} />
+          <Total
+            label="Empleados computados"
+            valor={String(totales.empleadosComputados)}
+            sub={
+              totales.sinCrono > 0
+                ? `${totales.sinCrono} sin cronograma — excluido del total`
+                : undefined
+            }
+          />
           <Total label="Horas teóricas" valor={formatHoras(totales.teoricas)} />
           <Total label="Horas reales" valor={formatHoras(totales.reales)} />
           <Total
@@ -511,8 +532,18 @@ function FilaEmpleado({
           <div className="flex items-center gap-2">
             <span className="inline-block w-3 text-xs text-gray-400">{abierto ? '▾' : '▸'}</span>
             <div>
-              <div className="font-medium text-gray-900">
-                {r.empleado.apellido}, {r.empleado.nombre}
+              <div className="flex items-center gap-1.5">
+                <span className="font-medium text-gray-900">
+                  {r.empleado.apellido}, {r.empleado.nombre}
+                </span>
+                {r.diasProgramados === 0 && (
+                  <span
+                    className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500"
+                    title="Sin cronograma cargado en el período — no suma al total"
+                  >
+                    sin cronograma
+                  </span>
+                )}
               </div>
               <div className="text-[11px] capitalize text-gray-400">
                 {r.empleado.puesto} · {r.empleado.local}
