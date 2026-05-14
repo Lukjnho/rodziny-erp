@@ -359,8 +359,11 @@ function LegajosTab() {
   const [empleadoEdit, setEmpleadoEdit] = useState<Empleado | null>(null);
   const [importadorAbierto, setImportadorAbierto] = useState(false);
 
+  // LegajosTab usa su propia queryKey (`empleados-todos`) porque necesita ver
+  // empleados dados de baja. El resto de los tabs comparten `['empleados']`
+  // con queries filtradas; si Legajos usara la misma key contaminaría el cache.
   const { data: empleados, isLoading } = useQuery({
-    queryKey: ['empleados'],
+    queryKey: ['empleados-todos'],
     queryFn: async () => {
       const { data, error } = await supabase
         .from('empleados')
@@ -439,6 +442,7 @@ function LegajosTab() {
       return;
     }
     qc.invalidateQueries({ queryKey: ['empleados'] });
+    qc.invalidateQueries({ queryKey: ['empleados-todos'] });
   }
 
   function abrirNuevo() {
@@ -635,6 +639,7 @@ function LegajosTab() {
           onClose={cerrarModal}
           onSaved={() => {
             qc.invalidateQueries({ queryKey: ['empleados'] });
+            qc.invalidateQueries({ queryKey: ['empleados-todos'] });
             cerrarModal();
           }}
         />
@@ -645,6 +650,7 @@ function LegajosTab() {
           onClose={() => setImportadorAbierto(false)}
           onImported={() => {
             qc.invalidateQueries({ queryKey: ['empleados'] });
+            qc.invalidateQueries({ queryKey: ['empleados-todos'] });
             setImportadorAbierto(false);
           }}
         />

@@ -414,13 +414,19 @@ export function SueldosTab() {
       if (ctx?.previo) qc.setQueryData(['empleados'], ctx.previo);
       window.alert(`Error al cambiar modalidad: ${e.message}`);
     },
-    onSettled: () => qc.invalidateQueries({ queryKey: ['empleados'] }),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ['empleados'] });
+      qc.invalidateQueries({ queryKey: ['empleados-todos'] });
+    },
   });
 
   // ── Empleados filtrados ──────────────────────────────────────────────────
   const empleadosFiltrados = useMemo(() => {
     if (!empleados) return [];
     return empleados.filter((e) => {
+      // Defensa: aunque la query SQL ya excluye bajas, filtramos en JS por si
+      // el cache de React Query estuvo contaminado por otra query.
+      if (!e.activo || e.estado_laboral === 'baja') return false;
       if (filtroLocal === 'vedia' && e.local !== 'vedia') return false;
       if (filtroLocal === 'saavedra' && e.local !== 'saavedra') return false;
       if (busqueda.trim()) {
