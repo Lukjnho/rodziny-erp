@@ -249,17 +249,29 @@ function CierrePastas({ local }: { local: Local }) {
         if (errDel) throw errDel;
       }
 
+      const num = (s: string) => Number(s.trim().replace(/\s/g, '').replace(',', '.'));
+      const malo = conDatos.find(([, f]) => {
+        const v = num(f.real);
+        return !Number.isFinite(v) || v < 0;
+      });
+      if (malo) {
+        const nom = pastas?.find((p) => p.id === malo[0])?.nombre ?? 'una pasta';
+        throw new Error(
+          `Revisá el stock real de "${nom}": "${malo[1].real}" no es un número válido.`,
+        );
+      }
+
       const payload = conDatos.map(([productoId, f]) => ({
         fecha,
         local,
         producto_id: productoId,
         tipo: 'pasta' as const,
         turno,
-        cantidad_real: Number(f.real),
+        cantidad_real: num(f.real),
         unidad: 'porciones' as const,
-        inicial: f.inicial.trim() ? Number(f.inicial) : null,
-        entrega: f.entrega.trim() ? Number(f.entrega) : null,
-        vendido: f.vendido.trim() ? Number(f.vendido) : null,
+        inicial: f.inicial.trim() && Number.isFinite(num(f.inicial)) ? num(f.inicial) : null,
+        entrega: f.entrega.trim() && Number.isFinite(num(f.entrega)) ? num(f.entrega) : null,
+        vendido: f.vendido.trim() && Number.isFinite(num(f.vendido)) ? num(f.vendido) : null,
         responsable: responsable.trim(),
       }));
 
@@ -519,11 +531,25 @@ function CierreSimple({
         if (errDel) throw errDel;
       }
 
-      // Salsas/postres se identifican por receta_id (no por producto_id)
+      // Salsas/postres se identifican por receta_id (no por producto_id).
+      // Parse robusto: convención AR (decimal con coma). Sacamos espacios y
+      // pasamos coma→punto. Cualquier valor que no quede como número válido
+      // (doble separador, miles con punto, texto) se RECHAZA con mensaje claro
+      // en vez de insertar NULL (cantidad_real es NOT NULL → rompía el cierre).
       const cierres = conDatos.map(([recetaId, valor]) => ({
         recetaId,
-        cantidad: Number(valor.replace(',', '.')),
+        cantidad: Number(valor.trim().replace(/\s/g, '').replace(',', '.')),
       }));
+      const mala = cierres.find(
+        (c) => !Number.isFinite(c.cantidad) || c.cantidad < 0,
+      );
+      if (mala) {
+        const nom =
+          productos?.find((p) => p.id === mala.recetaId)?.nombre ?? 'una salsa';
+        throw new Error(
+          `Revisá la cantidad de "${nom}": "${valores[mala.recetaId]}" no es un número válido. Usá coma para los decimales (ej: 8,910).`,
+        );
+      }
 
       const payload = cierres.map(({ recetaId, cantidad }) => ({
         fecha,
