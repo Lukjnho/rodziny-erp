@@ -97,22 +97,32 @@ export function PlanProduccionEditor({
   onClose: () => void;
 }) {
   const qc = useQueryClient();
-  const refSemana = semanaRef || hoy();
-  // Semana completa lun→dom que contiene la fecha de referencia. Permite editar
-  // planes pasados/futuros (los items ya iniciados quedan intactos por la
-  // lógica de guardado) y planificar toda la semana de un saque.
-  const fechas = useMemo(() => {
-    const lunes = lunesDeLaSemana(refSemana);
-    return Array.from({ length: 7 }, (_, i) => sumarDias(lunes, i));
-  }, [refSemana]);
   const fechaHoy = hoy();
+  // Lunes de la semana de referencia (fecha seleccionada en el tab, o hoy).
+  const lunesBase = useMemo(() => lunesDeLaSemana(semanaRef || hoy()), [semanaRef]);
+  // Offset en semanas respecto a la semana base. ◀ ▶ lo mueven, así se puede
+  // planificar la semana entrante (o cualquiera) sin cerrar el modal.
+  const [semanaOffset, setSemanaOffset] = useState(0);
+  const fechas = useMemo(() => {
+    const lunes = sumarDias(lunesBase, semanaOffset * 7);
+    return Array.from({ length: 7 }, (_, i) => sumarDias(lunes, i));
+  }, [lunesBase, semanaOffset]);
   const [fechaActiva, setFechaActiva] = useState(() => {
     // Si la semana de referencia contiene hoy, abrimos en hoy. Si no (semana
     // entrante o pasada), abrimos en el primer día (lunes) de esa semana.
-    const lunes = lunesDeLaSemana(refSemana);
-    const fechasSemana = Array.from({ length: 7 }, (_, i) => sumarDias(lunes, i));
+    const fechasSemana = Array.from({ length: 7 }, (_, i) => sumarDias(lunesBase, i));
     return fechasSemana.includes(fechaHoy) ? fechaHoy : fechasSemana[0];
   });
+
+  // Cambiar de semana sin cerrar el modal. Reposiciona el día activo dentro de
+  // la semana nueva (hoy si cae ahí, si no el lunes).
+  function cambiarSemana(delta: number) {
+    const nuevoOffset = semanaOffset + delta;
+    const lunes = sumarDias(lunesBase, nuevoOffset * 7);
+    const nuevas = Array.from({ length: 7 }, (_, i) => sumarDias(lunes, i));
+    setSemanaOffset(nuevoOffset);
+    setFechaActiva(nuevas.includes(fechaHoy) ? fechaHoy : nuevas[0]);
+  }
 
   const tipos = local === 'vedia' ? TIPOS_VEDIA : TIPOS_SAAVEDRA;
 
@@ -132,7 +142,7 @@ export function PlanProduccionEditor({
   });
 
   // Items existentes del plan (semana completa)
-  const { data: itemsExistentes } = useQuery({
+  const { data: itemsExistentes, isFetching: cargandoItemsSemana } = useQuery({
     queryKey: ['cocina-pizarron-editor', local, fechas[0], fechas[6]],
     queryFn: async () => {
       const { data, error } = await supabase
@@ -546,6 +556,35 @@ export function PlanProduccionEditor({
           </button>
         </div>
 
+        {/* Navegación de semana */}
+        <div className="flex items-center justify-between border-b border-gray-200 bg-white px-6 py-2">
+          <button
+            onClick={() => cambiarSemana(-1)}
+            className="rounded px-2 py-1 text-sm text-gray-600 hover:bg-gray-100"
+          >
+            ◀ Semana anterior
+          </button>
+          <div className="text-center">
+            <span className="text-sm font-semibold text-gray-800">
+              Semana del {formatFecha(fechas[0])} al {formatFecha(fechas[6])}
+            </span>
+            {semanaOffset !== 0 && (
+              <button
+                onClick={() => cambiarSemana(-semanaOffset)}
+                className="ml-2 rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-600 hover:bg-gray-200"
+              >
+                volver a la actual
+              </button>
+            )}
+          </div>
+          <button
+            onClick={() => cambiarSemana(1)}
+            className="rounded px-2 py-1 text-sm text-gray-600 hover:bg-gray-100"
+          >
+            Semana siguiente ▶
+          </button>
+        </div>
+
         {/* Tabs por día */}
         <div className="flex border-b border-gray-200 bg-gray-50">
           {fechas.map((f) => {
@@ -823,10 +862,14 @@ export function PlanProduccionEditor({
           </button>
           <button
             onClick={() => guardar.mutate()}
-            disabled={guardar.isPending}
+            disabled={guardar.isPending || cargandoItemsSemana}
             className="rounded bg-rodziny-700 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-rodziny-800 disabled:opacity-50"
           >
-            {guardar.isPending ? 'Guardando…' : 'Guardar plan'}
+            {guardar.isPending
+              ? 'Guardando…'
+              : cargandoItemsSemana
+                ? 'Cargando semana…'
+                : 'Guardar plan'}
           </button>
         </div>
       </div>
