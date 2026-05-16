@@ -356,7 +356,10 @@ export function ProduccionTab() {
   // Modales
   const [modalCerrarMasa, setModalCerrarMasa] = useState<LoteMasa | null>(null);
   const [modalPorcionar, setModalPorcionar] = useState<LotePasta | null>(null);
-  const [editorPlanLocal, setEditorPlanLocal] = useState<'vedia' | 'saavedra' | null>(null);
+  const [editorPlan, setEditorPlan] = useState<{
+    local: 'vedia' | 'saavedra';
+    semanaRef: string;
+  } | null>(null);
   const [modalEditarLote, setModalEditarLote] = useState<{
     id: string;
     tabla:
@@ -1034,7 +1037,7 @@ export function ProduccionTab() {
             <PlanSemanal
               fechaActiva={fecha}
               local="vedia"
-              onAbrirEditor={() => setEditorPlanLocal('vedia')}
+              onAbrirEditor={() => setEditorPlan({ local: 'vedia', semanaRef: fecha })}
             />
             <ResumenSemanalCard local="vedia" fechaReferencia={fecha} />
           </>
@@ -1044,7 +1047,7 @@ export function ProduccionTab() {
             <PlanSemanal
               fechaActiva={fecha}
               local="saavedra"
-              onAbrirEditor={() => setEditorPlanLocal('saavedra')}
+              onAbrirEditor={() => setEditorPlan({ local: 'saavedra', semanaRef: fecha })}
             />
             <ResumenSemanalCard local="saavedra" fechaReferencia={fecha} />
           </>
@@ -1384,10 +1387,11 @@ export function ProduccionTab() {
           }}
         />
       )}
-      {editorPlanLocal && (
+      {editorPlan && (
         <PlanProduccionEditor
-          local={editorPlanLocal}
-          onClose={() => setEditorPlanLocal(null)}
+          local={editorPlan.local}
+          semanaRef={editorPlan.semanaRef}
+          onClose={() => setEditorPlan(null)}
         />
       )}
       {modalEditarLote && (

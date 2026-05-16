@@ -87,27 +87,31 @@ function nuevoId() {
 
 export function PlanProduccionEditor({
   local,
+  semanaRef,
   onClose,
 }: {
   local: 'vedia' | 'saavedra';
+  // Fecha cualquiera dentro de la semana a editar. Por defecto hoy.
+  // Permite planificar la semana entrante (o cualquier semana) desde el tab.
+  semanaRef?: string;
   onClose: () => void;
 }) {
   const qc = useQueryClient();
-  // Semana completa lun→dom que contiene "hoy". Permite editar planes pasados
-  // (items con estado pendiente/cancelado siguen siendo editables; los ya
-  // iniciados quedan intactos por la lógica de guardado) y planificar para
-  // el resto de la semana de un saque.
+  const refSemana = semanaRef || hoy();
+  // Semana completa lun→dom que contiene la fecha de referencia. Permite editar
+  // planes pasados/futuros (los items ya iniciados quedan intactos por la
+  // lógica de guardado) y planificar toda la semana de un saque.
   const fechas = useMemo(() => {
-    const lunes = lunesDeLaSemana(hoy());
+    const lunes = lunesDeLaSemana(refSemana);
     return Array.from({ length: 7 }, (_, i) => sumarDias(lunes, i));
-  }, []);
+  }, [refSemana]);
   const fechaHoy = hoy();
   const [fechaActiva, setFechaActiva] = useState(() => {
-    // Si la semana actual contiene hoy, abrimos en hoy. Si no (caso borde si se
-    // abre justo a medianoche), abrimos en el primer día disponible.
-    const lunes = lunesDeLaSemana(hoy());
+    // Si la semana de referencia contiene hoy, abrimos en hoy. Si no (semana
+    // entrante o pasada), abrimos en el primer día (lunes) de esa semana.
+    const lunes = lunesDeLaSemana(refSemana);
     const fechasSemana = Array.from({ length: 7 }, (_, i) => sumarDias(lunes, i));
-    return fechasSemana.includes(hoy()) ? hoy() : fechasSemana[0];
+    return fechasSemana.includes(fechaHoy) ? fechaHoy : fechasSemana[0];
   });
 
   const tipos = local === 'vedia' ? TIPOS_VEDIA : TIPOS_SAAVEDRA;
