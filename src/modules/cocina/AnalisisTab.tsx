@@ -94,6 +94,30 @@ interface ProductoRef {
   tipo: string | null;
 }
 
+interface LotePasta {
+  id: string;
+  producto_id: string | null;
+  receta_masa_id: string | null;
+  masa_kg: number | null;
+  relleno_kg: number | null;
+  porciones: number | null;
+  fecha: string;
+  local: string | null;
+  lote_relleno: { receta_id: string | null } | null;
+}
+
+interface RendimientoPastaAgg {
+  producto_id: string;
+  pastaNombre: string;
+  rellenoNombre: string;
+  masaNombre: string;
+  lotes: number;
+  masaGrXPorc: number; // gramos de masa por porción (promedio real)
+  rellenoGrXPorc: number; // gramos de relleno por porción (promedio real)
+  porcPromedio: number; // porciones por lote (promedio)
+  ultimaFecha: string;
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 function restarDias(d: number): string {
@@ -204,6 +228,22 @@ export function AnalisisTab() {
         .gte('fecha', desde);
       if (error) throw error;
       return data as MermaQR[];
+    },
+  });
+
+  // ── Lotes de pasta (masa + relleno → porciones) para rendimiento real ──
+  const { data: lotesPasta } = useQuery({
+    queryKey: ['cocina-analisis-pasta', local, desde],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('cocina_lotes_pasta')
+        .select(
+          'id, producto_id, receta_masa_id, masa_kg, relleno_kg, porciones, fecha, local, lote_relleno:cocina_lotes_relleno!lote_relleno_id(receta_id)',
+        )
+        .eq('local', local)
+        .gte('fecha', desde);
+      if (error) throw error;
+      return data as unknown as LotePasta[];
     },
   });
 
@@ -412,6 +452,93 @@ export function AnalisisTab() {
     return out;
   }, [mermaQR, recetas, productos]);
 
+  // ── Agregado: rendimiento real de pastas (masa+relleno → porciones) ──
+  // Normalización al leer (decisión Lucas): si masa_kg o relleno_kg > 50 se
+  // asume que se cargó en gramos y se divide /1000. NO se tocan los registros.
+  const rendimientoPastas = useMemo<RendimientoPastaAgg[]>(() => {
+    if (!lotesPasta || !productos || !recetas) return [];
+    const norm = (v: number | null) => {
+      const n = Number(v) || 0;
+      return n > 50 ? n / 1000 : n; // >50 kg de masa/relleno por lote = gramos mal cargados
+    };
+    const agg = new Map<
+      string,
+      {
+        sumMasaKg: number;
+        sumRellenoKg: number;
+        sumPorc: number;
+        lotes: number;
+        ultimaFecha: string;
+        rellenoRecetaIds: Map<string, number>;
+        masaRecetaIds: Map<string, number>;
+      }
+    >();
+
+    for (const lp of lotesPasta) {
+      if (!lp.producto_id) continue;
+      const porc = Number(lp.porciones) || 0;
+      const masaKg = norm(lp.masa_kg);
+      const rellKg = norm(lp.relleno_kg);
+      if (porc <= 0 || masaKg <= 0 || rellKg <= 0) continue;
+
+      let e = agg.get(lp.producto_id);
+      if (!e) {
+        e = {
+          sumMasaKg: 0,
+          sumRellenoKg: 0,
+          sumPorc: 0,
+          lotes: 0,
+          ultimaFecha: lp.fecha,
+          rellenoRecetaIds: new Map(),
+          masaRecetaIds: new Map(),
+        };
+        agg.set(lp.producto_id, e);
+      }
+      e.sumMasaKg += masaKg;
+      e.sumRellenoKg += rellKg;
+      e.sumPorc += porc;
+      e.lotes += 1;
+      if (lp.fecha > e.ultimaFecha) e.ultimaFecha = lp.fecha;
+      const rid = lp.lote_relleno?.receta_id;
+      if (rid) e.rellenoRecetaIds.set(rid, (e.rellenoRecetaIds.get(rid) ?? 0) + 1);
+      if (lp.receta_masa_id)
+        e.masaRecetaIds.set(
+          lp.receta_masa_id,
+          (e.masaRecetaIds.get(lp.receta_masa_id) ?? 0) + 1,
+        );
+    }
+
+    const nombreMasUsado = (m: Map<string, number>): string => {
+      let best: string | null = null;
+      let bestN = -1;
+      for (const [id, n] of m) {
+        if (n > bestN) {
+          bestN = n;
+          best = id;
+        }
+      }
+      return best ? (recetas.get(best)?.nombre ?? '—') : '—';
+    };
+
+    const out: RendimientoPastaAgg[] = [];
+    for (const [productoId, e] of agg) {
+      if (e.sumPorc <= 0) continue;
+      out.push({
+        producto_id: productoId,
+        pastaNombre: productos.get(productoId)?.nombre ?? '—',
+        rellenoNombre: nombreMasUsado(e.rellenoRecetaIds),
+        masaNombre: nombreMasUsado(e.masaRecetaIds),
+        lotes: e.lotes,
+        masaGrXPorc: (e.sumMasaKg / e.sumPorc) * 1000,
+        rellenoGrXPorc: (e.sumRellenoKg / e.sumPorc) * 1000,
+        porcPromedio: e.sumPorc / e.lotes,
+        ultimaFecha: e.ultimaFecha,
+      });
+    }
+    out.sort((a, b) => b.lotes - a.lotes);
+    return out;
+  }, [lotesPasta, productos, recetas]);
+
   return (
     <div className="space-y-6">
       {/* Toolbar */}
@@ -501,6 +628,69 @@ export function AnalisisTab() {
                     </tr>
                   );
                 })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      {/* ── RENDIMIENTO REAL DE PASTAS (masa + relleno → porciones) ── */}
+      <section className="overflow-hidden rounded-lg border border-surface-border bg-white">
+        <header className="flex items-center justify-between border-b border-gray-100 px-4 py-3">
+          <div>
+            <h3 className="text-sm font-semibold text-gray-800">
+              Rendimiento real de pastas
+            </h3>
+            <p className="text-[11px] text-gray-500">
+              Promedio real de los lotes de los últimos {ventanaDias} días: cuánta masa y
+              relleno se usa por porción y cuántas porciones rinde el lote. Sirve para costear
+              la pasta con datos reales en vez de estimar.
+            </p>
+          </div>
+          <span className="text-[10px] text-gray-400">
+            {rendimientoPastas.length} pasta{rendimientoPastas.length !== 1 ? 's' : ''}
+          </span>
+        </header>
+        {rendimientoPastas.length === 0 ? (
+          <div className="px-4 py-6 text-center text-sm text-gray-500">
+            Sin lotes de pasta con masa, relleno y porciones cargados en este período.
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="border-b border-gray-200 bg-gray-50">
+                <tr className="text-[10px] uppercase text-gray-500">
+                  <th className="px-4 py-2.5 text-left">Pasta</th>
+                  <th className="px-4 py-2.5 text-left">Relleno</th>
+                  <th className="px-4 py-2.5 text-left">Masa</th>
+                  <th className="px-4 py-2.5 text-right">Lotes</th>
+                  <th className="px-4 py-2.5 text-right">Masa g/porc.</th>
+                  <th className="px-4 py-2.5 text-right">Relleno g/porc.</th>
+                  <th className="px-4 py-2.5 text-right">Porc./lote</th>
+                  <th className="px-4 py-2.5 text-right">Último</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {rendimientoPastas.map((r) => (
+                  <tr key={r.producto_id} className="hover:bg-gray-50">
+                    <td className="px-4 py-3 font-medium text-gray-900">{r.pastaNombre}</td>
+                    <td className="px-4 py-3 text-xs text-gray-500">{r.rellenoNombre}</td>
+                    <td className="px-4 py-3 text-xs text-gray-500">{r.masaNombre}</td>
+                    <td className="px-4 py-3 text-right text-gray-600">{r.lotes}</td>
+                    <td className="px-4 py-3 text-right font-medium text-gray-700">
+                      {fmtNum(r.masaGrXPorc, 0)}
+                    </td>
+                    <td className="px-4 py-3 text-right font-medium text-gray-700">
+                      {fmtNum(r.rellenoGrXPorc, 0)}
+                    </td>
+                    <td className="px-4 py-3 text-right text-gray-600">
+                      {fmtNum(r.porcPromedio, 0)}
+                    </td>
+                    <td className="px-4 py-3 text-right text-[10px] text-gray-400">
+                      {fmtFecha(r.ultimaFecha)}
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
