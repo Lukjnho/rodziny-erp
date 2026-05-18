@@ -33,6 +33,7 @@ const TIPOS_RECETA = [
   'relleno',
   'masa',
   'salsa',
+  'pasta',
   'postre',
   'pasteleria',
   'panaderia',
@@ -344,6 +345,14 @@ export function RecetaEditorInline({
             <p className="text-[10px] text-purple-600 sm:col-span-3">
               Marcada como <strong>subreceta</strong>: se usa como ingrediente de otras recetas,
               no es objetivo de producción standalone.
+            </p>
+          )}
+          {tipo === 'pasta' && (
+            <p className="text-[10px] text-red-600 sm:col-span-3">
+              Pasta armada: agregá tu <strong>masa</strong> y tu <strong>relleno</strong> como
+              ingredientes (escribí el nombre y elegilos del buscador — aparecen como receta, en
+              kg) más cualquier insumo extra. Cargá el <strong>rendimiento en porciones</strong>{' '}
+              para obtener el costo por porción.
             </p>
           )}
         </div>

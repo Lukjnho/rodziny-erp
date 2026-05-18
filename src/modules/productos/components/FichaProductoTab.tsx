@@ -18,6 +18,7 @@ const TIPO_COLOR: Record<string, string> = {
   relleno: 'bg-green-100 text-green-700',
   masa: 'bg-indigo-100 text-indigo-700',
   salsa: 'bg-orange-100 text-orange-700',
+  pasta: 'bg-red-100 text-red-700',
   postre: 'bg-pink-100 text-pink-700',
   pasteleria: 'bg-yellow-100 text-yellow-700',
   panaderia: 'bg-amber-100 text-amber-700',

@@ -22,7 +22,7 @@ export type RendUnidad = 'kg' | 'l' | 'unidad';
 export interface Receta {
   id: string;
   nombre: string;
-  tipo: 'relleno' | 'masa' | 'salsa' | 'subreceta' | 'otro';
+  tipo: 'relleno' | 'masa' | 'salsa' | 'pasta' | 'postre' | 'pasteleria' | 'panaderia' | 'subreceta' | 'otro';
   rendimiento_kg: number | null;
   rendimiento_unidad: RendUnidad;
   rendimiento_porciones: number | null;
@@ -45,6 +45,7 @@ const TIPOS = [
   'relleno',
   'masa',
   'salsa',
+  'pasta',
   'postre',
   'pasteleria',
   'panaderia',
@@ -55,6 +56,7 @@ const TIPO_LABEL: Record<string, string> = {
   relleno: 'Relleno',
   masa: 'Masa',
   salsa: 'Salsa',
+  pasta: 'Pasta',
   postre: 'Postre',
   pasteleria: 'Pastelería',
   panaderia: 'Panadería',
@@ -65,6 +67,7 @@ const TIPO_COLOR: Record<string, string> = {
   relleno: 'bg-green-100 text-green-700',
   masa: 'bg-blue-100 text-blue-700',
   salsa: 'bg-orange-100 text-orange-700',
+  pasta: 'bg-red-100 text-red-700',
   postre: 'bg-pink-100 text-pink-700',
   pasteleria: 'bg-yellow-100 text-yellow-700',
   panaderia: 'bg-amber-100 text-amber-700',
