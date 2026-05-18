@@ -62,7 +62,9 @@ REGLAS — leer con atencion:
 
 6. proveedor_cuit: solo digitos (sin guiones, formato XXXXXXXXXXX) o formato XX-XXXXXXXX-X. Verificar que NO sea 30717352366 (CUIT de Rodziny) — si lo es, ignorar y buscar el otro CUIT del documento.
 
-7. confianza: entre 0 y 1, reflejar honestamente la calidad de la extraccion.`;
+7. confianza: entre 0 y 1, reflejar honestamente la calidad de la extraccion.
+
+8. SALIDA: devolve EXCLUSIVAMENTE el objeto JSON. NO uses markdown (nada de \`\`\`), NO agregues notas, aclaraciones ni texto antes ni despues del JSON. Si falta informacion, reflejalo en los campos null y en confianza baja, NUNCA en texto adicional.`;
 
 interface ComprobanteRow {
   id: string;
@@ -186,11 +188,12 @@ Deno.serve(async (req) => {
     const claudeJson = JSON.parse(claudeBody);
     const rawText: string = claudeJson?.content?.[0]?.text ?? '';
 
-    // 4. Parsear JSON (Claude a veces envuelve en ```json)
+    // 4. Parsear JSON. Claude a veces envuelve en ```json y/o agrega prosa
+    // (notas, aclaraciones) ANTES o DESPUES del objeto. Extraemos el objeto
+    // desde el primer "{" hasta el ultimo "}" en vez de depender de fences.
     let extraido: OcrExtraido;
     try {
-      const cleaned = rawText.replace(/```json\s*/g, '').replace(/```\s*$/g, '').trim();
-      extraido = JSON.parse(cleaned);
+      extraido = JSON.parse(extraerObjetoJson(rawText));
     } catch (_parseErr) {
       await supabase
         .from('comprobantes')
@@ -242,6 +245,16 @@ Deno.serve(async (req) => {
 });
 
 // ----- Helpers -----
+
+// Extrae el primer objeto JSON de la respuesta del modelo, ignorando fences
+// ```json``` y cualquier prosa que Claude agregue antes o despues (notas,
+// aclaraciones de confianza baja, etc.). Toma del primer "{" al ultimo "}".
+function extraerObjetoJson(text: string): string {
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  if (start === -1 || end === -1 || end <= start) return text.trim();
+  return text.slice(start, end + 1);
+}
 
 function base64FromArrayBuffer(buffer: ArrayBuffer): string {
   const bytes = new Uint8Array(buffer);
