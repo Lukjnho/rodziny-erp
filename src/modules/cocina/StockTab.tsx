@@ -287,50 +287,65 @@ export function StockTab() {
     onError: (e: Error) => window.alert(`Error al guardar ajuste: ${e.message}`),
   });
 
-  // Ventas Fudo del día — solo Vedia tiene API habilitada (fudoApi.ts: Saavedra pendiente)
-  const { data: fudoVedia } = useQuery({
-    queryKey: ['cocina-stock-fudo', 'vedia', hoy],
+  // Locales en alcance según el filtro. Ambos locales tienen API de Fudo
+  // (credenciales en las Edge Functions fudo-*). Antes esto era solo Vedia.
+  const localesScope = useMemo<string[]>(
+    () => (filtroLocal === 'todos' ? ['vedia', 'saavedra'] : [filtroLocal]),
+    [filtroLocal],
+  );
+
+  // Ventas Fudo de HOY por local. Una llamada a fudo-productos por local.
+  const { data: fudoHoy } = useQuery({
+    queryKey: ['cocina-stock-fudo-hoy', localesScope, hoy],
     queryFn: async () => {
-      const { data, error } = await supabase.functions.invoke('fudo-productos', {
-        body: { local: 'vedia', fechaDesde: hoy, fechaHasta: hoy },
-      });
-      if (error) return null;
-      if (!data?.ok) return null;
-      return data.data as FudoData;
+      const res: Record<string, FudoData | null> = {};
+      for (const loc of localesScope) {
+        const { data, error } = await supabase.functions.invoke('fudo-productos', {
+          body: { local: loc, fechaDesde: hoy, fechaHasta: hoy },
+        });
+        res[loc] = !error && data?.ok ? (data.data as FudoData) : null;
+      }
+      return res;
     },
     staleTime: 2 * 60 * 1000, // refrescar cada 2 min
   });
 
-  // Fecha desde la cual necesitamos ventas Fudo para descontar del mostrador.
-  // Es la fecha MÁS ANTIGUA entre los últimos cierres de Vedia + 1 día.
-  // Si todos los cierres son de hoy o no hay cierres, alcanza con "hoy".
-  const fudoDesdeFecha = useMemo(() => {
-    if (!cierresPorProducto || cierresPorProducto.size === 0) return hoy;
-    let masAntigua: string | null = null;
-    for (const c of cierresPorProducto.values()) {
-      if (c.local !== 'vedia') continue;
-      if (c.fecha < hoy) {
-        if (!masAntigua || c.fecha < masAntigua) masAntigua = c.fecha;
+  // Fecha "desde" POR LOCAL = día siguiente al cierre más antiguo (anterior a
+  // hoy) de ese local. Si todos los cierres son de hoy o no hay, alcanza "hoy".
+  const fudoDesdeFechaPorLocal = useMemo(() => {
+    const out: Record<string, string> = {};
+    for (const loc of localesScope) {
+      let masAntigua: string | null = null;
+      if (cierresPorProducto) {
+        for (const c of cierresPorProducto.values()) {
+          if (c.local !== loc) continue;
+          if (c.fecha < hoy && (!masAntigua || c.fecha < masAntigua)) masAntigua = c.fecha;
+        }
       }
+      if (!masAntigua) {
+        out[loc] = hoy;
+        continue;
+      }
+      const d = new Date(masAntigua + 'T12:00:00');
+      d.setDate(d.getDate() + 1);
+      out[loc] = d.toISOString().slice(0, 10);
     }
-    if (!masAntigua) return hoy;
-    // Día siguiente al cierre más antiguo
-    const d = new Date(masAntigua + 'T12:00:00');
-    d.setDate(d.getDate() + 1);
-    return d.toISOString().slice(0, 10);
-  }, [cierresPorProducto, hoy]);
+    return out;
+  }, [cierresPorProducto, hoy, localesScope]);
 
-  // Ventas Fudo desde el último cierre relevante (para aplicar al mostrador acumulado).
-  // Si fudoDesdeFecha == hoy, este query devuelve lo mismo que fudoVedia.
+  // Ventas Fudo desde el último cierre relevante de cada local, para descontar
+  // del mostrador acumulado. Si la fecha desde == hoy, devuelve lo mismo que fudoHoy.
   const { data: fudoDesdeCierre } = useQuery({
-    queryKey: ['cocina-stock-fudo-desde-cierre', 'vedia', fudoDesdeFecha, hoy],
+    queryKey: ['cocina-stock-fudo-desde-cierre', fudoDesdeFechaPorLocal, hoy],
     queryFn: async () => {
-      const { data, error } = await supabase.functions.invoke('fudo-productos', {
-        body: { local: 'vedia', fechaDesde: fudoDesdeFecha, fechaHasta: hoy },
-      });
-      if (error) return null;
-      if (!data?.ok) return null;
-      return data.data as FudoData;
+      const res: Record<string, FudoData | null> = {};
+      for (const loc of Object.keys(fudoDesdeFechaPorLocal)) {
+        const { data, error } = await supabase.functions.invoke('fudo-productos', {
+          body: { local: loc, fechaDesde: fudoDesdeFechaPorLocal[loc], fechaHasta: hoy },
+        });
+        res[loc] = !error && data?.ok ? (data.data as FudoData) : null;
+      }
+      return res;
     },
     staleTime: 2 * 60 * 1000,
   });
@@ -378,8 +393,7 @@ export function StockTab() {
           .reduce((s, m) => s + m.porciones, 0);
 
         // Vendido hoy (para la columna "Vendido hoy" — no necesariamente lo mismo que se descuenta del mostrador)
-        const vendidoHoy =
-          loc === 'vedia' ? ventasFudoDelProducto(prod, fudoVedia?.ranking) : 0;
+        const vendidoHoy = ventasFudoDelProducto(prod, fudoHoy?.[loc]?.ranking);
 
         // Ajustes manuales acumulados por ubicación
         const ajusteCamara = (ajustes ?? [])
@@ -426,8 +440,8 @@ export function StockTab() {
           // descontamos ventas posteriores (Fudo no devuelve timestamp por venta para
           // filtrar por hora exacta del cierre).
           let ventasPost = 0;
-          if (loc === 'vedia' && cierre.fecha < hoy) {
-            ventasPost = ventasFudoDelProducto(prod, fudoDesdeCierre?.ranking);
+          if (cierre.fecha < hoy) {
+            ventasPost = ventasFudoDelProducto(prod, fudoDesdeCierre?.[loc]?.ranking);
           }
 
           mostradorRaw =
@@ -477,7 +491,7 @@ export function StockTab() {
     mermas,
     traspasosHoy,
     mermasHoy,
-    fudoVedia,
+    fudoHoy,
     fudoDesdeCierre,
     cierresPorProducto,
     hoy,
