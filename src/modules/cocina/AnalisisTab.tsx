@@ -115,6 +115,9 @@ interface RendimientoPastaAgg {
   masaGrXPorc: number; // gramos de masa por porción (promedio real)
   rellenoGrXPorc: number; // gramos de relleno por porción (promedio real)
   porcPromedio: number; // porciones por lote (promedio)
+  masaCvPct: number | null; // coef. variación masa g/porc entre lotes (null si <2 lotes)
+  rellenoCvPct: number | null; // coef. variación relleno g/porc entre lotes
+  variacionPct: number | null; // el peor de los dos (lo que dispara el aviso)
   ultimaFecha: string;
 }
 
@@ -471,6 +474,8 @@ export function AnalisisTab() {
         ultimaFecha: string;
         rellenoRecetaIds: Map<string, number>;
         masaRecetaIds: Map<string, number>;
+        masaSerie: number[];
+        rellenoSerie: number[];
       }
     >();
 
@@ -491,6 +496,8 @@ export function AnalisisTab() {
           ultimaFecha: lp.fecha,
           rellenoRecetaIds: new Map(),
           masaRecetaIds: new Map(),
+          masaSerie: [] as number[],
+          rellenoSerie: [] as number[],
         };
         agg.set(lp.producto_id, e);
       }
@@ -498,6 +505,8 @@ export function AnalisisTab() {
       e.sumRellenoKg += rellKg;
       e.sumPorc += porc;
       e.lotes += 1;
+      e.masaSerie.push((masaKg / porc) * 1000); // g de masa por porción de ESTE lote
+      e.rellenoSerie.push((rellKg / porc) * 1000);
       if (lp.fecha > e.ultimaFecha) e.ultimaFecha = lp.fecha;
       const rid = lp.lote_relleno?.receta_id;
       if (rid) e.rellenoRecetaIds.set(rid, (e.rellenoRecetaIds.get(rid) ?? 0) + 1);
@@ -507,6 +516,18 @@ export function AnalisisTab() {
           (e.masaRecetaIds.get(lp.receta_masa_id) ?? 0) + 1,
         );
     }
+
+    // Coeficiente de variación entre lotes (desv. estándar poblacional / promedio),
+    // en %. Mide qué tan parejo es el consumo por porción tanda a tanda. Necesita
+    // ≥2 lotes; null si no hay suficientes datos.
+    const coefVariacion = (serie: number[]): number | null => {
+      if (serie.length < 2) return null;
+      const mean = serie.reduce((s, x) => s + x, 0) / serie.length;
+      if (mean <= 0) return null;
+      const varianza =
+        serie.reduce((s, x) => s + (x - mean) ** 2, 0) / serie.length;
+      return (Math.sqrt(varianza) / mean) * 100;
+    };
 
     const nombreMasUsado = (m: Map<string, number>): string => {
       let best: string | null = null;
@@ -523,6 +544,8 @@ export function AnalisisTab() {
     const out: RendimientoPastaAgg[] = [];
     for (const [productoId, e] of agg) {
       if (e.sumPorc <= 0) continue;
+      const masaCvPct = coefVariacion(e.masaSerie);
+      const rellenoCvPct = coefVariacion(e.rellenoSerie);
       out.push({
         producto_id: productoId,
         pastaNombre: productos.get(productoId)?.nombre ?? '—',
@@ -532,6 +555,12 @@ export function AnalisisTab() {
         masaGrXPorc: (e.sumMasaKg / e.sumPorc) * 1000,
         rellenoGrXPorc: (e.sumRellenoKg / e.sumPorc) * 1000,
         porcPromedio: e.sumPorc / e.lotes,
+        masaCvPct,
+        rellenoCvPct,
+        variacionPct:
+          masaCvPct == null && rellenoCvPct == null
+            ? null
+            : Math.max(masaCvPct ?? 0, rellenoCvPct ?? 0),
         ultimaFecha: e.ultimaFecha,
       });
     }
@@ -644,7 +673,9 @@ export function AnalisisTab() {
             <p className="text-[11px] text-gray-500">
               Promedio real de los lotes de los últimos {ventanaDias} días: cuánta masa y
               relleno se usa por porción y cuántas porciones rinde el lote. Sirve para costear
-              la pasta con datos reales en vez de estimar.
+              la pasta con datos reales en vez de estimar. <strong>Variación</strong> = qué tan
+              parejo es ese consumo entre lotes (verde &lt;15% · amarillo 15-30% · rojo &gt;30%):
+              si está en rojo conviene estandarizar el armado o revisar la carga.
             </p>
           </div>
           <span className="text-[10px] text-gray-400">
@@ -667,6 +698,7 @@ export function AnalisisTab() {
                   <th className="px-4 py-2.5 text-right">Masa g/porc.</th>
                   <th className="px-4 py-2.5 text-right">Relleno g/porc.</th>
                   <th className="px-4 py-2.5 text-right">Porc./lote</th>
+                  <th className="px-4 py-2.5 text-right">Variación</th>
                   <th className="px-4 py-2.5 text-right">Último</th>
                 </tr>
               </thead>
@@ -685,6 +717,25 @@ export function AnalisisTab() {
                     </td>
                     <td className="px-4 py-3 text-right text-gray-600">
                       {fmtNum(r.porcPromedio, 0)}
+                    </td>
+                    <td
+                      className={cn(
+                        'px-4 py-3 text-right font-semibold',
+                        r.variacionPct == null
+                          ? 'text-gray-400'
+                          : r.variacionPct < 15
+                            ? 'text-green-700'
+                            : r.variacionPct < 30
+                              ? 'text-amber-700'
+                              : 'text-red-700',
+                      )}
+                      title={
+                        r.variacionPct == null
+                          ? 'Necesita al menos 2 lotes para medir variación'
+                          : `Masa: ${r.masaCvPct == null ? '—' : fmtNum(r.masaCvPct, 0) + '%'} · Relleno: ${r.rellenoCvPct == null ? '—' : fmtNum(r.rellenoCvPct, 0) + '%'} (consistencia entre lotes)`
+                      }
+                    >
+                      {r.variacionPct == null ? '—' : `±${fmtNum(r.variacionPct, 0)}%`}
                     </td>
                     <td className="px-4 py-3 text-right text-[10px] text-gray-400">
                       {fmtFecha(r.ultimaFecha)}
