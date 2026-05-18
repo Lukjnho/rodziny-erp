@@ -67,7 +67,6 @@ function RecepcionPageInner() {
   const [params] = useSearchParams();
   const local = (params.get('local') === 'saavedra' ? 'saavedra' : 'vedia') as 'vedia' | 'saavedra';
 
-  const [proveedor, setProveedor] = useState('');
   const [registradoPor, setRegistradoPor] = useState('');
   const [notas, setNotas] = useState('');
   const [busqueda, setBusqueda] = useState('');
@@ -107,23 +106,11 @@ function RecepcionPageInner() {
     },
   });
 
-  // Lista única de proveedores para el datalist
-  const proveedores = useMemo(() => {
-    const set = new Set<string>();
-    productos?.forEach((p) => {
-      if (p.proveedor) set.add(p.proveedor);
-    });
-    return Array.from(set).sort();
-  }, [productos]);
-
-  // Filtrado por búsqueda + proveedor seleccionado (si hay)
+  // Filtrado solo por búsqueda. El proveedor no se pide acá: lo asigna el
+  // encargado de compra en el tab Recepción al cargar el gasto.
   const filtrados = useMemo(() => {
     if (!productos) return [];
     let lista = productos;
-    if (proveedor.trim()) {
-      const p = proveedor.toLowerCase();
-      lista = lista.filter((x) => (x.proveedor ?? '').toLowerCase().includes(p));
-    }
     if (busqueda.trim()) {
       const b = busqueda
         .toLowerCase()
@@ -138,7 +125,7 @@ function RecepcionPageInner() {
       });
     }
     return lista;
-  }, [productos, proveedor, busqueda]);
+  }, [productos, busqueda]);
 
   function agregarAlCarrito(p: Producto) {
     const cant = parseFloat((cantidadTemp[p.id] ?? '').replace(',', '.'));
@@ -194,7 +181,7 @@ function RecepcionPageInner() {
       // 1) Crear recepción pendiente
       const { error: errRecep } = await supabase.from('recepciones_pendientes').insert({
         local,
-        proveedor: proveedor.trim() || null,
+        proveedor: null,
         items: carrito,
         registrado_por: registradoPor.trim(),
         notas: notas.trim() || null,
@@ -222,7 +209,7 @@ function RecepcionPageInner() {
           cantidad: item.cantidad,
           unidad: prod.unidad,
           motivo: 'Recepción mercadería',
-          observacion: proveedor ? `Proveedor: ${proveedor}` : null,
+          observacion: null,
           registrado_por: registradoPor.trim(),
         });
         if (errMov) throw errMov;
@@ -232,7 +219,6 @@ function RecepcionPageInner() {
       setTimeout(() => {
         setExito(false);
         setCarrito([]);
-        setProveedor('');
         setNotas('');
         setBusqueda('');
         setFoto(null);
@@ -279,23 +265,6 @@ function RecepcionPageInner() {
       <div className="mx-auto max-w-xl space-y-4 px-4 py-4">
         {/* Datos generales */}
         <div className="space-y-3 rounded-lg border border-gray-200 bg-white p-3">
-          <div>
-            <label className="mb-1 block text-xs font-medium text-gray-600">
-              Proveedor (opcional — filtra productos)
-            </label>
-            <select
-              value={proveedor}
-              onChange={(e) => setProveedor(e.target.value)}
-              className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm"
-            >
-              <option value="">— Cualquiera —</option>
-              {proveedores.map((p) => (
-                <option key={p} value={p}>
-                  {p}
-                </option>
-              ))}
-            </select>
-          </div>
           <div>
             <label className="mb-1 block text-xs font-medium text-gray-600">Tu nombre *</label>
             <input
