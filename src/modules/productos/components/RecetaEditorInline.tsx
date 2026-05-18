@@ -467,7 +467,8 @@ export function RecetaEditorInline({
                   recetas={todasLasRecetas}
                   recetaActualId={receta?.id ?? recetaIdLocal}
                   onChange={(v) => actualizarIng(ing.tempId, 'nombre', v)}
-                  onSelect={(p, tipo) => seleccionarProducto(ing.tempId, p, tipo)}
+                  onSelect={(p, t) => seleccionarProducto(ing.tempId, p, t)}
+                  tiposPrioritarios={tipo === 'pasta' ? ['masa', 'relleno'] : undefined}
                 />
                 <input
                   type="text"

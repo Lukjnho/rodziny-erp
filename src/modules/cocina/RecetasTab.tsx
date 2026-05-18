@@ -1504,6 +1504,7 @@ interface OpcionAutocomplete {
   unidad: string;
   tipo: 'producto' | 'receta';
   detalle: string; // categoría o tipo de receta
+  recetaTipo?: string; // tipo real de la receta (masa/relleno/...) para priorizar
 }
 
 export function AutocompleteIngrediente({
@@ -1513,6 +1514,7 @@ export function AutocompleteIngrediente({
   recetaActualId,
   onChange,
   onSelect,
+  tiposPrioritarios,
 }: {
   valor: string;
   productos: ProductoCompras[];
@@ -1520,6 +1522,9 @@ export function AutocompleteIngrediente({
   recetaActualId: string | null;
   onChange: (v: string) => void;
   onSelect: (p: ProductoCompras, tipo: 'receta' | 'producto') => void;
+  // Si se pasa (ej: ['masa','relleno'] para recetas tipo Pasta), esas recetas
+  // se muestran primero. El resto sigue listándose y buscándose igual.
+  tiposPrioritarios?: string[];
 }) {
   const [abierto, setAbierto] = useState(false);
   const [focused, setFocused] = useState(false);
@@ -1551,6 +1556,7 @@ export function AutocompleteIngrediente({
             : 'unid',
         tipo: 'receta',
         detalle: TIPO_LABEL[r.tipo] ?? r.tipo,
+        recetaTipo: r.tipo,
       });
     }
 
@@ -1569,13 +1575,25 @@ export function AutocompleteIngrediente({
       });
     }
 
+    if (tiposPrioritarios && tiposPrioritarios.length > 0) {
+      const prio = new Set(tiposPrioritarios);
+      const rank = (o: OpcionAutocomplete) =>
+        o.tipo === 'receta' && o.recetaTipo && prio.has(o.recetaTipo)
+          ? 0
+          : o.tipo === 'receta'
+            ? 1
+            : 2;
+      // sort estable: a igual rank se conserva el orden original
+      lista.sort((a, b) => rank(a) - rank(b));
+    }
+
     return lista;
-  }, [productos, recetas, recetaActualId]);
+  }, [productos, recetas, recetaActualId, tiposPrioritarios]);
 
   const filtrados = useMemo(() => {
     if (!valor.trim()) {
       // Sin búsqueda: mostrar recetas primero, luego productos
-      const recs = opciones.filter((o) => o.tipo === 'receta').slice(0, 5);
+      const recs = opciones.filter((o) => o.tipo === 'receta').slice(0, 8);
       const prods = opciones.filter((o) => o.tipo === 'producto').slice(0, 10);
       return [...recs, ...prods];
     }
