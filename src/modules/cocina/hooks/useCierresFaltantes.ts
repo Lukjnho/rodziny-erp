@@ -3,13 +3,43 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { supabase as supabaseAuth } from '@/lib/supabase';
 
 type Local = 'vedia' | 'saavedra';
+type TipoCierre = 'pasta' | 'salsa' | 'postre' | 'panaderia';
+type TurnoCierre = 'mediodia' | 'noche' | null;
 
 interface CierreFalta {
-  tipo: 'pasta' | 'salsa' | 'postre';
-  turno: 'mediodia' | 'noche' | null;
+  tipo: TipoCierre;
+  turno: TurnoCierre;
   fecha: string;
   label: string;
 }
+
+interface Requisito {
+  tipo: TipoCierre;
+  turno: TurnoCierre;
+  horaMin: number; // hora del día (AR) a partir de la cual el cierre de HOY es obligatorio
+  label: string;
+}
+
+// Cierres obligatorios por local. El día anterior se exige siempre (sin importar
+// la hora); el día actual solo a partir de `horaMin`.
+//   - Vedia: Pastas mediodía (16h) / noche (23h) · Salsas (23h) · Postres (23h).
+//   - Saavedra: igual + Panadería (23h). No tiene Fudo, pero el cierre es manual
+//     (no depende de ventas automáticas), así que las reglas de presencia aplican.
+const REQUISITOS: Record<Local, Requisito[]> = {
+  vedia: [
+    { tipo: 'pasta', turno: 'mediodia', horaMin: 16, label: 'Pastas · mediodía' },
+    { tipo: 'pasta', turno: 'noche', horaMin: 23, label: 'Pastas · noche' },
+    { tipo: 'salsa', turno: null, horaMin: 23, label: 'Salsas' },
+    { tipo: 'postre', turno: null, horaMin: 23, label: 'Postres' },
+  ],
+  saavedra: [
+    { tipo: 'pasta', turno: 'mediodia', horaMin: 16, label: 'Pastas · mediodía' },
+    { tipo: 'pasta', turno: 'noche', horaMin: 23, label: 'Pastas · noche' },
+    { tipo: 'salsa', turno: null, horaMin: 23, label: 'Salsas' },
+    { tipo: 'postre', turno: null, horaMin: 23, label: 'Postres' },
+    { tipo: 'panaderia', turno: null, horaMin: 23, label: 'Panadería' },
+  ],
+};
 
 function hoyAR(): string {
   const offsetMs = 3 * 60 * 60 * 1000;
@@ -28,13 +58,6 @@ function horaAR(): number {
 }
 
 // Devuelve la lista de cierres que tendrían que estar y faltan, según la hora del día.
-// Reglas (Vedia):
-//   - Pastas mediodía: requerido a partir de las 16hs.
-//   - Pastas noche: requerido a partir de las 23hs.
-//   - Salsas (fin de día): requerido a partir de las 23hs.
-//   - Postres (fin de día): requerido a partir de las 23hs.
-//   - El día anterior siempre se controla: si quedó algún cierre sin cargar, aparece como "atrasado".
-// Saavedra: por ahora no genera alertas (el flujo todavía no está habilitado).
 export function useCierresFaltantes(local: Local, client?: SupabaseClient) {
   const fecha = hoyAR();
   const fechaAyer = ayerAR(fecha);
@@ -43,7 +66,6 @@ export function useCierresFaltantes(local: Local, client?: SupabaseClient) {
 
   const { data, isLoading } = useQuery({
     queryKey: ['cocina-cierre-faltantes', local, fecha],
-    enabled: local === 'vedia',
     refetchInterval: 5 * 60_000,
     queryFn: async () => {
       const { data, error } = await sb
@@ -54,22 +76,14 @@ export function useCierresFaltantes(local: Local, client?: SupabaseClient) {
       if (error) throw error;
       return (data ?? []) as Array<{
         fecha: string;
-        tipo: 'pasta' | 'salsa' | 'postre';
-        turno: 'mediodia' | 'noche' | null;
+        tipo: TipoCierre;
+        turno: TurnoCierre;
       }>;
     },
   });
 
-  if (local !== 'vedia') {
-    return { faltantes: [] as CierreFalta[], isLoading: false };
-  }
-
   const cierres = data ?? [];
-  const tiene = (
-    f: string,
-    tipo: 'pasta' | 'salsa' | 'postre',
-    turno: 'mediodia' | 'noche' | null,
-  ) =>
+  const tiene = (f: string, tipo: TipoCierre, turno: TurnoCierre) =>
     cierres.some(
       (c) =>
         c.fecha === f &&
@@ -77,27 +91,20 @@ export function useCierresFaltantes(local: Local, client?: SupabaseClient) {
         ((turno === null && c.turno === null) || c.turno === turno),
     );
 
+  const requisitos = REQUISITOS[local];
   const faltantes: CierreFalta[] = [];
 
-  // Día anterior: todos los cierres son obligatorios
-  if (!tiene(fechaAyer, 'pasta', 'mediodia'))
-    faltantes.push({ tipo: 'pasta', turno: 'mediodia', fecha: fechaAyer, label: 'Pastas · mediodía (ayer)' });
-  if (!tiene(fechaAyer, 'pasta', 'noche'))
-    faltantes.push({ tipo: 'pasta', turno: 'noche', fecha: fechaAyer, label: 'Pastas · noche (ayer)' });
-  if (!tiene(fechaAyer, 'salsa', null))
-    faltantes.push({ tipo: 'salsa', turno: null, fecha: fechaAyer, label: 'Salsas (ayer)' });
-  if (!tiene(fechaAyer, 'postre', null))
-    faltantes.push({ tipo: 'postre', turno: null, fecha: fechaAyer, label: 'Postres (ayer)' });
+  // Día anterior: todos los cierres son obligatorios (atrasados)
+  for (const r of requisitos) {
+    if (!tiene(fechaAyer, r.tipo, r.turno))
+      faltantes.push({ tipo: r.tipo, turno: r.turno, fecha: fechaAyer, label: `${r.label} (ayer)` });
+  }
 
-  // Día actual: según hora
-  if (hora >= 16 && !tiene(fecha, 'pasta', 'mediodia'))
-    faltantes.push({ tipo: 'pasta', turno: 'mediodia', fecha, label: 'Pastas · mediodía (hoy)' });
-  if (hora >= 23 && !tiene(fecha, 'pasta', 'noche'))
-    faltantes.push({ tipo: 'pasta', turno: 'noche', fecha, label: 'Pastas · noche (hoy)' });
-  if (hora >= 23 && !tiene(fecha, 'salsa', null))
-    faltantes.push({ tipo: 'salsa', turno: null, fecha, label: 'Salsas (hoy)' });
-  if (hora >= 23 && !tiene(fecha, 'postre', null))
-    faltantes.push({ tipo: 'postre', turno: null, fecha, label: 'Postres (hoy)' });
+  // Día actual: obligatorio a partir de su horaMin
+  for (const r of requisitos) {
+    if (hora >= r.horaMin && !tiene(fecha, r.tipo, r.turno))
+      faltantes.push({ tipo: r.tipo, turno: r.turno, fecha, label: `${r.label} (hoy)` });
+  }
 
   return { faltantes, isLoading };
 }

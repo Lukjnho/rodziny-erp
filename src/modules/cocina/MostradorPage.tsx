@@ -6,7 +6,28 @@ import { cn } from '@/lib/utils';
 
 type Local = 'vedia' | 'saavedra';
 type Turno = 'mediodia' | 'noche';
-type TipoTab = 'pasta' | 'salsa' | 'postre';
+type TipoTab = 'pasta' | 'salsa' | 'postre' | 'panaderia';
+type TipoSimple = 'salsa' | 'postre' | 'panaderia';
+
+const TAB_META: Record<TipoTab, { emoji: string; label: string }> = {
+  pasta: { emoji: '🍝', label: 'Pastas' },
+  salsa: { emoji: '🥫', label: 'Salsas' },
+  postre: { emoji: '🍰', label: 'Postres' },
+  panaderia: { emoji: '🥐', label: 'Panadería' },
+};
+
+// Vedia cierra pasta/salsa/postre. Saavedra suma panadería (no tiene Fudo, pero
+// el cierre es conteo físico manual, así que no depende de ventas automáticas).
+const TABS_POR_LOCAL: Record<Local, TipoTab[]> = {
+  vedia: ['pasta', 'salsa', 'postre'],
+  saavedra: ['pasta', 'salsa', 'postre', 'panaderia'],
+};
+
+const UNIDAD_POR_TIPO: Record<TipoSimple, 'kg' | 'unidades'> = {
+  salsa: 'kg',
+  postre: 'unidades',
+  panaderia: 'unidades',
+};
 
 interface Producto {
   id: string;
@@ -46,32 +67,17 @@ export function MostradorPage() {
         <span className="text-rodziny-200 text-xs">{local === 'vedia' ? 'Vedia' : 'Saavedra'}</span>
       </div>
 
-      {local === 'saavedra' ? (
-        <div className="mx-auto max-w-md space-y-3 p-6 pt-10 text-center">
-          <p className="text-5xl">🚧</p>
-          <h2 className="text-lg font-semibold text-gray-800">Próximamente</h2>
-          <p className="text-sm text-gray-500">
-            El cierre de mostrador todavía no está habilitado para Saavedra. Por ahora solo Vedia.
-          </p>
-        </div>
-      ) : (
-        <>
-          <div className="flex border-b border-gray-200 bg-white">
-            <TabBtn activo={tab === 'pasta'} onClick={() => setTab('pasta')}>
-              🍝 Pastas
-            </TabBtn>
-            <TabBtn activo={tab === 'salsa'} onClick={() => setTab('salsa')}>
-              🥫 Salsas
-            </TabBtn>
-            <TabBtn activo={tab === 'postre'} onClick={() => setTab('postre')}>
-              🍰 Postres
-            </TabBtn>
-          </div>
+      <div className="flex border-b border-gray-200 bg-white">
+        {TABS_POR_LOCAL[local].map((t) => (
+          <TabBtn key={t} activo={tab === t} onClick={() => setTab(t)}>
+            {TAB_META[t].emoji} {TAB_META[t].label}
+          </TabBtn>
+        ))}
+      </div>
 
-          {tab === 'pasta' && <CierrePastas local="vedia" />}
-          {tab === 'salsa' && <CierreSimple local="vedia" tipo="salsa" unidad="kg" />}
-          {tab === 'postre' && <CierreSimple local="vedia" tipo="postre" unidad="unidades" />}
-        </>
+      {tab === 'pasta' && <CierrePastas local={local} />}
+      {tab !== 'pasta' && (
+        <CierreSimple local={local} tipo={tab} unidad={UNIDAD_POR_TIPO[tab]} />
       )}
     </div>
   );
@@ -448,9 +454,11 @@ function CierreSimple({
   unidad,
 }: {
   local: Local;
-  tipo: 'salsa' | 'postre';
+  tipo: TipoSimple;
   unidad: 'kg' | 'unidades';
 }) {
+  const meta = TAB_META[tipo];
+  const labelLower = meta.label.toLowerCase();
   const qc = useQueryClient();
   const fecha = hoyAR();
   const [responsable, setResponsable] = useState('');
@@ -621,9 +629,9 @@ function CierreSimple({
     return (
       <div className="mx-auto max-w-md p-3">
         <div className="rounded-lg border border-dashed border-gray-300 bg-white p-6 text-center">
-          <p className="text-2xl">{tipo === 'salsa' ? '🥫' : '🍰'}</p>
+          <p className="text-2xl">{meta.emoji}</p>
           <p className="mt-2 text-sm font-medium text-gray-700">
-            No hay {tipo === 'salsa' ? 'salsas' : 'postres'} cargadas
+            No hay {labelLower} cargadas
           </p>
           <p className="mt-1 text-xs text-gray-500">
             Cargalas primero desde el ERP en Cocina → Recetas → "Nueva receta" con tipo "
@@ -712,9 +720,7 @@ function CierreSimple({
         disabled={guardar.isPending}
         className="w-full rounded-lg bg-rodziny-800 py-3 text-base font-semibold text-white hover:bg-rodziny-700 disabled:opacity-50"
       >
-        {guardar.isPending
-          ? 'Guardando…'
-          : `Guardar cierre de ${tipo === 'salsa' ? 'salsas' : 'postres'}`}
+        {guardar.isPending ? 'Guardando…' : `Guardar cierre de ${labelLower}`}
       </button>
     </div>
   );

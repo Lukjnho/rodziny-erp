@@ -1,11 +1,26 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
 
 type Local = 'vedia' | 'saavedra';
-type Tipo = 'pasta' | 'salsa' | 'postre';
+type Tipo = 'pasta' | 'salsa' | 'postre' | 'panaderia';
 type Turno = 'mediodia' | 'noche';
+
+// Etiqueta legible por tipo (para filtros y chips). Evita pluralizar con +'s'
+// (que daría "panaderias").
+const TIPO_LABEL: Record<Tipo, string> = {
+  pasta: 'Pastas',
+  salsa: 'Salsas',
+  postre: 'Postres',
+  panaderia: 'Panadería',
+};
+
+// Tipos de cierre que se controlan por local. Vedia no cierra panadería.
+const TIPOS_POR_LOCAL: Record<Local, Tipo[]> = {
+  vedia: ['pasta', 'salsa', 'postre'],
+  saavedra: ['pasta', 'salsa', 'postre', 'panaderia'],
+};
 
 interface CierreRow {
   id: string;
@@ -56,21 +71,6 @@ function diaSiguiente(iso: string): string {
 export function CierresTab() {
   const [local, setLocal] = useState<Local>('vedia');
   const [fecha, setFecha] = useState<string>(hoyISO());
-
-  if (local === 'saavedra') {
-    return (
-      <div className="space-y-4">
-        <CabeceraLocal local={local} setLocal={setLocal} />
-        <div className="rounded-lg border border-yellow-200 bg-yellow-50 p-8 text-center">
-          <p className="text-2xl">🚧</p>
-          <p className="mt-2 font-semibold text-yellow-800">Próximamente</p>
-          <p className="text-sm text-yellow-700">
-            Los cierres de Saavedra se habilitan cuando estabilicemos el flujo en Vedia.
-          </p>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="space-y-4">
@@ -157,11 +157,19 @@ function ResumenDia({ local, fecha }: { local: Local; fecha: string }) {
     },
   });
 
-  const requisitos = [
-    { tipo: 'pasta' as Tipo, turno: 'mediodia' as Turno, label: 'Pastas · mediodía', emoji: '🍝' },
-    { tipo: 'pasta' as Tipo, turno: 'noche' as Turno, label: 'Pastas · noche', emoji: '🍝' },
-    { tipo: 'salsa' as Tipo, turno: null, label: 'Salsas (fin de día)', emoji: '🥫' },
-    { tipo: 'postre' as Tipo, turno: null, label: 'Postres (fin de día)', emoji: '🍰' },
+  const requisitos: Array<{
+    tipo: Tipo;
+    turno: Turno | null;
+    label: string;
+    emoji: string;
+  }> = [
+    { tipo: 'pasta', turno: 'mediodia', label: 'Pastas · mediodía', emoji: '🍝' },
+    { tipo: 'pasta', turno: 'noche', label: 'Pastas · noche', emoji: '🍝' },
+    { tipo: 'salsa', turno: null, label: 'Salsas (fin de día)', emoji: '🥫' },
+    { tipo: 'postre', turno: null, label: 'Postres (fin de día)', emoji: '🍰' },
+    ...(local === 'saavedra'
+      ? [{ tipo: 'panaderia' as Tipo, turno: null, label: 'Panadería (fin de día)', emoji: '🥐' }]
+      : []),
   ];
 
   return (
@@ -207,6 +215,14 @@ function ResumenDia({ local, fecha }: { local: Local; fecha: string }) {
 
 function DetalleDia({ local, fecha }: { local: Local; fecha: string }) {
   const [filtroTipo, setFiltroTipo] = useState<'todos' | Tipo>('todos');
+
+  // Si cambia el local y el filtro activo no aplica (ej: 'panaderia' al pasar a
+  // Vedia), volver a 'todos' para no mostrar la tabla vacía sin botón visible.
+  useEffect(() => {
+    if (filtroTipo !== 'todos' && !TIPOS_POR_LOCAL[local].includes(filtroTipo)) {
+      setFiltroTipo('todos');
+    }
+  }, [local, filtroTipo]);
 
   const { data: cierres, isLoading } = useQuery({
     queryKey: ['cocina-cierre-dia-detalle', local, fecha],
@@ -288,7 +304,7 @@ function DetalleDia({ local, fecha }: { local: Local; fecha: string }) {
           Detalle del día ({(cierres ?? []).length})
         </h3>
         <div className="flex gap-1">
-          {(['todos', 'pasta', 'salsa', 'postre'] as const).map((t) => (
+          {(['todos', ...TIPOS_POR_LOCAL[local]] as const).map((t) => (
             <button
               key={t}
               onClick={() => setFiltroTipo(t)}
@@ -299,7 +315,7 @@ function DetalleDia({ local, fecha }: { local: Local; fecha: string }) {
                   : 'border-gray-300 text-gray-600 hover:bg-gray-50',
               )}
             >
-              {t === 'todos' ? 'Todos' : t.charAt(0).toUpperCase() + t.slice(1) + 's'}
+              {t === 'todos' ? 'Todos' : TIPO_LABEL[t]}
             </button>
           ))}
         </div>
