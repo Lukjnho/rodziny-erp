@@ -164,6 +164,17 @@ export function RecetaEditorInline({
     });
   }
 
+  // Solo subrecetas del MISMO local de la receta (más null/'ambos' por las
+  // dudas, hoy no hay). Evita listar masas/rellenos del otro local — y el
+  // costeoEngine resuelve la subreceta por (nombre, local) igual.
+  const recetasDelLocal = useMemo(
+    () =>
+      todasLasRecetas.filter(
+        (r) => !r.local || r.local === 'ambos' || r.local === local,
+      ),
+    [todasLasRecetas, local],
+  );
+
   // ─── Costo en vivo ─────────────────────────────────────────────────────────
   const costo = useMemo(() => {
     if (!ctx) return undefined;
@@ -464,7 +475,7 @@ export function RecetaEditorInline({
                 <AutocompleteIngrediente
                   valor={ing.nombre}
                   productos={productosCompras ?? []}
-                  recetas={todasLasRecetas}
+                  recetas={recetasDelLocal}
                   recetaActualId={receta?.id ?? recetaIdLocal}
                   onChange={(v) => actualizarIng(ing.tempId, 'nombre', v)}
                   onSelect={(p, t) => seleccionarProducto(ing.tempId, p, t)}
