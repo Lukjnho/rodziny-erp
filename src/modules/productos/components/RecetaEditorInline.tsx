@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { cn, formatARS } from '@/lib/utils';
 import {
@@ -61,6 +61,7 @@ export function RecetaEditorInline({
   onCancel: () => void;
   onSaved: () => void;
 }) {
+  const qc = useQueryClient();
   const creando = !receta;
   // Id estable para previsualizar el costo de una receta nueva sin guardar.
   const [recetaIdLocal] = useState<string>(() => receta?.id ?? crypto.randomUUID());
@@ -91,8 +92,29 @@ export function RecetaEditorInline({
   );
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState('');
+  // Solo al CREAR una receta tipo Pasta: producto (pasta) al que se le vincula
+  // la receta recién creada, en un solo paso (evita ir al ABM aparte).
+  const [productoDestino, setProductoDestino] = useState('');
 
   const local = creando ? localState : (receta?.local ?? localRestringido ?? 'vedia');
+
+  // Pastas del local sin receta vinculada (candidatas a enganchar la nueva).
+  const { data: pastasSinReceta } = useQuery({
+    queryKey: ['pastas-sin-receta', local],
+    enabled: creando && tipo === 'pasta',
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('cocina_productos')
+        .select('id, nombre, codigo')
+        .eq('local', local)
+        .eq('tipo', 'pasta')
+        .eq('activo', true)
+        .is('receta_id', null)
+        .order('nombre');
+      if (error) throw error;
+      return data as { id: string; nombre: string; codigo: string }[];
+    },
+  });
 
   const { data: productosCompras } = useQuery({
     queryKey: ['productos-compras-recetas', local],
@@ -295,6 +317,21 @@ export function RecetaEditorInline({
         }
       }
 
+      // Vincular la receta nueva al producto pasta elegido (un solo paso).
+      if (creando && productoDestino) {
+        const { error: errLink } = await supabase
+          .from('cocina_productos')
+          .update({ receta_id: recetaId })
+          .eq('id', productoDestino);
+        if (errLink) throw errLink;
+        // Refrescar consumidores de cocina_productos.receta_id (grid Costeo,
+        // resumen semanal, dashboard, ABM).
+        qc.invalidateQueries({ queryKey: ['pastas-sin-receta'] });
+        qc.invalidateQueries({ queryKey: ['cocina-productos-sugerencias-plan'] });
+        qc.invalidateQueries({ queryKey: ['cocina_productos_dashboard'] });
+        qc.invalidateQueries({ queryKey: ['producto-form'] });
+      }
+
       onSaved();
     } catch (err: unknown) {
       const msg =
@@ -365,6 +402,30 @@ export function RecetaEditorInline({
               kg) más cualquier insumo extra. Cargá el <strong>rendimiento en porciones</strong>{' '}
               para obtener el costo por porción.
             </p>
+          )}
+          {tipo === 'pasta' && (
+            <div className="sm:col-span-3">
+              <label className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-gray-500">
+                Vincular a producto (opcional)
+              </label>
+              <select
+                value={productoDestino}
+                onChange={(e) => setProductoDestino(e.target.value)}
+                className="w-full rounded border border-gray-300 px-2 py-2 text-sm"
+              >
+                <option value="">— No vincular ahora —</option>
+                {(pastasSinReceta ?? []).map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.nombre}
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1 text-[10px] text-gray-500">
+                Al guardar, esta receta queda enganchada al producto elegido (su costo/porción
+                pasa a usarse en Costeo y el resumen semanal). Lista: pastas de {local} sin
+                receta.
+              </p>
+            </div>
           )}
         </div>
       )}
