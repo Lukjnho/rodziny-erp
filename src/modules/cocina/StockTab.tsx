@@ -347,6 +347,10 @@ export function StockTab() {
     const locales: string[] = filtroLocal === 'todos' ? ['vedia', 'saavedra'] : [filtroLocal];
 
     for (const prod of productos) {
+      // Stock solo de pastas y postres (no masas, salsas ni panificados).
+      // Filtro defensivo en JS: la query ['cocina-productos'] la comparte
+      // TraspasosTab y necesita todos los tipos.
+      if (prod.tipo !== 'pasta' && prod.tipo !== 'postre') continue;
       for (const loc of locales) {
         if (prod.local !== loc) continue;
 

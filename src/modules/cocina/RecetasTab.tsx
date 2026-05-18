@@ -6,7 +6,7 @@ import { cn, formatARS } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
 import { useCostosRecetas, type CostoReceta } from './hooks/useCostosRecetas';
 
-interface Ingrediente {
+export interface Ingrediente {
   id: string;
   receta_id: string;
   nombre: string;
@@ -17,9 +17,9 @@ interface Ingrediente {
   producto_id: string | null;
 }
 
-type RendUnidad = 'kg' | 'l' | 'unidad';
+export type RendUnidad = 'kg' | 'l' | 'unidad';
 
-interface Receta {
+export interface Receta {
   id: string;
   nombre: string;
   tipo: 'relleno' | 'masa' | 'salsa' | 'subreceta' | 'otro';
@@ -35,7 +35,7 @@ interface Receta {
   created_at: string;
 }
 
-const UNIDAD_LABEL: Record<RendUnidad, string> = {
+export const UNIDAD_LABEL: Record<RendUnidad, string> = {
   kg: 'kg',
   l: 'L',
   unidad: 'unid.',
@@ -72,7 +72,7 @@ const TIPO_COLOR: Record<string, string> = {
   otro: 'bg-gray-100 text-gray-700',
 };
 
-const UNIDADES = ['g', 'kg', 'ml', 'lt', 'unid', 'cdta', 'cda'] as const;
+export const UNIDADES = ['g', 'kg', 'ml', 'lt', 'unid', 'cdta', 'cda'] as const;
 
 export function RecetasTab() {
   const qc = useQueryClient();
@@ -723,7 +723,7 @@ function DialogDuplicar({
 }
 
 // ─── Ficha Técnica (expandible) ─────────────────────────────────────────────
-function FichaTecnica({
+export function FichaTecnica({
   receta,
   ingredientes,
   costo,
@@ -905,7 +905,7 @@ function FichaTecnica({
 }
 
 // ─── Modal crear/editar receta con ingredientes ─────────────────────────────
-interface ProductoCompras {
+export interface ProductoCompras {
   id: string;
   nombre: string;
   marca: string | null;
@@ -924,7 +924,7 @@ interface IngredienteForm {
   producto_id: string | null;
 }
 
-function ModalReceta({
+export function ModalReceta({
   receta,
   ingredientes: ingredientesExistentes,
   todasLasRecetas,
@@ -1503,7 +1503,7 @@ interface OpcionAutocomplete {
   detalle: string; // categoría o tipo de receta
 }
 
-function AutocompleteIngrediente({
+export function AutocompleteIngrediente({
   valor,
   productos,
   recetas,
@@ -1685,7 +1685,7 @@ function AutocompleteIngrediente({
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 // Mapear unidades de Compras → unidades de receta
-function mapearUnidad(unidadCompras: string): string {
+export function mapearUnidad(unidadCompras: string): string {
   const u = unidadCompras.toLowerCase().trim();
   if (u === 'kg' || u === 'kgs') return 'kg';
   if (u === 'g' || u === 'gr' || u === 'grs' || u === 'gramos') return 'g';
@@ -1696,7 +1696,7 @@ function mapearUnidad(unidadCompras: string): string {
   return 'g'; // default
 }
 
-function formatCantidad(n: number): string {
+export function formatCantidad(n: number): string {
   if (Number.isInteger(n)) return String(n);
   return n.toLocaleString('es-AR', { maximumFractionDigits: 2 });
 }

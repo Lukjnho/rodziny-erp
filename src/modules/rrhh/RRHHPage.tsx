@@ -1,5 +1,5 @@
 import { useState, useMemo, useRef } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { PageContainer } from '@/components/layout/PageContainer';
 import { KPICard } from '@/components/ui/KPICard';
@@ -44,6 +44,7 @@ export interface Empleado {
   pin_fichaje: string | null;
   observaciones: string | null;
   modalidad_cobro: 'quincenal' | 'mensual';
+  es_produccion: boolean;
   manipulacion_alimentos_vence: string | null;
   certificado_domicilio: boolean;
   certificado_domicilio_fecha: string | null;
@@ -374,6 +375,34 @@ function LegajosTab() {
     },
   });
 
+  const toggleProduccion = useMutation({
+    mutationFn: async (payload: { id: string; valor: boolean }) => {
+      const { error } = await supabase
+        .from('empleados')
+        .update({ es_produccion: payload.valor })
+        .eq('id', payload.id);
+      if (error) throw error;
+    },
+    onMutate: async ({ id, valor }) => {
+      await qc.cancelQueries({ queryKey: ['empleados-todos'] });
+      const previo = qc.getQueryData<Empleado[]>(['empleados-todos']);
+      if (previo) {
+        qc.setQueryData<Empleado[]>(
+          ['empleados-todos'],
+          previo.map((e) => (e.id === id ? { ...e, es_produccion: valor } : e)),
+        );
+      }
+      return { previo };
+    },
+    onError: (_e, _v, ctx) => {
+      if (ctx?.previo) qc.setQueryData(['empleados-todos'], ctx.previo);
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ['empleados-todos'] });
+      qc.invalidateQueries({ queryKey: ['pool-mano-obra'] });
+    },
+  });
+
   const filtrados = useMemo(() => {
     let lista = empleados ?? [];
     if (filtroLocal === 'vedia') lista = lista.filter((e) => e.local === 'vedia');
@@ -561,6 +590,9 @@ function LegajosTab() {
               <th className="px-4 py-2 text-left">Local</th>
               <th className="px-4 py-2 text-left">Ingreso</th>
               <th className="px-4 py-2 text-right">Sueldo neto</th>
+              <th className="px-4 py-2 text-center" title="Entra al pool de mano de obra del costeo de productos">
+                Producción
+              </th>
               <th className="px-4 py-2 text-left">Certificaciones</th>
               <th className="px-4 py-2 text-left">Estado</th>
               <th className="px-4 py-2 text-right"></th>
@@ -569,14 +601,14 @@ function LegajosTab() {
           <tbody>
             {isLoading && (
               <tr>
-                <td colSpan={9} className="py-8 text-center text-gray-400">
+                <td colSpan={10} className="py-8 text-center text-gray-400">
                   Cargando...
                 </td>
               </tr>
             )}
             {!isLoading && filtrados.length === 0 && (
               <tr>
-                <td colSpan={9} className="py-8 text-center text-gray-400">
+                <td colSpan={10} className="py-8 text-center text-gray-400">
                   {empleados?.length === 0
                     ? 'No hay empleados cargados todavía. Hacé clic en "+ Nuevo empleado" para empezar.'
                     : 'No hay empleados que coincidan con los filtros.'}
@@ -608,6 +640,17 @@ function LegajosTab() {
                     )}
                   </td>
                   <td className="px-4 py-2 text-right text-gray-700">{formatARS(e.sueldo_neto)}</td>
+                  <td className="px-4 py-2 text-center">
+                    <input
+                      type="checkbox"
+                      checked={e.es_produccion}
+                      onChange={(ev) =>
+                        toggleProduccion.mutate({ id: e.id, valor: ev.target.checked })
+                      }
+                      title="Si está tildado, su sueldo entra al pool de mano de obra del costeo"
+                      className="h-4 w-4 cursor-pointer"
+                    />
+                  </td>
                   <td className="px-4 py-2">{badgeCertificaciones(e)}</td>
                   <td className="px-4 py-2">{badgeEstado(e.estado_laboral)}</td>
                   <td className="px-4 py-2 text-right">

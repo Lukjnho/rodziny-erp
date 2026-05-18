@@ -41,6 +41,9 @@ const MostradorPage = lazy(() =>
 const AlmacenPage = lazy(() =>
   import('@/modules/almacen/AlmacenPage').then((m) => ({ default: m.AlmacenPage })),
 );
+const ProductosPage = lazy(() =>
+  import('@/modules/productos/ProductosPage').then((m) => ({ default: m.ProductosPage })),
+);
 const DashboardPage = lazy(() =>
   import('@/modules/dashboard/DashboardPage').then((m) => ({ default: m.DashboardPage })),
 );
@@ -131,9 +134,11 @@ function AppInterna() {
             ? '/cocina'
             : tienePermiso('almacen')
               ? '/almacen'
-              : tienePermiso('usuarios')
-                ? '/usuarios'
-                : null;
+              : tienePermiso('productos')
+                ? '/productos'
+                : tienePermiso('usuarios')
+                  ? '/usuarios'
+                  : null;
 
   return (
     <div className="flex min-h-screen">
@@ -194,6 +199,14 @@ function AppInterna() {
               element={
                 <Ruta modulo="almacen">
                   <AlmacenPage />
+                </Ruta>
+              }
+            />
+            <Route
+              path="/productos"
+              element={
+                <Ruta modulo="productos">
+                  <ProductosPage />
                 </Ruta>
               }
             />
