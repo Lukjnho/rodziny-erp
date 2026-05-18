@@ -74,6 +74,42 @@ function equivalenteKgGramos(n: number): string | null {
   if (gramos === 0) return `${kilos} ${kilos === 1 ? 'kilo' : 'kilos'} justos`;
   return `${kilos} ${kilos === 1 ? 'kilo' : 'kilos'} ${gramos} g`;
 }
+// Un lote de pasta no usa más de ~50 kg de masa ni de relleno. Si el valor
+// supera esto, casi seguro se cargó en gramos (ej: 1167 = 1,167 kg). Sirve para
+// avisar/corregir en el QR antes de ensuciar cocina_lotes_pasta.
+const MAX_KG_PASTA = 50;
+function pareceGramosPasta(raw: string): number | null {
+  const v = parseDecimal(raw);
+  return isFinite(v) && v > MAX_KG_PASTA ? v : null;
+}
+// String en kg con coma decimal (sin separador de miles) para meter al input.
+function aKgStr(gramos: number): string {
+  return String(Math.round(gramos) / 1000).replace('.', ',');
+}
+function AvisoPosibleGramos({
+  raw,
+  onCorregir,
+}: {
+  raw: string;
+  onCorregir: (kgStr: string) => void;
+}) {
+  const v = pareceGramosPasta(raw);
+  if (v == null) return null;
+  const kgStr = aKgStr(v);
+  return (
+    <div className="mt-1 rounded border border-amber-300 bg-amber-50 px-2 py-1.5 text-[10px] text-amber-800">
+      ⚠ {v} kg es muchísimo para un lote. ¿Lo cargaste en gramos?{' '}
+      <button
+        type="button"
+        onClick={() => onCorregir(kgStr)}
+        className="ml-1 rounded bg-amber-600 px-1.5 py-0.5 font-semibold text-white"
+      >
+        Usar {kgStr} kg
+      </button>
+    </div>
+  );
+}
+
 interface LoteRelleno {
   id: string;
   receta_id: string;
@@ -1174,6 +1210,21 @@ function FormPasta({
       setError('Indicá tu nombre (responsable)');
       return;
     }
+    // Sanity de unidades: >50 kg de masa/relleno por lote es casi seguro gramos.
+    const masaSospechosa = pareceGramosPasta(masaKg);
+    const rellenoSospechoso = pareceGramosPasta(rellenoKg);
+    if (masaSospechosa != null || rellenoSospechoso != null) {
+      const partes: string[] = [];
+      if (masaSospechosa != null)
+        partes.push(`masa ${masaSospechosa} kg (¿= ${aKgStr(masaSospechosa)} kg?)`);
+      if (rellenoSospechoso != null)
+        partes.push(`relleno ${rellenoSospechoso} kg (¿= ${aKgStr(rellenoSospechoso)} kg?)`);
+      const ok = window.confirm(
+        `Cargaste ${partes.join(' y ')}. Eso parece estar en GRAMOS, no en kg. ` +
+          `¿Confirmás igual estos valores en kg?`,
+      );
+      if (!ok) return;
+    }
     setGuardando(true);
     setError('');
 
@@ -1370,6 +1421,7 @@ function FormPasta({
                   }
                   return null;
                 })()}
+                <AvisoPosibleGramos raw={masaKg} onCorregir={setMasaKg} />
               </div>
               <div>
                 <label className="mb-1 block text-xs font-medium text-gray-700">
@@ -1397,6 +1449,7 @@ function FormPasta({
                   }
                   return null;
                 })()}
+                <AvisoPosibleGramos raw={rellenoKg} onCorregir={setRellenoKg} />
               </div>
             </div>
           </>
@@ -1441,6 +1494,7 @@ function FormPasta({
               }
               return null;
             })()}
+            <AvisoPosibleGramos raw={rellenoKg} onCorregir={setRellenoKg} />
           </div>
         )}
 
