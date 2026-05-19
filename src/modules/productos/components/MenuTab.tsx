@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { formatARS, cn } from '@/lib/utils';
@@ -20,6 +20,50 @@ const CATEGORIAS: { tipo: string; label: string }[] = [
   { tipo: 'bebida', label: 'Bebidas' },
 ];
 const TIPOS_VENDIBLES = CATEGORIAS.map((c) => c.tipo);
+
+// Subcategorías de Bebidas inferidas por nombre, reproduciendo el esquema que
+// usa Fudo (no hay link confiable cocina↔Fudo para bebidas: codigo no matchea,
+// fudo_nombres vacío). Si en el futuro crece la carta, migrar a una columna.
+const SUBCAT_BEBIDA_ORDEN = [
+  'Bebidas Sin Alcohol',
+  'Aguas',
+  'Jugos / Jarras',
+  'Vinos',
+  'Cervezas',
+  'Aperitivos',
+  'Gin Artesanal',
+  'Otras',
+] as const;
+
+function subcatBebida(nombre: string): (typeof SUBCAT_BEBIDA_ORDEN)[number] {
+  const n = nombre.toLowerCase();
+  if (/\bgin\b/.test(n)) return 'Gin Artesanal';
+  if (/cerveza|\bipa\b|el perro|\bamber\b|dorada|nea ?pa|session/.test(n)) return 'Cervezas';
+  if (/aperol|campari|cynar|fernet|vermut|branca|gancia|aperitivo/.test(n)) return 'Aperitivos';
+  if (
+    /malbec|cabernet|chardonn?ay|sauvignon|syrah|merlot|ros[eé]\b|tannat|bonarda|espumante|cerezo|zunino|makila|iride|abducido|huelga de amores|\(bot\)|\(copa\)|reserva|\bvino/.test(
+      n,
+    )
+  )
+    return 'Vinos';
+  if (/agua/.test(n)) return 'Aguas';
+  if (/jarra|limonada|naranjada|jugo|exprimido|detox|h2o/.test(n)) return 'Jugos / Jarras';
+  if (/7 ?up|pepsi|mirinda|coca|sprite|fanta|paso de los toros|t[oó]nica|lata|gaseosa/.test(n))
+    return 'Bebidas Sin Alcohol';
+  return 'Otras';
+}
+
+function agruparBebidas(items: ProductoMenu[]): { sub: string; rows: ProductoMenu[] }[] {
+  const m = new Map<string, ProductoMenu[]>();
+  for (const p of items) {
+    const s = subcatBebida(p.nombre);
+    (m.get(s) ?? m.set(s, []).get(s)!).push(p);
+  }
+  return SUBCAT_BEBIDA_ORDEN.filter((s) => m.has(s)).map((s) => ({
+    sub: s,
+    rows: (m.get(s) ?? []).sort((a, b) => a.nombre.localeCompare(b.nombre)),
+  }));
+}
 
 const CANAL_LABEL: Record<CanalPrecio, string> = {
   plato: 'Salón',
@@ -310,7 +354,8 @@ export function MenuTab() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
-                    {items.map((p) => {
+                    {(() => {
+                      const fila = (p: ProductoMenu) => {
                       const costo = costoDe(p);
                       const pp = precios.get(p.id) ?? {};
                       const margen = margenPctDe(pp.plato, costo);
@@ -360,7 +405,24 @@ export function MenuTab() {
                           </td>
                         </tr>
                       );
-                    })}
+                      };
+                      if (cat.tipo !== 'bebida') return items.map(fila);
+                      const colSpan = 3 + CANALES_PRECIO.length;
+                      return agruparBebidas(items).map(({ sub, rows }) => (
+                        <Fragment key={sub}>
+                          <tr className="bg-gray-50/70">
+                            <td
+                              colSpan={colSpan}
+                              className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-gray-500"
+                            >
+                              {sub}{' '}
+                              <span className="font-normal text-gray-400">· {rows.length}</span>
+                            </td>
+                          </tr>
+                          {rows.map(fila)}
+                        </Fragment>
+                      ));
+                    })()}
                   </tbody>
                 </table>
               </div>
