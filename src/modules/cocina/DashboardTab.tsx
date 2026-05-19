@@ -83,11 +83,13 @@ export const PRODUCTOS_COCINA: ProductoCocina[] = [
     diasObjetivo: 3,
     local: 'vedia',
   },
-  // Salsas Saavedra — nombres alineados a cocina_productos (= Fudo Saavedra,
-  // Lucas 2026-05-19). Ya tienen receta vinculada; fudoNombres = mismo nombre.
+  // Salsas Saavedra — `nombre` = nombre real de cocina_productos (Lucas alineó
+  // el ERP 2026-05-19) para que el cruce con el producto/receta funcione. SIN
+  // fudoNombres a propósito: en Fudo Saavedra la salsa NO se vende como línea
+  // propia (va dentro del plato), igual que las salsas de Vedia. En el Resumen
+  // salen como planificado vs "s/ venta" (sin demanda Fudo, by design).
   {
     nombre: 'Salsa Amatriciana SG',
-    fudoNombres: ['Salsa Amatriciana SG'],
     categoria: 'Salsas',
     tipo: 'salsa',
     gramosporcion: 200,
@@ -98,7 +100,6 @@ export const PRODUCTOS_COCINA: ProductoCocina[] = [
   },
   {
     nombre: 'Salsa Bolognesa SG',
-    fudoNombres: ['Salsa Bolognesa SG'],
     categoria: 'Salsas',
     tipo: 'salsa',
     gramosporcion: 200,
@@ -109,7 +110,6 @@ export const PRODUCTOS_COCINA: ProductoCocina[] = [
   },
   {
     nombre: 'Salsa De Crema Blanca SG',
-    fudoNombres: ['Salsa De Crema Blanca SG'],
     categoria: 'Salsas',
     tipo: 'salsa',
     gramosporcion: 200,
@@ -120,7 +120,6 @@ export const PRODUCTOS_COCINA: ProductoCocina[] = [
   },
   {
     nombre: 'Salsa Parisienne SG',
-    fudoNombres: ['Salsa Parisienne SG'],
     categoria: 'Salsas',
     tipo: 'salsa',
     gramosporcion: 200,
@@ -131,7 +130,6 @@ export const PRODUCTOS_COCINA: ProductoCocina[] = [
   },
   {
     nombre: 'Salsa Pomodoro SG',
-    fudoNombres: ['Salsa Pomodoro SG'],
     categoria: 'Salsas',
     tipo: 'salsa',
     gramosporcion: 200,
@@ -142,7 +140,6 @@ export const PRODUCTOS_COCINA: ProductoCocina[] = [
   },
   {
     nombre: 'Salsa Rose SG',
-    fudoNombres: ['Salsa Rose SG'],
     categoria: 'Salsas',
     tipo: 'salsa',
     gramosporcion: 200,
@@ -153,7 +150,6 @@ export const PRODUCTOS_COCINA: ProductoCocina[] = [
   },
   {
     nombre: 'Salsa Scarparo SG',
-    fudoNombres: ['Salsa Scarparo SG'],
     categoria: 'Salsas',
     tipo: 'salsa',
     gramosporcion: 200,
@@ -268,12 +264,15 @@ export const PRODUCTOS_COCINA: ProductoCocina[] = [
   // ════════════════════════════════════════════════════════════════
   // PASTAS — Saavedra (salón + congelada se suman)
   // ════════════════════════════════════════════════════════════════
-  // Nombres alineados a los productos reales de cocina_productos (Lucas igualó
-  // el nombre del ERP al de Fudo Saavedra 2026-05-19), por eso fudoNombres = el
-  // mismo nombre. normNombre debe matchear contra cocina_productos.nombre.
+  // `nombre` = nombre real de cocina_productos (Lucas alineó el ERP 2026-05-19)
+  // para el cruce producto/receta. `fudoNombres` = nombre REAL en Fudo Saavedra
+  // (Lucas NO renombró Fudo, solo el ERP), tomado de ventas_items.
   {
+    // AMBIGUO: el producto (cód. scarsg) se renombró a "Capellacci de Pollo…"
+    // pero en Fudo histórico figura "Scarpinocc de Jamón, Quesos y cebollas
+    // caramelizadas". Sin fudoNombres hasta que Lucas confirme cómo se vende
+    // hoy en Fudo Saavedra (puede ser plato nuevo sin historial).
     nombre: 'Capellacci de Pollo, puerro y quesos',
-    fudoNombres: ['Capellacci de Pollo, puerro y quesos'],
     categoria: 'Pastas',
     tipo: 'pasta',
     gramosporcion: 0,
@@ -284,7 +283,7 @@ export const PRODUCTOS_COCINA: ProductoCocina[] = [
   },
   {
     nombre: 'Cappelletti Capresse',
-    fudoNombres: ['Cappelletti Capresse'],
+    fudoNombres: ['Cappelletti Capresse', 'Cappelletti Capresse (CONGELADA)'],
     categoria: 'Pastas',
     tipo: 'pasta',
     gramosporcion: 0,
@@ -294,8 +293,10 @@ export const PRODUCTOS_COCINA: ProductoCocina[] = [
     local: 'saavedra',
   },
   {
+    // AMBIGUO: producto (cód. mezsg) renombrado a "Mezzelune de vacío de cerdo"
+    // pero en Fudo histórico figura "Mezzelune de Bondiola Braseada". Sin
+    // fudoNombres hasta que Lucas confirme el nombre real en Fudo Saavedra.
     nombre: 'Mezzelune de vacío de cerdo',
-    fudoNombres: ['Mezzelune de vacío de cerdo'],
     categoria: 'Pastas',
     tipo: 'pasta',
     gramosporcion: 0,
@@ -339,7 +340,7 @@ export const PRODUCTOS_COCINA: ProductoCocina[] = [
   },
   {
     nombre: 'Spaghetti al huevo',
-    fudoNombres: ['Spaghetti al huevo'],
+    fudoNombres: ['Spaghetti al huevo', 'Spaghettis al huevo (CONGELADOS)'],
     categoria: 'Pastas',
     tipo: 'pasta',
     gramosporcion: 0,
@@ -455,11 +456,13 @@ export const PRODUCTOS_COCINA: ProductoCocina[] = [
   // ════════════════════════════════════════════════════════════════
   // POSTRES/TORTAS — Saavedra
   // ════════════════════════════════════════════════════════════════
-  // Postres/Tortas Saavedra — nombres alineados a cocina_productos (= Fudo
-  // Saavedra, Lucas 2026-05-19). Ya tienen receta; fudoNombres = mismo nombre.
+  // Postres/Tortas Saavedra — `nombre` = nombre real de cocina_productos (Lucas
+  // alineó el ERP 2026-05-19) para el cruce con producto/receta. `fudoNombres`
+  // = nombre REAL en Fudo Saavedra (Lucas NO renombró Fudo, solo el ERP), según
+  // ventas_items: variantes "(porcion)" y "( ALMACEN)". Si Fudo cambia, ajustar.
   {
     nombre: 'Brownies Con Nueces SG',
-    fudoNombres: ['Brownies Con Nueces SG'],
+    fudoNombres: ['Brownie (porcion)', 'Torta brownie ( ALMACEN)'],
     categoria: 'Postres/Tortas',
     tipo: 'postre',
     gramosporcion: 0,
@@ -469,8 +472,10 @@ export const PRODUCTOS_COCINA: ProductoCocina[] = [
     local: 'saavedra',
   },
   {
+    // Budín de pan: no figura como línea de venta propia en Fudo Saavedra
+    // (ventas_items no tiene match). Sin fudoNombres → sin demanda hasta saber
+    // el nombre real en Fudo. Igual aparece en el Resumen como planificado.
     nombre: 'Budin De Pan SG',
-    fudoNombres: ['Budin De Pan SG'],
     categoria: 'Postres/Tortas',
     tipo: 'postre',
     gramosporcion: 0,
@@ -481,7 +486,7 @@ export const PRODUCTOS_COCINA: ProductoCocina[] = [
   },
   {
     nombre: 'Carrot Cake SG',
-    fudoNombres: ['Carrot Cake SG'],
+    fudoNombres: ['Carrot cake (porcion)', 'Carrot cake ( ALMACEN)'],
     categoria: 'Postres/Tortas',
     tipo: 'postre',
     gramosporcion: 0,
@@ -492,7 +497,7 @@ export const PRODUCTOS_COCINA: ProductoCocina[] = [
   },
   {
     nombre: 'Flan SG',
-    fudoNombres: ['Flan SG'],
+    fudoNombres: ['Flan'],
     categoria: 'Postres/Tortas',
     tipo: 'postre',
     gramosporcion: 0,
@@ -503,7 +508,7 @@ export const PRODUCTOS_COCINA: ProductoCocina[] = [
   },
   {
     nombre: 'Torta Matilda',
-    fudoNombres: ['Torta Matilda'],
+    fudoNombres: ['Matilda (porcion)', 'Torta matilda ( ALMACEN)'],
     categoria: 'Postres/Tortas',
     tipo: 'postre',
     gramosporcion: 0,
@@ -514,7 +519,7 @@ export const PRODUCTOS_COCINA: ProductoCocina[] = [
   },
   {
     nombre: 'Torta Vasca SG',
-    fudoNombres: ['Torta Vasca SG'],
+    fudoNombres: ['Tarta Vasca'],
     categoria: 'Postres/Tortas',
     tipo: 'postre',
     gramosporcion: 0,
