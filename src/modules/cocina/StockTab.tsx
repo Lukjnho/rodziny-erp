@@ -694,15 +694,6 @@ export function StockTab() {
                         ✎
                       </span>
                     </button>
-                    {r.ajusteCamara !== 0 && (
-                      <div
-                        className="text-[9px] text-purple-600"
-                        title="Ajuste manual acumulado"
-                      >
-                        ({r.ajusteCamara > 0 ? '+' : ''}
-                        {r.ajusteCamara} aj.)
-                      </div>
-                    )}
                   </td>
                   <td className="px-4 py-2 text-right">
                     <button
@@ -733,15 +724,6 @@ export function StockTab() {
                         ✎
                       </span>
                     </button>
-                    {r.ajusteMostrador !== 0 && (
-                      <div
-                        className="text-[9px] text-purple-600"
-                        title="Ajuste manual acumulado"
-                      >
-                        ({r.ajusteMostrador > 0 ? '+' : ''}
-                        {r.ajusteMostrador} aj.)
-                      </div>
-                    )}
                   </td>
                   <td className="px-4 py-2 text-right text-gray-500">
                     {r.vendidoHoy > 0 ? r.vendidoHoy : '—'}
