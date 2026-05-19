@@ -64,7 +64,10 @@ interface FudoData {
   ranking: FudoRankingItem[];
 }
 
-type FiltroLocal = 'todos' | 'vedia' | 'saavedra';
+// Cocina es una herramienta operativa por local: nunca vista combinada.
+// El admin elige Vedia o Saavedra (default Vedia); al cocinero con
+// local_restringido se le fuerza el suyo y se le oculta el selector.
+type FiltroLocal = 'vedia' | 'saavedra';
 
 interface StockRow {
   producto: Producto;
@@ -129,7 +132,9 @@ export function StockTab() {
   const { perfil } = useAuth();
   const qc = useQueryClient();
   const localRestringido = perfil?.local_restringido ?? null;
-  const [filtroLocal, setFiltroLocal] = useState<FiltroLocal>(localRestringido ?? 'todos');
+  const [filtroLocal, setFiltroLocal] = useState<FiltroLocal>(
+    (localRestringido as FiltroLocal | null) ?? 'vedia',
+  );
   useEffect(() => {
     if (localRestringido && filtroLocal !== localRestringido) setFiltroLocal(localRestringido);
   }, [localRestringido, filtroLocal]);
@@ -289,10 +294,7 @@ export function StockTab() {
 
   // Locales en alcance según el filtro. Ambos locales tienen API de Fudo
   // (credenciales en las Edge Functions fudo-*). Antes esto era solo Vedia.
-  const localesScope = useMemo<string[]>(
-    () => (filtroLocal === 'todos' ? ['vedia', 'saavedra'] : [filtroLocal]),
-    [filtroLocal],
-  );
+  const localesScope = useMemo<string[]>(() => [filtroLocal], [filtroLocal]);
 
   // Ventas Fudo de HOY por local. Una llamada a fudo-productos por local.
   const { data: fudoHoy } = useQuery({
@@ -359,7 +361,7 @@ export function StockTab() {
       return [];
 
     const rows: StockRow[] = [];
-    const locales: string[] = filtroLocal === 'todos' ? ['vedia', 'saavedra'] : [filtroLocal];
+    const locales: string[] = [filtroLocal];
 
     for (const prod of productos) {
       // Esta tabla es SOLO de pastas (flujo cámara/mostrador/porcionado).
@@ -550,10 +552,7 @@ export function StockTab() {
           value={String(kpis.totalProductos)}
           color="blue"
           loading={isLoading}
-          onClick={() => {
-            setFiltroEstado('todos');
-            if (!localRestringido) setFiltroLocal('todos');
-          }}
+          onClick={() => setFiltroEstado('todos')}
         />
         <KPICard
           label="Bajo mínimo"
@@ -605,7 +604,6 @@ export function StockTab() {
             onChange={(e) => setFiltroLocal(e.target.value as FiltroLocal)}
             className="rounded border border-gray-300 px-2 py-1.5 text-sm"
           >
-            <option value="todos">Todos los locales</option>
             <option value="vedia">Vedia</option>
             <option value="saavedra">Saavedra</option>
           </select>
