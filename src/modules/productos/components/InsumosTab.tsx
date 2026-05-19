@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/lib/auth';
 import { formatARS, cn } from '@/lib/utils';
 import { VariacionesCostoPanel } from './VariacionesCostoPanel';
 
@@ -19,13 +20,17 @@ interface Insumo {
   updated_at: string;
 }
 
-type FiltroLocal = 'todos' | 'vedia' | 'saavedra';
+type FiltroLocal = 'vedia' | 'saavedra';
 
 export function InsumosTab() {
   const qc = useQueryClient();
+  const { perfil } = useAuth();
+  const localRestringido = (perfil?.local_restringido ?? null) as 'vedia' | 'saavedra' | null;
   const [busqueda, setBusqueda] = useState('');
   const [filtroCategoria, setFiltroCategoria] = useState<string>('todas');
-  const [filtroLocal, setFiltroLocal] = useState<FiltroLocal>('todos');
+  const [filtroLocal, setFiltroLocal] = useState<FiltroLocal>(
+    (localRestringido as FiltroLocal | null) ?? 'vedia',
+  );
   const [edit, setEdit] = useState<{ id: string; field: 'costo' | 'merma'; valor: string } | null>(
     null,
   );
@@ -66,8 +71,7 @@ export function InsumosTab() {
   }, [insumos]);
 
   const filtrados = useMemo(() => {
-    let lista = insumos ?? [];
-    if (filtroLocal !== 'todos') lista = lista.filter((i) => (i.local ?? '') === filtroLocal);
+    let lista = (insumos ?? []).filter((i) => (i.local ?? '') === filtroLocal);
     if (filtroCategoria !== 'todas') lista = lista.filter((i) => i.categoria === filtroCategoria);
     if (busqueda.trim()) {
       const q = busqueda.toLowerCase();
@@ -106,18 +110,19 @@ export function InsumosTab() {
 
       <div className="flex flex-wrap items-center gap-2 rounded-lg border border-gray-200 bg-white p-3">
         <div className="flex gap-1">
-          {(['todos', 'vedia', 'saavedra'] as const).map((l) => (
+          {(['vedia', 'saavedra'] as const).map((l) => (
             <button
               key={l}
+              disabled={!!localRestringido && l !== localRestringido}
               onClick={() => setFiltroLocal(l)}
               className={cn(
-                'rounded px-3 py-1.5 text-sm font-medium capitalize transition-colors',
+                'rounded px-3 py-1.5 text-sm font-medium capitalize transition-colors disabled:opacity-30',
                 filtroLocal === l
                   ? 'bg-rodziny-700 text-white'
                   : 'border border-gray-300 bg-white text-gray-700 hover:bg-gray-50',
               )}
             >
-              {l === 'todos' ? 'Ambos locales' : l}
+              {l}
             </button>
           ))}
         </div>

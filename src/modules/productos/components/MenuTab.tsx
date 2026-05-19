@@ -38,7 +38,7 @@ interface ProductoMenu {
   insumo_reventa_id: string | null;
 }
 
-type FiltroLocal = 'todos' | 'vedia' | 'saavedra';
+type FiltroLocal = 'vedia' | 'saavedra';
 
 export function MenuTab() {
   const qc = useQueryClient();
@@ -46,7 +46,7 @@ export function MenuTab() {
   const localRestringido = (perfil?.local_restringido ?? null) as 'vedia' | 'saavedra' | null;
 
   const [filtroLocal, setFiltroLocal] = useState<FiltroLocal>(
-    (localRestringido as FiltroLocal) ?? 'todos',
+    (localRestringido as FiltroLocal | null) ?? 'vedia',
   );
   const [busqueda, setBusqueda] = useState('');
   const [colapsadas, setColapsadas] = useState<Set<string>>(new Set());
@@ -170,8 +170,7 @@ export function MenuTab() {
   });
 
   const filtrados = useMemo(() => {
-    let lista = productos ?? [];
-    if (filtroLocal !== 'todos') lista = lista.filter((p) => p.local === filtroLocal);
+    let lista = (productos ?? []).filter((p) => p.local === filtroLocal);
     if (busqueda.trim()) {
       const q = busqueda.toLowerCase();
       lista = lista.filter(
@@ -232,10 +231,10 @@ export function MenuTab() {
 
       <div className="flex flex-wrap items-center gap-2 rounded-lg border border-gray-200 bg-white p-3">
         <div className="flex gap-1">
-          {(['todos', 'vedia', 'saavedra'] as const).map((l) => (
+          {(['vedia', 'saavedra'] as const).map((l) => (
             <button
               key={l}
-              disabled={!!localRestringido && l !== localRestringido && l !== 'todos'}
+              disabled={!!localRestringido && l !== localRestringido}
               onClick={() => setFiltroLocal(l)}
               className={cn(
                 'rounded px-3 py-1.5 text-sm font-medium capitalize transition-colors disabled:opacity-30',
@@ -244,7 +243,7 @@ export function MenuTab() {
                   : 'border border-gray-300 bg-white text-gray-700 hover:bg-gray-50',
               )}
             >
-              {l === 'todos' ? 'Ambos locales' : l}
+              {l}
             </button>
           ))}
         </div>
@@ -392,7 +391,7 @@ function ArmarPlato({
 
   const lista = (tipo: string) =>
     productos
-      .filter((p) => p.tipo === tipo && (filtroLocal === 'todos' || p.local === filtroLocal))
+      .filter((p) => p.tipo === tipo && p.local === filtroLocal)
       .sort((a, b) => a.nombre.localeCompare(b.nombre));
 
   const pasta = productos.find((p) => p.id === pastaId) ?? null;

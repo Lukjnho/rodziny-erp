@@ -12,7 +12,7 @@ import { RecetaEditorInline } from './RecetaEditorInline';
 // canal, packaging, adicionales, ABM) vive en el tab Menú.
 type RecetaFull = Receta & { es_subreceta: boolean };
 
-type FiltroLocal = 'todos' | 'vedia' | 'saavedra';
+type FiltroLocal = 'vedia' | 'saavedra';
 
 const TIPO_COLOR: Record<string, string> = {
   relleno: 'bg-green-100 text-green-700',
@@ -60,7 +60,7 @@ export function FichaProductoTab() {
   const [busqueda, setBusqueda] = useState('');
   const [filtroTipo, setFiltroTipo] = useState('todos');
   const [filtroLocal, setFiltroLocal] = useState<FiltroLocal>(
-    (localRestringido as FiltroLocal) ?? 'todos',
+    (localRestringido as FiltroLocal | null) ?? 'vedia',
   );
   const [soloSub, setSoloSub] = useState(false);
   const [editando, setEditando] = useState(false);
@@ -100,8 +100,7 @@ export function FichaProductoTab() {
   }, [recetas]);
 
   const filtradas = useMemo(() => {
-    let lista = recetas ?? [];
-    if (filtroLocal !== 'todos') lista = lista.filter((r) => r.local === filtroLocal);
+    let lista = (recetas ?? []).filter((r) => r.local === filtroLocal);
     if (filtroTipo !== 'todos') lista = lista.filter((r) => r.tipo === filtroTipo);
     if (soloSub) lista = lista.filter((r) => r.es_subreceta);
     if (busqueda.trim()) {
@@ -193,10 +192,10 @@ export function FichaProductoTab() {
 
         <div className="flex flex-wrap items-center gap-2 rounded-lg border border-gray-200 bg-white p-3">
           <div className="flex gap-1">
-            {(['todos', 'vedia', 'saavedra'] as const).map((l) => (
+            {(['vedia', 'saavedra'] as const).map((l) => (
               <button
                 key={l}
-                disabled={!!localRestringido && l !== localRestringido && l !== 'todos'}
+                disabled={!!localRestringido && l !== localRestringido}
                 onClick={() => setFiltroLocal(l)}
                 className={cn(
                   'rounded px-3 py-1.5 text-sm font-medium capitalize transition-colors disabled:opacity-30',
@@ -205,7 +204,7 @@ export function FichaProductoTab() {
                     : 'border border-gray-300 bg-white text-gray-700 hover:bg-gray-50',
                 )}
               >
-                {l === 'todos' ? 'Ambos locales' : l}
+                {l}
               </button>
             ))}
           </div>

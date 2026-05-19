@@ -70,7 +70,7 @@ function normalizarNombre(n: string): string {
 
 export interface MenuEngineeringOptions {
   periodos: string[]; // formato YYYY-MM, ej ['2026-04','2026-05']
-  local?: 'vedia' | 'saavedra' | 'todos';
+  local?: 'vedia' | 'saavedra';
   categoria?: string | 'todas';
 }
 
@@ -83,7 +83,7 @@ export function useMenuEngineering(opts: MenuEngineeringOptions) {
         .from('ventas_items')
         .select('codigo, nombre, categoria, subcategoria, local, cantidad, total, periodo')
         .in('periodo', opts.periodos);
-      if (opts.local && opts.local !== 'todos') q = q.eq('local', opts.local);
+      if (opts.local) q = q.eq('local', opts.local);
       const { data, error } = await q;
       if (error) throw error;
       return data as VentaItemRow[];

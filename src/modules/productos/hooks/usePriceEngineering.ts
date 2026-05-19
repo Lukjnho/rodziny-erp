@@ -44,7 +44,7 @@ export interface OmnesResultado {
 }
 
 export function usePriceEngineering(
-  local: 'vedia' | 'saavedra' | 'todos',
+  local: 'vedia' | 'saavedra',
   categoria: string | 'todas',
   periodosVentas: string[],
 ) {
@@ -57,7 +57,7 @@ export function usePriceEngineering(
         .eq('activo', true)
         .not('precio_venta', 'is', null)
         .gt('precio_venta', 0);
-      if (local !== 'todos') q = q.eq('local', local);
+      q = q.eq('local', local);
       if (categoria !== 'todas') q = q.eq('tipo', categoria);
       const { data, error } = await q;
       if (error) throw error;
@@ -73,7 +73,7 @@ export function usePriceEngineering(
         .from('ventas_items')
         .select('codigo, local, cantidad, total')
         .in('periodo', periodosVentas);
-      if (local !== 'todos') q = q.eq('local', local);
+      q = q.eq('local', local);
       const { data, error } = await q;
       if (error) throw error;
       // Agregar por codigo + local

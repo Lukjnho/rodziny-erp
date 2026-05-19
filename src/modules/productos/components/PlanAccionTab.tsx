@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react';
 import { formatARS, cn } from '@/lib/utils';
+import { useAuth } from '@/lib/auth';
 import { useMenuEngineering, type ProductoME } from '../hooks/useMenuEngineering';
 import { useProductosCosteoConfig } from '../hooks/useProductosCosteoConfig';
 
@@ -50,8 +51,10 @@ const TIPO_LABEL: Record<TipoAccion, { label: string; icon: string; color: strin
 };
 
 export function PlanAccionTab() {
+  const { perfil } = useAuth();
+  const localRestringido = (perfil?.local_restringido ?? null) as 'vedia' | 'saavedra' | null;
   const meses = useMemo(() => ultimosMeses(1), []);
-  const [local, setLocal] = useState<'todos' | 'vedia' | 'saavedra'>('todos');
+  const [local, setLocal] = useState<'vedia' | 'saavedra'>(localRestringido ?? 'vedia');
   const [tipoFiltro, setTipoFiltro] = useState<TipoAccion | 'todas'>('todas');
 
   const { productos, isLoading } = useMenuEngineering({ periodos: meses, local });
@@ -185,12 +188,13 @@ export function PlanAccionTab() {
         <div>
           <label className="block text-[10px] uppercase tracking-wide text-gray-500">Local</label>
           <div className="flex gap-1">
-            {(['todos', 'vedia', 'saavedra'] as const).map((l) => (
+            {(['vedia', 'saavedra'] as const).map((l) => (
               <button
                 key={l}
+                disabled={!!localRestringido && l !== localRestringido}
                 onClick={() => setLocal(l)}
                 className={cn(
-                  'rounded px-3 py-1 text-xs capitalize',
+                  'rounded px-3 py-1 text-xs capitalize disabled:opacity-30',
                   local === l
                     ? 'bg-rodziny-700 text-white'
                     : 'border border-gray-300 bg-white text-gray-700',
