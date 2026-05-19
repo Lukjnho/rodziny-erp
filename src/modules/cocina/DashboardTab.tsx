@@ -8,8 +8,10 @@ import { ProximasEfemeridesCard } from './components/ProximasEfemeridesCard';
 import { useCierresFaltantes } from './hooks/useCierresFaltantes';
 
 // ── Productos que el chef controla ──────────────────────────────────────────
-// tipo determina unidad de medida y cálculo de porciones
-export type TipoProducto = 'salsa' | 'postre' | 'pasta';
+// tipo determina unidad de medida y cálculo de porciones.
+// 'panificado' (panes Saavedra vendidos vía Almacén) se comporta igual que
+// 'postre': se cuenta por unidades y usa stock registrado, no flujo de pasta.
+export type TipoProducto = 'salsa' | 'postre' | 'pasta' | 'panificado';
 
 export interface ProductoCocina {
   nombre: string;
@@ -542,6 +544,62 @@ export const PRODUCTOS_COCINA: ProductoCocina[] = [
     tipo: 'postre',
     gramosporcion: 0,
     porcionesporunidad: 8,
+    unidadstock: 'unidades',
+    diasObjetivo: 2,
+    local: 'saavedra',
+  },
+
+  // ════════════════════════════════════════════════════════════════
+  // PANADERÍA — Saavedra (se venden solo vía Almacén en Fudo)
+  // ════════════════════════════════════════════════════════════════
+  // `nombre` = nombre real de cocina_productos Saavedra (tipo='panificado').
+  // `fudoNombres` = nombre EXACTO en Fudo cat. "Panaderia", verificado contra
+  // la API live 2026-05-19: "(ALMACEN)" SIN espacio tras "(" (≠ las tortas de
+  // Pastelería que van con espacio "( ALMACEN)"). El normalizador colapsa
+  // espacios múltiples pero conserva el simple → copiar EXACTO.
+  // Nota: hoy no tienen receta_id vinculada → no generan demanda en el Resumen
+  // hasta que Lucas linkee receta desde Cocina (igual que las 7 pastas).
+  // `Pan de servicio SG` NO se vende en Fudo. No existe producto `Rosca de Pascuas`.
+  {
+    nombre: 'Pan Brioche SG',
+    fudoNombres: ['Pan brioche (ALMACEN)'],
+    categoria: 'Panadería',
+    tipo: 'panificado',
+    gramosporcion: 0,
+    porcionesporunidad: 1,
+    unidadstock: 'unidades',
+    diasObjetivo: 2,
+    local: 'saavedra',
+  },
+  {
+    nombre: 'Pan de Campo SG',
+    fudoNombres: ['Pan de campo (ALMACEN)'],
+    categoria: 'Panadería',
+    tipo: 'panificado',
+    gramosporcion: 0,
+    porcionesporunidad: 1,
+    unidadstock: 'unidades',
+    diasObjetivo: 2,
+    local: 'saavedra',
+  },
+  {
+    nombre: 'Pan de Molde SG',
+    fudoNombres: ['Pan de molde (ALMACEN)'],
+    categoria: 'Panadería',
+    tipo: 'panificado',
+    gramosporcion: 0,
+    porcionesporunidad: 1,
+    unidadstock: 'unidades',
+    diasObjetivo: 2,
+    local: 'saavedra',
+  },
+  {
+    nombre: 'Pan Lactal SG',
+    fudoNombres: ['Pan lactal (ALMACEN)'],
+    categoria: 'Panadería',
+    tipo: 'panificado',
+    gramosporcion: 0,
+    porcionesporunidad: 1,
     unidadstock: 'unidades',
     diasObjetivo: 2,
     local: 'saavedra',
@@ -1133,7 +1191,7 @@ export function DashboardTab() {
     mutationFn: async (payload: {
       producto: string;
       cantidad: number;
-      tipo: 'salsa' | 'postre' | 'pasta';
+      tipo: 'salsa' | 'postre' | 'pasta' | 'panificado';
       unidadStock: string;
     }) => {
       if (payload.tipo === 'pasta') {
@@ -1145,7 +1203,10 @@ export function DashboardTab() {
       // Mapear unidad
       const unidad: 'kg' | 'unid' | 'lt' =
         payload.unidadStock === 'kg' ? 'kg' : payload.unidadStock === 'lt' ? 'lt' : 'unid';
-      const categoria = payload.tipo; // 'salsa' o 'postre'
+      // cocina_lotes_produccion.categoria tiene CHECK (salsa/postre/pasteleria/
+      // panaderia/prueba). El tipo 'panificado' (cocina_productos) mapea a la
+      // categoría 'panaderia' de los lotes; el resto pasa tal cual.
+      const categoria = payload.tipo === 'panificado' ? 'panaderia' : payload.tipo;
 
       // Match por nombre normalizado con cocina_recetas (puede no existir)
       const receta = recetasLocal?.get(normNombre(payload.producto)) ?? null;
