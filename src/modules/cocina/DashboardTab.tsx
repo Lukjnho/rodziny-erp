@@ -199,8 +199,45 @@ export const PRODUCTOS_COCINA: ProductoCocina[] = [
   // ════════════════════════════════════════════════════════════════
   // PASTAS — Saavedra (salón + congelada se suman)
   // ════════════════════════════════════════════════════════════════
+  // Nombres alineados a los productos reales de cocina_productos (Lucas igualó
+  // el nombre del ERP al de Fudo Saavedra 2026-05-19), por eso fudoNombres = el
+  // mismo nombre. normNombre debe matchear contra cocina_productos.nombre.
+  {
+    nombre: 'Capellacci de Pollo, puerro y quesos',
+    fudoNombres: ['Capellacci de Pollo, puerro y quesos'],
+    categoria: 'Pastas',
+    tipo: 'pasta',
+    gramosporcion: 0,
+    porcionesporunidad: 1,
+    unidadstock: 'porciones',
+    diasObjetivo: 3,
+    local: 'saavedra',
+  },
+  {
+    nombre: 'Cappelletti Capresse',
+    fudoNombres: ['Cappelletti Capresse'],
+    categoria: 'Pastas',
+    tipo: 'pasta',
+    gramosporcion: 0,
+    porcionesporunidad: 1,
+    unidadstock: 'porciones',
+    diasObjetivo: 3,
+    local: 'saavedra',
+  },
+  {
+    nombre: 'Mezzelune de vacío de cerdo',
+    fudoNombres: ['Mezzelune de vacío de cerdo'],
+    categoria: 'Pastas',
+    tipo: 'pasta',
+    gramosporcion: 0,
+    porcionesporunidad: 1,
+    unidadstock: 'porciones',
+    diasObjetivo: 3,
+    local: 'saavedra',
+  },
   {
     nombre: 'Mila napo + fideos',
+    fudoNombres: ['Mila napo + fideos'],
     categoria: 'Pastas',
     tipo: 'pasta',
     gramosporcion: 0,
@@ -221,33 +258,8 @@ export const PRODUCTOS_COCINA: ProductoCocina[] = [
     local: 'saavedra',
   },
   {
-    nombre: 'Cappelletti Capresse',
-    fudoNombres: ['Cappelletti Capresse', 'Cappelletti Capresse (CONGELADA)'],
-    categoria: 'Pastas',
-    tipo: 'pasta',
-    gramosporcion: 0,
-    porcionesporunidad: 1,
-    unidadstock: 'porciones',
-    diasObjetivo: 3,
-    local: 'saavedra',
-  },
-  {
-    nombre: 'Scarpinocc J&Q',
-    fudoNombres: [
-      'Scarpinocc de Jamón, Quesos y cebollas caramelizadas',
-      'Scarpinocc de Jamón, Quesos y cebollas caramelizadas (CONGELADA)',
-    ],
-    categoria: 'Pastas',
-    tipo: 'pasta',
-    gramosporcion: 0,
-    porcionesporunidad: 1,
-    unidadstock: 'porciones',
-    diasObjetivo: 3,
-    local: 'saavedra',
-  },
-  {
-    nombre: 'Mezzelune de Bondiola',
-    fudoNombres: ['Mezzelune de Bondiola Braseada', 'Mezzelune de Bondiola Braseada (CONGELADA)'],
+    nombre: 'Ñoquis rellenos',
+    fudoNombres: ['Ñoquis rellenos'],
     categoria: 'Pastas',
     tipo: 'pasta',
     gramosporcion: 0,
@@ -258,7 +270,7 @@ export const PRODUCTOS_COCINA: ProductoCocina[] = [
   },
   {
     nombre: 'Spaghetti al huevo',
-    fudoNombres: ['Spaghetti al huevo', 'Spaghettis al huevo (CONGELADOS)'],
+    fudoNombres: ['Spaghetti al huevo'],
     categoria: 'Pastas',
     tipo: 'pasta',
     gramosporcion: 0,
