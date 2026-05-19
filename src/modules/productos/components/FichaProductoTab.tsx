@@ -22,6 +22,7 @@ const TIPO_COLOR: Record<string, string> = {
   postre: 'bg-pink-100 text-pink-700',
   pasteleria: 'bg-yellow-100 text-yellow-700',
   panaderia: 'bg-amber-100 text-amber-700',
+  bebida: 'bg-sky-100 text-sky-700',
   subreceta: 'bg-purple-100 text-purple-700',
   otro: 'bg-gray-100 text-gray-700',
 };
@@ -35,6 +36,7 @@ const ORDEN_TIPOS = [
   'postre',
   'pasteleria',
   'panaderia',
+  'bebida',
   'subreceta',
   'otro',
 ];
@@ -47,6 +49,7 @@ const TIPO_LABEL: Record<string, string> = {
   postre: 'Postres',
   pasteleria: 'Pastelería',
   panaderia: 'Panadería',
+  bebida: 'Bebidas',
   subreceta: 'Subrecetas',
   otro: 'Otros',
 };

@@ -22,7 +22,7 @@ export type RendUnidad = 'kg' | 'l' | 'unidad';
 export interface Receta {
   id: string;
   nombre: string;
-  tipo: 'relleno' | 'masa' | 'salsa' | 'pasta' | 'postre' | 'pasteleria' | 'panaderia' | 'subreceta' | 'otro';
+  tipo: 'relleno' | 'masa' | 'salsa' | 'pasta' | 'postre' | 'pasteleria' | 'panaderia' | 'bebida' | 'subreceta' | 'otro';
   rendimiento_kg: number | null;
   rendimiento_unidad: RendUnidad;
   rendimiento_porciones: number | null;
@@ -49,6 +49,7 @@ const TIPOS = [
   'postre',
   'pasteleria',
   'panaderia',
+  'bebida',
   'subreceta',
   'otro',
 ] as const;

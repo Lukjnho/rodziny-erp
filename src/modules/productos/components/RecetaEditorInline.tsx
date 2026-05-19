@@ -37,6 +37,7 @@ const TIPOS_RECETA = [
   'postre',
   'pasteleria',
   'panaderia',
+  'bebida',
   'subreceta',
   'otro',
 ] as const;
