@@ -7,19 +7,34 @@ import { useCostosRecetas } from '@/modules/cocina/hooks/useCostosRecetas';
 import { useConfigCosteo } from '@/modules/cocina/hooks/useConfigCosteo';
 import { useComisionMpConfig } from '../hooks/useComisionMpConfig';
 import { CANALES_PRECIO, type CanalPrecio } from '../hooks/usePreciosCanal';
-import { ProductoFormPanel } from './ProductoFormPanel';
-import { ProductoDetalleMenu } from './ProductoDetalleMenu';
 
-// Solo lo que se vende. Componentes (masa, relleno, crema, subrecetas) viven
-// en el tab Costeo, no acá.
-const CATEGORIAS: { tipo: string; label: string }[] = [
-  { tipo: 'pasta', label: 'Pastas' },
-  { tipo: 'salsa', label: 'Salsas' },
-  { tipo: 'postre', label: 'Postres' },
-  { tipo: 'panificado', label: 'Panificados' },
-  { tipo: 'bebida', label: 'Bebidas' },
+// El Menú es una PROYECCIÓN de Costeo: lista las recetas marcadas "vendible"
+// (su costo sale del motor de Costeo, no se duplica) + las bebidas de reventa
+// (sin receta). Acá solo se fija el precio por canal y se ve el margen. El
+// armado de recetas/ingredientes y el toggle "vendible" viven en Costeo.
+
+// Orden y etiqueta de las categorías del Menú. El grupo es el `tipo` de la
+// receta (o 'bebida' para reventa). Tipos no listados van al final, alfabético.
+const CATEGORIA_ORDEN = [
+  'pasta',
+  'salsa',
+  'postre',
+  'panaderia',
+  'pasteleria',
+  'panificado',
+  'bebida',
+  'otro',
 ];
-const TIPOS_VENDIBLES = CATEGORIAS.map((c) => c.tipo);
+const CATEGORIA_LABEL: Record<string, string> = {
+  pasta: 'Pastas',
+  salsa: 'Salsas',
+  postre: 'Postres',
+  panaderia: 'Panadería',
+  pasteleria: 'Pastelería',
+  panificado: 'Panificados',
+  bebida: 'Bebidas',
+  otro: 'Otros',
+};
 
 // Subcategorías de Bebidas inferidas por nombre, reproduciendo el esquema que
 // usa Fudo (no hay link confiable cocina↔Fudo para bebidas: codigo no matchea,
@@ -53,8 +68,8 @@ function subcatBebida(nombre: string): (typeof SUBCAT_BEBIDA_ORDEN)[number] {
   return 'Otras';
 }
 
-function agruparBebidas(items: ProductoMenu[]): { sub: string; rows: ProductoMenu[] }[] {
-  const m = new Map<string, ProductoMenu[]>();
+function agruparBebidas(items: ItemMenu[]): { sub: string; rows: ItemMenu[] }[] {
+  const m = new Map<string, ItemMenu[]>();
   for (const p of items) {
     const s = subcatBebida(p.nombre);
     (m.get(s) ?? m.set(s, []).get(s)!).push(p);
@@ -71,70 +86,102 @@ const CANAL_LABEL: Record<CanalPrecio, string> = {
   congelado: 'Congelado',
 };
 
-interface ProductoMenu {
-  id: string;
+type FiltroLocal = 'vedia' | 'saavedra';
+type Origen = 'receta' | 'reventa';
+
+// Ítem unificado del Menú. `refId` es el receta_id (origen receta) o el
+// cocina_producto_id (origen reventa). `key` = clave única para React/precios.
+interface ItemMenu {
+  key: string;
+  origen: Origen;
+  refId: string;
   nombre: string;
-  codigo: string;
   tipo: string;
-  unidad: string;
-  local: 'vedia' | 'saavedra';
-  receta_id: string | null;
-  insumo_reventa_id: string | null;
+  local: FiltroLocal;
+  costo: number | null;
+  esSubreceta: boolean;
 }
 
-type FiltroLocal = 'vedia' | 'saavedra';
+interface RecetaVendible {
+  id: string;
+  nombre: string;
+  tipo: string;
+  local: FiltroLocal;
+  es_subreceta: boolean;
+}
+
+interface BebidaReventa {
+  id: string;
+  nombre: string;
+  local: FiltroLocal;
+  insumo_reventa_id: string | null;
+}
 
 export function MenuTab() {
   const qc = useQueryClient();
   const { perfil } = useAuth();
-  const localRestringido = (perfil?.local_restringido ?? null) as 'vedia' | 'saavedra' | null;
+  const localRestringido = (perfil?.local_restringido ?? null) as FiltroLocal | null;
 
   const [filtroLocal, setFiltroLocal] = useState<FiltroLocal>(
     (localRestringido as FiltroLocal | null) ?? 'vedia',
   );
   const [busqueda, setBusqueda] = useState('');
   const [colapsadas, setColapsadas] = useState<Set<string>>(new Set());
-  const [detalleId, setDetalleId] = useState<string | null>(null);
-  // null = cerrado · {id:null} = nuevo · {id:'x'} = editar definición
-  const [formProducto, setFormProducto] = useState<{ id: string | null } | null>(null);
 
-  const invalidarMenu = () => {
-    qc.invalidateQueries({ queryKey: ['menu-productos'] });
-    qc.invalidateQueries({ queryKey: ['menu-precios-canal'] });
-    qc.invalidateQueries({ queryKey: ['menu-detalle-producto'] });
-    qc.invalidateQueries({ queryKey: ['ficha-productos'] });
-    qc.invalidateQueries({ queryKey: ['cocina-producto-detalle'] });
-    qc.invalidateQueries({ queryKey: ['productos-costeo'] });
-  };
-
-  const { data: productos } = useQuery({
-    queryKey: ['menu-productos'],
+  // ─── Recetas marcadas vendible en Costeo ───────────────────────────────────
+  const { data: recetas } = useQuery({
+    queryKey: ['menu-recetas-vendibles'],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from('cocina_productos')
-        .select('id, nombre, codigo, tipo, unidad, local, receta_id, insumo_reventa_id')
+        .from('cocina_recetas')
+        .select('id, nombre, tipo, local, es_subreceta')
         .eq('activo', true)
-        .in('tipo', TIPOS_VENDIBLES)
+        .eq('vendible', true)
         .order('nombre');
       if (error) throw error;
-      return data as ProductoMenu[];
+      return (data ?? []) as RecetaVendible[];
     },
   });
 
-  // Costo de los insumos de reventa (bebidas de lata/agua/vino sin receta).
+  // ─── Bebidas de reventa (sin receta: latas, agua, vino) ────────────────────
+  const { data: bebidas } = useQuery({
+    queryKey: ['menu-bebidas-reventa'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('cocina_productos')
+        .select('id, nombre, local, insumo_reventa_id')
+        .eq('activo', true)
+        .eq('tipo', 'bebida')
+        .not('insumo_reventa_id', 'is', null)
+        .order('nombre');
+      if (error) throw error;
+      return (data ?? []) as BebidaReventa[];
+    },
+  });
+
   const { data: insumosReventa } = useQuery({
     queryKey: ['menu-insumos-reventa'],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('productos')
-        .select('id, costo_unitario');
+      const { data, error } = await supabase.from('productos').select('id, costo_unitario');
       if (error) throw error;
       return data as Array<{ id: string; costo_unitario: number }>;
     },
   });
 
-  const { data: preciosRaw } = useQuery({
-    queryKey: ['menu-precios-canal'],
+  // Precios por receta (modelo nuevo) y por producto de reventa (legacy).
+  const { data: preciosReceta } = useQuery({
+    queryKey: ['menu-precios-receta'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('cocina_recetas_precios_canal')
+        .select('receta_id, canal, precio');
+      if (error) throw error;
+      return data as Array<{ receta_id: string; canal: CanalPrecio; precio: number }>;
+    },
+  });
+
+  const { data: preciosReventa } = useQuery({
+    queryKey: ['menu-precios-reventa'],
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cocina_productos_precios_canal')
@@ -148,45 +195,34 @@ export function MenuTab() {
   const { config: configGen } = useConfigCosteo();
   const { getComision } = useComisionMpConfig();
 
-  // precios[productoId][canal] = precio
-  const precios = useMemo(() => {
-    const m = new Map<string, Partial<Record<CanalPrecio, number>>>();
-    for (const r of preciosRaw ?? []) {
-      if (!m.has(r.cocina_producto_id)) m.set(r.cocina_producto_id, {});
-      m.get(r.cocina_producto_id)![r.canal] = Number(r.precio);
-    }
-    return m;
-  }, [preciosRaw]);
-
   const costoInsumo = useMemo(() => {
     const m = new Map<string, number>();
     for (const i of insumosReventa ?? []) m.set(i.id, Number(i.costo_unitario));
     return m;
   }, [insumosReventa]);
 
-  // Costo del producto. Elaborado → costo de receta (incluye merma+subrecetas
-  // +margen seguridad, criterio de useCostoCompleto). Reventa (bebida sin
-  // receta) → costo_unitario del insumo vinculado.
-  const costoDe = (p: ProductoMenu): number | null => {
-    if (!p.receta_id) {
-      if (p.insumo_reventa_id) return costoInsumo.get(p.insumo_reventa_id) ?? null;
-      return null;
+  // precios[`${origen}:${refId}`][canal] = precio
+  const precios = useMemo(() => {
+    const m = new Map<string, Partial<Record<CanalPrecio, number>>>();
+    for (const r of preciosReceta ?? []) {
+      const k = `receta:${r.receta_id}`;
+      if (!m.has(k)) m.set(k, {});
+      m.get(k)![r.canal] = Number(r.precio);
     }
-    const c = costos.get(p.receta_id);
-    if (!c) return null;
-    const u = (p.unidad ?? '').toLowerCase();
-    const esPeso = u === 'kg' || u === 'litros' || u === 'lt' || u === 'l';
-    if (esPeso && c.costoPorKg != null) return c.costoPorKg;
-    if (!esPeso && c.costoPorPorcion != null) return c.costoPorPorcion;
-    return c.costoPorPorcion ?? c.costoPorKg ?? null;
-  };
+    for (const r of preciosReventa ?? []) {
+      const k = `reventa:${r.cocina_producto_id}`;
+      if (!m.has(k)) m.set(k, {});
+      m.get(k)![r.canal] = Number(r.precio);
+    }
+    return m;
+  }, [preciosReceta, preciosReventa]);
 
   const ivaPct = configGen?.iva_pct ?? 0.21;
   const comisionPct = getComision('qr');
 
-  // Margen sobre precio para un precio dado (despeje idéntico a useCostoCompleto,
-  // medio QR por defecto). Costo = costo de receta (el desglose fino —packaging,
-  // servicio, MO— está en el tab Costeo).
+  // Margen sobre precio (despeje idéntico a useCostoCompleto, medio QR por
+  // defecto). Costo = costo de receta; el desglose fino (packaging, servicio,
+  // mano de obra) vive en el tab Costeo.
   const margenPctDe = (precio: number | null | undefined, costo: number | null): number | null => {
     if (!precio || precio <= 0 || costo == null) return null;
     const neto = precio / (1 + ivaPct);
@@ -197,38 +233,88 @@ export function MenuTab() {
   };
 
   const setPrecio = useMutation({
-    mutationFn: async (v: { productoId: string; canal: CanalPrecio; precio: number }) => {
-      const { error } = await supabase.from('cocina_productos_precios_canal').upsert(
-        { cocina_producto_id: v.productoId, canal: v.canal, precio: v.precio },
-        { onConflict: 'cocina_producto_id,canal' },
-      );
-      if (error) throw error;
+    mutationFn: async (v: { origen: Origen; refId: string; canal: CanalPrecio; precio: number }) => {
+      if (v.origen === 'receta') {
+        const { error } = await supabase
+          .from('cocina_recetas_precios_canal')
+          .upsert(
+            { receta_id: v.refId, canal: v.canal, precio: v.precio },
+            { onConflict: 'receta_id,canal' },
+          );
+        if (error) throw error;
+      } else {
+        const { error } = await supabase
+          .from('cocina_productos_precios_canal')
+          .upsert(
+            { cocina_producto_id: v.refId, canal: v.canal, precio: v.precio },
+            { onConflict: 'cocina_producto_id,canal' },
+          );
+        if (error) throw error;
+      }
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['menu-precios-canal'] });
-      // El canal 'plato' se espeja a cocina_productos.precio_venta (trigger).
-      qc.invalidateQueries({ queryKey: ['ficha-productos'] });
-      qc.invalidateQueries({ queryKey: ['productos-costeo'] });
-      qc.invalidateQueries({ queryKey: ['historial-precio'] });
+      qc.invalidateQueries({ queryKey: ['menu-precios-receta'] });
+      qc.invalidateQueries({ queryKey: ['menu-precios-reventa'] });
     },
   });
 
+  // ─── Ítems unificados ──────────────────────────────────────────────────────
+  const items = useMemo<ItemMenu[]>(() => {
+    const out: ItemMenu[] = [];
+    for (const r of recetas ?? []) {
+      const c = costos.get(r.id);
+      out.push({
+        key: `receta:${r.id}`,
+        origen: 'receta',
+        refId: r.id,
+        nombre: r.nombre,
+        tipo: r.tipo || 'otro',
+        local: r.local,
+        costo: c?.costoPorPorcion ?? c?.costoPorKg ?? null,
+        esSubreceta: r.es_subreceta,
+      });
+    }
+    for (const b of bebidas ?? []) {
+      out.push({
+        key: `reventa:${b.id}`,
+        origen: 'reventa',
+        refId: b.id,
+        nombre: b.nombre,
+        tipo: 'bebida',
+        local: b.local,
+        costo: b.insumo_reventa_id ? (costoInsumo.get(b.insumo_reventa_id) ?? null) : null,
+        esSubreceta: false,
+      });
+    }
+    return out;
+  }, [recetas, bebidas, costos, costoInsumo]);
+
   const filtrados = useMemo(() => {
-    let lista = (productos ?? []).filter((p) => p.local === filtroLocal);
+    let lista = items.filter((p) => p.local === filtroLocal);
     if (busqueda.trim()) {
       const q = busqueda.toLowerCase();
-      lista = lista.filter(
-        (p) => p.nombre.toLowerCase().includes(q) || p.codigo.toLowerCase().includes(q),
-      );
+      lista = lista.filter((p) => p.nombre.toLowerCase().includes(q));
     }
     return lista;
-  }, [productos, filtroLocal, busqueda]);
+  }, [items, filtroLocal, busqueda]);
 
-  const porCategoria = useMemo(() => {
-    const m = new Map<string, ProductoMenu[]>();
-    for (const c of CATEGORIAS) m.set(c.tipo, []);
-    for (const p of filtrados) m.get(p.tipo)?.push(p);
-    return m;
+  // Grupos ordenados por CATEGORIA_ORDEN, el resto alfabético al final.
+  const grupos = useMemo(() => {
+    const m = new Map<string, ItemMenu[]>();
+    for (const p of filtrados) (m.get(p.tipo) ?? m.set(p.tipo, []).get(p.tipo)!).push(p);
+    return Array.from(m.entries())
+      .map(([tipo, lista]) => ({
+        tipo,
+        items: lista.sort((a, b) => a.nombre.localeCompare(b.nombre)),
+      }))
+      .sort((a, b) => {
+        const ia = CATEGORIA_ORDEN.indexOf(a.tipo);
+        const ib = CATEGORIA_ORDEN.indexOf(b.tipo);
+        if (ia !== -1 && ib !== -1) return ia - ib;
+        if (ia !== -1) return -1;
+        if (ib !== -1) return 1;
+        return a.tipo.localeCompare(b.tipo);
+      });
   }, [filtrados]);
 
   const toggle = (tipo: string) =>
@@ -238,39 +324,16 @@ export function MenuTab() {
       return n;
     });
 
-  // Alta / edición de definición del producto (apartado ancho)
-  if (formProducto) {
-    return (
-      <ProductoFormPanel
-        productoId={formProducto.id}
-        onVolver={() => setFormProducto(null)}
-        onSaved={() => {
-          setFormProducto(null);
-          invalidarMenu();
-        }}
-      />
-    );
-  }
-
-  // Detalle del producto vendible (packaging, adicionales, costo+margen)
-  if (detalleId) {
-    return (
-      <ProductoDetalleMenu
-        productoId={detalleId}
-        onVolver={() => setDetalleId(null)}
-        onEditarDefinicion={() => setFormProducto({ id: detalleId })}
-      />
-    );
-  }
+  const recetasVendiblesLocal = (recetas ?? []).filter((r) => r.local === filtroLocal).length;
 
   return (
     <div className="space-y-4">
       <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs text-blue-800">
-        Acá fijás <strong>precios de venta por canal</strong> de lo que se vende. El{' '}
-        <strong>Salón</strong> y la <strong>Vianda</strong> suelen ir al mismo precio; el{' '}
-        <strong>Congelado</strong> tiene el suyo. El plato = pasta + salsa (cada uno con su
-        precio). El margen mostrado es sobre el <strong>costo de receta</strong> — el desglose
-        fino (packaging, servicio, mano de obra) está en <strong>Costeo</strong>.
+        Acá fijás <strong>precios de venta por canal</strong> de lo que se vende. El Menú{' '}
+        <strong>proyecta automáticamente</strong> las recetas marcadas{' '}
+        <strong>Vendible</strong> en el tab <strong>Costeo</strong> (más las bebidas de
+        reventa) — el costo viene de Costeo, no se duplica. El plato = pasta + salsa (cada
+        uno con su precio). El margen es sobre el <strong>costo de receta</strong>.
       </div>
 
       <div className="flex flex-wrap items-center gap-2 rounded-lg border border-gray-200 bg-white p-3">
@@ -292,47 +355,94 @@ export function MenuTab() {
           ))}
         </div>
         <input
-          placeholder="Buscar por nombre o código…"
+          placeholder="Buscar por nombre…"
           value={busqueda}
           onChange={(e) => setBusqueda(e.target.value)}
           className="w-64 rounded border border-gray-300 px-3 py-1.5 text-sm"
         />
-        <button
-          onClick={() => setFormProducto({ id: null })}
-          className="ml-auto rounded bg-rodziny-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-rodziny-800"
-        >
-          + Nuevo producto
-        </button>
-        <div className="text-xs text-gray-400">
-          {filtrados.length} de {productos?.length ?? 0} vendibles
+        <div className="ml-auto text-xs text-gray-400">
+          {filtrados.length} ítem{filtrados.length === 1 ? '' : 's'}
         </div>
       </div>
 
       <ArmarPlato
-        productos={productos ?? []}
+        items={items}
         filtroLocal={filtroLocal}
         precios={precios}
-        costoDe={costoDe}
         margenPctDe={margenPctDe}
       />
 
-      {CATEGORIAS.map((cat) => {
-        const items = porCategoria.get(cat.tipo) ?? [];
-        if (items.length === 0) return null;
-        const colapsada = colapsadas.has(cat.tipo);
+      {recetasVendiblesLocal === 0 && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+          No hay recetas marcadas <strong>Vendible</strong> en {filtroLocal}. Andá al tab{' '}
+          <strong>Costeo</strong>, abrí la receta que vendés y tocá{' '}
+          <strong>"Marcar vendible"</strong> para que aparezca acá.
+        </div>
+      )}
+
+      {grupos.map(({ tipo, items: gItems }) => {
+        const colapsada = colapsadas.has(tipo);
+        const fila = (p: ItemMenu) => {
+          const pp = precios.get(p.key) ?? {};
+          const margen = margenPctDe(pp.plato, p.costo);
+          return (
+            <tr key={p.key} className="hover:bg-rodziny-50/40">
+              <td className="px-3 py-1.5">
+                <span className="font-medium text-gray-800">{p.nombre}</span>
+                <div className="font-mono text-[10px] text-gray-400">
+                  <span className="capitalize">{p.local}</span>
+                  {p.origen === 'reventa' ? (
+                    <span className="ml-1 rounded bg-sky-100 px-1 text-sky-700">reventa</span>
+                  ) : (
+                    <span className="ml-1 rounded bg-green-100 px-1 capitalize text-green-700">
+                      {p.tipo}
+                    </span>
+                  )}
+                  {p.costo == null && (
+                    <span className="ml-1 rounded bg-amber-100 px-1 text-amber-700">
+                      sin costo
+                    </span>
+                  )}
+                </div>
+              </td>
+              <td className="px-3 py-1.5 text-right tabular-nums text-gray-600">
+                {p.costo != null ? formatARS(p.costo) : '—'}
+              </td>
+              {CANALES_PRECIO.map((c) => (
+                <td key={c} className="px-3 py-1.5 text-right">
+                  <PrecioInput
+                    valor={pp[c] ?? null}
+                    placeholder={c === 'vianda' && pp.plato != null ? pp.plato : undefined}
+                    onGuardar={(precio) =>
+                      setPrecio.mutate({
+                        origen: p.origen,
+                        refId: p.refId,
+                        canal: c,
+                        precio,
+                      })
+                    }
+                  />
+                </td>
+              ))}
+              <td className="px-3 py-1.5 text-right">
+                <MargenBadge pct={margen} />
+              </td>
+            </tr>
+          );
+        };
         return (
           <section
-            key={cat.tipo}
+            key={tipo}
             className="overflow-hidden rounded-lg border border-gray-200 bg-white"
           >
             <button
-              onClick={() => toggle(cat.tipo)}
+              onClick={() => toggle(tipo)}
               className="flex w-full items-center justify-between bg-gray-50 px-4 py-2 text-left hover:bg-gray-100"
             >
               <span className="text-sm font-semibold text-gray-800">
-                {cat.label}{' '}
+                {CATEGORIA_LABEL[tipo] ?? tipo}{' '}
                 <span className="ml-1 rounded bg-gray-200 px-1.5 py-0.5 text-[10px] text-gray-600">
-                  {items.length}
+                  {gItems.length}
                 </span>
               </span>
               <span className="text-xs text-gray-400">{colapsada ? '▸' : '▾'}</span>
@@ -354,75 +464,24 @@ export function MenuTab() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
-                    {(() => {
-                      const fila = (p: ProductoMenu) => {
-                      const costo = costoDe(p);
-                      const pp = precios.get(p.id) ?? {};
-                      const margen = margenPctDe(pp.plato, costo);
-                      return (
-                        <tr key={p.id} className="hover:bg-rodziny-50/40">
-                          <td className="px-3 py-1.5">
-                            <button
-                              onClick={() => setDetalleId(p.id)}
-                              className="text-left font-medium text-gray-800 hover:text-rodziny-700 hover:underline"
-                              title="Ver packaging, adicionales y margen"
-                            >
-                              {p.nombre}
-                            </button>
-                            <div className="font-mono text-[10px] text-gray-400">
-                              {p.codigo} · {p.local}
-                              {p.insumo_reventa_id ? (
-                                <span className="ml-1 rounded bg-sky-100 px-1 text-sky-700">
-                                  reventa
+                    {tipo !== 'bebida'
+                      ? gItems.map(fila)
+                      : agruparBebidas(gItems).map(({ sub, rows }) => (
+                          <Fragment key={sub}>
+                            <tr className="bg-gray-50/70">
+                              <td
+                                colSpan={3 + CANALES_PRECIO.length}
+                                className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-gray-500"
+                              >
+                                {sub}{' '}
+                                <span className="font-normal text-gray-400">
+                                  · {rows.length}
                                 </span>
-                              ) : (
-                                !p.receta_id && (
-                                  <span className="ml-1 rounded bg-amber-100 px-1 text-amber-700">
-                                    sin receta
-                                  </span>
-                                )
-                              )}
-                            </div>
-                          </td>
-                          <td className="px-3 py-1.5 text-right tabular-nums text-gray-600">
-                            {costo != null ? formatARS(costo) : '—'}
-                          </td>
-                          {CANALES_PRECIO.map((c) => (
-                            <td key={c} className="px-3 py-1.5 text-right">
-                              <PrecioInput
-                                valor={pp[c] ?? null}
-                                placeholder={
-                                  c === 'vianda' && pp.plato != null ? pp.plato : undefined
-                                }
-                                onGuardar={(precio) =>
-                                  setPrecio.mutate({ productoId: p.id, canal: c, precio })
-                                }
-                              />
-                            </td>
-                          ))}
-                          <td className="px-3 py-1.5 text-right">
-                            <MargenBadge pct={margen} />
-                          </td>
-                        </tr>
-                      );
-                      };
-                      if (cat.tipo !== 'bebida') return items.map(fila);
-                      const colSpan = 3 + CANALES_PRECIO.length;
-                      return agruparBebidas(items).map(({ sub, rows }) => (
-                        <Fragment key={sub}>
-                          <tr className="bg-gray-50/70">
-                            <td
-                              colSpan={colSpan}
-                              className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-gray-500"
-                            >
-                              {sub}{' '}
-                              <span className="font-normal text-gray-400">· {rows.length}</span>
-                            </td>
-                          </tr>
-                          {rows.map(fila)}
-                        </Fragment>
-                      ));
-                    })()}
+                              </td>
+                            </tr>
+                            {rows.map(fila)}
+                          </Fragment>
+                        ))}
                   </tbody>
                 </table>
               </div>
@@ -436,71 +495,66 @@ export function MenuTab() {
 
 // ─── Bloque "Armar plato" (pasta + salsa) ────────────────────────────────────
 function ArmarPlato({
-  productos,
+  items,
   filtroLocal,
   precios,
-  costoDe,
   margenPctDe,
 }: {
-  productos: ProductoMenu[];
+  items: ItemMenu[];
   filtroLocal: FiltroLocal;
   precios: Map<string, Partial<Record<CanalPrecio, number>>>;
-  costoDe: (p: ProductoMenu) => number | null;
   margenPctDe: (precio: number | null | undefined, costo: number | null) => number | null;
 }) {
-  const [pastaId, setPastaId] = useState('');
-  const [salsaId, setSalsaId] = useState('');
+  const [pastaKey, setPastaKey] = useState('');
+  const [salsaKey, setSalsaKey] = useState('');
 
   const lista = (tipo: string) =>
-    productos
+    items
       .filter((p) => p.tipo === tipo && p.local === filtroLocal)
       .sort((a, b) => a.nombre.localeCompare(b.nombre));
 
-  const pasta = productos.find((p) => p.id === pastaId) ?? null;
-  const salsa = productos.find((p) => p.id === salsaId) ?? null;
+  const pasta = items.find((p) => p.key === pastaKey) ?? null;
+  const salsa = items.find((p) => p.key === salsaKey) ?? null;
 
-  const precioPasta = pasta ? (precios.get(pasta.id)?.plato ?? null) : null;
-  const precioSalsa = salsa ? (precios.get(salsa.id)?.plato ?? null) : null;
-  const total =
-    precioPasta != null && precioSalsa != null ? precioPasta + precioSalsa : null;
+  const precioPasta = pasta ? (precios.get(pasta.key)?.plato ?? null) : null;
+  const precioSalsa = salsa ? (precios.get(salsa.key)?.plato ?? null) : null;
+  const total = precioPasta != null && precioSalsa != null ? precioPasta + precioSalsa : null;
 
-  // Margen del plato: costo pasta + costo salsa vs precio combinado.
-  // El servicio (pan/queso/aceite) se imputa a la pasta — se ve en el tab Costeo.
   const costoPlato = useMemo(() => {
     if (!pasta || !salsa) return null;
-    const cp = costoDe(pasta);
-    const cs = costoDe(salsa);
-    if (cp == null || cs == null) return null;
-    return cp + cs;
-  }, [pasta, salsa, costoDe]);
+    if (pasta.costo == null || salsa.costo == null) return null;
+    return pasta.costo + salsa.costo;
+  }, [pasta, salsa]);
 
   const margenPlato = margenPctDe(total, costoPlato);
+
+  if (lista('pasta').length === 0 && lista('salsa').length === 0) return null;
 
   return (
     <div className="rounded-lg border border-rodziny-200 bg-rodziny-50/40 p-3">
       <div className="mb-2 text-sm font-semibold text-gray-800">🍝 Armar plato</div>
       <div className="flex flex-wrap items-center gap-3">
         <select
-          value={pastaId}
-          onChange={(e) => setPastaId(e.target.value)}
+          value={pastaKey}
+          onChange={(e) => setPastaKey(e.target.value)}
           className="rounded border border-gray-300 bg-white px-2 py-1.5 text-sm"
         >
           <option value="">Elegí pasta…</option>
           {lista('pasta').map((p) => (
-            <option key={p.id} value={p.id}>
+            <option key={p.key} value={p.key}>
               {p.nombre}
             </option>
           ))}
         </select>
         <span className="text-gray-400">+</span>
         <select
-          value={salsaId}
-          onChange={(e) => setSalsaId(e.target.value)}
+          value={salsaKey}
+          onChange={(e) => setSalsaKey(e.target.value)}
           className="rounded border border-gray-300 bg-white px-2 py-1.5 text-sm"
         >
           <option value="">Elegí salsa…</option>
           {lista('salsa').map((p) => (
-            <option key={p.id} value={p.id}>
+            <option key={p.key} value={p.key}>
               {p.nombre}
             </option>
           ))}
@@ -545,7 +599,6 @@ function PrecioInput({
 }) {
   const [raw, setRaw] = useState(valor != null ? String(valor) : '');
 
-  // Sincronizar si cambia desde afuera (otra edición / refetch)
   const [ultimoValor, setUltimoValor] = useState(valor);
   if (valor !== ultimoValor) {
     setUltimoValor(valor);
@@ -583,8 +636,8 @@ function MargenBadge({ pct }: { pct: number | null }) {
     pct < 0.5
       ? 'bg-red-100 text-red-700'
       : pct < 0.65
-      ? 'bg-amber-100 text-amber-700'
-      : 'bg-emerald-100 text-emerald-700';
+        ? 'bg-amber-100 text-amber-700'
+        : 'bg-emerald-100 text-emerald-700';
   return (
     <span className={cn('rounded px-1.5 py-0.5 text-xs font-semibold tabular-nums', color)}>
       {(pct * 100).toFixed(0)}%

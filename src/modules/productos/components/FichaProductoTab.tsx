@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { cn, formatARS } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
@@ -10,7 +10,7 @@ import { RecetaEditorInline } from './RecetaEditorInline';
 // Costeo = recetas y subrecetas (Crema Pastelera, Masa Facturas, salsas base,
 // rellenos, etc.). Solo ingredientes + costo. El producto vendible (precio por
 // canal, packaging, adicionales, ABM) vive en el tab Menú.
-type RecetaFull = Receta & { es_subreceta: boolean };
+type RecetaFull = Receta & { es_subreceta: boolean; vendible: boolean };
 
 type FiltroLocal = 'vedia' | 'saavedra';
 
@@ -136,6 +136,22 @@ export function FichaProductoTab() {
     () => (receta ? (ingredientes ?? []).filter((i) => i.receta_id === receta.id) : []),
     [ingredientes, receta],
   );
+
+  // Vendible = la receta se proyecta al tab Menú (precio + margen). El costo
+  // sigue saliendo de Costeo; no se duplica nada.
+  const toggleVendible = useMutation({
+    mutationFn: async (r: RecetaFull) => {
+      const { error } = await supabase
+        .from('cocina_recetas')
+        .update({ vendible: !r.vendible })
+        .eq('id', r.id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['cocina-recetas'] });
+      qc.invalidateQueries({ queryKey: ['menu-recetas-vendibles'] });
+    },
+  });
 
   const invalidarTodo = () => {
     qc.invalidateQueries({ queryKey: ['cocina-recetas'] });
@@ -302,6 +318,11 @@ export function FichaProductoTab() {
                           subreceta
                         </span>
                       )}
+                      {r.vendible && (
+                        <span className="rounded bg-green-100 px-1.5 py-0.5 text-[9px] font-medium text-green-700">
+                          Menú
+                        </span>
+                      )}
                     </div>
                     <div className="mt-0.5 text-xs tabular-nums text-gray-500">
                       {costoUnit != null ? (
@@ -364,12 +385,31 @@ export function FichaProductoTab() {
             </div>
           </div>
           {!editando && (
-            <button
-              onClick={() => setEditando(true)}
-              className="rounded bg-rodziny-700 px-3 py-1.5 text-xs text-white hover:bg-rodziny-800"
-            >
-              ✎ Editar receta
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => toggleVendible.mutate(receta)}
+                disabled={toggleVendible.isPending}
+                title={
+                  receta.vendible
+                    ? 'Se está proyectando al tab Menú. Click para sacarla.'
+                    : 'Marcar vendible: se proyecta al tab Menú para ponerle precio.'
+                }
+                className={cn(
+                  'rounded px-3 py-1.5 text-xs font-medium ring-1 transition-colors disabled:opacity-50',
+                  receta.vendible
+                    ? 'bg-green-600 text-white ring-green-700 hover:bg-green-700'
+                    : 'bg-white text-gray-600 ring-gray-300 hover:bg-gray-50',
+                )}
+              >
+                {receta.vendible ? '✓ Vendible (va al Menú)' : '+ Marcar vendible'}
+              </button>
+              <button
+                onClick={() => setEditando(true)}
+                className="rounded bg-rodziny-700 px-3 py-1.5 text-xs text-white hover:bg-rodziny-800"
+              >
+                ✎ Editar receta
+              </button>
+            </div>
           )}
         </div>
       </section>
