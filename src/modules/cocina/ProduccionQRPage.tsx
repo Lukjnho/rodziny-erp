@@ -165,11 +165,16 @@ type Vista =
   | 'postre'
   | 'pasteleria'
   | 'panaderia'
+  | 'pasta-stock'
+  | 'milanesa'
   | 'merma'
   | 'traslado'
   | 'exito';
 
-type CategoriaGenerica = 'salsa' | 'postre' | 'pasteleria' | 'panaderia';
+// Saavedra controla TODO el stock con overwrite ("último pesaje manda"): pasta y
+// milanesa se cargan por el flujo genérico (cocina_lotes_produccion), no por el
+// flujo cámara/traspaso de Vedia. Por eso 'pasta' y 'milanesa' son categorías genéricas.
+type CategoriaGenerica = 'salsa' | 'postre' | 'pasteleria' | 'panaderia' | 'pasta' | 'milanesa';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -526,6 +531,21 @@ export function ProduccionQRPage() {
     () => (productos ?? []).filter((p) => p.tipo === 'pasta' && p.local === local),
     [productos, local],
   );
+  // Saavedra: catálogo para carga overwrite recipe-independent (pasta/milanesa).
+  const pastaLibres = useMemo(
+    () =>
+      (productos ?? [])
+        .filter((p) => p.tipo === 'pasta' && p.local === local)
+        .map((p) => ({ id: p.id, nombre: p.nombre })),
+    [productos, local],
+  );
+  const milanesaLibres = useMemo(
+    () =>
+      (productos ?? [])
+        .filter((p) => p.tipo === 'milanesa' && p.local === local)
+        .map((p) => ({ id: p.id, nombre: p.nombre })),
+    [productos, local],
+  );
 
   function onGuardado(msg: string) {
     setMensajeExito(msg);
@@ -648,6 +668,30 @@ export function ProduccionQRPage() {
         />
       )}
 
+      {vista === 'pasta-stock' && (
+        <FormGenerico
+          local={local}
+          categoria="pasta"
+          recetas={[]}
+          permitirLibre
+          productosLibres={pastaLibres}
+          onGuardado={onGuardado}
+          onVolver={() => setVista('inicio')}
+        />
+      )}
+
+      {vista === 'milanesa' && (
+        <FormGenerico
+          local={local}
+          categoria="milanesa"
+          recetas={[]}
+          permitirLibre
+          productosLibres={milanesaLibres}
+          onGuardado={onGuardado}
+          onVolver={() => setVista('inicio')}
+        />
+      )}
+
       {vista === 'merma' && (
         <FormMerma
           local={local}
@@ -697,25 +741,39 @@ function Inicio({
   const botones: { vista: Vista; label: string; color: string }[] = [
     { vista: 'relleno', label: 'Cargar Relleno', color: 'bg-green-600 hover:bg-green-700' },
     { vista: 'masa', label: 'Cargar Masa', color: 'bg-amber-500 hover:bg-amber-600' },
-    {
+  ];
+  if (local === 'vedia') {
+    // Vedia: flujo cámara/traspaso (armar bandejas → porcionar → trasladar a mostrador).
+    botones.push({
       vista: 'pasta',
       label: 'Armar Pasta (bandejas)',
       color: 'bg-rodziny-700 hover:bg-rodziny-800',
-    },
-    {
+    });
+    botones.push({
       vista: 'porcionar-pasta',
       label: frescosPendientes > 0 ? `Porcionar Pasta (${frescosPendientes})` : 'Porcionar Pasta',
       color: 'bg-blue-600 hover:bg-blue-700',
-    },
-    { vista: 'salsa', label: 'Cargar Salsa', color: 'bg-orange-500 hover:bg-orange-600' },
-  ];
-  if (local === 'vedia') {
+    });
+    botones.push({ vista: 'salsa', label: 'Cargar Salsa', color: 'bg-orange-500 hover:bg-orange-600' });
     botones.push({
       vista: 'postre',
       label: 'Cargar Postre',
       color: 'bg-pink-500 hover:bg-pink-600',
     });
   } else {
+    // Saavedra: sin mostrador. Stock por overwrite ("último pesaje manda"): pasta y
+    // milanesa se cargan directo como stock final, igual que salsa/postre.
+    botones.push({
+      vista: 'pasta-stock',
+      label: 'Cargar Pasta',
+      color: 'bg-rodziny-700 hover:bg-rodziny-800',
+    });
+    botones.push({
+      vista: 'milanesa',
+      label: 'Cargar Milanesas',
+      color: 'bg-red-700 hover:bg-red-800',
+    });
+    botones.push({ vista: 'salsa', label: 'Cargar Salsa', color: 'bg-orange-500 hover:bg-orange-600' });
     botones.push({
       vista: 'pasteleria',
       label: 'Cargar Pastelería Terminada',
@@ -789,14 +847,16 @@ function Inicio({
         </button>
       )}
 
-      <div className="pt-2">
-        <button
-          onClick={() => onIr('traslado')}
-          className="w-full rounded-lg border-2 border-blue-700 bg-blue-600 py-3 text-sm font-semibold text-white transition-transform active:scale-[0.98]"
-        >
-          🚚 Trasladar a mostrador
-        </button>
-      </div>
+      {local === 'vedia' && (
+        <div className="pt-2">
+          <button
+            onClick={() => onIr('traslado')}
+            className="w-full rounded-lg border-2 border-blue-700 bg-blue-600 py-3 text-sm font-semibold text-white transition-transform active:scale-[0.98]"
+          >
+            🚚 Trasladar a mostrador
+          </button>
+        </div>
+      )}
 
       <div className="pt-2">
         <a
@@ -2235,6 +2295,8 @@ const CATEGORIA_LABEL: Record<CategoriaGenerica, string> = {
   postre: 'Postre',
   pasteleria: 'Pastelería',
   panaderia: 'Panadería',
+  pasta: 'Pasta',
+  milanesa: 'Milanesas',
 };
 
 function unidadesDisponibles(
@@ -2258,6 +2320,7 @@ function FormGenerico({
   recetaIdsPlan,
   permitirLibre,
   permitirLitros,
+  productosLibres,
   onGuardado,
   onVolver,
 }: {
@@ -2267,6 +2330,9 @@ function FormGenerico({
   recetaIdsPlan?: Map<string, number>;
   permitirLibre?: boolean;
   permitirLitros?: boolean;
+  // Catálogo de productos para carga recipe-independent (Saavedra pasta/milanesa):
+  // el cocinero elige de esta lista y se guarda como nombre_libre. Stock = overwrite.
+  productosLibres?: { id: string; nombre: string }[];
   onGuardado: (msg: string) => void;
   onVolver: () => void;
 }) {
@@ -2287,11 +2353,7 @@ function FormGenerico({
   const [nombreLibre, setNombreLibre] = useState('');
   const [cantidad, setCantidad] = useState('');
   const [unidad, setUnidad] = useState<'kg' | 'unid' | 'lt'>(
-    categoria === 'salsa'
-      ? 'kg'
-      : categoria === 'postre' || categoria === 'pasteleria' || categoria === 'panaderia'
-        ? 'unid'
-        : 'kg',
+    categoria === 'salsa' ? 'kg' : 'unid',
   );
   const [merma, setMerma] = useState('');
   const [mermaMotivo, setMermaMotivo] = useState('');
@@ -2516,7 +2578,27 @@ function FormGenerico({
           </div>
         )}
 
-        {permitirLibre && (
+        {permitirLibre && productosLibres && productosLibres.length > 0 && (
+          <div>
+            <label className="mb-1 block text-xs font-medium text-gray-700">
+              {CATEGORIA_LABEL[categoria]}
+            </label>
+            <select
+              value={nombreLibre}
+              onChange={(e) => setNombreLibre(e.target.value)}
+              className="w-full rounded border border-gray-300 px-3 py-2.5 text-sm"
+            >
+              <option value="">— Elegir —</option>
+              {productosLibres.map((p) => (
+                <option key={p.id} value={p.nombre}>
+                  {p.nombre}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {permitirLibre && !productosLibres && (
           <div>
             <label className="mb-1 block text-xs font-medium text-gray-700">
               {recetaId ? 'O escribí un nombre libre (opcional)' : 'Nombre'}

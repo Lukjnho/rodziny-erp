@@ -47,7 +47,7 @@ interface MermaRow {
   producto?: { nombre: string } | null;
 }
 
-type FiltroLocal = 'todos' | 'vedia' | 'saavedra';
+type FiltroLocal = 'vedia' | 'saavedra';
 
 function hoy() {
   return new Date().toISOString().slice(0, 10);
@@ -58,10 +58,15 @@ export function TraspasosTab() {
   const { perfil } = useAuth();
   const localRestringido = perfil?.local_restringido ?? null;
   const [fecha, setFecha] = useState(hoy());
-  const [filtroLocal, setFiltroLocal] = useState<FiltroLocal>(localRestringido ?? 'todos');
+  const [filtroLocal, setFiltroLocal] = useState<FiltroLocal>(
+    (localRestringido as FiltroLocal | null) ?? 'vedia',
+  );
   useEffect(() => {
-    if (localRestringido && filtroLocal !== localRestringido) setFiltroLocal(localRestringido);
+    if (localRestringido && filtroLocal !== localRestringido)
+      setFiltroLocal(localRestringido as FiltroLocal);
   }, [localRestringido, filtroLocal]);
+  // Saavedra produce y almacena en la misma cámara: no existe el flujo depósito → mostrador.
+  const esSaavedra = filtroLocal === 'saavedra';
   const [modalTraspaso, setModalTraspaso] = useState(false);
   const [modalMerma, setModalMerma] = useState(false);
   const [seccionMerma, setSeccionMerma] = useState(false);
@@ -131,15 +136,15 @@ export function TraspasosTab() {
     },
   });
 
-  const traspasosFiltrados = useMemo(() => {
-    if (filtroLocal === 'todos') return traspasos ?? [];
-    return (traspasos ?? []).filter((t) => t.local === filtroLocal);
-  }, [traspasos, filtroLocal]);
+  const traspasosFiltrados = useMemo(
+    () => (traspasos ?? []).filter((t) => t.local === filtroLocal),
+    [traspasos, filtroLocal],
+  );
 
-  const mermasFiltradas = useMemo(() => {
-    if (filtroLocal === 'todos') return mermas ?? [];
-    return (mermas ?? []).filter((m) => m.local === filtroLocal);
-  }, [mermas, filtroLocal]);
+  const mermasFiltradas = useMemo(
+    () => (mermas ?? []).filter((m) => m.local === filtroLocal),
+    [mermas, filtroLocal],
+  );
 
   const kpis = useMemo(
     () => ({
@@ -228,7 +233,6 @@ export function TraspasosTab() {
             onChange={(e) => setFiltroLocal(e.target.value as FiltroLocal)}
             className="ml-auto rounded border border-gray-300 px-2 py-1.5 text-sm"
           >
-            <option value="todos">Todos los locales</option>
             <option value="vedia">Vedia</option>
             <option value="saavedra">Saavedra</option>
           </select>
@@ -237,18 +241,22 @@ export function TraspasosTab() {
 
       {/* KPIs — los de merma abren la sección colapsada */}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <KPICard
-          label="Traspasos hoy"
-          value={String(kpis.traspasos)}
-          color="blue"
-          loading={cargandoT}
-        />
-        <KPICard
-          label="Porciones traspasadas"
-          value={String(kpis.porcionesTraspasadas)}
-          color="green"
-          loading={cargandoT}
-        />
+        {!esSaavedra && (
+          <>
+            <KPICard
+              label="Traspasos hoy"
+              value={String(kpis.traspasos)}
+              color="blue"
+              loading={cargandoT}
+            />
+            <KPICard
+              label="Porciones traspasadas"
+              value={String(kpis.porcionesTraspasadas)}
+              color="green"
+              loading={cargandoT}
+            />
+          </>
+        )}
         <KPICard
           label="Mermas hoy"
           value={String(kpis.mermas)}
@@ -268,16 +276,25 @@ export function TraspasosTab() {
       </div>
 
       {/* ── Traspasos ──────────────────────────────────────────────────────────── */}
-      <div>
-        <div className="mb-3 flex items-center justify-between">
-          <h3 className="text-base font-semibold text-gray-800">Traspasos depósito → mostrador</h3>
-          <button
-            onClick={() => setModalTraspaso(true)}
-            className="rounded bg-rodziny-700 px-3 py-1.5 text-sm text-white hover:bg-rodziny-800"
-          >
-            + Nuevo traspaso
-          </button>
+      {esSaavedra ? (
+        <div className="rounded-lg border border-surface-border bg-blue-50 px-4 py-3 text-sm text-blue-800">
+          <span className="font-semibold">Saavedra</span> produce y almacena en la misma cámara: de
+          la cámara se saca directamente para cocinar. No existe el flujo depósito → mostrador, por
+          eso esta sección no aplica acá. Solo se registra <span className="font-semibold">merma</span>.
         </div>
+      ) : (
+        <div>
+          <div className="mb-3 flex items-center justify-between">
+            <h3 className="text-base font-semibold text-gray-800">
+              Traspasos depósito → mostrador
+            </h3>
+            <button
+              onClick={() => setModalTraspaso(true)}
+              className="rounded bg-rodziny-700 px-3 py-1.5 text-sm text-white hover:bg-rodziny-800"
+            >
+              + Nuevo traspaso
+            </button>
+          </div>
 
         <div className="overflow-x-auto rounded-lg border border-surface-border bg-white">
           <table className="w-full text-sm">
@@ -323,8 +340,9 @@ export function TraspasosTab() {
               )}
             </tbody>
           </table>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* ── Merma (colapsable) ─────────────────────────────────────────────────── */}
       <div>
@@ -407,7 +425,7 @@ export function TraspasosTab() {
           fecha={fecha}
           productos={productos ?? []}
           stockDisponible={stockDisponible}
-          localRestringido={localRestringido}
+          local={filtroLocal}
           onClose={() => setModalTraspaso(false)}
           onSaved={() => {
             qc.invalidateQueries({ queryKey: ['cocina-traspasos', fecha] });
@@ -423,7 +441,7 @@ export function TraspasosTab() {
         <ModalMerma
           fecha={fecha}
           productos={productos ?? []}
-          localRestringido={localRestringido}
+          local={filtroLocal}
           onClose={() => setModalMerma(false)}
           onSaved={() => {
             qc.invalidateQueries({ queryKey: ['cocina-merma', fecha] });
@@ -444,18 +462,17 @@ function ModalTraspaso({
   fecha,
   productos,
   stockDisponible,
-  localRestringido,
+  local,
   onClose,
   onSaved,
 }: {
   fecha: string;
   productos: Producto[];
   stockDisponible: StockMap;
-  localRestringido: 'vedia' | 'saavedra' | null;
+  local: 'vedia' | 'saavedra';
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [local, setLocal] = useState<'vedia' | 'saavedra'>(localRestringido ?? 'vedia');
   const [productoId, setProductoId] = useState('');
   const [porciones, setPorciones] = useState('');
   const [hora, setHora] = useState(
@@ -531,21 +548,10 @@ function ModalTraspaso({
         className="relative w-full max-w-md rounded-lg bg-white p-6 shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <h3 className="mb-4 text-lg font-bold text-gray-800">Nuevo traspaso</h3>
+        <h3 className="mb-4 text-lg font-bold text-gray-800">
+          Nuevo traspaso · <span className="capitalize">{local}</span>
+        </h3>
         <div className="space-y-3">
-          {!localRestringido && (
-            <div>
-              <label className="mb-1 block text-xs text-gray-500">Local</label>
-              <select
-                value={local}
-                onChange={(e) => setLocal(e.target.value as 'vedia' | 'saavedra')}
-                className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
-              >
-                <option value="vedia">Vedia</option>
-                <option value="saavedra">Saavedra</option>
-              </select>
-            </div>
-          )}
           <div>
             <div className="mb-1 flex items-baseline justify-between">
               <label className="block text-xs text-gray-500">Producto</label>
@@ -642,13 +648,13 @@ function ModalTraspaso({
 function ModalMerma({
   fecha,
   productos,
-  localRestringido,
+  local,
   onClose,
   onSaved,
 }: {
   fecha: string;
   productos: Producto[];
-  localRestringido: 'vedia' | 'saavedra' | null;
+  local: 'vedia' | 'saavedra';
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -656,7 +662,6 @@ function ModalMerma({
   const [porciones, setPorciones] = useState('');
   const [motivo, setMotivo] = useState<'rotura' | 'vencido' | 'otro'>('rotura');
   const [responsable, setResponsable] = useState('');
-  const [local, setLocal] = useState<'vedia' | 'saavedra'>(localRestringido ?? 'vedia');
   const [notas, setNotas] = useState('');
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState('');
@@ -697,7 +702,9 @@ function ModalMerma({
         className="relative w-full max-w-md rounded-lg bg-white p-6 shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <h3 className="mb-4 text-lg font-bold text-gray-800">Registrar merma</h3>
+        <h3 className="mb-4 text-lg font-bold text-gray-800">
+          Registrar merma · <span className="capitalize">{local}</span>
+        </h3>
         <div className="space-y-3">
           <div>
             <label className="mb-1 block text-xs text-gray-500">Producto</label>
@@ -736,28 +743,13 @@ function ModalMerma({
               </select>
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="mb-1 block text-xs text-gray-500">Responsable</label>
-              <input
-                value={responsable}
-                onChange={(e) => setResponsable(e.target.value)}
-                className="w-full rounded border border-gray-300 px-3 py-1.5 text-sm"
-              />
-            </div>
-            {!localRestringido && (
-              <div>
-                <label className="mb-1 block text-xs text-gray-500">Local</label>
-                <select
-                  value={local}
-                  onChange={(e) => setLocal(e.target.value as 'vedia' | 'saavedra')}
-                  className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
-                >
-                  <option value="vedia">Vedia</option>
-                  <option value="saavedra">Saavedra</option>
-                </select>
-              </div>
-            )}
+          <div>
+            <label className="mb-1 block text-xs text-gray-500">Responsable</label>
+            <input
+              value={responsable}
+              onChange={(e) => setResponsable(e.target.value)}
+              className="w-full rounded border border-gray-300 px-3 py-1.5 text-sm"
+            />
           </div>
           <div>
             <label className="mb-1 block text-xs text-gray-500">Notas</label>

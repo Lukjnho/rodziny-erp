@@ -40,6 +40,8 @@ const CAT_LABEL: Record<string, string> = {
   postre: 'Postres',
   pasteleria: 'Pastelería',
   panaderia: 'Panadería',
+  pasta: 'Pastas',
+  milanesa: 'Milanesas',
   prueba: 'Pruebas',
 };
 const CAT_COLOR: Record<string, string> = {
@@ -47,9 +49,11 @@ const CAT_COLOR: Record<string, string> = {
   postre: 'bg-pink-100 text-pink-700',
   pasteleria: 'bg-rose-100 text-rose-700',
   panaderia: 'bg-yellow-100 text-yellow-700',
+  pasta: 'bg-rodziny-100 text-rodziny-700',
+  milanesa: 'bg-red-100 text-red-700',
   prueba: 'bg-purple-100 text-purple-700',
 };
-const CAT_ORDEN = ['salsa', 'postre', 'pasteleria', 'panaderia', 'prueba'] as const;
+const CAT_ORDEN = ['salsa', 'postre', 'pasteleria', 'panaderia', 'pasta', 'milanesa', 'prueba'] as const;
 type Categoria = (typeof CAT_ORDEN)[number];
 
 export function StockProduccionSection({
@@ -243,6 +247,8 @@ export function StockProduccionSection({
       postre: 0,
       pasteleria: 0,
       panaderia: 0,
+      pasta: 0,
+      milanesa: 0,
       prueba: 0,
     };
     for (const g of grupos) {

@@ -5,8 +5,6 @@ import { KPICard } from '@/components/ui/KPICard';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
 import { PRODUCTOS_COCINA, normNombre } from './DashboardTab';
-import { StockProduccionSection } from './components/StockProduccionSection';
-import { StockPorLoteSection } from './components/StockPorLoteSection';
 
 interface Producto {
   id: string;
@@ -18,6 +16,8 @@ interface Producto {
   local: string;
   activo: boolean;
   fudo_nombres: string[] | null;
+  receta_id: string | null;
+  controla_stock: boolean;
 }
 interface LotePasta {
   producto_id: string;
@@ -131,7 +131,24 @@ function ventasFudoDelProducto(producto: Producto, ranking: FudoRankingItem[] | 
 export function StockTab() {
   const { perfil } = useAuth();
   const qc = useQueryClient();
+  const esAdmin = perfil?.es_admin ?? false;
   const localRestringido = perfil?.local_restringido ?? null;
+
+  // Toggle admin: sacar/poner un producto del control de stock (independiente de
+  // 'activo'). Lo usan la tabla Pastas (Vedia) y el catálogo (Saavedra).
+  const toggleControlaStock = useMutation({
+    mutationFn: async ({ id, valor }: { id: string; valor: boolean }) => {
+      const { error } = await supabase
+        .from('cocina_productos')
+        .update({ controla_stock: valor })
+        .eq('id', id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['cocina-productos'] });
+      qc.invalidateQueries({ queryKey: ['cocina-catalogo-saavedra-lotes'] });
+    },
+  });
   const [filtroLocal, setFiltroLocal] = useState<FiltroLocal>(
     (localRestringido as FiltroLocal | null) ?? 'vedia',
   );
@@ -614,10 +631,26 @@ export function StockTab() {
         </span>
       </div>
 
-      {/* Tabla de pastas — un bloque por local, NUNCA mezclados.
-          Vedia y Saavedra tienen categorías parecidas pero distintas. */}
-      {localesScope.map((locKey) => {
-        const filasLocal = stockRowsFiltrados.filter((r) => r.local === locKey);
+      {/* Saavedra controla TODO el stock con overwrite ("último pesaje manda"):
+          catálogo único por tipo, sin flujo cámara/mostrador. Ver project_modelo_salsas. */}
+      {filtroLocal === 'saavedra' && (
+        <CatalogoStock
+          productos={productos ?? []}
+          local="saavedra"
+          tipos={CATALOGO_TIPOS_SAAVEDRA}
+          esAdmin={esAdmin}
+          onQuitarControl={(id) => toggleControlaStock.mutate({ id, valor: false })}
+          toggleDisabled={toggleControlaStock.isPending}
+        />
+      )}
+
+      {/* Tabla de pastas (Vedia) — flujo cámara/mostrador/porcionado.
+          Saavedra no usa este flujo (sin mostrador). */}
+      {filtroLocal === 'vedia' &&
+        localesScope.map((locKey) => {
+        const filasLocal = stockRowsFiltrados.filter(
+          (r) => r.local === locKey && r.producto.controla_stock !== false,
+        );
         return (
           <div key={locKey} className="space-y-2">
             <h3 className="text-base font-semibold text-gray-800">
@@ -637,6 +670,7 @@ export function StockTab() {
                     <th className="px-4 py-2 text-right">Merma</th>
                     <th className="px-4 py-2">Mín.</th>
                     <th className="px-4 py-2">Estado</th>
+                    {esAdmin && <th className="px-4 py-2 text-center">Control</th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -747,12 +781,26 @@ export function StockTab() {
                       </span>
                     )}
                   </td>
+                  {esAdmin && (
+                    <td className="px-4 py-2 text-center">
+                      <ControlToggle
+                        on
+                        disabled={toggleControlaStock.isPending}
+                        onToggle={() =>
+                          toggleControlaStock.mutate({ id: r.producto.id, valor: false })
+                        }
+                      />
+                    </td>
+                  )}
                 </tr>
               );
             })}
                   {filasLocal.length === 0 && (
                     <tr>
-                      <td colSpan={9} className="px-4 py-8 text-center text-gray-400">
+                      <td
+                        colSpan={esAdmin ? 10 : 9}
+                        className="px-4 py-8 text-center text-gray-400"
+                      >
                         {isLoading || productos === undefined || lotesPasta === undefined ? (
                           'Cargando…'
                         ) : productosError ? (
@@ -777,18 +825,33 @@ export function StockTab() {
               </table>
             </div>
           </div>
-        );
-      })}
+          );
+        })}
 
-      {/* ── Otras producciones: salsas, postres, pastelería, panadería ────── */}
-      <div className="pt-6">
-        <h3 className="mb-3 text-base font-semibold text-gray-800">
-          Salsas, postres y otras producciones
-        </h3>
-        <StockProduccionSection filtroLocal={filtroLocal} />
-      </div>
+      {/* ── Vedia: salsas/postres en catálogo simple (mismo formato Saavedra) ──
+          Modelo overwrite sin descuento por venta (ver project_modelo_salsas).
+          La proyección Fudo + FIFO sigue disponible en el tab Producción. */}
+      {filtroLocal === 'vedia' && (
+        <div className="pt-6">
+          <CatalogoStock
+            productos={productos ?? []}
+            local="vedia"
+            tipos={CATALOGO_TIPOS_VEDIA}
+            esAdmin={esAdmin}
+            onQuitarControl={(id) => toggleControlaStock.mutate({ id, valor: false })}
+            toggleDisabled={toggleControlaStock.isPending}
+          />
+        </div>
+      )}
 
-      <StockPorLoteSection filtroLocal={filtroLocal} />
+      {esAdmin && (
+        <SinControlSection
+          productos={productos ?? []}
+          filtroLocal={filtroLocal}
+          onReactivar={(id) => toggleControlaStock.mutate({ id, valor: true })}
+          toggleDisabled={toggleControlaStock.isPending}
+        />
+      )}
 
       {/* ── Modal de ajuste de stock ─────────────────────────────────────── */}
       {ajusteModal && (
@@ -953,6 +1016,321 @@ function ModalAjusteStock({
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ── Catálogo de stock (overwrite) ─────────────────────────────────────────────
+// Stock por producto = última carga en Producción ("último pesaje manda") sobre
+// cocina_lotes_produccion, sin descuento por venta (ver project_modelo_salsas).
+// El stock se asocia al producto por nombre (nombre_libre) o por receta vinculada.
+// Lista SIEMPRE todos los productos controlados, aunque estén en 0.
+// Saavedra: pastas/milanesas/postres/panes/salsas (no usa cámara/mostrador).
+// Vedia: salsas/postres (las pastas tienen su tabla cámara/mostrador aparte).
+
+interface LoteProdCatalogo {
+  receta_id: string | null;
+  nombre_libre: string | null;
+  categoria: string;
+  cantidad_producida: number;
+  merma_cantidad: number | null;
+}
+
+const CATALOGO_TIPOS_SAAVEDRA: { tipo: string; titulo: string }[] = [
+  { tipo: 'pasta', titulo: '🍝 Pastas' },
+  { tipo: 'milanesa', titulo: '🍖 Milanesas' },
+  { tipo: 'postre', titulo: '🍰 Postres' },
+  { tipo: 'panificado', titulo: '🥖 Panes' },
+  { tipo: 'salsa', titulo: '🥫 Salsas' },
+];
+const CATALOGO_TIPOS_VEDIA: { tipo: string; titulo: string }[] = [
+  { tipo: 'salsa', titulo: '🥫 Salsas' },
+  { tipo: 'postre', titulo: '🍰 Postres' },
+];
+
+function CatalogoStock({
+  productos,
+  local,
+  tipos,
+  esAdmin,
+  onQuitarControl,
+  toggleDisabled,
+}: {
+  productos: Producto[];
+  local: FiltroLocal;
+  tipos: { tipo: string; titulo: string }[];
+  esAdmin: boolean;
+  onQuitarControl: (id: string) => void;
+  toggleDisabled: boolean;
+}) {
+  const { data: lotes, isLoading } = useQuery({
+    queryKey: ['cocina-catalogo-lotes', local],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('cocina_lotes_produccion')
+        .select('receta_id, nombre_libre, categoria, cantidad_producida, merma_cantidad')
+        .eq('local', local)
+        .eq('en_stock', true);
+      if (error) throw error;
+      return (data ?? []) as LoteProdCatalogo[];
+    },
+  });
+
+  // Stock por producto = Σ (producido − merma) de lotes activos que matchean por
+  // nombre (nombre_libre) o por receta vinculada. Overwrite ⇒ normalmente 1 lote.
+  const stockPorProducto = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const prod of productos) {
+      if (prod.local !== local || !prod.activo) continue;
+      const objetivoNombre = normNombre(prod.nombre);
+      let total = 0;
+      for (const l of lotes ?? []) {
+        const matchNombre =
+          !!l.nombre_libre && normNombre(l.nombre_libre) === objetivoNombre;
+        const matchReceta = !!prod.receta_id && l.receta_id === prod.receta_id;
+        if (matchNombre || matchReceta) {
+          total += Math.max(0, Number(l.cantidad_producida) - (Number(l.merma_cantidad) || 0));
+        }
+      }
+      m.set(prod.id, total);
+    }
+    return m;
+  }, [productos, lotes, local]);
+
+  // Solo los controlados van al catálogo; los demás aparecen en la sección
+  // colapsable "Sin control de stock" (abajo, admin) para re-activarlos.
+  const productosCatalogo = useMemo(
+    () =>
+      productos.filter(
+        (p) => p.local === local && p.activo && p.controla_stock !== false,
+      ),
+    [productos, local],
+  );
+
+  return (
+    <div className="space-y-6">
+      {tipos.map(({ tipo, titulo }) => {
+        const filas = productosCatalogo
+          .filter((p) => p.tipo === tipo)
+          .sort((a, b) => a.nombre.localeCompare(b.nombre));
+        if (filas.length === 0) return null;
+        return (
+          <div key={tipo} className="space-y-2">
+            <h3 className="text-base font-semibold text-gray-800">
+              {titulo}{' '}
+              <span className="text-sm font-normal capitalize text-gray-500">
+                · {local}
+              </span>
+            </h3>
+            <div className="overflow-x-auto rounded-lg border border-surface-border bg-white">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-surface-border bg-gray-50 text-left text-xs uppercase text-gray-500">
+                    <th className="px-4 py-2">Producto</th>
+                    <th className="px-4 py-2">Código</th>
+                    <th className="px-4 py-2 text-right">Stock</th>
+                    <th className="px-4 py-2">Unidad</th>
+                    <th className="px-4 py-2">Mín.</th>
+                    <th className="px-4 py-2">Estado</th>
+                    {esAdmin && <th className="px-4 py-2 text-center">Control</th>}
+                  </tr>
+                </thead>
+                <tbody>
+                  {filas.map((p) => {
+                    const stock = stockPorProducto.get(p.id) ?? 0;
+                    const min = p.minimo_produccion ?? 0;
+                    const estado =
+                      stock <= 0 ? 'sin-stock' : min && stock < min ? 'bajo' : 'ok';
+                    return (
+                      <tr
+                        key={p.id}
+                        className={cn(
+                          'border-b border-surface-border',
+                          estado === 'sin-stock' && 'bg-red-50',
+                          estado === 'bajo' && 'bg-yellow-50',
+                        )}
+                      >
+                        <td className="px-4 py-2 font-medium">{p.nombre}</td>
+                        <td className="px-4 py-2 font-mono text-xs">{p.codigo}</td>
+                        <td className="px-4 py-2 text-right font-semibold">{stock}</td>
+                        <td className="px-4 py-2 text-gray-500">{p.unidad}</td>
+                        <td className="px-4 py-2">{min || '—'}</td>
+                        <td className="px-4 py-2">
+                          {estado === 'ok' && (
+                            <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs text-green-700">
+                              OK
+                            </span>
+                          )}
+                          {estado === 'bajo' && (
+                            <span className="rounded-full bg-yellow-100 px-2 py-0.5 text-xs text-yellow-700">
+                              Bajo mínimo
+                            </span>
+                          )}
+                          {estado === 'sin-stock' && (
+                            <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs text-red-700">
+                              Sin stock
+                            </span>
+                          )}
+                        </td>
+                        {esAdmin && (
+                          <td className="px-4 py-2 text-center">
+                            <ControlToggle
+                              on
+                              disabled={toggleDisabled}
+                              onToggle={() => onQuitarControl(p.id)}
+                            />
+                          </td>
+                        )}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        );
+      })}
+      {isLoading && (
+        <p className="text-xs text-gray-400">Cargando stock…</p>
+      )}
+      <p className="text-[11px] text-gray-400">
+        Stock = última carga en Producción ("último pesaje manda"), sin descuento
+        automático por venta.
+        {local === 'saavedra' &&
+          ' Saavedra produce y almacena en la misma cámara.'}
+      </p>
+    </div>
+  );
+}
+
+// ── Toggle de control de stock (solo admin) ──────────────────────────────────
+
+function ControlToggle({
+  on,
+  onToggle,
+  disabled,
+}: {
+  on: boolean;
+  onToggle: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      onClick={onToggle}
+      disabled={disabled}
+      title={on ? 'Quitar del control de stock' : 'Volver a controlar el stock'}
+      className={cn(
+        'relative inline-flex h-5 w-9 items-center rounded-full transition-colors',
+        on ? 'bg-green-500' : 'bg-gray-300',
+        disabled && 'cursor-not-allowed opacity-50',
+      )}
+    >
+      <span
+        className={cn(
+          'inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform',
+          on ? 'translate-x-4' : 'translate-x-0.5',
+        )}
+      />
+    </button>
+  );
+}
+
+// ── Sección "Sin control de stock" (colapsable, solo admin) ──────────────────
+// Lista los productos del local activo que el admin sacó del control de stock,
+// con su toggle para volver a controlarlos. El cocinero no ve esta sección.
+
+const TIPO_LABEL_SIN_CONTROL: Record<string, string> = {
+  pasta: 'Pasta',
+  milanesa: 'Milanesa',
+  postre: 'Postre',
+  panificado: 'Pan',
+  salsa: 'Salsa',
+  relleno: 'Relleno',
+  masa: 'Masa',
+  bebida: 'Bebida',
+};
+
+function SinControlSection({
+  productos,
+  filtroLocal,
+  onReactivar,
+  toggleDisabled,
+}: {
+  productos: Producto[];
+  filtroLocal: FiltroLocal;
+  onReactivar: (id: string) => void;
+  toggleDisabled: boolean;
+}) {
+  const [abierto, setAbierto] = useState(false);
+  const items = useMemo(
+    () =>
+      productos
+        .filter(
+          (p) => p.local === filtroLocal && p.activo && p.controla_stock === false,
+        )
+        .sort(
+          (a, b) => a.tipo.localeCompare(b.tipo) || a.nombre.localeCompare(b.nombre),
+        ),
+    [productos, filtroLocal],
+  );
+
+  return (
+    <div className="pt-6">
+      <button
+        onClick={() => setAbierto((v) => !v)}
+        className="flex items-center gap-2 text-base font-semibold text-gray-800"
+      >
+        <span className="text-xs">{abierto ? '▼' : '▶'}</span>
+        Sin control de stock
+        <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600">
+          {items.length}
+        </span>
+      </button>
+
+      {abierto && (
+        <div className="mt-3">
+          {items.length === 0 ? (
+            <p className="rounded-lg border border-dashed border-gray-200 px-4 py-6 text-center text-sm text-gray-400">
+              Todos los productos de{' '}
+              <span className="capitalize">{filtroLocal}</span> están bajo control de
+              stock.
+            </p>
+          ) : (
+            <div className="overflow-x-auto rounded-lg border border-surface-border bg-white">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-surface-border bg-gray-50 text-left text-xs uppercase text-gray-500">
+                    <th className="px-4 py-2">Producto</th>
+                    <th className="px-4 py-2">Tipo</th>
+                    <th className="px-4 py-2">Código</th>
+                    <th className="px-4 py-2 text-center">Control</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {items.map((p) => (
+                    <tr key={p.id} className="border-b border-surface-border">
+                      <td className="px-4 py-2 font-medium text-gray-600">{p.nombre}</td>
+                      <td className="px-4 py-2 text-gray-500">
+                        {TIPO_LABEL_SIN_CONTROL[p.tipo] ?? p.tipo}
+                      </td>
+                      <td className="px-4 py-2 font-mono text-xs text-gray-500">
+                        {p.codigo}
+                      </td>
+                      <td className="px-4 py-2 text-center">
+                        <ControlToggle
+                          on={false}
+                          disabled={toggleDisabled}
+                          onToggle={() => onReactivar(p.id)}
+                        />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
