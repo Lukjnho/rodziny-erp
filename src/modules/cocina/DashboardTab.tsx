@@ -276,9 +276,12 @@ export const PRODUCTOS_COCINA: ProductoCocina[] = [
   // (Lucas NO renombró Fudo, solo el ERP), tomado de ventas_items.
   {
     nombre: 'Capellacci de Pollo, puerro y quesos',
+    // OJO: en Fudo la congelada está cargada con otra grafía que el salón
+    // ("Cappellacci" doble P/L vs "Capellacci"). Verificado en API live
+    // 2026-05-19. Copiar EXACTO o no matchea (el normalizador no corrige letras).
     fudoNombres: [
       'Capellacci de Pollo, puerro y quesos',
-      'Capellacci de pollo, puerro y quesos (CONGELADA)',
+      'Cappellacci de pollo, puerro y quesos (CONGELADA)',
     ],
     categoria: 'Pastas',
     tipo: 'pasta',
