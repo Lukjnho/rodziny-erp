@@ -2394,6 +2394,30 @@ function FormGenerico({
     setGuardando(true);
     setError('');
 
+    // Overwrite — "último pesaje manda". Antes de cargar el lote nuevo a stock,
+    // desactivamos los lotes activos previos de esta misma receta (o nombre
+    // libre) + local, para que no se acumulen batch tras batch. Salsas/postres
+    // no se descuentan por venta (no son línea Fudo propia): cada carga
+    // reemplaza. Solo cuando este lote va a stock (enStock).
+    if (enStock) {
+      let qOff = supabase
+        .from('cocina_lotes_produccion')
+        .update({ en_stock: false })
+        .eq('local', local)
+        .eq('en_stock', true);
+      if (recetaId) {
+        qOff = qOff.eq('receta_id', recetaId);
+      } else {
+        qOff = qOff.eq('nombre_libre', nombreLibre.trim()).is('receta_id', null);
+      }
+      const { error: errOff } = await qOff;
+      if (errOff) {
+        setError(errOff.message);
+        setGuardando(false);
+        return;
+      }
+    }
+
     const { error: err } = await supabase.from('cocina_lotes_produccion').insert({
       fecha: hoy(),
       local,
