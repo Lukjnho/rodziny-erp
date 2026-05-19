@@ -362,12 +362,12 @@ export function StockTab() {
     const locales: string[] = filtroLocal === 'todos' ? ['vedia', 'saavedra'] : [filtroLocal];
 
     for (const prod of productos) {
-      // Stock solo de pastas, postres y panificados (no masas ni salsas).
+      // Esta tabla es SOLO de pastas (flujo cámara/mostrador/porcionado).
+      // Postres, panificados y salsas tienen su stock por conteo registrado
+      // en StockProduccionSection (abajo) — no se duplican acá.
       // Filtro defensivo en JS: la query ['cocina-productos'] la comparte
-      // TraspasosTab y necesita todos los tipos. 'panificado' = panes Saavedra
-      // (Almacén), se trata igual que 'postre' (unidades + stock registrado).
-      if (prod.tipo !== 'pasta' && prod.tipo !== 'postre' && prod.tipo !== 'panificado')
-        continue;
+      // TraspasosTab y necesita todos los tipos.
+      if (prod.tipo !== 'pasta') continue;
       for (const loc of locales) {
         if (prod.local !== loc) continue;
 
@@ -616,26 +616,33 @@ export function StockTab() {
         </span>
       </div>
 
-      {/* Tabla de pastas */}
-      <h3 className="text-base font-semibold text-gray-800">Pastas</h3>
-      <div className="overflow-x-auto rounded-lg border border-surface-border bg-white">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-surface-border bg-gray-50 text-left text-xs uppercase text-gray-500">
-              <th className="px-4 py-2">Producto</th>
-              <th className="px-4 py-2">Código</th>
-              <th className="px-4 py-2">Local</th>
-              <th className="px-4 py-2 text-right">Pastas en produ</th>
-              <th className="px-4 py-2 text-right">En cámara</th>
-              <th className="px-4 py-2 text-right">En mostrador</th>
-              <th className="px-4 py-2 text-right">Vendido hoy</th>
-              <th className="px-4 py-2 text-right">Merma</th>
-              <th className="px-4 py-2">Mín.</th>
-              <th className="px-4 py-2">Estado</th>
-            </tr>
-          </thead>
-          <tbody>
-            {stockRowsFiltrados.map((r, i) => {
+      {/* Tabla de pastas — un bloque por local, NUNCA mezclados.
+          Vedia y Saavedra tienen categorías parecidas pero distintas. */}
+      {localesScope.map((locKey) => {
+        const filasLocal = stockRowsFiltrados.filter((r) => r.local === locKey);
+        return (
+          <div key={locKey} className="space-y-2">
+            <h3 className="text-base font-semibold text-gray-800">
+              🍝 Pastas{' '}
+              <span className="text-sm font-normal capitalize text-gray-500">· {locKey}</span>
+            </h3>
+            <div className="overflow-x-auto rounded-lg border border-surface-border bg-white">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-surface-border bg-gray-50 text-left text-xs uppercase text-gray-500">
+                    <th className="px-4 py-2">Producto</th>
+                    <th className="px-4 py-2">Código</th>
+                    <th className="px-4 py-2 text-right">Pastas en produ</th>
+                    <th className="px-4 py-2 text-right">En cámara</th>
+                    <th className="px-4 py-2 text-right">En mostrador</th>
+                    <th className="px-4 py-2 text-right">Vendido hoy</th>
+                    <th className="px-4 py-2 text-right">Merma</th>
+                    <th className="px-4 py-2">Mín.</th>
+                    <th className="px-4 py-2">Estado</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filasLocal.map((r, i) => {
               const min = r.producto.minimo_produccion ?? 0;
               const estado = r.stock <= 0 ? 'sin-stock' : r.stock < min ? 'bajo' : 'ok';
               return (
@@ -649,7 +656,6 @@ export function StockTab() {
                 >
                   <td className="px-4 py-2 font-medium">{r.producto.nombre}</td>
                   <td className="px-4 py-2 font-mono text-xs">{r.producto.codigo}</td>
-                  <td className="px-4 py-2 capitalize">{r.local}</td>
                   <td className="px-4 py-2 text-right">
                     {r.frescoBandejas > 0 || r.fresco > 0 ? (
                       <div className="flex flex-col items-end leading-tight">
@@ -764,32 +770,35 @@ export function StockTab() {
                 </tr>
               );
             })}
-            {stockRowsFiltrados.length === 0 && (
-              <tr>
-                <td colSpan={10} className="px-4 py-8 text-center text-gray-400">
-                  {isLoading || productos === undefined || lotesPasta === undefined ? (
-                    'Cargando…'
-                  ) : productosError ? (
-                    <div className="space-y-2">
-                      <p className="text-red-500">No se pudieron cargar los productos.</p>
-                      <button
-                        onClick={() => refetchProductos()}
-                        className="rounded border border-gray-300 px-3 py-1 text-xs text-gray-700 hover:bg-gray-50"
-                      >
-                        Reintentar
-                      </button>
-                    </div>
-                  ) : filtroEstado !== 'todos' ? (
-                    'No hay productos con ese estado en el filtro actual'
-                  ) : (
-                    'No hay datos de stock aún'
+                  {filasLocal.length === 0 && (
+                    <tr>
+                      <td colSpan={9} className="px-4 py-8 text-center text-gray-400">
+                        {isLoading || productos === undefined || lotesPasta === undefined ? (
+                          'Cargando…'
+                        ) : productosError ? (
+                          <div className="space-y-2">
+                            <p className="text-red-500">No se pudieron cargar los productos.</p>
+                            <button
+                              onClick={() => refetchProductos()}
+                              className="rounded border border-gray-300 px-3 py-1 text-xs text-gray-700 hover:bg-gray-50"
+                            >
+                              Reintentar
+                            </button>
+                          </div>
+                        ) : filtroEstado !== 'todos' ? (
+                          'No hay pastas con ese estado en el filtro actual'
+                        ) : (
+                          'No hay datos de stock de pastas aún'
+                        )}
+                      </td>
+                    </tr>
                   )}
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        );
+      })}
 
       {/* ── Otras producciones: salsas, postres, pastelería, panadería ────── */}
       <div className="pt-6">
