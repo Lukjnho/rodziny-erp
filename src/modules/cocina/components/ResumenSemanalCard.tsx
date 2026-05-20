@@ -4,9 +4,11 @@ import { supabase } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
 import { PRODUCTOS_COCINA, normNombre } from '../DashboardTab';
 
-// El Resumen semanal es un CATÁLOGO POR DEMANDA: lista todos los productos
-// controlados del local con su demanda Fudo semanal vs el stock actual, para
-// planificar la producción. NO depende del Plan semanal (cocina_pizarron_items).
+// El Resumen semanal proyecta la PRODUCCIÓN PLANIFICADA esta semana
+// (cocina_pizarron_items × rendimiento_porciones de la receta) vs la demanda
+// Fudo 7d. Aplica solo a pastas y postres. Match por receta_id: el item del
+// pizarrón vincula receta, y la pasta-producto vincula la MISMA receta en
+// cocina_productos.receta_id (típicamente la del relleno).
 
 type LocalCocina = 'vedia' | 'saavedra';
 
@@ -18,11 +20,11 @@ interface ProductoCat {
   fudo_nombres: string[] | null;
 }
 
-interface LoteStock {
-  receta_id: string | null;
-  nombre_libre: string | null;
-  cantidad_producida: number;
-  merma_cantidad: number | null;
+interface ItemPlan {
+  receta_id: string;
+  cantidad_recetas: number;
+  estado: string;
+  rendimiento_porciones: number | null;
 }
 
 interface FudoResp {
@@ -36,17 +38,29 @@ interface ResumenItem {
   id: string;
   nombre: string;
   tipo: string;
-  stockActual: number;
+  planificado: number;
   demandaSemanal: number;
   estado: Estado;
 }
 
-// Tipos del catálogo por local (mismo criterio que StockTab.CatalogoStock):
-// Saavedra controla todo por overwrite; Vedia salsas/postres (pasta = cámara).
+// Solo pastas y postres entran al resumen, en ambos locales.
 const TIPOS_POR_LOCAL: Record<LocalCocina, string[]> = {
-  saavedra: ['pasta', 'milanesa', 'postre', 'panificado', 'salsa'],
-  vedia: ['salsa', 'postre'],
+  saavedra: ['pasta', 'postre'],
+  vedia: ['pasta', 'postre'],
 };
+
+// Lunes de la semana de una fecha dada (semana lunes-domingo).
+function lunesDeSemana(fechaIso: string): string {
+  const d = new Date(fechaIso + 'T00:00:00');
+  const diaSemana = (d.getDay() + 6) % 7; // 0 = lunes
+  d.setDate(d.getDate() - diaSemana);
+  return d.toISOString().split('T')[0];
+}
+function sumarDias(fechaIso: string, dias: number): string {
+  const d = new Date(fechaIso + 'T00:00:00');
+  d.setDate(d.getDate() + dias);
+  return d.toISOString().split('T')[0];
+}
 
 const TIPO_EMOJI: Record<string, string> = {
   pasta: '🍝',
@@ -94,10 +108,10 @@ const ORDEN_ESTADO: Record<Estado, number> = {
 
 export function ResumenSemanalCard({
   local,
+  fechaReferencia,
 }: {
   local: LocalCocina;
-  // Se conserva en la firma por compatibilidad con las llamadas existentes,
-  // pero el resumen ya no depende de la semana (demanda = Fudo 14d rolling).
+  // Fecha pivote para determinar la semana del plan a leer (lunes-domingo).
   fechaReferencia: string;
 }) {
   const [abierto, setAbierto] = useState(true);
@@ -118,17 +132,35 @@ export function ResumenSemanalCard({
     },
   });
 
-  // Stock actual (modelo overwrite, igual que el catálogo de Stock).
-  const { data: lotes } = useQuery({
-    queryKey: ['resumen-semanal-stock', local],
+  // Items del pizarrón de la semana en curso (lunes-domingo).
+  const semana = useMemo(() => {
+    const lunes = lunesDeSemana(fechaReferencia);
+    return { lunes, domingo: sumarDias(lunes, 6) };
+  }, [fechaReferencia]);
+
+  const { data: itemsPlan } = useQuery({
+    queryKey: ['resumen-semanal-plan', local, semana.lunes, semana.domingo],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from('cocina_lotes_produccion')
-        .select('receta_id, nombre_libre, cantidad_producida, merma_cantidad')
+        .from('cocina_pizarron_items')
+        .select(
+          'receta_id, cantidad_recetas, estado, receta:cocina_recetas(rendimiento_porciones)',
+        )
         .eq('local', local)
-        .eq('en_stock', true);
+        .gte('fecha_objetivo', semana.lunes)
+        .lte('fecha_objetivo', semana.domingo)
+        .neq('estado', 'cancelado')
+        .not('receta_id', 'is', null);
       if (error) throw error;
-      return (data ?? []) as LoteStock[];
+      return (data ?? []).map((r) => {
+        const rec = Array.isArray(r.receta) ? r.receta[0] : r.receta;
+        return {
+          receta_id: r.receta_id as string,
+          cantidad_recetas: Number(r.cantidad_recetas) || 0,
+          estado: r.estado as string,
+          rendimiento_porciones: rec?.rendimiento_porciones ?? null,
+        } as ItemPlan;
+      });
     },
   });
 
@@ -164,16 +196,18 @@ export function ResumenSemanalCard({
       return (total / fudoData.dias) * 7;
     }
 
-    function stockDe(prod: ProductoCat): number {
-      const objetivoNombre = normNombre(prod.nombre);
+    // Proyección: items del pizarrón de la semana cuya receta coincide con
+    // la receta vinculada al producto, × rinde. Si el producto no tiene
+    // receta_id o la receta no tiene rinde, queda en 0 (señal de qué falta
+    // cargar para que el cálculo funcione).
+    function planificadoDe(prod: ProductoCat): number {
+      if (!prod.receta_id) return 0;
       let total = 0;
-      for (const l of lotes ?? []) {
-        const matchNombre =
-          !!l.nombre_libre && normNombre(l.nombre_libre) === objetivoNombre;
-        const matchReceta = !!prod.receta_id && l.receta_id === prod.receta_id;
-        if (matchNombre || matchReceta) {
-          total += Math.max(0, Number(l.cantidad_producida) - (Number(l.merma_cantidad) || 0));
-        }
+      for (const it of itemsPlan ?? []) {
+        if (it.receta_id !== prod.receta_id) continue;
+        const rinde = Number(it.rendimiento_porciones) || 0;
+        if (rinde <= 0) continue;
+        total += it.cantidad_recetas * rinde;
       }
       return total;
     }
@@ -182,12 +216,12 @@ export function ResumenSemanalCard({
       .filter((p) => tiposLocal.includes(p.tipo))
       .map<ResumenItem>((p) => {
         const demandaSemanal = demandaSemanalDe(p);
-        const stockActual = stockDe(p);
+        const planificado = planificadoDe(p);
         let estado: Estado;
         if (demandaSemanal <= 0) {
           estado = 'sin_demanda';
         } else {
-          const ratio = stockActual / demandaSemanal;
+          const ratio = planificado / demandaSemanal;
           if (ratio < 0.8) estado = 'corto';
           else if (ratio < 0.95) estado = 'ajustado';
           else if (ratio <= 1.2) estado = 'cubre';
@@ -197,7 +231,7 @@ export function ResumenSemanalCard({
           id: p.id,
           nombre: p.nombre,
           tipo: p.tipo,
-          stockActual,
+          planificado,
           demandaSemanal,
           estado,
         };
@@ -208,7 +242,7 @@ export function ResumenSemanalCard({
         return ORDEN_ESTADO[a.estado] - ORDEN_ESTADO[b.estado];
       return b.demandaSemanal - a.demandaSemanal;
     });
-  }, [productos, lotes, fudoData, tiposLocal]);
+  }, [productos, itemsPlan, fudoData, tiposLocal]);
 
   // Agrupado por tipo, respetando el orden de tipos del local. resumen ya viene
   // ordenado por estado, así que cada grupo conserva ese orden interno.
@@ -236,8 +270,8 @@ export function ResumenSemanalCard({
             <span className="text-xs font-normal capitalize text-gray-500">· {local}</span>
           </h3>
           <p className="text-[11px] text-gray-500">
-            {resumen.length} producto{resumen.length === 1 ? '' : 's'} · demanda Fudo (7d) vs
-            stock
+            {resumen.length} producto{resumen.length === 1 ? '' : 's'} · planificado (semana) vs
+            demanda Fudo (7d)
             {cortos > 0 && (
               <span className="ml-1 font-medium text-red-700">
                 · {cortos} falta{cortos === 1 ? '' : 'n'}
@@ -262,7 +296,7 @@ export function ResumenSemanalCard({
                   const lbl = ESTADO_LABEL[r.estado];
                   const pct =
                     r.demandaSemanal > 0
-                      ? Math.round((r.stockActual / r.demandaSemanal) * 100)
+                      ? Math.round((r.planificado / r.demandaSemanal) * 100)
                       : null;
                   return (
                     <div
@@ -275,7 +309,7 @@ export function ResumenSemanalCard({
                             {r.nombre}
                           </div>
                           <div className="text-[10px] text-gray-500">
-                            stock ~{Math.round(r.stockActual)}
+                            planif. ~{Math.round(r.planificado)}
                             {r.demandaSemanal > 0 ? (
                               <>
                                 {' · demanda ~'}
