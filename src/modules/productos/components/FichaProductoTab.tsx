@@ -12,6 +12,31 @@ import { RecetaEditorInline } from './RecetaEditorInline';
 // canal, packaging, adicionales, ABM) vive en el tab Menú.
 type RecetaFull = Receta & { es_subreceta: boolean; vendible: boolean };
 
+// Bebidas de reventa (latas, agua, vino sin transformar): no son recetas, son
+// cocina_productos con insumo_reventa_id. Se gestionan acá en Costeo (alta/
+// edición/eliminación) y van automáticamente al Menú mientras estén activas.
+interface BebidaReventa {
+  id: string;
+  nombre: string;
+  local: 'vedia' | 'saavedra';
+  insumo_reventa_id: string;
+}
+
+interface InsumoBebida {
+  id: string;
+  nombre: string;
+  costo_unitario: number | null;
+  unidad: string;
+  local: string | null;
+}
+
+const CATEGORIAS_INSUMO_BEBIDA = ['Bebidas para venta', 'Bebidas para la venta'];
+
+// Union de lo que se muestra en el grid de Costeo.
+type ItemCosteo =
+  | { kind: 'receta'; receta: RecetaFull; costoUnit: number | null; unidadCosto: string }
+  | { kind: 'reventa'; bebida: BebidaReventa; costoUnit: number | null };
+
 type FiltroLocal = 'vedia' | 'saavedra';
 
 const TIPO_COLOR: Record<string, string> = {
@@ -60,6 +85,8 @@ export function FichaProductoTab() {
   const localRestringido = (perfil?.local_restringido ?? null) as 'vedia' | 'saavedra' | null;
 
   const [recetaId, setRecetaId] = useState<string | null>(null);
+  const [bebidaRevId, setBebidaRevId] = useState<string | null>(null);
+  const [nuevaBebidaRev, setNuevaBebidaRev] = useState(false);
   const [busqueda, setBusqueda] = useState('');
   const [filtroTipo, setFiltroTipo] = useState('todos');
   const [filtroLocal, setFiltroLocal] = useState<FiltroLocal>(
@@ -94,6 +121,42 @@ export function FichaProductoTab() {
     },
   });
 
+  const { data: bebidasReventa } = useQuery({
+    queryKey: ['costeo-bebidas-reventa'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('cocina_productos')
+        .select('id, nombre, local, insumo_reventa_id')
+        .eq('tipo', 'bebida')
+        .eq('activo', true)
+        .not('insumo_reventa_id', 'is', null)
+        .order('nombre');
+      if (error) throw error;
+      return (data ?? []) as BebidaReventa[];
+    },
+  });
+
+  const { data: insumosBebida } = useQuery({
+    queryKey: ['costeo-insumos-bebida'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('productos')
+        .select('id, nombre, costo_unitario, unidad, local')
+        .in('categoria', CATEGORIAS_INSUMO_BEBIDA)
+        .order('nombre');
+      if (error) throw error;
+      return (data ?? []) as InsumoBebida[];
+    },
+  });
+
+  const costoInsumo = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const i of insumosBebida ?? []) {
+      if (i.costo_unitario != null) m.set(i.id, Number(i.costo_unitario));
+    }
+    return m;
+  }, [insumosBebida]);
+
   const { costos, ctx } = useCostosRecetas();
 
   const tipos = useMemo(() => {
@@ -102,23 +165,47 @@ export function FichaProductoTab() {
     return Array.from(set).sort();
   }, [recetas]);
 
-  const filtradas = useMemo(() => {
-    let lista = (recetas ?? []).filter((r) => r.local === filtroLocal);
-    if (filtroTipo !== 'todos') lista = lista.filter((r) => r.tipo === filtroTipo);
-    if (soloSub) lista = lista.filter((r) => r.es_subreceta);
-    if (busqueda.trim()) {
-      const q = busqueda.toLowerCase();
-      lista = lista.filter((r) => r.nombre.toLowerCase().includes(q));
+  // Items del grid: recetas + bebidas de reventa (en el grupo 'bebida').
+  // Bebidas reventa no son recetas, así que el filtro "Solo subrecetas" las oculta.
+  const items = useMemo<ItemCosteo[]>(() => {
+    const q = busqueda.trim().toLowerCase();
+    const out: ItemCosteo[] = [];
+    for (const r of recetas ?? []) {
+      if (r.local !== filtroLocal) continue;
+      if (filtroTipo !== 'todos' && r.tipo !== filtroTipo) continue;
+      if (soloSub && !r.es_subreceta) continue;
+      if (q && !r.nombre.toLowerCase().includes(q)) continue;
+      const c = costos.get(r.id);
+      const costoUnit = c?.costoPorPorcion ?? c?.costoPorKg ?? null;
+      const unidadCosto =
+        c?.costoPorPorcion != null ? '/porción' : c?.costoPorKg != null ? '/kg' : '';
+      out.push({ kind: 'receta', receta: r, costoUnit, unidadCosto });
     }
-    return lista;
-  }, [recetas, filtroLocal, filtroTipo, soloSub, busqueda]);
+    if (!soloSub && (filtroTipo === 'todos' || filtroTipo === 'bebida')) {
+      for (const b of bebidasReventa ?? []) {
+        if (b.local !== filtroLocal) continue;
+        if (q && !b.nombre.toLowerCase().includes(q)) continue;
+        out.push({
+          kind: 'reventa',
+          bebida: b,
+          costoUnit: costoInsumo.get(b.insumo_reventa_id) ?? null,
+        });
+      }
+    }
+    return out;
+  }, [recetas, bebidasReventa, costos, costoInsumo, filtroLocal, filtroTipo, soloSub, busqueda]);
+
+  const filtradas = useMemo(
+    () => items.filter((i): i is Extract<ItemCosteo, { kind: 'receta' }> => i.kind === 'receta'),
+    [items],
+  );
 
   // Agrupado por categoría (tipo), respetando ORDEN_TIPOS y luego alfabético.
   const grupos = useMemo(() => {
-    const map = new Map<string, RecetaFull[]>();
-    for (const r of filtradas) {
-      const k = r.tipo || 'otro';
-      (map.get(k) ?? map.set(k, []).get(k)!).push(r);
+    const map = new Map<string, ItemCosteo[]>();
+    for (const it of items) {
+      const k = it.kind === 'receta' ? it.receta.tipo || 'otro' : 'bebida';
+      (map.get(k) ?? map.set(k, []).get(k)!).push(it);
     }
     return Array.from(map.entries()).sort(([a], [b]) => {
       const ia = ORDEN_TIPOS.indexOf(a);
@@ -128,7 +215,7 @@ export function FichaProductoTab() {
       if (ib !== -1) return 1;
       return a.localeCompare(b);
     });
-  }, [filtradas]);
+  }, [items]);
 
   const receta = useMemo(
     () => recetas?.find((r) => r.id === recetaId) ?? null,
@@ -163,6 +250,36 @@ export function FichaProductoTab() {
     qc.invalidateQueries({ queryKey: ['cocina-receta-ingredientes-costeo'] });
     qc.invalidateQueries({ queryKey: ['productos-costeo'] });
   };
+
+  const invalidarBebidaRev = () => {
+    qc.invalidateQueries({ queryKey: ['costeo-bebidas-reventa'] });
+    qc.invalidateQueries({ queryKey: ['menu-bebidas-reventa'] });
+  };
+
+  const bebidaRev = useMemo(
+    () => bebidasReventa?.find((b) => b.id === bebidaRevId) ?? null,
+    [bebidasReventa, bebidaRevId],
+  );
+
+  // ─── Nueva / editar bebida de reventa ──────────────────────────────────────
+  if (nuevaBebidaRev || bebidaRev) {
+    return (
+      <BebidaReventaPanel
+        bebida={bebidaRev}
+        insumos={insumosBebida ?? []}
+        localRestringido={localRestringido}
+        onCancel={() => {
+          setNuevaBebidaRev(false);
+          setBebidaRevId(null);
+        }}
+        onSaved={() => {
+          setNuevaBebidaRev(false);
+          setBebidaRevId(null);
+          invalidarBebidaRev();
+        }}
+      />
+    );
+  }
 
   // ─── Nueva receta (apartado ancho inline, NO modal) ────────────────────────
   if (nuevaReceta) {
@@ -255,13 +372,25 @@ export function FichaProductoTab() {
             Solo subrecetas
           </label>
           <button
+            onClick={() => setNuevaBebidaRev(true)}
+            className="ml-auto rounded border border-sky-300 bg-white px-3 py-1.5 text-sm font-medium text-sky-700 hover:bg-sky-50"
+          >
+            + Nueva bebida reventa
+          </button>
+          <button
             onClick={() => setNuevaReceta(true)}
-            className="ml-auto rounded bg-rodziny-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-rodziny-800"
+            className="rounded bg-rodziny-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-rodziny-800"
           >
             + Nueva receta
           </button>
           <div className="text-xs text-gray-400">
-            {filtradas.length} de {recetas?.length ?? 0}
+            {filtradas.length} receta{filtradas.length === 1 ? '' : 's'}
+            {(bebidasReventa ?? []).filter((b) => b.local === filtroLocal).length > 0 &&
+              ` + ${(bebidasReventa ?? []).filter((b) => b.local === filtroLocal).length} bebida${
+                (bebidasReventa ?? []).filter((b) => b.local === filtroLocal).length === 1
+                  ? ''
+                  : 's'
+              } reventa`}
           </div>
         </div>
 
@@ -271,7 +400,7 @@ export function FichaProductoTab() {
           </div>
         )}
 
-        {grupos.map(([tipo, items]) => (
+        {grupos.map(([tipo, grupoItems]) => (
           <section key={tipo} className="space-y-2">
             <div className="flex items-center gap-2">
               <span
@@ -282,19 +411,54 @@ export function FichaProductoTab() {
               >
                 {TIPO_LABEL[tipo] ?? tipo}
               </span>
-              <span className="text-xs text-gray-400">{items.length}</span>
+              <span className="text-xs text-gray-400">{grupoItems.length}</span>
               <div className="h-px flex-1 bg-gray-200" />
             </div>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
-              {items.map((r) => {
-                const c = costos.get(r.id);
-                const costoUnit = c?.costoPorPorcion ?? c?.costoPorKg ?? null;
-                const unidadCosto =
-                  c?.costoPorPorcion != null
-                    ? '/porción'
-                    : c?.costoPorKg != null
-                      ? '/kg'
-                      : '';
+              {grupoItems.map((it) => {
+                if (it.kind === 'reventa') {
+                  return (
+                    <button
+                      key={`reventa:${it.bebida.id}`}
+                      onClick={() => setBebidaRevId(it.bebida.id)}
+                      className="flex flex-col gap-1 rounded-lg border border-gray-200 bg-white p-3 text-left transition-colors hover:border-sky-400 hover:bg-sky-50"
+                    >
+                      <span className="text-sm font-medium leading-tight text-gray-800">
+                        {it.bebida.nombre}
+                      </span>
+                      <div className="flex flex-wrap items-center gap-1">
+                        <span
+                          className={cn(
+                            'rounded px-1.5 py-0.5 text-[9px] font-medium capitalize',
+                            TIPO_COLOR.bebida,
+                          )}
+                        >
+                          bebida
+                        </span>
+                        <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[9px] capitalize text-gray-600">
+                          {it.bebida.local}
+                        </span>
+                        <span className="rounded bg-sky-100 px-1.5 py-0.5 text-[9px] text-sky-700">
+                          reventa
+                        </span>
+                        <span className="rounded bg-green-100 px-1.5 py-0.5 text-[9px] font-medium text-green-700">
+                          Menú
+                        </span>
+                      </div>
+                      <div className="mt-0.5 text-xs tabular-nums text-gray-500">
+                        {it.costoUnit != null ? (
+                          <>
+                            {formatARS(it.costoUnit)}
+                            <span className="ml-0.5 text-[10px] text-gray-400">/u</span>
+                          </>
+                        ) : (
+                          <span className="text-gray-300">sin costo</span>
+                        )}
+                      </div>
+                    </button>
+                  );
+                }
+                const r = it.receta;
                 return (
                   <button
                     key={r.id}
@@ -328,11 +492,11 @@ export function FichaProductoTab() {
                       )}
                     </div>
                     <div className="mt-0.5 text-xs tabular-nums text-gray-500">
-                      {costoUnit != null ? (
+                      {it.costoUnit != null ? (
                         <>
-                          {formatARS(costoUnit)}
+                          {formatARS(it.costoUnit)}
                           <span className="ml-0.5 text-[10px] text-gray-400">
-                            {unidadCosto}
+                            {it.unidadCosto}
                           </span>
                         </>
                       ) : (
@@ -439,6 +603,236 @@ export function FichaProductoTab() {
             costo={costos.get(receta.id)}
           />
         )}
+      </section>
+    </div>
+  );
+}
+
+// ─── Panel alta/edición/eliminación de bebida de reventa ───────────────────
+function BebidaReventaPanel({
+  bebida,
+  insumos,
+  localRestringido,
+  onCancel,
+  onSaved,
+}: {
+  bebida: BebidaReventa | null;
+  insumos: InsumoBebida[];
+  localRestringido: 'vedia' | 'saavedra' | null;
+  onCancel: () => void;
+  onSaved: () => void;
+}) {
+  const creando = !bebida;
+  const [nombre, setNombre] = useState(bebida?.nombre ?? '');
+  const [insumoId, setInsumoId] = useState(bebida?.insumo_reventa_id ?? '');
+  const [local, setLocal] = useState<'vedia' | 'saavedra'>(
+    bebida?.local ?? (localRestringido ?? 'vedia'),
+  );
+  const [busca, setBusca] = useState('');
+  const [guardando, setGuardando] = useState(false);
+  const [error, setError] = useState('');
+
+  // Sugerir nombre desde el insumo elegido si todavía no escribieron uno.
+  const insumoSel = insumos.find((i) => i.id === insumoId) ?? null;
+  useMemo(() => {
+    if (creando && !nombre.trim() && insumoSel) setNombre(insumoSel.nombre);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [insumoSel?.id]);
+
+  const insumosFiltrados = useMemo(() => {
+    let lista = insumos.filter((i) => !i.local || i.local === local);
+    if (busca.trim()) {
+      const q = busca.toLowerCase();
+      lista = lista.filter((i) => i.nombre.toLowerCase().includes(q));
+    }
+    return lista.slice(0, 50);
+  }, [insumos, local, busca]);
+
+  const guardar = async () => {
+    if (!nombre.trim()) {
+      setError('Cargá un nombre');
+      return;
+    }
+    if (!insumoId) {
+      setError('Elegí el insumo de compra');
+      return;
+    }
+    setError('');
+    setGuardando(true);
+    try {
+      if (creando) {
+        const { error: errIns } = await supabase.from('cocina_productos').insert({
+          nombre: nombre.trim(),
+          tipo: 'bebida',
+          unidad: 'unid',
+          local,
+          activo: true,
+          insumo_reventa_id: insumoId,
+        });
+        if (errIns) throw errIns;
+      } else {
+        const { error: errUpd } = await supabase
+          .from('cocina_productos')
+          .update({
+            nombre: nombre.trim(),
+            insumo_reventa_id: insumoId,
+          })
+          .eq('id', bebida!.id);
+        if (errUpd) throw errUpd;
+      }
+      onSaved();
+    } catch (err: unknown) {
+      const msg =
+        err instanceof Error
+          ? err.message
+          : ((err as { message?: string })?.message ?? 'Error desconocido');
+      setError(msg);
+      setGuardando(false);
+    }
+  };
+
+  const eliminar = async () => {
+    if (!bebida) return;
+    if (!confirm(`¿Eliminar "${bebida.nombre}" del Menú y del Costeo?`)) return;
+    setError('');
+    setGuardando(true);
+    try {
+      const { error: errDel } = await supabase
+        .from('cocina_productos')
+        .update({ activo: false })
+        .eq('id', bebida.id);
+      if (errDel) throw errDel;
+      onSaved();
+    } catch (err: unknown) {
+      const msg =
+        err instanceof Error
+          ? err.message
+          : ((err as { message?: string })?.message ?? 'Error desconocido');
+      setError(msg);
+      setGuardando(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <button
+        onClick={onCancel}
+        className="text-sm text-rodziny-700 hover:text-rodziny-900"
+      >
+        ← Volver a recetas
+      </button>
+      <section className="rounded-lg border border-sky-200 bg-white p-4">
+        <h2 className="text-lg font-semibold text-gray-900">
+          {creando ? 'Nueva bebida de reventa' : `Editar "${bebida!.nombre}"`}
+        </h2>
+        <p className="mt-0.5 text-xs text-gray-500">
+          Bebida que se compra terminada y se vende sin transformar. El costo sale del{' '}
+          <strong>insumo de compra</strong>; va automáticamente al <strong>Menú</strong> para
+          que le pongas precio.
+        </p>
+      </section>
+
+      <section className="space-y-3 rounded-lg border border-gray-200 bg-white p-4">
+        <div className="grid gap-3 sm:grid-cols-3">
+          <div className="sm:col-span-2">
+            <label className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-gray-500">
+              Nombre (como va a aparecer en el Menú)
+            </label>
+            <input
+              value={nombre}
+              onChange={(e) => setNombre(e.target.value)}
+              placeholder="Ej: Pepsi"
+              className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+              autoFocus={creando}
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-gray-500">
+              Local
+            </label>
+            <select
+              value={local}
+              onChange={(e) => setLocal(e.target.value as 'vedia' | 'saavedra')}
+              disabled={!!localRestringido || !creando}
+              className="w-full rounded border border-gray-300 px-2 py-2 text-sm capitalize disabled:bg-gray-100"
+            >
+              <option value="vedia">Vedia</option>
+              <option value="saavedra">Saavedra</option>
+            </select>
+          </div>
+        </div>
+
+        <div>
+          <label className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-gray-500">
+            Insumo de compra
+          </label>
+          <input
+            value={busca}
+            onChange={(e) => setBusca(e.target.value)}
+            placeholder="Buscar insumo…"
+            className="mb-1 w-full rounded border border-gray-300 px-3 py-1.5 text-sm"
+          />
+          <select
+            value={insumoId}
+            onChange={(e) => setInsumoId(e.target.value)}
+            size={8}
+            className="w-full rounded border border-gray-300 px-2 py-1 text-sm"
+          >
+            <option value="">— elegí un insumo —</option>
+            {insumosFiltrados.map((i) => (
+              <option key={i.id} value={i.id}>
+                {i.nombre}
+                {i.costo_unitario != null
+                  ? ` — ${formatARS(Number(i.costo_unitario))}/${i.unidad}`
+                  : ''}
+                {i.local ? ` · ${i.local}` : ''}
+              </option>
+            ))}
+          </select>
+          {insumosFiltrados.length === 50 && (
+            <p className="mt-1 text-[10px] text-gray-400">
+              Mostrando 50 — afiná la búsqueda para ver más.
+            </p>
+          )}
+          {insumoSel && (
+            <p className="mt-1 text-[11px] text-gray-600">
+              Costo: <strong>{formatARS(Number(insumoSel.costo_unitario ?? 0))}</strong> por{' '}
+              {insumoSel.unidad}
+            </p>
+          )}
+        </div>
+
+        {error && (
+          <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+            {error}
+          </div>
+        )}
+
+        <div className="flex items-center gap-2">
+          <button
+            onClick={guardar}
+            disabled={guardando}
+            className="rounded bg-rodziny-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-rodziny-800 disabled:opacity-50"
+          >
+            {creando ? 'Crear bebida' : 'Guardar cambios'}
+          </button>
+          <button
+            onClick={onCancel}
+            disabled={guardando}
+            className="rounded border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+          >
+            Cancelar
+          </button>
+          {!creando && (
+            <button
+              onClick={eliminar}
+              disabled={guardando}
+              className="ml-auto rounded border border-red-300 bg-white px-3 py-1.5 text-sm text-red-700 hover:bg-red-50 disabled:opacity-50"
+            >
+              Eliminar
+            </button>
+          )}
+        </div>
       </section>
     </div>
   );
