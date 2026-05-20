@@ -42,12 +42,13 @@ interface ResumenItem {
 }
 
 // Tipos del catálogo por local. Saavedra controla todo por overwrite
-// (cocina_lotes_produccion). Vedia controla salsas/postres por overwrite y
-// pastas por cámara/traspasos (vista v_cocina_stock_pastas) — el resumen
-// rutea el cálculo de stock según producto.tipo + local.
+// (cocina_lotes_produccion). Vedia controla postres por overwrite y pastas
+// por cámara/traspasos + último cierre del mostrador — el resumen rutea el
+// cálculo de stock según producto.tipo + local. Salsas Vedia se omiten
+// del resumen (se controlan en su propio flujo).
 const TIPOS_POR_LOCAL: Record<LocalCocina, string[]> = {
   saavedra: ['pasta', 'milanesa', 'postre', 'panificado', 'salsa'],
-  vedia: ['pasta', 'salsa', 'postre'],
+  vedia: ['pasta', 'postre'],
 };
 
 const TIPO_EMOJI: Record<string, string> = {
@@ -155,6 +156,34 @@ export function ResumenSemanalCard({
     },
   });
 
+  // Último cierre de mostrador por producto (Vedia pastas). cocina_cierre_dia
+  // registra cantidad_real al cierre de cada turno → fuente más fresca del
+  // stock mostrador. Se suma a la cámara para obtener el stock total real.
+  const { data: ultCierrePorProducto } = useQuery({
+    queryKey: ['resumen-semanal-ult-cierre-pastas', local],
+    enabled: local === 'vedia',
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('cocina_cierre_dia')
+        .select('producto_id, cantidad_real, fecha, created_at')
+        .eq('local', 'vedia')
+        .eq('tipo', 'pasta')
+        .order('fecha', { ascending: false })
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      const map = new Map<string, number>();
+      for (const r of (data ?? []) as {
+        producto_id: string | null;
+        cantidad_real: number | null;
+      }[]) {
+        if (!r.producto_id) continue;
+        if (map.has(r.producto_id)) continue; // ya tomé el más reciente
+        map.set(r.producto_id, Number(r.cantidad_real) || 0);
+      }
+      return map;
+    },
+  });
+
   // Ventas Fudo (14d) para estimar la demanda semanal.
   const hace14 = useMemo(
     () => new Date(Date.now() - 14 * 86400000).toISOString().split('T')[0],
@@ -188,14 +217,17 @@ export function ResumenSemanalCard({
     }
 
     function stockDe(prod: ProductoCat): number {
-      // Pastas Vedia leen de v_cocina_stock_pastas (cámara − traspasos − merma).
+      // Pastas Vedia: neto cámara (cocina_lotes_pasta) + último cierre
+      // mostrador (cocina_cierre_dia.cantidad_real). Suma ambas ubicaciones
+      // físicas. Si no hay cierre del producto, solo cámara.
       if (local === 'vedia' && prod.tipo === 'pasta') {
         const row = (stockPastasVedia ?? []).find((s) => s.producto_id === prod.id);
-        if (!row) return 0;
-        const camara = Number(row.porciones_camara) || 0;
-        const traspasos = Number(row.porciones_traspasadas) || 0;
-        const merma = Number(row.porciones_merma) || 0;
-        return Math.max(0, camara - traspasos - merma);
+        const camara = Number(row?.porciones_camara) || 0;
+        const traspasos = Number(row?.porciones_traspasadas) || 0;
+        const merma = Number(row?.porciones_merma) || 0;
+        const netoCamara = Math.max(0, camara - traspasos - merma);
+        const mostrador = ultCierrePorProducto?.get(prod.id) ?? 0;
+        return netoCamara + mostrador;
       }
       // Resto: modelo overwrite en cocina_lotes_produccion.
       const objetivoNombre = normNombre(prod.nombre);
@@ -241,7 +273,7 @@ export function ResumenSemanalCard({
         return ORDEN_ESTADO[a.estado] - ORDEN_ESTADO[b.estado];
       return b.demandaSemanal - a.demandaSemanal;
     });
-  }, [productos, lotes, stockPastasVedia, fudoData, tiposLocal, local]);
+  }, [productos, lotes, stockPastasVedia, ultCierrePorProducto, fudoData, tiposLocal, local]);
 
   // Agrupado por tipo, respetando el orden de tipos del local. resumen ya viene
   // ordenado por estado, así que cada grupo conserva ese orden interno.
