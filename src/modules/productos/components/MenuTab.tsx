@@ -382,9 +382,10 @@ export function MenuTab() {
 
       {grupos.map(({ tipo, items: gItems }) => {
         const colapsada = colapsadas.has(tipo);
-        // Bebidas: 1 sola columna de precio (no aplica Vianda/Congelado).
-        const esBebida = tipo === 'bebida';
-        const canales: CanalPrecio[] = esBebida ? ['plato'] : CANALES_PRECIO;
+        // Solo Pastas mantienen los 3 canales (Salón/Vianda/Congelado).
+        // El resto va con una sola columna 'Precio'.
+        const esPrecioUnico = tipo !== 'pasta';
+        const canales: CanalPrecio[] = esPrecioUnico ? ['plato'] : CANALES_PRECIO;
         const fila = (p: ItemMenu) => {
           const pp = precios.get(p.key) ?? {};
           const margen = margenPctDe(pp.plato, p.costo);
@@ -460,11 +461,11 @@ export function MenuTab() {
                       <th className="px-3 py-1.5 text-right font-medium">Costo receta</th>
                       {canales.map((c) => (
                         <th key={c} className="px-3 py-1.5 text-right font-medium">
-                          {esBebida ? 'Precio' : CANAL_LABEL[c]}
+                          {esPrecioUnico ? 'Precio' : CANAL_LABEL[c]}
                         </th>
                       ))}
                       <th className="px-3 py-1.5 text-right font-medium">
-                        {esBebida ? 'Margen' : 'Margen Salón'}
+                        {esPrecioUnico ? 'Margen' : 'Margen Salón'}
                       </th>
                     </tr>
                   </thead>
