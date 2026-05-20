@@ -268,16 +268,21 @@ export function RecetaEditorInline({
         // Rendimiento + tipo. Nombre/local/procedimiento/Fudo siguen sin tocarse
         // desde acá (renombrar/mover de local impacta linkings — se hace en
         // Cocina si hace falta).
+        // es_subreceta solo se TOCA si tipo='subreceta' (fuerza true). Para
+        // otros tipos respetamos el valor en DB — habilita recetas que son
+        // físicamente relleno/masa pero contablemente subreceta (ej. Pure
+        // papa para ñoqui: aparece en el QR de relleno, oculta en Menú).
+        const updatePayload: Record<string, unknown> = {
+          tipo,
+          rendimiento_kg: rendKgNum,
+          rendimiento_unidad: rendUnidad,
+          rendimiento_porciones: rendPorcNum,
+          updated_at: new Date().toISOString(),
+        };
+        if (tipo === 'subreceta') updatePayload.es_subreceta = true;
         const { error: errReceta } = await supabase
           .from('cocina_recetas')
-          .update({
-            tipo,
-            es_subreceta: tipo === 'subreceta',
-            rendimiento_kg: rendKgNum,
-            rendimiento_unidad: rendUnidad,
-            rendimiento_porciones: rendPorcNum,
-            updated_at: new Date().toISOString(),
-          })
+          .update(updatePayload)
           .eq('id', recetaId);
         if (errReceta) throw errReceta;
       }
