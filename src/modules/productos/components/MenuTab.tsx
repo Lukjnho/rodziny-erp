@@ -382,6 +382,9 @@ export function MenuTab() {
 
       {grupos.map(({ tipo, items: gItems }) => {
         const colapsada = colapsadas.has(tipo);
+        // Bebidas: 1 sola columna de precio (no aplica Vianda/Congelado).
+        const esBebida = tipo === 'bebida';
+        const canales: CanalPrecio[] = esBebida ? ['plato'] : CANALES_PRECIO;
         const fila = (p: ItemMenu) => {
           const pp = precios.get(p.key) ?? {};
           const margen = margenPctDe(pp.plato, p.costo);
@@ -408,7 +411,7 @@ export function MenuTab() {
               <td className="px-3 py-1.5 text-right tabular-nums text-gray-600">
                 {p.costo != null ? formatARS(p.costo) : '—'}
               </td>
-              {CANALES_PRECIO.map((c) => (
+              {canales.map((c) => (
                 <td key={c} className="px-3 py-1.5 text-right">
                   <PrecioInput
                     valor={pp[c] ?? null}
@@ -455,12 +458,14 @@ export function MenuTab() {
                     <tr>
                       <th className="px-3 py-1.5 text-left font-medium">Producto</th>
                       <th className="px-3 py-1.5 text-right font-medium">Costo receta</th>
-                      {CANALES_PRECIO.map((c) => (
+                      {canales.map((c) => (
                         <th key={c} className="px-3 py-1.5 text-right font-medium">
-                          {CANAL_LABEL[c]}
+                          {esBebida ? 'Precio' : CANAL_LABEL[c]}
                         </th>
                       ))}
-                      <th className="px-3 py-1.5 text-right font-medium">Margen Salón</th>
+                      <th className="px-3 py-1.5 text-right font-medium">
+                        {esBebida ? 'Margen' : 'Margen Salón'}
+                      </th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
@@ -470,7 +475,7 @@ export function MenuTab() {
                           <Fragment key={sub}>
                             <tr className="bg-gray-50/70">
                               <td
-                                colSpan={3 + CANALES_PRECIO.length}
+                                colSpan={3 + canales.length}
                                 className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-gray-500"
                               >
                                 {sub}{' '}
