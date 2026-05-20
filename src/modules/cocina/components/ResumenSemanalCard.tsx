@@ -41,13 +41,11 @@ interface ResumenItem {
   estado: Estado;
 }
 
-// Tipos del catálogo por local. Saavedra controla todo por overwrite
-// (cocina_lotes_produccion). Vedia controla salsas/postres por overwrite y
-// pastas por cámara/traspasos (vista v_cocina_stock_pastas) — el resumen
-// rutea el cálculo de stock según producto.tipo + local.
+// Tipos del catálogo por local (mismo criterio que StockTab.CatalogoStock):
+// Saavedra controla todo por overwrite; Vedia salsas/postres (pasta = cámara).
 const TIPOS_POR_LOCAL: Record<LocalCocina, string[]> = {
   saavedra: ['pasta', 'milanesa', 'postre', 'panificado', 'salsa'],
-  vedia: ['pasta', 'salsa', 'postre'],
+  vedia: ['salsa', 'postre'],
 };
 
 const TIPO_EMOJI: Record<string, string> = {
@@ -120,8 +118,7 @@ export function ResumenSemanalCard({
     },
   });
 
-  // Stock actual (modelo overwrite, igual que el catálogo de Stock). Cubre
-  // salsas/postres/panificados/milanesas en ambos locales y pastas Saavedra.
+  // Stock actual (modelo overwrite, igual que el catálogo de Stock).
   const { data: lotes } = useQuery({
     queryKey: ['resumen-semanal-stock', local],
     queryFn: async () => {
@@ -132,26 +129,6 @@ export function ResumenSemanalCard({
         .eq('en_stock', true);
       if (error) throw error;
       return (data ?? []) as LoteStock[];
-    },
-  });
-
-  // Stock de pastas VEDIA: viven en cocina_lotes_pasta (cámara/traspasos),
-  // no en el modelo overwrite. La vista expone camara − traspasadas − merma.
-  const { data: stockPastasVedia } = useQuery({
-    queryKey: ['resumen-semanal-stock-pastas-vedia'],
-    enabled: local === 'vedia',
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('v_cocina_stock_pastas')
-        .select('producto_id, porciones_camara, porciones_traspasadas, porciones_merma')
-        .eq('local', 'vedia');
-      if (error) throw error;
-      return (data ?? []) as {
-        producto_id: string;
-        porciones_camara: number | null;
-        porciones_traspasadas: number | null;
-        porciones_merma: number | null;
-      }[];
     },
   });
 
@@ -188,16 +165,6 @@ export function ResumenSemanalCard({
     }
 
     function stockDe(prod: ProductoCat): number {
-      // Pastas Vedia leen de v_cocina_stock_pastas (cámara − traspasos − merma).
-      if (local === 'vedia' && prod.tipo === 'pasta') {
-        const row = (stockPastasVedia ?? []).find((s) => s.producto_id === prod.id);
-        if (!row) return 0;
-        const camara = Number(row.porciones_camara) || 0;
-        const traspasos = Number(row.porciones_traspasadas) || 0;
-        const merma = Number(row.porciones_merma) || 0;
-        return Math.max(0, camara - traspasos - merma);
-      }
-      // Resto: modelo overwrite en cocina_lotes_produccion.
       const objetivoNombre = normNombre(prod.nombre);
       let total = 0;
       for (const l of lotes ?? []) {
@@ -241,7 +208,7 @@ export function ResumenSemanalCard({
         return ORDEN_ESTADO[a.estado] - ORDEN_ESTADO[b.estado];
       return b.demandaSemanal - a.demandaSemanal;
     });
-  }, [productos, lotes, stockPastasVedia, fudoData, tiposLocal, local]);
+  }, [productos, lotes, fudoData, tiposLocal]);
 
   // Agrupado por tipo, respetando el orden de tipos del local. resumen ya viene
   // ordenado por estado, así que cada grupo conserva ese orden interno.
