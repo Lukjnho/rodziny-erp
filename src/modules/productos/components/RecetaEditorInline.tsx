@@ -265,10 +265,14 @@ export function RecetaEditorInline({
         recetaId = data.id as string;
       } else {
         recetaId = receta!.id;
-        // Solo rendimiento — NO se toca nombre/tipo/local/procedimiento/Fudo
+        // Rendimiento + tipo. Nombre/local/procedimiento/Fudo siguen sin tocarse
+        // desde acá (renombrar/mover de local impacta linkings — se hace en
+        // Cocina si hace falta).
         const { error: errReceta } = await supabase
           .from('cocina_recetas')
           .update({
+            tipo,
+            es_subreceta: tipo === 'subreceta',
             rendimiento_kg: rendKgNum,
             rendimiento_unidad: rendUnidad,
             rendimiento_porciones: rendPorcNum,
@@ -433,6 +437,24 @@ export function RecetaEditorInline({
 
       {/* Rendimiento editable (manda el costo /kg y /porción) */}
       <div className="flex flex-wrap items-end gap-3 rounded-lg border border-rodziny-200 bg-rodziny-50/40 p-3">
+        {!creando && (
+          <div>
+            <label className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-gray-500">
+              Tipo
+            </label>
+            <select
+              value={tipo}
+              onChange={(e) => setTipo(e.target.value)}
+              className="rounded border border-gray-300 bg-white px-2 py-1.5 text-sm capitalize"
+            >
+              {TIPOS_RECETA.map((t) => (
+                <option key={t} value={t} className="capitalize">
+                  {t}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
         <div>
           <label className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-gray-500">
             Rendimiento total
