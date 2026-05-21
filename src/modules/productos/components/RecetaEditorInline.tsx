@@ -8,6 +8,8 @@ import {
   CATEGORIA_LABEL,
   ROLES,
   ROL_LABEL,
+  SUBCATEGORIAS_POR_CATEGORIA,
+  SUBCATEGORIA_LABEL,
   mapearUnidad,
   UNIDADES,
   UNIDAD_LABEL,
@@ -70,6 +72,7 @@ export function RecetaEditorInline({
   const [nombre, setNombre] = useState<string>(receta?.nombre ?? '');
   const [tipo, setTipo] = useState<RecetaTipo>(receta?.tipo ?? 'subreceta');
   const [categoria, setCategoria] = useState<RecetaCategoria | ''>(receta?.categoria ?? '');
+  const [subcategoria, setSubcategoria] = useState<string>(receta?.subcategoria ?? '');
   const [rol, setRol] = useState<SubrecetaRol | ''>(receta?.rol ?? '');
   const [localState, setLocalState] = useState<string>(
     receta?.local ?? localRestringido ?? 'vedia',
@@ -253,9 +256,14 @@ export function RecetaEditorInline({
       if (tipo === 'subreceta' && !rol) {
         throw new Error('Las subrecetas requieren rol');
       }
+      // Solo aplica subcategoria si la categoria elegida la admite; si no, NULL.
+      const subsPermitidas = categoria ? SUBCATEGORIAS_POR_CATEGORIA[categoria] : [];
+      const subcategoriaPayload =
+        tipo === 'receta' && subsPermitidas.length > 0 && subcategoria ? subcategoria : null;
       const tipoPayload = {
         tipo,
         categoria: tipo === 'receta' ? categoria : null,
+        subcategoria: subcategoriaPayload,
         rol: tipo === 'subreceta' ? rol : null,
       };
       let recetaId: string;
@@ -394,23 +402,47 @@ export function RecetaEditorInline({
             </select>
           </div>
           {tipo === 'receta' ? (
-            <div>
-              <label className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-gray-500">
-                Categoría
-              </label>
-              <select
-                value={categoria}
-                onChange={(e) => setCategoria(e.target.value as RecetaCategoria)}
-                className="w-full rounded border border-gray-300 px-2 py-2 text-sm"
-              >
-                <option value="">— Elegí —</option>
-                {CATEGORIAS.map((c) => (
-                  <option key={c} value={c}>
-                    {CATEGORIA_LABEL[c]}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <>
+              <div>
+                <label className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-gray-500">
+                  Categoría
+                </label>
+                <select
+                  value={categoria}
+                  onChange={(e) => {
+                    setCategoria(e.target.value as RecetaCategoria);
+                    setSubcategoria('');
+                  }}
+                  className="w-full rounded border border-gray-300 px-2 py-2 text-sm"
+                >
+                  <option value="">— Elegí —</option>
+                  {CATEGORIAS.map((c) => (
+                    <option key={c} value={c}>
+                      {CATEGORIA_LABEL[c]}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              {categoria && SUBCATEGORIAS_POR_CATEGORIA[categoria].length > 0 && (
+                <div>
+                  <label className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-gray-500">
+                    Subcategoría
+                  </label>
+                  <select
+                    value={subcategoria}
+                    onChange={(e) => setSubcategoria(e.target.value)}
+                    className="w-full rounded border border-gray-300 px-2 py-2 text-sm"
+                  >
+                    <option value="">— Elegí —</option>
+                    {SUBCATEGORIAS_POR_CATEGORIA[categoria].map((s) => (
+                      <option key={s} value={s}>
+                        {SUBCATEGORIA_LABEL[s] ?? s}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+            </>
           ) : (
             <div>
               <label className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-gray-500">
@@ -511,23 +543,47 @@ export function RecetaEditorInline({
               </select>
             </div>
             {tipo === 'receta' ? (
-              <div>
-                <label className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-gray-500">
-                  Categoría
-                </label>
-                <select
-                  value={categoria}
-                  onChange={(e) => setCategoria(e.target.value as RecetaCategoria)}
-                  className="rounded border border-gray-300 bg-white px-2 py-1.5 text-sm"
-                >
-                  <option value="">— Elegí —</option>
-                  {CATEGORIAS.map((c) => (
-                    <option key={c} value={c}>
-                      {CATEGORIA_LABEL[c]}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              <>
+                <div>
+                  <label className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-gray-500">
+                    Categoría
+                  </label>
+                  <select
+                    value={categoria}
+                    onChange={(e) => {
+                      setCategoria(e.target.value as RecetaCategoria);
+                      setSubcategoria('');
+                    }}
+                    className="rounded border border-gray-300 bg-white px-2 py-1.5 text-sm"
+                  >
+                    <option value="">— Elegí —</option>
+                    {CATEGORIAS.map((c) => (
+                      <option key={c} value={c}>
+                        {CATEGORIA_LABEL[c]}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                {categoria && SUBCATEGORIAS_POR_CATEGORIA[categoria].length > 0 && (
+                  <div>
+                    <label className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-gray-500">
+                      Subcategoría
+                    </label>
+                    <select
+                      value={subcategoria}
+                      onChange={(e) => setSubcategoria(e.target.value)}
+                      className="rounded border border-gray-300 bg-white px-2 py-1.5 text-sm"
+                    >
+                      <option value="">— Elegí —</option>
+                      {SUBCATEGORIAS_POR_CATEGORIA[categoria].map((s) => (
+                        <option key={s} value={s}>
+                          {SUBCATEGORIA_LABEL[s] ?? s}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </>
             ) : (
               <div>
                 <label className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-gray-500">

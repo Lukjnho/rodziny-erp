@@ -7,6 +7,7 @@ import { useCostosRecetas } from '@/modules/cocina/hooks/useCostosRecetas';
 import { useConfigCosteo } from '@/modules/cocina/hooks/useConfigCosteo';
 import { useComisionMpConfig } from '../hooks/useComisionMpConfig';
 import { CANALES_PRECIO, type CanalPrecio } from '../hooks/usePreciosCanal';
+import { SUBCATEGORIA_LABEL } from '@/modules/cocina/RecetasTab';
 
 // El Menú es una PROYECCIÓN de Costeo: lista las recetas marcadas "vendible"
 // (su costo sale del motor de Costeo, no se duplica) + las bebidas de reventa
@@ -15,25 +16,27 @@ import { CANALES_PRECIO, type CanalPrecio } from '../hooks/usePreciosCanal';
 
 // Orden y etiqueta de las categorías del Menú. El grupo es el `tipo` de la
 // receta (o 'bebida' para reventa). Tipos no listados van al final, alfabético.
+// Vocabulario espejo del modelo nuevo (cocina_recetas.categoria) más el alias
+// 'bebida' para reventa. Tipos no listados van al final, alfabético.
 const CATEGORIA_ORDEN = [
   'pasta',
   'salsa',
   'postre',
-  'panaderia',
   'pasteleria',
   'panificado',
+  'cafeteria',
   'bebida',
-  'otro',
+  'otros',
 ];
 const CATEGORIA_LABEL: Record<string, string> = {
   pasta: 'Pastas',
   salsa: 'Salsas',
   postre: 'Postres',
-  panaderia: 'Panadería',
   pasteleria: 'Pastelería',
   panificado: 'Panificados',
+  cafeteria: 'Cafetería',
   bebida: 'Bebidas',
-  otro: 'Otros',
+  otros: 'Otros',
 };
 
 // Subcategorías de Bebidas inferidas por nombre, reproduciendo el esquema que
@@ -71,13 +74,53 @@ function subcatBebida(nombre: string): (typeof SUBCAT_BEBIDA_ORDEN)[number] {
 function agruparBebidas(items: ItemMenu[]): { sub: string; rows: ItemMenu[] }[] {
   const m = new Map<string, ItemMenu[]>();
   for (const p of items) {
-    const s = subcatBebida(p.nombre);
+    // Si la receta trae subcategoria explícita (modelo nuevo), respetarla;
+    // sino caer a la heurística por nombre (reventa legacy sin sub cargado).
+    const s = p.subcategoria
+      ? (SUBCATEGORIA_LABEL[p.subcategoria] ?? p.subcategoria)
+      : subcatBebida(p.nombre);
     (m.get(s) ?? m.set(s, []).get(s)!).push(p);
   }
-  return SUBCAT_BEBIDA_ORDEN.filter((s) => m.has(s)).map((s) => ({
-    sub: s,
-    rows: (m.get(s) ?? []).sort((a, b) => a.nombre.localeCompare(b.nombre)),
-  }));
+  return Array.from(m.entries())
+    .map(([sub, rows]) => ({
+      sub,
+      rows: rows.sort((a, b) => a.nombre.localeCompare(b.nombre)),
+    }))
+    .sort((a, b) => {
+      const ia = SUBCAT_BEBIDA_ORDEN.indexOf(a.sub as (typeof SUBCAT_BEBIDA_ORDEN)[number]);
+      const ib = SUBCAT_BEBIDA_ORDEN.indexOf(b.sub as (typeof SUBCAT_BEBIDA_ORDEN)[number]);
+      if (ia !== -1 && ib !== -1) return ia - ib;
+      if (ia !== -1) return -1;
+      if (ib !== -1) return 1;
+      return a.sub.localeCompare(b.sub);
+    });
+}
+
+// Agrupador genérico: usa el campo `subcategoria` cargado (modelo nuevo).
+// Si ningún ítem trae subcategoria, devuelve un único grupo sin header.
+function agruparPorSub(items: ItemMenu[]): { sub: string; rows: ItemMenu[] }[] {
+  const haySub = items.some((p) => !!p.subcategoria);
+  if (!haySub) {
+    return [
+      { sub: '', rows: [...items].sort((a, b) => a.nombre.localeCompare(b.nombre)) },
+    ];
+  }
+  const m = new Map<string, ItemMenu[]>();
+  for (const p of items) {
+    const k = p.subcategoria ? (SUBCATEGORIA_LABEL[p.subcategoria] ?? p.subcategoria) : '';
+    (m.get(k) ?? m.set(k, []).get(k)!).push(p);
+  }
+  return Array.from(m.entries())
+    .map(([sub, rows]) => ({
+      sub,
+      rows: rows.sort((a, b) => a.nombre.localeCompare(b.nombre)),
+    }))
+    .sort((a, b) => {
+      // Items sin sub van al final
+      if (!a.sub && b.sub) return 1;
+      if (a.sub && !b.sub) return -1;
+      return a.sub.localeCompare(b.sub);
+    });
 }
 
 const CANAL_LABEL: Record<CanalPrecio, string> = {
@@ -97,6 +140,7 @@ interface ItemMenu {
   refId: string;
   nombre: string;
   tipo: string;
+  subcategoria: string | null;
   local: FiltroLocal;
   costo: number | null;
   esSubreceta: boolean;
@@ -107,7 +151,29 @@ interface RecetaVendible {
   nombre: string;
   tipo: 'receta' | 'subreceta';
   categoria: string | null;
+  subcategoria: string | null;
+  rol: string | null;
   local: FiltroLocal;
+}
+
+// Mapea rol operativo → categoría comercial equivalente. Subrecetas vendibles
+// (ej. salsas base que también se venden por separado) caían en "Otros" porque
+// tenían categoria=null; ahora se proyectan al grupo comercial correcto.
+function rolToCategoria(rol: string | null): string {
+  switch (rol) {
+    case 'salsa_base':
+      return 'salsa';
+    case 'postre_base':
+      return 'postre';
+    case 'bebida_base':
+      return 'bebida';
+    case 'pasteleria_base':
+      return 'pasteleria';
+    case 'panificado':
+      return 'panificado';
+    default:
+      return 'otros';
+  }
 }
 
 interface BebidaReventa {
@@ -134,7 +200,7 @@ export function MenuTab() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cocina_recetas')
-        .select('id, nombre, tipo, categoria, local')
+        .select('id, nombre, tipo, categoria, subcategoria, rol, local')
         .eq('activo', true)
         .eq('vendible', true)
         .order('nombre');
@@ -263,12 +329,19 @@ export function MenuTab() {
     const out: ItemMenu[] = [];
     for (const r of recetas ?? []) {
       const c = costos.get(r.id);
+      // Receta vendible: usa su categoria. Subreceta vendible: deriva del rol
+      // operativo (ej. salsa_base → "Salsas") para no caer en "Otros".
+      const tipoCat =
+        r.tipo === 'subreceta'
+          ? rolToCategoria(r.rol)
+          : (r.categoria ?? 'otros');
       out.push({
         key: `receta:${r.id}`,
         origen: 'receta',
         refId: r.id,
         nombre: r.nombre,
-        tipo: r.categoria ?? 'otros',
+        tipo: tipoCat,
+        subcategoria: r.subcategoria,
         local: r.local,
         costo: c?.costoPorPorcion ?? c?.costoPorKg ?? null,
         esSubreceta: r.tipo === 'subreceta',
@@ -281,6 +354,7 @@ export function MenuTab() {
         refId: b.id,
         nombre: b.nombre,
         tipo: 'bebida',
+        subcategoria: null,
         local: b.local,
         costo: b.insumo_reventa_id ? (costoInsumo.get(b.insumo_reventa_id) ?? null) : null,
         esSubreceta: false,
@@ -469,10 +543,10 @@ export function MenuTab() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
-                    {tipo !== 'bebida'
-                      ? gItems.map(fila)
-                      : agruparBebidas(gItems).map(({ sub, rows }) => (
-                          <Fragment key={sub}>
+                    {(tipo === 'bebida' ? agruparBebidas(gItems) : agruparPorSub(gItems)).map(
+                      ({ sub, rows }) => (
+                        <Fragment key={sub || '__sin_sub__'}>
+                          {sub && (
                             <tr className="bg-gray-50/70">
                               <td
                                 colSpan={3 + canales.length}
@@ -484,9 +558,11 @@ export function MenuTab() {
                                 </span>
                               </td>
                             </tr>
-                            {rows.map(fila)}
-                          </Fragment>
-                        ))}
+                          )}
+                          {rows.map(fila)}
+                        </Fragment>
+                      ),
+                    )}
                   </tbody>
                 </table>
               </div>

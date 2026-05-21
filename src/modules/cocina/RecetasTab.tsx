@@ -20,7 +20,15 @@ export interface Ingrediente {
 export type RendUnidad = 'kg' | 'l' | 'unidad';
 
 export type RecetaTipo = 'receta' | 'subreceta';
-export type RecetaCategoria = 'pasta' | 'salsa' | 'postre' | 'bebida' | 'panificado' | 'otros';
+export type RecetaCategoria =
+  | 'pasta'
+  | 'salsa'
+  | 'postre'
+  | 'pasteleria'
+  | 'panificado'
+  | 'cafeteria'
+  | 'bebida'
+  | 'otros';
 export type SubrecetaRol =
   | 'relleno'
   | 'masa'
@@ -38,6 +46,7 @@ export interface Receta {
   nombre: string;
   tipo: RecetaTipo;
   categoria: RecetaCategoria | null;
+  subcategoria: string | null;
   rol: SubrecetaRol | null;
   rendimiento_kg: number | null;
   rendimiento_unidad: RendUnidad;
@@ -71,25 +80,58 @@ export const CATEGORIAS: RecetaCategoria[] = [
   'pasta',
   'salsa',
   'postre',
-  'bebida',
+  'pasteleria',
   'panificado',
+  'cafeteria',
+  'bebida',
   'otros',
 ];
 export const CATEGORIA_LABEL: Record<RecetaCategoria, string> = {
   pasta: 'Pasta',
   salsa: 'Salsa',
   postre: 'Postre',
-  bebida: 'Bebida',
+  pasteleria: 'Pastelería',
   panificado: 'Panificado',
+  cafeteria: 'Cafetería',
+  bebida: 'Bebida',
   otros: 'Otros',
 };
 export const CATEGORIA_COLOR: Record<RecetaCategoria, string> = {
   pasta: 'bg-red-100 text-red-700',
   salsa: 'bg-orange-100 text-orange-700',
   postre: 'bg-pink-100 text-pink-700',
-  bebida: 'bg-cyan-100 text-cyan-700',
+  pasteleria: 'bg-rose-100 text-rose-700',
   panificado: 'bg-amber-100 text-amber-700',
+  cafeteria: 'bg-yellow-100 text-yellow-700',
+  bebida: 'bg-cyan-100 text-cyan-700',
   otros: 'bg-gray-100 text-gray-700',
+};
+
+// Mapping categoría → subcategorías permitidas. Solo cafeteria y bebida tienen
+// jerarquía hoy. Si el array está vacío, el editor no muestra select de sub.
+export const SUBCATEGORIAS_POR_CATEGORIA: Record<RecetaCategoria, string[]> = {
+  pasta: [],
+  salsa: [],
+  postre: [],
+  pasteleria: [],
+  panificado: [],
+  cafeteria: ['cafe_caliente', 'cafe_frio', 'sin_cafe', 'salado', 'dulce', 'combo'],
+  bebida: ['gaseosa', 'agua', 'jugo', 'vino', 'aperitivo'],
+  otros: [],
+};
+
+export const SUBCATEGORIA_LABEL: Record<string, string> = {
+  cafe_caliente: 'Café caliente',
+  cafe_frio: 'Café frío',
+  sin_cafe: 'Sin café',
+  salado: 'Salado',
+  dulce: 'Dulce',
+  combo: 'Combo',
+  gaseosa: 'Gaseosa',
+  agua: 'Agua',
+  jugo: 'Jugo',
+  vino: 'Vino',
+  aperitivo: 'Aperitivo',
 };
 
 export const ROLES: SubrecetaRol[] = [
