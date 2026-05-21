@@ -10,7 +10,20 @@ import { RecetaEditorInline } from './RecetaEditorInline';
 // Costeo = recetas y subrecetas (Crema Pastelera, Masa Facturas, salsas base,
 // rellenos, etc.). Solo ingredientes + costo. El producto vendible (precio por
 // canal, packaging, adicionales, ABM) vive en el tab Menú.
-type RecetaFull = Receta & { es_subreceta: boolean; vendible: boolean };
+type RecetaFull = Receta & { vendible: boolean };
+
+// Agrupa visualmente subrecetas por rol y recetas por categoría, normalizando
+// salsa_base/postre_base/bebida_base a sus pares "comerciales" para no duplicar
+// secciones en el grid de Costeo.
+function tipoEfectivo(r: Receta): string {
+  if (r.tipo === 'subreceta') {
+    if (r.rol === 'salsa_base') return 'salsa';
+    if (r.rol === 'postre_base') return 'postre';
+    if (r.rol === 'bebida_base') return 'bebida';
+    return r.rol ?? 'otros';
+  }
+  return r.categoria ?? 'otros';
+}
 
 // Bebidas de reventa (latas, agua, vino sin transformar): no son recetas, son
 // cocina_productos con insumo_reventa_id. Se gestionan acá en Costeo (alta/
@@ -45,11 +58,11 @@ const TIPO_COLOR: Record<string, string> = {
   salsa: 'bg-orange-100 text-orange-700',
   pasta: 'bg-red-100 text-red-700',
   postre: 'bg-pink-100 text-pink-700',
-  pasteleria: 'bg-yellow-100 text-yellow-700',
-  panaderia: 'bg-amber-100 text-amber-700',
+  panificado: 'bg-amber-100 text-amber-700',
   bebida: 'bg-sky-100 text-sky-700',
-  subreceta: 'bg-purple-100 text-purple-700',
-  otro: 'bg-gray-100 text-gray-700',
+  adicional: 'bg-emerald-100 text-emerald-700',
+  packaging: 'bg-slate-100 text-slate-700',
+  otros: 'bg-gray-100 text-gray-700',
 };
 
 // Orden y etiqueta de las categorías en el grid de Costeo.
@@ -59,11 +72,11 @@ const ORDEN_TIPOS = [
   'salsa',
   'pasta',
   'postre',
-  'pasteleria',
-  'panaderia',
+  'panificado',
   'bebida',
-  'subreceta',
-  'otro',
+  'adicional',
+  'packaging',
+  'otros',
 ];
 
 const TIPO_LABEL: Record<string, string> = {
@@ -72,11 +85,11 @@ const TIPO_LABEL: Record<string, string> = {
   salsa: 'Salsas',
   pasta: 'Pastas',
   postre: 'Postres',
-  pasteleria: 'Pastelería',
-  panaderia: 'Panadería',
+  panificado: 'Panificados',
   bebida: 'Bebidas',
-  subreceta: 'Subrecetas',
-  otro: 'Otros',
+  adicional: 'Adicionales',
+  packaging: 'Packaging',
+  otros: 'Otros',
 };
 
 export function FichaProductoTab() {
@@ -172,8 +185,8 @@ export function FichaProductoTab() {
     const out: ItemCosteo[] = [];
     for (const r of recetas ?? []) {
       if (r.local !== filtroLocal) continue;
-      if (filtroTipo !== 'todos' && r.tipo !== filtroTipo) continue;
-      if (soloSub && !r.es_subreceta) continue;
+      if (filtroTipo !== 'todos' && tipoEfectivo(r) !== filtroTipo) continue;
+      if (soloSub && r.tipo !== 'subreceta') continue;
       if (q && !r.nombre.toLowerCase().includes(q)) continue;
       const c = costos.get(r.id);
       const costoUnit = c?.costoPorPorcion ?? c?.costoPorKg ?? null;
@@ -204,7 +217,7 @@ export function FichaProductoTab() {
   const grupos = useMemo(() => {
     const map = new Map<string, ItemCosteo[]>();
     for (const it of items) {
-      const k = it.kind === 'receta' ? it.receta.tipo || 'otro' : 'bebida';
+      const k = it.kind === 'receta' ? tipoEfectivo(it.receta) : 'bebida';
       (map.get(k) ?? map.set(k, []).get(k)!).push(it);
     }
     return Array.from(map.entries()).sort(([a], [b]) => {
@@ -472,15 +485,15 @@ export function FichaProductoTab() {
                       <span
                         className={cn(
                           'rounded px-1.5 py-0.5 text-[9px] font-medium capitalize',
-                          TIPO_COLOR[r.tipo] ?? 'bg-gray-100 text-gray-600',
+                          TIPO_COLOR[tipoEfectivo(r)] ?? 'bg-gray-100 text-gray-600',
                         )}
                       >
-                        {r.tipo}
+                        {TIPO_LABEL[tipoEfectivo(r)] ?? tipoEfectivo(r)}
                       </span>
                       <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[9px] capitalize text-gray-600">
                         {r.local ?? '—'}
                       </span>
-                      {r.es_subreceta && (
+                      {r.tipo === 'subreceta' && (
                         <span className="rounded bg-purple-100 px-1.5 py-0.5 text-[9px] text-purple-700">
                           subreceta
                         </span>
@@ -535,12 +548,12 @@ export function FichaProductoTab() {
               <span
                 className={cn(
                   'rounded px-1.5 py-0.5 text-[10px] font-medium capitalize',
-                  TIPO_COLOR[receta.tipo] ?? 'bg-gray-100 text-gray-600',
+                  TIPO_COLOR[tipoEfectivo(receta)] ?? 'bg-gray-100 text-gray-600',
                 )}
               >
-                {receta.tipo}
+                {TIPO_LABEL[tipoEfectivo(receta)] ?? tipoEfectivo(receta)}
               </span>
-              {receta.es_subreceta && (
+              {receta.tipo === 'subreceta' && (
                 <span className="rounded bg-purple-100 px-1.5 py-0.5 text-[10px] text-purple-700">
                   subreceta
                 </span>

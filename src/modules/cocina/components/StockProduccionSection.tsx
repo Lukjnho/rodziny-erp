@@ -19,10 +19,9 @@ interface LoteStock {
   receta?: {
     id: string;
     nombre: string;
-    tipo: string;
+    tipo: 'receta' | 'subreceta';
     gramos_por_porcion: number | null;
     fudo_productos: string[] | null;
-    es_subreceta: boolean;
   } | null;
 }
 
@@ -69,7 +68,7 @@ export function StockProduccionSection({
       let q = supabase
         .from('cocina_lotes_produccion')
         .select(
-          '*, receta:cocina_recetas(id, nombre, tipo, gramos_por_porcion, fudo_productos, es_subreceta)',
+          '*, receta:cocina_recetas(id, nombre, tipo, gramos_por_porcion, fudo_productos)',
         )
         .eq('en_stock', true)
         .order('receta_id')
@@ -108,7 +107,7 @@ export function StockProduccionSection({
     const porReceta = new Map<string, LoteStock[]>();
     for (const l of lotes) {
       // Subrecetas (ej. Pomodoro Base) son insumos internos, no se muestran como producto final
-      if (l.receta?.es_subreceta) continue;
+      if (l.receta?.tipo === 'subreceta') continue;
       const key = l.receta_id ?? `libre:${l.nombre_libre ?? '—'}`;
       if (!porReceta.has(key)) porReceta.set(key, []);
       porReceta.get(key)!.push(l);

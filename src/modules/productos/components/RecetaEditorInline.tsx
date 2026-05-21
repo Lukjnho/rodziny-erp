@@ -4,11 +4,18 @@ import { supabase } from '@/lib/supabase';
 import { cn, formatARS } from '@/lib/utils';
 import {
   AutocompleteIngrediente,
+  CATEGORIAS,
+  CATEGORIA_LABEL,
+  ROLES,
+  ROL_LABEL,
   mapearUnidad,
   UNIDADES,
   UNIDAD_LABEL,
   type ProductoCompras,
   type Receta,
+  type RecetaTipo,
+  type RecetaCategoria,
+  type SubrecetaRol,
   type Ingrediente,
   type RendUnidad,
 } from '@/modules/cocina/RecetasTab';
@@ -29,18 +36,11 @@ interface IngredienteForm {
   producto_id: string | null;
 }
 
-const TIPOS_RECETA = [
-  'relleno',
-  'masa',
-  'salsa',
-  'pasta',
-  'postre',
-  'pasteleria',
-  'panaderia',
-  'bebida',
-  'subreceta',
-  'otro',
-] as const;
+const TIPOS_RECETA: RecetaTipo[] = ['receta', 'subreceta'];
+const TIPO_LABEL_INLINE: Record<RecetaTipo, string> = {
+  receta: 'Receta',
+  subreceta: 'Subreceta',
+};
 
 // Editor inline de la receta (apartado ancho, NO modal). Misma lista que
 // FichaTecnica pero editable, con el costo recalculando EN VIVO. Sirve para
@@ -68,7 +68,9 @@ export function RecetaEditorInline({
   const [recetaIdLocal] = useState<string>(() => receta?.id ?? crypto.randomUUID());
 
   const [nombre, setNombre] = useState<string>(receta?.nombre ?? '');
-  const [tipo, setTipo] = useState<string>(receta?.tipo ?? 'relleno');
+  const [tipo, setTipo] = useState<RecetaTipo>(receta?.tipo ?? 'subreceta');
+  const [categoria, setCategoria] = useState<RecetaCategoria | ''>(receta?.categoria ?? '');
+  const [rol, setRol] = useState<SubrecetaRol | ''>(receta?.rol ?? '');
   const [localState, setLocalState] = useState<string>(
     receta?.local ?? localRestringido ?? 'vedia',
   );
@@ -102,7 +104,7 @@ export function RecetaEditorInline({
   // Pastas del local sin receta vinculada (candidatas a enganchar la nueva).
   const { data: pastasSinReceta } = useQuery({
     queryKey: ['pastas-sin-receta', local],
-    enabled: creando && tipo === 'pasta',
+    enabled: creando && categoria === 'pasta',
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cocina_productos')
@@ -244,17 +246,27 @@ export function RecetaEditorInline({
       const rendPorcNum =
         rendPorciones !== '' ? Number(String(rendPorciones).replace(',', '.')) : null;
 
+      // Validación tipo↔categoria/rol (replica el CHECK de DB en cliente)
+      if (tipo === 'receta' && !categoria) {
+        throw new Error('Las recetas vendibles requieren categoría');
+      }
+      if (tipo === 'subreceta' && !rol) {
+        throw new Error('Las subrecetas requieren rol');
+      }
+      const tipoPayload = {
+        tipo,
+        categoria: tipo === 'receta' ? categoria : null,
+        rol: tipo === 'subreceta' ? rol : null,
+      };
       let recetaId: string;
       if (creando) {
-        // Crear la receta (datos generales) y usar su id para los ingredientes.
         const { data, error: errIns } = await supabase
           .from('cocina_recetas')
           .insert({
             nombre: nombre.trim(),
-            tipo,
+            ...tipoPayload,
             local: localState,
             activo: true,
-            es_subreceta: tipo === 'subreceta',
             rendimiento_kg: rendKgNum,
             rendimiento_unidad: rendUnidad,
             rendimiento_porciones: rendPorcNum,
@@ -265,24 +277,15 @@ export function RecetaEditorInline({
         recetaId = data.id as string;
       } else {
         recetaId = receta!.id;
-        // Rendimiento + tipo. Nombre/local/procedimiento/Fudo siguen sin tocarse
-        // desde acá (renombrar/mover de local impacta linkings — se hace en
-        // Cocina si hace falta).
-        // es_subreceta solo se TOCA si tipo='subreceta' (fuerza true). Para
-        // otros tipos respetamos el valor en DB — habilita recetas que son
-        // físicamente relleno/masa pero contablemente subreceta (ej. Pure
-        // papa para ñoqui: aparece en el QR de relleno, oculta en Menú).
-        const updatePayload: Record<string, unknown> = {
-          tipo,
-          rendimiento_kg: rendKgNum,
-          rendimiento_unidad: rendUnidad,
-          rendimiento_porciones: rendPorcNum,
-          updated_at: new Date().toISOString(),
-        };
-        if (tipo === 'subreceta') updatePayload.es_subreceta = true;
         const { error: errReceta } = await supabase
           .from('cocina_recetas')
-          .update(updatePayload)
+          .update({
+            ...tipoPayload,
+            rendimiento_kg: rendKgNum,
+            rendimiento_unidad: rendUnidad,
+            rendimiento_porciones: rendPorcNum,
+            updated_at: new Date().toISOString(),
+          })
           .eq('id', recetaId);
         if (errReceta) throw errReceta;
       }
@@ -375,16 +378,58 @@ export function RecetaEditorInline({
             </label>
             <select
               value={tipo}
-              onChange={(e) => setTipo(e.target.value)}
+              onChange={(e) => {
+                const next = e.target.value as RecetaTipo;
+                setTipo(next);
+                if (next === 'receta') setRol('');
+                else setCategoria('');
+              }}
               className="w-full rounded border border-gray-300 px-2 py-2 text-sm capitalize"
             >
               {TIPOS_RECETA.map((t) => (
-                <option key={t} value={t} className="capitalize">
-                  {t}
+                <option key={t} value={t}>
+                  {TIPO_LABEL_INLINE[t]}
                 </option>
               ))}
             </select>
           </div>
+          {tipo === 'receta' ? (
+            <div>
+              <label className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-gray-500">
+                Categoría
+              </label>
+              <select
+                value={categoria}
+                onChange={(e) => setCategoria(e.target.value as RecetaCategoria)}
+                className="w-full rounded border border-gray-300 px-2 py-2 text-sm"
+              >
+                <option value="">— Elegí —</option>
+                {CATEGORIAS.map((c) => (
+                  <option key={c} value={c}>
+                    {CATEGORIA_LABEL[c]}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : (
+            <div>
+              <label className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-gray-500">
+                Rol
+              </label>
+              <select
+                value={rol}
+                onChange={(e) => setRol(e.target.value as SubrecetaRol)}
+                className="w-full rounded border border-gray-300 px-2 py-2 text-sm"
+              >
+                <option value="">— Elegí —</option>
+                {ROLES.map((r) => (
+                  <option key={r} value={r}>
+                    {ROL_LABEL[r]}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           <div>
             <label className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-gray-500">
               Local
@@ -405,7 +450,7 @@ export function RecetaEditorInline({
               no es objetivo de producción standalone.
             </p>
           )}
-          {tipo === 'pasta' && (
+          {categoria === 'pasta' && (
             <p className="text-[10px] text-red-600 sm:col-span-3">
               Pasta armada: agregá tu <strong>masa</strong> y tu <strong>relleno</strong> como
               ingredientes (escribí el nombre y elegilos del buscador — aparecen como receta, en
@@ -413,7 +458,7 @@ export function RecetaEditorInline({
               para obtener el costo por porción.
             </p>
           )}
-          {tipo === 'pasta' && (
+          {categoria === 'pasta' && (
             <div className="sm:col-span-3">
               <label className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-gray-500">
                 Vincular a producto (opcional)
@@ -449,7 +494,12 @@ export function RecetaEditorInline({
             </label>
             <select
               value={tipo}
-              onChange={(e) => setTipo(e.target.value)}
+              onChange={(e) => {
+                const next = e.target.value as RecetaTipo;
+                setTipo(next);
+                if (next === 'receta') setRol('');
+                else setCategoria('');
+              }}
               className="rounded border border-gray-300 bg-white px-2 py-1.5 text-sm capitalize"
             >
               {TIPOS_RECETA.map((t) => (
@@ -568,7 +618,7 @@ export function RecetaEditorInline({
                   recetaActualId={receta?.id ?? recetaIdLocal}
                   onChange={(v) => actualizarIng(ing.tempId, 'nombre', v)}
                   onSelect={(p, t) => seleccionarProducto(ing.tempId, p, t)}
-                  tiposPrioritarios={tipo === 'pasta' ? ['masa', 'relleno'] : undefined}
+                  tiposPrioritarios={categoria === 'pasta' ? ['masa', 'relleno'] : undefined}
                 />
                 <input
                   type="text"

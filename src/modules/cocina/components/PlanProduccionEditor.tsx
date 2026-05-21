@@ -7,8 +7,31 @@ import { PRODUCTOS_COCINA, normNombre } from '../DashboardTab';
 interface Receta {
   id: string;
   nombre: string;
-  tipo: string;
+  tipo: 'receta' | 'subreceta';
+  rol: string | null;
+  categoria: string | null;
   local: string | null;
+}
+
+// Mapea el TipoItem del pizarrón (relleno/masa/salsa/postre/pasteleria/panaderia)
+// a las recetas/subrecetas correspondientes en el modelo nuevo.
+function recetasDelTipoPlan(recetas: Receta[], tipoPlan: TipoItem): Receta[] {
+  switch (tipoPlan) {
+    case 'relleno':
+      return recetas.filter((r) => r.rol === 'relleno');
+    case 'masa':
+      return recetas.filter((r) => r.rol === 'masa');
+    case 'salsa':
+      return recetas.filter((r) => r.rol === 'salsa_base' || r.categoria === 'salsa');
+    case 'postre':
+      return recetas.filter((r) => r.rol === 'postre_base' || r.categoria === 'postre');
+    case 'panaderia':
+      return recetas.filter((r) => r.rol === 'panificado' || r.categoria === 'panificado');
+    case 'pasteleria':
+      // El modelo nuevo no distingue pastelería de postre. Si Saavedra lo necesita,
+      // agregar un rol 'pasteleria_base' en cocina_recetas y filtrar acá.
+      return [];
+  }
 }
 
 interface Sugerencia {
@@ -132,7 +155,7 @@ export function PlanProduccionEditor({
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cocina_recetas')
-        .select('id, nombre, tipo, local')
+        .select('id, nombre, tipo, rol, categoria, local')
         .eq('activo', true)
         .or(`local.eq.${local},local.is.null`)
         .order('nombre');
@@ -680,7 +703,7 @@ export function PlanProduccionEditor({
 
           {tipos.map(({ tipo, label, emoji }) => {
             const itemsTipo = itemsDelDia.filter((it) => it.tipo === tipo);
-            const recetasTipo = (recetas ?? []).filter((r) => r.tipo === tipo);
+            const recetasTipo = recetasDelTipoPlan(recetas ?? [], tipo);
             return (
               <section key={tipo} className="mb-5">
                 <div className="mb-2 flex items-center justify-between">

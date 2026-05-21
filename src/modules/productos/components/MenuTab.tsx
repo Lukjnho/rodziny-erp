@@ -105,9 +105,9 @@ interface ItemMenu {
 interface RecetaVendible {
   id: string;
   nombre: string;
-  tipo: string;
+  tipo: 'receta' | 'subreceta';
+  categoria: string | null;
   local: FiltroLocal;
-  es_subreceta: boolean;
 }
 
 interface BebidaReventa {
@@ -134,7 +134,7 @@ export function MenuTab() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cocina_recetas')
-        .select('id, nombre, tipo, local, es_subreceta')
+        .select('id, nombre, tipo, categoria, local')
         .eq('activo', true)
         .eq('vendible', true)
         .order('nombre');
@@ -268,10 +268,10 @@ export function MenuTab() {
         origen: 'receta',
         refId: r.id,
         nombre: r.nombre,
-        tipo: r.tipo || 'otro',
+        tipo: r.categoria ?? 'otros',
         local: r.local,
         costo: c?.costoPorPorcion ?? c?.costoPorKg ?? null,
-        esSubreceta: r.es_subreceta,
+        esSubreceta: r.tipo === 'subreceta',
       });
     }
     for (const b of bebidas ?? []) {

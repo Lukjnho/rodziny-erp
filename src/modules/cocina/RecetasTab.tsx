@@ -19,10 +19,25 @@ export interface Ingrediente {
 
 export type RendUnidad = 'kg' | 'l' | 'unidad';
 
+export type RecetaTipo = 'receta' | 'subreceta';
+export type RecetaCategoria = 'pasta' | 'salsa' | 'postre' | 'bebida' | 'panificado' | 'otros';
+export type SubrecetaRol =
+  | 'relleno'
+  | 'masa'
+  | 'salsa_base'
+  | 'postre_base'
+  | 'panificado'
+  | 'bebida_base'
+  | 'adicional'
+  | 'packaging'
+  | 'otros';
+
 export interface Receta {
   id: string;
   nombre: string;
-  tipo: 'relleno' | 'masa' | 'salsa' | 'pasta' | 'postre' | 'pasteleria' | 'panaderia' | 'bebida' | 'subreceta' | 'otro';
+  tipo: RecetaTipo;
+  categoria: RecetaCategoria | null;
+  rol: SubrecetaRol | null;
   rendimiento_kg: number | null;
   rendimiento_unidad: RendUnidad;
   rendimiento_porciones: number | null;
@@ -41,39 +56,62 @@ export const UNIDAD_LABEL: Record<RendUnidad, string> = {
   unidad: 'unid.',
 };
 
-const TIPOS = [
+const TIPOS = ['receta', 'subreceta'] as const;
+const TIPO_LABEL: Record<RecetaTipo, string> = {
+  receta: 'Receta',
+  subreceta: 'Subreceta',
+};
+const TIPO_COLOR: Record<RecetaTipo, string> = {
+  receta: 'bg-blue-100 text-blue-700',
+  subreceta: 'bg-purple-100 text-purple-700',
+};
+
+export const CATEGORIAS: RecetaCategoria[] = [
+  'pasta',
+  'salsa',
+  'postre',
+  'bebida',
+  'panificado',
+  'otros',
+];
+export const CATEGORIA_LABEL: Record<RecetaCategoria, string> = {
+  pasta: 'Pasta',
+  salsa: 'Salsa',
+  postre: 'Postre',
+  bebida: 'Bebida',
+  panificado: 'Panificado',
+  otros: 'Otros',
+};
+export const CATEGORIA_COLOR: Record<RecetaCategoria, string> = {
+  pasta: 'bg-red-100 text-red-700',
+  salsa: 'bg-orange-100 text-orange-700',
+  postre: 'bg-pink-100 text-pink-700',
+  bebida: 'bg-cyan-100 text-cyan-700',
+  panificado: 'bg-amber-100 text-amber-700',
+  otros: 'bg-gray-100 text-gray-700',
+};
+
+export const ROLES: SubrecetaRol[] = [
   'relleno',
   'masa',
-  'salsa',
-  'pasta',
-  'postre',
-  'pasteleria',
-  'panaderia',
-  'bebida',
-  'subreceta',
-  'otro',
-] as const;
-const TIPO_LABEL: Record<string, string> = {
+  'salsa_base',
+  'postre_base',
+  'panificado',
+  'bebida_base',
+  'adicional',
+  'packaging',
+  'otros',
+];
+export const ROL_LABEL: Record<SubrecetaRol, string> = {
   relleno: 'Relleno',
   masa: 'Masa',
-  salsa: 'Salsa',
-  pasta: 'Pasta',
-  postre: 'Postre',
-  pasteleria: 'Pastelería',
-  panaderia: 'Panadería',
-  subreceta: 'Subreceta',
-  otro: 'Otro',
-};
-const TIPO_COLOR: Record<string, string> = {
-  relleno: 'bg-green-100 text-green-700',
-  masa: 'bg-blue-100 text-blue-700',
-  salsa: 'bg-orange-100 text-orange-700',
-  pasta: 'bg-red-100 text-red-700',
-  postre: 'bg-pink-100 text-pink-700',
-  pasteleria: 'bg-yellow-100 text-yellow-700',
-  panaderia: 'bg-amber-100 text-amber-700',
-  subreceta: 'bg-purple-100 text-purple-700',
-  otro: 'bg-gray-100 text-gray-700',
+  salsa_base: 'Salsa (base)',
+  postre_base: 'Postre (base)',
+  panificado: 'Panificado',
+  bebida_base: 'Bebida (base)',
+  adicional: 'Adicional servicio',
+  packaging: 'Packaging',
+  otros: 'Otros',
 };
 
 export const UNIDADES = ['g', 'kg', 'ml', 'lt', 'unid', 'cdta', 'cda'] as const;
@@ -140,7 +178,13 @@ export function RecetasTab() {
 
   const filtrados = useMemo(() => {
     let lista = recetas ?? [];
-    if (filtroTipo !== 'todos') lista = lista.filter((r) => r.tipo === filtroTipo);
+    // filtroTipo acepta tipo nuevo ('receta'/'subreceta'), rol o categoria,
+    // así los KPIs Rellenos/Masas que setean filtroTipo='relleno'/'masa' siguen funcionando.
+    if (filtroTipo !== 'todos') {
+      lista = lista.filter(
+        (r) => r.tipo === filtroTipo || r.rol === filtroTipo || r.categoria === filtroTipo,
+      );
+    }
     if (filtroLocal === 'vedia') lista = lista.filter((r) => r.local === 'vedia');
     else if (filtroLocal === 'saavedra') lista = lista.filter((r) => r.local === 'saavedra');
     if (filtroActivo === 'activas') lista = lista.filter((r) => r.activo);
@@ -203,10 +247,10 @@ export function RecetasTab() {
     }
     return {
       total: all.length,
-      rellenos: all.filter((r) => r.tipo === 'relleno').length,
-      masas: all.filter((r) => r.tipo === 'masa').length,
-      salsas: all.filter((r) => r.tipo === 'salsa').length,
+      recetas: all.filter((r) => r.tipo === 'receta').length,
       subrecetas: all.filter((r) => r.tipo === 'subreceta').length,
+      rellenos: all.filter((r) => r.rol === 'relleno').length,
+      masas: all.filter((r) => r.rol === 'masa').length,
       conCosto,
       sinCosto,
       conAdv,
@@ -251,6 +295,8 @@ export function RecetasTab() {
       const nuevaRow = {
         nombre: nuevoNombre.trim(),
         tipo: origen.tipo,
+        categoria: origen.categoria,
+        rol: origen.rol,
         rendimiento_kg: origen.rendimiento_kg,
         rendimiento_unidad: origen.rendimiento_unidad ?? 'kg',
         rendimiento_porciones: origen.rendimiento_porciones,
@@ -497,8 +543,13 @@ export function RecetasTab() {
                           'rounded-full px-2 py-0.5 text-xs font-medium',
                           TIPO_COLOR[r.tipo],
                         )}
+                        title={TIPO_LABEL[r.tipo]}
                       >
-                        {TIPO_LABEL[r.tipo]}
+                        {r.tipo === 'subreceta' && r.rol
+                          ? ROL_LABEL[r.rol]
+                          : r.tipo === 'receta' && r.categoria
+                            ? CATEGORIA_LABEL[r.categoria]
+                            : TIPO_LABEL[r.tipo]}
                       </span>
                     </td>
                     <td className="px-4 py-2 text-center">
@@ -944,7 +995,9 @@ export function ModalReceta({
   onSaved: () => void;
 }) {
   const [nombre, setNombre] = useState(receta?.nombre ?? '');
-  const [tipo, setTipo] = useState(receta?.tipo ?? 'relleno');
+  const [tipo, setTipo] = useState<RecetaTipo>(receta?.tipo ?? 'subreceta');
+  const [categoria, setCategoria] = useState<RecetaCategoria | ''>(receta?.categoria ?? '');
+  const [rol, setRol] = useState<SubrecetaRol | ''>(receta?.rol ?? '');
   const [rendKg, setRendKg] = useState(receta?.rendimiento_kg ?? '');
   const [rendUnidad, setRendUnidad] = useState<RendUnidad>(receta?.rendimiento_unidad ?? 'kg');
   const [rendPorciones, setRendPorciones] = useState(receta?.rendimiento_porciones ?? '');
@@ -1072,9 +1125,22 @@ export function ModalReceta({
         .split(',')
         .map((s) => s.trim())
         .filter(Boolean);
+      // Validación: receta exige categoria, subreceta exige rol y NO admite categoria
+      if (tipo === 'receta' && !categoria) {
+        setError('Las recetas vendibles requieren categoría');
+        setGuardando(false);
+        return;
+      }
+      if (tipo === 'subreceta' && !rol) {
+        setError('Las subrecetas requieren rol');
+        setGuardando(false);
+        return;
+      }
       const row = {
         nombre: nombre.trim(),
         tipo,
+        categoria: tipo === 'receta' ? categoria : null,
+        rol: tipo === 'subreceta' ? rol : null,
         rendimiento_kg: rendKg !== '' ? Number(rendKg) : null,
         rendimiento_unidad: rendUnidad,
         rendimiento_porciones: rendPorciones !== '' ? Number(rendPorciones) : null,
@@ -1203,12 +1269,18 @@ export function ModalReceta({
                   placeholder="Relleno Jamón, Queso y Cebolla"
                 />
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-3 gap-3">
                 <div>
                   <label className="mb-1 block text-xs text-gray-500">Tipo</label>
                   <select
                     value={tipo}
-                    onChange={(e) => setTipo(e.target.value as Receta['tipo'])}
+                    onChange={(e) => {
+                      const next = e.target.value as RecetaTipo;
+                      setTipo(next);
+                      // Limpiar el campo no aplicable al cambiar tipo
+                      if (next === 'receta') setRol('');
+                      else setCategoria('');
+                    }}
                     className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
                   >
                     {TIPOS.map((t) => (
@@ -1218,6 +1290,39 @@ export function ModalReceta({
                     ))}
                   </select>
                 </div>
+                {tipo === 'receta' ? (
+                  <div>
+                    <label className="mb-1 block text-xs text-gray-500">Categoría</label>
+                    <select
+                      value={categoria}
+                      onChange={(e) => setCategoria(e.target.value as RecetaCategoria)}
+                      className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
+                    >
+                      <option value="">— Elegí —</option>
+                      {CATEGORIAS.map((c) => (
+                        <option key={c} value={c}>
+                          {CATEGORIA_LABEL[c]}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ) : (
+                  <div>
+                    <label className="mb-1 block text-xs text-gray-500">Rol</label>
+                    <select
+                      value={rol}
+                      onChange={(e) => setRol(e.target.value as SubrecetaRol)}
+                      className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
+                    >
+                      <option value="">— Elegí —</option>
+                      {ROLES.map((r) => (
+                        <option key={r} value={r}>
+                          {ROL_LABEL[r]}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
                 {!localRestringido && (
                   <div>
                     <label className="mb-1 block text-xs text-gray-500">Local</label>
@@ -1544,6 +1649,15 @@ export function AutocompleteIngrediente({
     // Recetas primero (excluyendo la receta actual para evitar referencia circular)
     for (const r of recetas) {
       if (r.id === recetaActualId) continue;
+      // El detalle/recetaTipo prioriza rol (subreceta) o categoria (receta) para
+      // que el autocomplete pueda priorizar por rol/categoría (ej: 'masa','relleno').
+      const rolOCat = r.rol ?? r.categoria ?? r.tipo;
+      const labelDetalle =
+        r.tipo === 'subreceta' && r.rol
+          ? ROL_LABEL[r.rol]
+          : r.tipo === 'receta' && r.categoria
+            ? CATEGORIA_LABEL[r.categoria]
+            : TIPO_LABEL[r.tipo];
       lista.push({
         id: r.id,
         nombre: r.nombre,
@@ -1556,8 +1670,8 @@ export function AutocompleteIngrediente({
                 : 'kg'
             : 'unid',
         tipo: 'receta',
-        detalle: TIPO_LABEL[r.tipo] ?? r.tipo,
-        recetaTipo: r.tipo,
+        detalle: labelDetalle,
+        recetaTipo: rolOCat,
       });
     }
 

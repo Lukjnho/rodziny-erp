@@ -19,7 +19,9 @@ interface Producto {
 interface Receta {
   id: string;
   nombre: string;
-  tipo: string;
+  tipo: 'receta' | 'subreceta';
+  rol: string | null;
+  categoria: string | null;
   rendimiento_kg: number | null;
   rendimiento_unidad: 'kg' | 'l' | 'unidad' | null;
   local: string | null;
@@ -246,7 +248,7 @@ export function ProduccionQRPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cocina_recetas')
-        .select('id, nombre, tipo, rendimiento_kg, rendimiento_unidad, local')
+        .select('id, nombre, tipo, rol, categoria, rendimiento_kg, rendimiento_unidad, local')
         .eq('activo', true)
         .order('nombre');
       if (error) throw error;
@@ -414,12 +416,12 @@ export function ProduccionQRPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cocina_pasta_recetas')
-        .select('pasta_id, receta_id, receta:cocina_recetas(tipo)');
+        .select('pasta_id, receta_id, receta:cocina_recetas(tipo, rol)');
       if (error) throw error;
       return (data ?? []) as unknown as {
         pasta_id: string;
         receta_id: string;
-        receta: { tipo: string } | { tipo: string }[] | null;
+        receta: { tipo: string; rol: string | null } | { tipo: string; rol: string | null }[] | null;
       }[];
     },
   });
@@ -477,28 +479,40 @@ export function ProduccionQRPage() {
   // Filtro estricto por local: solo muestra lo asignado explícitamente a este local.
   // Inlineamos el chequeo en cada useMemo para que no haya un closure intermedio
   // que oculte la dependencia real (local) del linter de hooks.
+  // Modelo nuevo: las subrecetas se filtran por `rol` (operativo), las recetas
+  // vendibles por `categoria` (comercial). Para los flujos que pueden producir
+  // ambas (salsa, postre, panificado), combinamos: subreceta_base + receta_final.
+  // Rellenos y masas solo existen como subrecetas (no se venden directo).
   const recetasRelleno = useMemo(
-    () => (recetas ?? []).filter((r) => r.tipo === 'relleno' && r.local === local),
+    () => (recetas ?? []).filter((r) => r.rol === 'relleno' && r.local === local),
     [recetas, local],
   );
   const recetasMasa = useMemo(
-    () => (recetas ?? []).filter((r) => r.tipo === 'masa' && r.local === local),
+    () => (recetas ?? []).filter((r) => r.rol === 'masa' && r.local === local),
     [recetas, local],
   );
   const recetasSalsa = useMemo(
-    () => (recetas ?? []).filter((r) => r.tipo === 'salsa' && r.local === local),
+    () =>
+      (recetas ?? []).filter(
+        (r) => (r.rol === 'salsa_base' || r.categoria === 'salsa') && r.local === local,
+      ),
     [recetas, local],
   );
   const recetasPostre = useMemo(
-    () => (recetas ?? []).filter((r) => r.tipo === 'postre' && r.local === local),
+    () =>
+      (recetas ?? []).filter(
+        (r) => (r.rol === 'postre_base' || r.categoria === 'postre') && r.local === local,
+      ),
     [recetas, local],
   );
-  const recetasPasteleria = useMemo(
-    () => (recetas ?? []).filter((r) => r.tipo === 'pasteleria' && r.local === local),
-    [recetas, local],
-  );
+  // Pastelería: legacy. Modelo nuevo no la distingue de postres. Queda vacío para
+  // mantener el flujo del QR; si Saavedra lo necesita, agregar rol 'pasteleria_base'.
+  const recetasPasteleria = useMemo<Receta[]>(() => [], []);
   const recetasPanaderia = useMemo(
-    () => (recetas ?? []).filter((r) => r.tipo === 'panaderia' && r.local === local),
+    () =>
+      (recetas ?? []).filter(
+        (r) => (r.rol === 'panificado' || r.categoria === 'panificado') && r.local === local,
+      ),
     [recetas, local],
   );
   const recetasLocal = useMemo(
@@ -1111,7 +1125,7 @@ function FormPasta({
   pastaRecetas: {
     pasta_id: string;
     receta_id: string;
-    receta: { tipo: string } | { tipo: string }[] | null;
+    receta: { tipo: string; rol: string | null } | { tipo: string; rol: string | null }[] | null;
   }[];
   onGuardado: (msg: string) => void;
   onVolver: () => void;
@@ -1160,7 +1174,7 @@ function FormPasta({
     for (const pr of pastaRecetas) {
       // Supabase devuelve el join como objeto o array según la cardinalidad detectada
       const r = Array.isArray(pr.receta) ? pr.receta[0] : pr.receta;
-      if (r?.tipo === 'relleno') s.add(pr.pasta_id);
+      if (r?.rol === 'relleno') s.add(pr.pasta_id);
     }
     return s;
   }, [pastaRecetas]);
@@ -2828,14 +2842,16 @@ function FormMerma({
     }
     for (const r of recetas) {
       if (r.local !== local) continue;
-      // Recetas estructurales que no representan un item vendible/consumible en sí mismo
-      if (r.tipo === 'subreceta' || r.tipo === 'otro') continue;
-      // Si ya está cubierto como producto del catálogo (mismo nombre + tipo), no duplicar
+      // Subrecetas y recetas categorizadas como 'otros' no son items vendibles/consumibles
+      if (r.tipo === 'subreceta' || r.categoria === 'otros') continue;
+      // r.categoria comparte vocabulario con cocina_productos.tipo (pasta/salsa/postre/etc),
+      // así que sirve para detectar duplicación con el catálogo de productos.
+      const tipoEquiv = r.categoria ?? '';
       if (
         productos.some(
           (p) =>
             p.local === local &&
-            p.tipo === r.tipo &&
+            p.tipo === tipoEquiv &&
             p.nombre.toLowerCase().trim() === r.nombre.toLowerCase().trim(),
         )
       ) {
@@ -2846,7 +2862,7 @@ function FormMerma({
         kind: 'receta',
         id: r.id,
         nombre: r.nombre,
-        tipo: r.tipo,
+        tipo: tipoEquiv,
       });
     }
     return list;
