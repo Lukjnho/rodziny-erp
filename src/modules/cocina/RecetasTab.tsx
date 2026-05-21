@@ -700,7 +700,7 @@ export function RecetasTab() {
 }
 
 // ─── Dialog: Duplicar receta para otro local ───────────────────────────────
-function DialogDuplicar({
+export function DialogDuplicar({
   receta,
   onCancelar,
   onConfirmar,

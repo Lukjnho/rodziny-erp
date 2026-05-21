@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { cn, formatARS } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
-import { FichaTecnica, type Receta, type Ingrediente } from '@/modules/cocina/RecetasTab';
+import { DialogDuplicar, FichaTecnica, type Receta, type Ingrediente } from '@/modules/cocina/RecetasTab';
 import { useCostosRecetas } from '@/modules/cocina/hooks/useCostosRecetas';
 import { RecetaEditorInline } from './RecetaEditorInline';
 
@@ -111,8 +111,10 @@ export function FichaProductoTab() {
   );
   const [soloSub, setSoloSub] = useState(false);
   const [mostrarInactivas, setMostrarInactivas] = useState(false);
+  const [filtroCalidad, setFiltroCalidad] = useState<'todos' | 'sin_match' | 'con_adv'>('todos');
   const [editando, setEditando] = useState(false);
   const [nuevaReceta, setNuevaReceta] = useState(false);
+  const [duplicandoReceta, setDuplicandoReceta] = useState<RecetaFull | null>(null);
 
   // Trae TODAS las recetas (activas + inactivas). El filtro por activo lo aplica
   // el grid según el toggle "Mostrar inactivas". Sin esto no se podría reactivar
@@ -207,6 +209,14 @@ export function FichaProductoTab() {
       if (!mostrarInactivas && !r.activo) continue;
       if (filtroTipo !== 'todos' && tipoEfectivo(r) !== filtroTipo) continue;
       if (soloSub && r.tipo !== 'subreceta') continue;
+      // Filtro de auditoría (heredado de Cocina > Recetas): sin_match = tiene
+      // ingredientes pero costoBase=0; con_adv = el motor reportó alguna advertencia.
+      if (filtroCalidad !== 'todos') {
+        const c = costos.get(r.id);
+        const tieneIngs = (ingredientes ?? []).some((i) => i.receta_id === r.id);
+        if (filtroCalidad === 'sin_match' && !(tieneIngs && (!c || c.costoBase <= 0))) continue;
+        if (filtroCalidad === 'con_adv' && !(c && c.advertencias.length > 0)) continue;
+      }
       if (q && !r.nombre.toLowerCase().includes(q)) continue;
       const c = costos.get(r.id);
       const costoUnit = c?.costoPorPorcion ?? c?.costoPorKg ?? null;
@@ -226,7 +236,36 @@ export function FichaProductoTab() {
       }
     }
     return out;
-  }, [recetas, bebidasReventa, costos, costoInsumo, filtroLocal, filtroTipo, soloSub, mostrarInactivas, busqueda]);
+  }, [
+    recetas,
+    bebidasReventa,
+    costos,
+    costoInsumo,
+    ingredientes,
+    filtroLocal,
+    filtroTipo,
+    soloSub,
+    mostrarInactivas,
+    filtroCalidad,
+    busqueda,
+  ]);
+
+  // KPIs de auditoría del subset visible (mismo local, mismo filtro de inactivas)
+  // para que los conteos coincidan con lo que el usuario ve.
+  const kpisCalidad = useMemo(() => {
+    let conCosto = 0;
+    let sinMatch = 0;
+    let conAdv = 0;
+    for (const r of recetas ?? []) {
+      if (r.local !== filtroLocal) continue;
+      if (!mostrarInactivas && !r.activo) continue;
+      const c = costos.get(r.id);
+      if (c && c.costoBase > 0) conCosto++;
+      else if ((ingredientes ?? []).some((i) => i.receta_id === r.id)) sinMatch++;
+      if (c && c.advertencias.length > 0) conAdv++;
+    }
+    return { conCosto, sinMatch, conAdv };
+  }, [recetas, costos, ingredientes, filtroLocal, mostrarInactivas]);
 
   const filtradas = useMemo(
     () => items.filter((i): i is Extract<ItemCosteo, { kind: 'receta' }> => i.kind === 'receta'),
@@ -287,6 +326,58 @@ export function FichaProductoTab() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['cocina-recetas'] });
       qc.invalidateQueries({ queryKey: ['menu-recetas-vendibles'] });
+    },
+  });
+
+  // Duplicar receta a otro local (clona ingredientes). Migrado de Cocina > Recetas.
+  const duplicarReceta = useMutation({
+    mutationFn: async ({
+      origen,
+      nuevoLocal,
+      nuevoNombre,
+    }: {
+      origen: Receta;
+      nuevoLocal: string;
+      nuevoNombre: string;
+    }) => {
+      const nuevaRow = {
+        nombre: nuevoNombre.trim(),
+        tipo: origen.tipo,
+        categoria: origen.categoria,
+        rol: origen.rol,
+        rendimiento_kg: origen.rendimiento_kg,
+        rendimiento_unidad: origen.rendimiento_unidad ?? 'kg',
+        rendimiento_porciones: origen.rendimiento_porciones,
+        instrucciones: origen.instrucciones,
+        local: nuevoLocal,
+        gramos_por_porcion: origen.gramos_por_porcion,
+        fudo_productos: origen.fudo_productos,
+        activo: true,
+      };
+      const { data: recetaNueva, error: errReceta } = await supabase
+        .from('cocina_recetas')
+        .insert(nuevaRow)
+        .select('id')
+        .single();
+      if (errReceta) throw errReceta;
+
+      const { data: ingsOrigen, error: errIngs } = await supabase
+        .from('cocina_receta_ingredientes')
+        .select('nombre, cantidad, unidad, observaciones, orden, producto_id')
+        .eq('receta_id', origen.id);
+      if (errIngs) throw errIngs;
+      if (ingsOrigen && ingsOrigen.length > 0) {
+        const rows = ingsOrigen.map((i) => ({ ...i, receta_id: recetaNueva.id }));
+        const { error: errInsIngs } = await supabase
+          .from('cocina_receta_ingredientes')
+          .insert(rows);
+        if (errInsIngs) throw errInsIngs;
+      }
+      return recetaNueva.id as string;
+    },
+    onSuccess: () => {
+      invalidarTodo();
+      setDuplicandoReceta(null);
     },
   });
 
@@ -452,6 +543,53 @@ export function FichaProductoTab() {
               } reventa`}
           </div>
         </div>
+
+        {/* KPIs de auditoría — clickeables, alertan solo si hay problemas */}
+        {(kpisCalidad.sinMatch > 0 || kpisCalidad.conAdv > 0 || filtroCalidad !== 'todos') && (
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => setFiltroCalidad('todos')}
+              className={cn(
+                'rounded-full px-3 py-1 text-xs font-medium ring-1 transition-colors',
+                filtroCalidad === 'todos'
+                  ? 'bg-gray-100 text-gray-800 ring-gray-300'
+                  : 'bg-white text-gray-500 ring-gray-200 hover:bg-gray-50',
+              )}
+            >
+              Con costeo: {kpisCalidad.conCosto}
+            </button>
+            {kpisCalidad.sinMatch > 0 && (
+              <button
+                onClick={() =>
+                  setFiltroCalidad(filtroCalidad === 'sin_match' ? 'todos' : 'sin_match')
+                }
+                className={cn(
+                  'rounded-full px-3 py-1 text-xs font-medium ring-1 transition-colors',
+                  filtroCalidad === 'sin_match'
+                    ? 'bg-yellow-200 text-yellow-900 ring-yellow-400'
+                    : 'bg-yellow-50 text-yellow-700 ring-yellow-200 hover:bg-yellow-100',
+                )}
+              >
+                ⚠ Sin match: {kpisCalidad.sinMatch}
+              </button>
+            )}
+            {kpisCalidad.conAdv > 0 && (
+              <button
+                onClick={() =>
+                  setFiltroCalidad(filtroCalidad === 'con_adv' ? 'todos' : 'con_adv')
+                }
+                className={cn(
+                  'rounded-full px-3 py-1 text-xs font-medium ring-1 transition-colors',
+                  filtroCalidad === 'con_adv'
+                    ? 'bg-orange-200 text-orange-900 ring-orange-400'
+                    : 'bg-orange-50 text-orange-700 ring-orange-200 hover:bg-orange-100',
+                )}
+              >
+                ⚠ Con advertencias: {kpisCalidad.conAdv}
+              </button>
+            )}
+          </div>
+        )}
 
         {grupos.length === 0 && (
           <div className="rounded-lg border border-gray-200 bg-gray-50 p-8 text-center text-sm text-gray-400">
@@ -659,6 +797,15 @@ export function FichaProductoTab() {
               >
                 {receta.activo ? 'Desactivar' : '↻ Reactivar'}
               </button>
+              {!localRestringido && (
+                <button
+                  onClick={() => setDuplicandoReceta(receta)}
+                  title="Clonar esta receta a otro local"
+                  className="rounded bg-white px-3 py-1.5 text-xs font-medium text-purple-700 ring-1 ring-purple-300 hover:bg-purple-50"
+                >
+                  ⎘ Duplicar
+                </button>
+              )}
               <button
                 onClick={() => setEditando(true)}
                 className="rounded bg-rodziny-700 px-3 py-1.5 text-xs text-white hover:bg-rodziny-800"
@@ -693,6 +840,18 @@ export function FichaProductoTab() {
           />
         )}
       </section>
+
+      {duplicandoReceta && (
+        <DialogDuplicar
+          receta={duplicandoReceta}
+          onCancelar={() => setDuplicandoReceta(null)}
+          onConfirmar={(nuevoLocal, nuevoNombre) =>
+            duplicarReceta.mutate({ origen: duplicandoReceta, nuevoLocal, nuevoNombre })
+          }
+          guardando={duplicarReceta.isPending}
+          error={duplicarReceta.error ? String(duplicarReceta.error) : null}
+        />
+      )}
     </div>
   );
 }

@@ -5,7 +5,6 @@ import { DashboardTab } from './DashboardTab';
 import { ProduccionTab } from './ProduccionTab';
 import { StockTab } from './StockTab';
 import { TraspasosTab } from './TraspasosTab';
-import { RecetasTab } from './RecetasTab';
 import { AnalisisTab } from './AnalisisTab';
 import { CalendarioTab } from './CalendarioTab';
 import { CierresTab } from './CierresTab';
@@ -16,7 +15,6 @@ type Tab =
   | 'stock'
   | 'cierres'
   | 'traspasos'
-  | 'recetas'
   | 'analisis'
   | 'calendario';
 
@@ -65,14 +63,6 @@ const ayudaPorTab: Record<Tab, { titulo: string; pasos: string[] }> = {
       'También podés registrar merma (rotura, vencimiento, etc.).',
     ],
   },
-  recetas: {
-    titulo: 'Recetas',
-    pasos: [
-      'Cargá las recetas de rellenos, masas y salsas.',
-      'Indicá el rendimiento en kg y/o porciones por receta.',
-      'Las recetas se usan al registrar producción.',
-    ],
-  },
   analisis: {
     titulo: 'Análisis',
     pasos: [
@@ -116,9 +106,6 @@ export function CocinaPage() {
         <TabButton activo={tab === 'traspasos'} onClick={() => setTab('traspasos')}>
           Traspasos
         </TabButton>
-        <TabButton activo={tab === 'recetas'} onClick={() => setTab('recetas')}>
-          Recetas
-        </TabButton>
         <TabButton activo={tab === 'analisis'} onClick={() => setTab('analisis')}>
           Análisis
         </TabButton>
@@ -139,7 +126,6 @@ export function CocinaPage() {
       {tab === 'stock' && <StockTab />}
       {tab === 'cierres' && <CierresTab />}
       {tab === 'traspasos' && <TraspasosTab />}
-      {tab === 'recetas' && <RecetasTab />}
       {tab === 'analisis' && <AnalisisTab />}
       {tab === 'calendario' && <CalendarioTab />}
 
