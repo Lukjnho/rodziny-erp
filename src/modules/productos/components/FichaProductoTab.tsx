@@ -176,10 +176,22 @@ export function FichaProductoTab() {
 
   const { costos, ctx } = useCostosRecetas();
 
+  // Vocabulario unificado para el filtro: usa tipoEfectivo(r) — mismo valor que
+  // luego compara `items` al filtrar. Si usáramos r.tipo crudo, el dropdown
+  // ofrecería 'receta'/'subreceta' pero el filter compara contra 'masa','salsa',
+  // etc. → nunca matchea (bug pre-fix).
   const tipos = useMemo(() => {
     const set = new Set<string>();
-    for (const r of recetas ?? []) if (r.tipo) set.add(r.tipo);
-    return Array.from(set).sort();
+    for (const r of recetas ?? []) set.add(tipoEfectivo(r));
+    // Ordenar según ORDEN_TIPOS, dejando los desconocidos al final.
+    return Array.from(set).sort((a, b) => {
+      const ia = ORDEN_TIPOS.indexOf(a);
+      const ib = ORDEN_TIPOS.indexOf(b);
+      if (ia !== -1 && ib !== -1) return ia - ib;
+      if (ia !== -1) return -1;
+      if (ib !== -1) return 1;
+      return a.localeCompare(b);
+    });
   }, [recetas]);
 
   // Items del grid: recetas + bebidas de reventa (en el grupo 'bebida').
@@ -375,7 +387,7 @@ export function FichaProductoTab() {
             <option value="todos">Todos los tipos</option>
             {tipos.map((t) => (
               <option key={t} value={t} className="capitalize">
-                {t}
+                {TIPO_LABEL[t] ?? t}
               </option>
             ))}
           </select>
