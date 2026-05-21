@@ -28,9 +28,7 @@ function recetasDelTipoPlan(recetas: Receta[], tipoPlan: TipoItem): Receta[] {
     case 'panaderia':
       return recetas.filter((r) => r.rol === 'panificado' || r.categoria === 'panificado');
     case 'pasteleria':
-      // El modelo nuevo no distingue pastelería de postre. Si Saavedra lo necesita,
-      // agregar un rol 'pasteleria_base' en cocina_recetas y filtrar acá.
-      return [];
+      return recetas.filter((r) => r.rol === 'pasteleria_base');
   }
 }
 

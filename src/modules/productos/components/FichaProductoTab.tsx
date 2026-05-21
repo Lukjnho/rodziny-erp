@@ -20,6 +20,7 @@ function tipoEfectivo(r: Receta): string {
     if (r.rol === 'salsa_base') return 'salsa';
     if (r.rol === 'postre_base') return 'postre';
     if (r.rol === 'bebida_base') return 'bebida';
+    if (r.rol === 'pasteleria_base') return 'pasteleria';
     return r.rol ?? 'otros';
   }
   return r.categoria ?? 'otros';
@@ -58,6 +59,7 @@ const TIPO_COLOR: Record<string, string> = {
   salsa: 'bg-orange-100 text-orange-700',
   pasta: 'bg-red-100 text-red-700',
   postre: 'bg-pink-100 text-pink-700',
+  pasteleria: 'bg-rose-100 text-rose-700',
   panificado: 'bg-amber-100 text-amber-700',
   bebida: 'bg-sky-100 text-sky-700',
   adicional: 'bg-emerald-100 text-emerald-700',
@@ -72,6 +74,7 @@ const ORDEN_TIPOS = [
   'salsa',
   'pasta',
   'postre',
+  'pasteleria',
   'panificado',
   'bebida',
   'adicional',
@@ -85,6 +88,7 @@ const TIPO_LABEL: Record<string, string> = {
   salsa: 'Salsas',
   pasta: 'Pastas',
   postre: 'Postres',
+  pasteleria: 'Pastelería',
   panificado: 'Panificados',
   bebida: 'Bebidas',
   adicional: 'Adicionales',

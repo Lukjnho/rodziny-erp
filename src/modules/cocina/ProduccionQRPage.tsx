@@ -505,9 +505,10 @@ export function ProduccionQRPage() {
       ),
     [recetas, local],
   );
-  // Pastelería: legacy. Modelo nuevo no la distingue de postres. Queda vacío para
-  // mantener el flujo del QR; si Saavedra lo necesita, agregar rol 'pasteleria_base'.
-  const recetasPasteleria = useMemo<Receta[]>(() => [], []);
+  const recetasPasteleria = useMemo(
+    () => (recetas ?? []).filter((r) => r.rol === 'pasteleria_base' && r.local === local),
+    [recetas, local],
+  );
   const recetasPanaderia = useMemo(
     () =>
       (recetas ?? []).filter(
