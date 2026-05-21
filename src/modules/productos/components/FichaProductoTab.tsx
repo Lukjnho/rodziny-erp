@@ -110,16 +110,19 @@ export function FichaProductoTab() {
     (localRestringido as FiltroLocal | null) ?? 'vedia',
   );
   const [soloSub, setSoloSub] = useState(false);
+  const [mostrarInactivas, setMostrarInactivas] = useState(false);
   const [editando, setEditando] = useState(false);
   const [nuevaReceta, setNuevaReceta] = useState(false);
 
+  // Trae TODAS las recetas (activas + inactivas). El filtro por activo lo aplica
+  // el grid según el toggle "Mostrar inactivas". Sin esto no se podría reactivar
+  // una receta desde acá porque desaparecía del catálogo apenas se desactivaba.
   const { data: recetas } = useQuery({
     queryKey: ['cocina-recetas'],
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cocina_recetas')
         .select('*')
-        .eq('activo', true)
         .order('nombre');
       if (error) throw error;
       return data as RecetaFull[];
@@ -201,6 +204,7 @@ export function FichaProductoTab() {
     const out: ItemCosteo[] = [];
     for (const r of recetas ?? []) {
       if (r.local !== filtroLocal) continue;
+      if (!mostrarInactivas && !r.activo) continue;
       if (filtroTipo !== 'todos' && tipoEfectivo(r) !== filtroTipo) continue;
       if (soloSub && r.tipo !== 'subreceta') continue;
       if (q && !r.nombre.toLowerCase().includes(q)) continue;
@@ -222,7 +226,7 @@ export function FichaProductoTab() {
       }
     }
     return out;
-  }, [recetas, bebidasReventa, costos, costoInsumo, filtroLocal, filtroTipo, soloSub, busqueda]);
+  }, [recetas, bebidasReventa, costos, costoInsumo, filtroLocal, filtroTipo, soloSub, mostrarInactivas, busqueda]);
 
   const filtradas = useMemo(
     () => items.filter((i): i is Extract<ItemCosteo, { kind: 'receta' }> => i.kind === 'receta'),
@@ -263,6 +267,20 @@ export function FichaProductoTab() {
       const { error } = await supabase
         .from('cocina_recetas')
         .update({ vendible: !r.vendible })
+        .eq('id', r.id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['cocina-recetas'] });
+      qc.invalidateQueries({ queryKey: ['menu-recetas-vendibles'] });
+    },
+  });
+
+  const toggleActivo = useMutation({
+    mutationFn: async (r: RecetaFull) => {
+      const { error } = await supabase
+        .from('cocina_recetas')
+        .update({ activo: !r.activo })
         .eq('id', r.id);
       if (error) throw error;
     },
@@ -400,6 +418,18 @@ export function FichaProductoTab() {
             />
             Solo subrecetas
           </label>
+          <label
+            className="flex items-center gap-1.5 text-xs text-gray-600"
+            title="Mostrar también recetas desactivadas para reactivarlas"
+          >
+            <input
+              type="checkbox"
+              checked={mostrarInactivas}
+              onChange={(e) => setMostrarInactivas(e.target.checked)}
+              className="h-3.5 w-3.5"
+            />
+            Mostrar inactivas
+          </label>
           <button
             onClick={() => setNuevaBebidaRev(true)}
             className="ml-auto rounded border border-sky-300 bg-white px-3 py-1.5 text-sm font-medium text-sky-700 hover:bg-sky-50"
@@ -492,7 +522,10 @@ export function FichaProductoTab() {
                   <button
                     key={r.id}
                     onClick={() => setRecetaId(r.id)}
-                    className="flex flex-col gap-1 rounded-lg border border-gray-200 bg-white p-3 text-left transition-colors hover:border-rodziny-400 hover:bg-rodziny-50"
+                    className={cn(
+                      'flex flex-col gap-1 rounded-lg border border-gray-200 bg-white p-3 text-left transition-colors hover:border-rodziny-400 hover:bg-rodziny-50',
+                      !r.activo && 'opacity-50',
+                    )}
                   >
                     <span className="text-sm font-medium leading-tight text-gray-800">
                       {r.nombre}
@@ -517,6 +550,11 @@ export function FichaProductoTab() {
                       {r.vendible && (
                         <span className="rounded bg-green-100 px-1.5 py-0.5 text-[9px] font-medium text-green-700">
                           Menú
+                        </span>
+                      )}
+                      {!r.activo && (
+                        <span className="rounded bg-orange-100 px-1.5 py-0.5 text-[9px] font-medium text-orange-700">
+                          inactiva
                         </span>
                       )}
                     </div>
@@ -598,6 +636,28 @@ export function FichaProductoTab() {
                 )}
               >
                 {receta.vendible ? '✓ Vendible (va al Menú)' : '+ Marcar vendible'}
+              </button>
+              <button
+                onClick={() => {
+                  if (receta.activo) {
+                    if (!window.confirm(`Desactivar "${receta.nombre}"? Se oculta del catálogo. Podés reactivarla marcando "Mostrar inactivas".`)) return;
+                  }
+                  toggleActivo.mutate(receta);
+                }}
+                disabled={toggleActivo.isPending}
+                title={
+                  receta.activo
+                    ? 'Sacar del catálogo activo (la oculta sin borrarla)'
+                    : 'Reactivar receta'
+                }
+                className={cn(
+                  'rounded px-3 py-1.5 text-xs font-medium ring-1 transition-colors disabled:opacity-50',
+                  receta.activo
+                    ? 'bg-white text-orange-700 ring-orange-300 hover:bg-orange-50'
+                    : 'bg-orange-600 text-white ring-orange-700 hover:bg-orange-700',
+                )}
+              >
+                {receta.activo ? 'Desactivar' : '↻ Reactivar'}
               </button>
               <button
                 onClick={() => setEditando(true)}
