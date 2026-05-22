@@ -245,15 +245,18 @@ function CierrePastas({ local }: { local: Local }) {
       const conDatos = Object.entries(filas).filter(([, f]) => f.real.trim() !== '');
       if (conDatos.length === 0) throw new Error('Cargá al menos un producto con stock real');
 
-      // Borrar el cierre previo del turno (upsert manual para evitar duplicados)
-      const prevIds = (cierreActual ?? []).map((c) => c.id);
-      if (prevIds.length > 0) {
-        const { error: errDel } = await supabase
-          .from('cocina_cierre_dia')
-          .delete()
-          .in('id', prevIds);
-        if (errDel) throw errDel;
-      }
+      // Borrar el cierre previo de este turno por sus columnas naturales
+      // (local/fecha/tipo/turno), NO por los ids del snapshot `cierreActual`:
+      // si ese snapshot estaba viejo (otro guardado, otra pestaña) quedaban filas
+      // sin borrar y el insert chocaba contra el índice único ux_..._con_turno.
+      const { error: errDel } = await supabase
+        .from('cocina_cierre_dia')
+        .delete()
+        .eq('local', local)
+        .eq('fecha', fecha)
+        .eq('tipo', 'pasta')
+        .eq('turno', turno);
+      if (errDel) throw errDel;
 
       const num = (s: string) => Number(s.trim().replace(/\s/g, '').replace(',', '.'));
       const malo = conDatos.find(([, f]) => {
@@ -541,14 +544,17 @@ function CierreSimple({
       const conDatos = Object.entries(valores).filter(([, v]) => v.trim() !== '');
       if (conDatos.length === 0) throw new Error('Cargá al menos un producto');
 
-      const prevIds = (cierreActual ?? []).map((c) => c.id);
-      if (prevIds.length > 0) {
-        const { error: errDel } = await supabase
-          .from('cocina_cierre_dia')
-          .delete()
-          .in('id', prevIds);
-        if (errDel) throw errDel;
-      }
+      // Borrar el cierre previo por columnas naturales (local/fecha/tipo, turno
+      // NULL en salsa/postre/panadería), NO por los ids del snapshot
+      // `cierreActual` — si está viejo deja filas sin borrar y se duplican.
+      const { error: errDel } = await supabase
+        .from('cocina_cierre_dia')
+        .delete()
+        .eq('local', local)
+        .eq('fecha', fecha)
+        .eq('tipo', tipo)
+        .is('turno', null);
+      if (errDel) throw errDel;
 
       // Salsas/postres se identifican por receta_id (no por producto_id).
       // Parse robusto: convención AR (decimal con coma). Sacamos espacios y
