@@ -303,6 +303,15 @@ export function ListadoGastos({
       window.alert(error.message);
       return;
     }
+    // Al cancelar el gasto, liberar su comprobante: el alta de gastos bloquea por
+    // hash mientras el comprobante siga vinculado a un gasto (aunque esté
+    // cancelado). Sin esto, no se puede volver a subir el mismo archivo al rehacerlo.
+    // Desvinculamos las dos puntas: comprobantes.gasto_id y gastos.comprobante_id.
+    await supabase
+      .from('comprobantes')
+      .update({ gasto_id: null, estado: 'huerfano' })
+      .eq('gasto_id', g.id);
+    await supabase.from('gastos').update({ comprobante_id: null }).eq('id', g.id);
     qc.invalidateQueries({ queryKey: ['gastos_listado'] });
     qc.invalidateQueries({ queryKey: ['gastos_resumen_kpis'] });
   }
