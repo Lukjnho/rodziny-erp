@@ -238,7 +238,7 @@ export function RecetaEditorInline({
 
   // ─── Guardar (rendimiento + ingredientes, en lote) ─────────────────────────
   const guardar = async () => {
-    if (creando && !nombre.trim()) {
+    if (!nombre.trim()) {
       setError('El nombre de la receta es obligatorio');
       return;
     }
@@ -288,6 +288,7 @@ export function RecetaEditorInline({
         const { error: errReceta } = await supabase
           .from('cocina_recetas')
           .update({
+            nombre: nombre.trim(),
             ...tipoPayload,
             rendimiento_kg: rendKgNum,
             rendimiento_unidad: rendUnidad,
@@ -521,6 +522,16 @@ export function RecetaEditorInline({
       <div className="flex flex-wrap items-end gap-3 rounded-lg border border-rodziny-200 bg-rodziny-50/40 p-3">
         {!creando && (
           <>
+            <div className="basis-full">
+              <label className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-gray-500">
+                Nombre
+              </label>
+              <input
+                value={nombre}
+                onChange={(e) => setNombre(e.target.value)}
+                className="w-full rounded border border-gray-300 bg-white px-2 py-1.5 text-sm"
+              />
+            </div>
             <div>
               <label className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-gray-500">
                 Tipo
