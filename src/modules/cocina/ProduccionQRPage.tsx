@@ -2383,6 +2383,10 @@ function FormGenerico({
   const recetaSel = recetas.find((r) => r.id === recetaId);
   const unidades = unidadesDisponibles(categoria, permitirLitros);
   const titulo = `Cargar ${CATEGORIA_LABEL[categoria]}`;
+  // Postres y pastelería se ACUMULAN: cada carga es un lote nuevo que se suma al
+  // stock (la pastelera produce varias tandas al día). El resto pisa el stock
+  // anterior ("último pesaje manda").
+  const esAditivo = categoria === 'postre' || categoria === 'pasteleria';
 
   // Salsa es overwrite: avisar al cocinero si ya cargó esa receta hoy,
   // así no se duplican filas en el detalle ni hay sorpresa de stock pisado.
@@ -2473,10 +2477,11 @@ function FormGenerico({
 
     // Overwrite — "último pesaje manda". Antes de cargar el lote nuevo a stock,
     // desactivamos los lotes activos previos de esta misma receta (o nombre
-    // libre) + local, para que no se acumulen batch tras batch. Salsas/postres
-    // no se descuentan por venta (no son línea Fudo propia): cada carga
-    // reemplaza. Solo cuando este lote va a stock (enStock).
-    if (enStock) {
+    // libre) + local, para que no se acumulen batch tras batch. Aplica a salsa /
+    // pasta / milanesa. Postres y pastelería NO entran acá: se acumulan (cada
+    // carga es un lote más) y el cierre físico de /mostrador re-baselinea el
+    // stock con lo contado. Solo cuando este lote va a stock (enStock).
+    if (enStock && !esAditivo) {
       let qOff = supabase
         .from('cocina_lotes_produccion')
         .update({ en_stock: false })
@@ -2639,6 +2644,13 @@ function FormGenerico({
                 : `${cargaPrevia.cargas} veces · última a las ${cargaPrevia.hora} (${cargaPrevia.cantidad}${cargaPrevia.unidad}).`}{' '}
               Si guardás de nuevo, el stock se <strong>reemplaza</strong> por el nuevo valor.
             </p>
+          </div>
+        )}
+
+        {esAditivo && (
+          <div className="rounded border border-pink-200 bg-pink-50 px-3 py-2 text-[11px] text-pink-800">
+            Cada carga <strong>se suma</strong> al stock. Cargá solo lo que
+            produjiste recién, no el total — el cierre físico corrige lo que sobró.
           </div>
         )}
 

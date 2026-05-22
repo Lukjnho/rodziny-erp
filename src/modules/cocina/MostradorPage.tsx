@@ -466,18 +466,29 @@ function CierreSimple({
   const [notas, setNotas] = useState<Record<string, string>>({});
   const [mensaje, setMensaje] = useState<string | null>(null);
 
-  // Salsas y postres viven en cocina_recetas (no en cocina_productos como las pastas).
-  // Listamos todas las recetas activas del tipo para que el cierre funcione "como las pastas".
+  // Salsas, postres y panadería viven en cocina_recetas (no en cocina_productos
+  // como las pastas). Tras el refactor de recetas, `tipo` es solo receta/subreceta:
+  // lo que antes era tipo='postre'/'salsa'/'panaderia' ahora está en `categoria`
+  // (recetas vendibles) o `rol` (subrecetas-base).
+  //  · Postres   → solo los VENDIBLES (las porciones que se cuentan al cierre).
+  //  · Salsas    → vendibles + subrecetas-base (al cierre se pesa TODA la salsa).
+  //  · Panadería → vendibles + subrecetas-base (conteo físico de todo).
   const { data: productos, isLoading } = useQuery({
     queryKey: ['mostrador-simple-recetas', local, tipo],
     queryFn: async () => {
-      const { data, error } = await supabase
+      let q = supabase
         .from('cocina_recetas')
-        .select('id, nombre, tipo, local')
-        .eq('tipo', tipo)
+        .select('id, nombre')
         .eq('activo', true)
-        .or(`local.eq.${local},local.eq.ambos`)
-        .order('nombre');
+        .eq('local', local);
+      if (tipo === 'postre') {
+        q = q.eq('categoria', 'postre').eq('vendible', true);
+      } else if (tipo === 'salsa') {
+        q = q.or('categoria.eq.salsa,rol.eq.salsa_base');
+      } else {
+        q = q.or('categoria.eq.panificado,rol.eq.panificado');
+      }
+      const { data, error } = await q.order('nombre');
       if (error) throw error;
       return (data ?? []).map((r) => ({ id: r.id, nombre: r.nombre, codigo: '' })) as Producto[];
     },
