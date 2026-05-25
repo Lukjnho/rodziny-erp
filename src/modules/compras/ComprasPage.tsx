@@ -518,7 +518,7 @@ export function ComprasPage() {
   const [fusionando, setFusionando] = useState<Producto | null>(null);
 
   const [filtroPagos, setFiltroPagos] = useState<
-    'todos' | 'pendientes' | 'pagados' | 'vencidos' | 'semana'
+    'todos' | 'pendientes' | 'pagados' | 'vencidos' | 'hoy' | 'semana'
   >('todos');
   const [filtroProveedor, setFiltroProveedor] = useState('');
 
@@ -605,6 +605,14 @@ export function ComprasPage() {
           g.fecha_vencimiento &&
           g.fecha_vencimiento < hoy,
       );
+    else if (filtroPagos === 'hoy')
+      // "Vence hoy" incluye atrasados: todo lo urgente que hay que pagar ya.
+      lista = lista.filter(
+        (g) =>
+          g.estado_pago?.toLowerCase() !== 'pagado' &&
+          g.fecha_vencimiento &&
+          g.fecha_vencimiento <= hoy,
+      );
     else if (filtroPagos === 'semana')
       lista = lista.filter(
         (g) =>
@@ -669,6 +677,8 @@ export function ComprasPage() {
 
     if (filtroPagos === 'vencidos') {
       lista = lista.filter((g) => g.fecha_vencimiento && g.fecha_vencimiento < hoy);
+    } else if (filtroPagos === 'hoy') {
+      lista = lista.filter((g) => g.fecha_vencimiento && g.fecha_vencimiento <= hoy);
     } else if (filtroPagos === 'semana') {
       lista = lista.filter(
         (g) =>
@@ -993,6 +1003,7 @@ export function ComprasPage() {
     const todos = gastosPagos ?? [];
     const pendientes = todos.filter((g) => g.estado_pago?.toLowerCase() !== 'pagado');
     const vencidos = pendientes.filter((g) => g.fecha_vencimiento && g.fecha_vencimiento < hoy);
+    const venceHoy = pendientes.filter((g) => g.fecha_vencimiento === hoy);
     const proxSemana = pendientes.filter(
       (g) => g.fecha_vencimiento && g.fecha_vencimiento >= hoy && g.fecha_vencimiento <= en7dias,
     );
@@ -1023,6 +1034,8 @@ export function ComprasPage() {
       cantPendientes: pendientes.length,
       totalVencido: vencidos.reduce((s, g) => s + g.importe_total, 0),
       cantVencidos: vencidos.length,
+      totalHoy: venceHoy.reduce((s, g) => s + g.importe_total, 0),
+      cantHoy: venceHoy.length,
       totalSemana: proxSemana.reduce((s, g) => s + g.importe_total, 0),
       cantSemana: proxSemana.length,
       totalMes: delMes.reduce((s, g) => s + g.importe_total, 0),
@@ -2673,7 +2686,7 @@ export function ComprasPage() {
           </div>
 
           {/* KPIs de estado */}
-          <div className="mb-4 grid grid-cols-4 gap-3">
+          <div className="mb-4 grid grid-cols-5 gap-3">
             <button
               onClick={() => setFiltroPagos(filtroPagos === 'pendientes' ? 'todos' : 'pendientes')}
               className={cn(
@@ -2707,6 +2720,26 @@ export function ComprasPage() {
                 )}
               >
                 {formatARS(pagosKpis.totalVencido)}
+              </p>
+            </button>
+            <button
+              onClick={() => setFiltroPagos(filtroPagos === 'hoy' ? 'todos' : 'hoy')}
+              className={cn(
+                'rounded-lg border bg-white p-4 text-left transition-colors',
+                filtroPagos === 'hoy'
+                  ? 'border-amber-500 bg-amber-50 ring-1 ring-amber-200'
+                  : 'border-surface-border hover:border-gray-300',
+              )}
+              title="Lo que vence hoy. Al hacer click el listado muestra también los vencidos: todo lo que hay que pagar ya."
+            >
+              <p className="mb-1 text-xs text-gray-500">Vence hoy ({pagosKpis.cantHoy})</p>
+              <p
+                className={cn(
+                  'text-lg font-semibold',
+                  pagosKpis.cantHoy > 0 ? 'text-amber-600' : 'text-green-600',
+                )}
+              >
+                {formatARS(pagosKpis.totalHoy)}
               </p>
             </button>
             <button
@@ -3034,11 +3067,13 @@ export function ComprasPage() {
             <div className="rounded-lg border border-surface-border bg-white p-8 text-center text-sm text-gray-400">
               {filtroPagos === 'vencidos'
                 ? 'Sin gastos vencidos 🎉'
-                : filtroPagos === 'semana'
-                  ? 'Sin vencimientos en los próximos 7 días'
-                  : filtroProveedor
-                    ? `Sin gastos pendientes para "${filtroProveedor}"`
-                    : 'Sin gastos pendientes de pago'}
+                : filtroPagos === 'hoy'
+                  ? 'Nada que pagar hoy 🎉'
+                  : filtroPagos === 'semana'
+                    ? 'Sin vencimientos en los próximos 7 días'
+                    : filtroProveedor
+                      ? `Sin gastos pendientes para "${filtroProveedor}"`
+                      : 'Sin gastos pendientes de pago'}
             </div>
           ) : (
             <div className="space-y-2">
