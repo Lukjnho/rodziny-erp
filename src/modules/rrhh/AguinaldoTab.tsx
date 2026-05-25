@@ -6,12 +6,28 @@ import { KPICard } from '@/components/ui/KPICard';
 import type { Empleado } from './RRHHPage';
 import { parseYmd, ymd, normalizarTexto } from './utils';
 
-interface SueldoMensual {
+// ── Tipos ────────────────────────────────────────────────────────────────────
+interface PagoSueldo {
   empleado_id: string;
-  periodo: string; // YYYY-MM
-  sueldo_recibo: number;
-  plus_mano: number;
+  periodo: string; // 'YYYY-MM-Q1' | 'YYYY-MM-Q2'
+  monto: number;
 }
+
+type MedioPagoGasto =
+  | 'transferencia_mp'
+  | 'transferencia_galicia'
+  | 'transferencia_icbc'
+  | 'efectivo'
+  | 'debito_mp'
+  | 'debito_galicia'
+  | 'debito_icbc';
+
+const MEDIO_PAGO_OPCIONES: { value: MedioPagoGasto; label: string }[] = [
+  { value: 'transferencia_mp', label: 'Transferencia MP' },
+  { value: 'transferencia_galicia', label: 'Transferencia Galicia' },
+  { value: 'transferencia_icbc', label: 'Transferencia ICBC' },
+  { value: 'efectivo', label: 'Efectivo' },
+];
 
 interface Aguinaldo {
   id: string;
@@ -24,18 +40,23 @@ interface Aguinaldo {
   monto_pagado: number | null;
   pagado: boolean;
   fecha_pago: string | null;
+  medio_pago: MedioPagoGasto | null;
+  gasto_id: string | null;
   notas: string | null;
 }
 
 interface FilaAguinaldo {
   empleado: Empleado;
   mejorSueldo: number;
-  mesEnQueGano: string | null;
+  mesEnQueGano: string | null; // 'YYYY-MM'
   mesesConSueldo: number;
   diasTrabajados: number;
   montoCalculado: number;
   registro: Aguinaldo | null;
 }
+
+// ── Constantes legales (LCT art. 121) ───────────────────────────────────────
+const DIAS_SEMESTRE_LCT = 180;
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 function mesesDelSemestre(año: number, sem: number): string[] {
@@ -46,22 +67,20 @@ function mesesDelSemestre(año: number, sem: number): string[] {
   });
 }
 
-function rangoDelSemestre(
-  año: number,
-  sem: number,
-): { inicio: Date; fin: Date; diasTotales: number } {
+function rangoDelSemestre(año: number, sem: number): { inicio: Date; fin: Date } {
   const inicio = sem === 1 ? new Date(año, 0, 1) : new Date(año, 6, 1);
   const fin = sem === 1 ? new Date(año, 5, 30) : new Date(año, 11, 31);
-  const diasTotales = Math.round((fin.getTime() - inicio.getTime()) / 86400000) + 1;
-  return { inicio, fin, diasTotales };
+  return { inicio, fin };
 }
 
 function diasTrabajadosEnSemestre(fechaIngreso: string, año: number, sem: number): number {
-  const { inicio, fin, diasTotales } = rangoDelSemestre(año, sem);
+  const { inicio, fin } = rangoDelSemestre(año, sem);
   const ing = parseYmd(fechaIngreso);
   if (ing > fin) return 0;
-  if (ing <= inicio) return diasTotales;
-  return Math.round((fin.getTime() - ing.getTime()) / 86400000) + 1;
+  if (ing <= inicio) return DIAS_SEMESTRE_LCT;
+  // Proporcional: días entre ingreso y fin de semestre, capeado a 180 (LCT)
+  const diasReales = Math.round((fin.getTime() - ing.getTime()) / 86400000) + 1;
+  return Math.min(diasReales, DIAS_SEMESTRE_LCT);
 }
 
 function vencimiento(año: number, sem: number): Date {
@@ -82,6 +101,11 @@ function nombreMes(periodo: string): string {
   ];
 }
 
+function periodoDePago(fechaPago: string): string {
+  // Devuelve 'YYYY-MM' a partir de un 'YYYY-MM-DD'
+  return fechaPago.slice(0, 7);
+}
+
 // ── Componente principal ────────────────────────────────────────────────────
 export function AguinaldoTab() {
   const qc = useQueryClient();
@@ -92,7 +116,7 @@ export function AguinaldoTab() {
   const [busqueda, setBusqueda] = useState('');
   const [modalFila, setModalFila] = useState<FilaAguinaldo | null>(null);
 
-  const meses = useMemo(() => mesesDelSemestre(año, semestre), [año, semestre]);
+  const mesesSemestre = useMemo(() => mesesDelSemestre(año, semestre), [año, semestre]);
 
   const { data: empleados } = useQuery({
     queryKey: ['empleados'],
@@ -103,15 +127,19 @@ export function AguinaldoTab() {
     },
   });
 
-  const { data: sueldos } = useQuery({
-    queryKey: ['sueldos-sac', año, semestre],
+  // El "mejor sueldo del semestre" se reconstruye sumando Q1+Q2 de cada mes
+  // a partir de pagos_sueldos reales (los que liquida el tab Sueldos).
+  // periodo en pagos_sueldos = 'YYYY-MM-Q1' | 'YYYY-MM-Q2'.
+  const { data: pagosSueldos } = useQuery({
+    queryKey: ['pagos_sueldos_sac', año, semestre],
     queryFn: async () => {
+      const periodos = mesesSemestre.flatMap((m) => [`${m}-Q1`, `${m}-Q2`]);
       const { data, error } = await supabase
-        .from('sueldos_mensuales')
-        .select('empleado_id, periodo, sueldo_recibo, plus_mano')
-        .in('periodo', meses);
+        .from('pagos_sueldos')
+        .select('empleado_id, periodo, monto')
+        .in('periodo', periodos);
       if (error) throw error;
-      return data as SueldoMensual[];
+      return (data ?? []) as PagoSueldo[];
     },
   });
 
@@ -128,35 +156,42 @@ export function AguinaldoTab() {
     },
   });
 
-  const upsertAguinaldo = useMutation({
-    mutationFn: async (
-      payload: Partial<Aguinaldo> & { empleado_id: string; anio: number; semestre: number },
-    ) => {
-      const { error } = await supabase
-        .from('aguinaldos')
-        .upsert(
-          { ...payload, updated_at: new Date().toISOString() },
-          { onConflict: 'empleado_id,anio,semestre' },
-        );
+  // Categoría 'Aguinaldo' (subcategoría dentro de 'Gastos de RRHH').
+  // Sembrada en migración 003.
+  const { data: categoriaAguinaldo } = useQuery({
+    queryKey: ['categoria_aguinaldo'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('categorias_gasto')
+        .select('id')
+        .eq('nombre', 'Aguinaldo')
+        .not('parent_id', 'is', null)
+        .maybeSingle();
       if (error) throw error;
+      return (data as { id: string } | null)?.id ?? null;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['aguinaldos'] }),
-    onError: (e: Error) => window.alert(`Error: ${e.message}`),
   });
 
   const eliminar = useMutation({
-    mutationFn: async (id: string) => {
-      const { error } = await supabase.from('aguinaldos').delete().eq('id', id);
+    mutationFn: async (registro: Aguinaldo) => {
+      // Si tenía gasto vinculado, lo cancelamos también
+      if (registro.gasto_id) {
+        await supabase.from('gastos').update({ cancelado: true }).eq('id', registro.gasto_id);
+      }
+      const { error } = await supabase.from('aguinaldos').delete().eq('id', registro.id);
       if (error) throw error;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['aguinaldos'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['aguinaldos'] });
+      qc.invalidateQueries({ queryKey: ['gastos'] });
+    },
     onError: (e: Error) => window.alert(`Error: ${e.message}`),
   });
 
-  const cargando = !empleados || !sueldos || !aguinaldos;
+  const cargando = !empleados || !pagosSueldos || !aguinaldos;
 
   const filas = useMemo<FilaAguinaldo[]>(() => {
-    if (!empleados || !sueldos || !aguinaldos) return [];
+    if (!empleados || !pagosSueldos || !aguinaldos) return [];
     const activos = empleados.filter((e) => e.activo && e.estado_laboral !== 'baja');
     const filtrados = activos.filter((e) => {
       if (filtroLocal === 'vedia' && e.local !== 'vedia') return false;
@@ -171,34 +206,39 @@ export function AguinaldoTab() {
 
     return filtrados
       .map((emp) => {
-        const sueldosEmp = sueldos.filter((s) => s.empleado_id === emp.id);
-        const mesesConSueldo = sueldosEmp.filter((s) => s.sueldo_recibo > 0).length;
+        // Sumar pagos por mes: monto_mes = Σ pagos (Q1 + Q2) de ese empleado en ese mes
+        const sueldoPorMes = new Map<string, number>();
+        for (const p of pagosSueldos) {
+          if (p.empleado_id !== emp.id) continue;
+          const mes = p.periodo.slice(0, 7); // 'YYYY-MM'
+          sueldoPorMes.set(mes, (sueldoPorMes.get(mes) ?? 0) + Number(p.monto || 0));
+        }
         let mejorSueldo = 0;
         let mesEnQueGano: string | null = null;
-        for (const s of sueldosEmp) {
-          if (s.sueldo_recibo > mejorSueldo) {
-            mejorSueldo = s.sueldo_recibo;
-            mesEnQueGano = s.periodo;
+        for (const [mes, monto] of sueldoPorMes) {
+          if (monto > mejorSueldo) {
+            mejorSueldo = monto;
+            mesEnQueGano = mes;
           }
         }
-        const { diasTotales } = rangoDelSemestre(año, semestre);
-        const diasTrabSemestre = diasTrabajadosEnSemestre(emp.fecha_ingreso, año, semestre);
-        const diasEfectivos = Math.min(diasTrabSemestre, diasTotales);
+        const mesesConSueldo = Array.from(sueldoPorMes.values()).filter((v) => v > 0).length;
+        const diasTrab = diasTrabajadosEnSemestre(emp.fecha_ingreso, año, semestre);
+        // Fórmula LCT art. 121: (mejor sueldo / 2) × (días trabajados / 180)
         const montoCalculado =
-          mejorSueldo > 0 ? (mejorSueldo / 2) * (diasEfectivos / diasTotales) : 0;
+          mejorSueldo > 0 ? (mejorSueldo / 2) * (diasTrab / DIAS_SEMESTRE_LCT) : 0;
         const registro = aguinaldos.find((a) => a.empleado_id === emp.id) || null;
         return {
           empleado: emp,
           mejorSueldo,
           mesEnQueGano,
           mesesConSueldo,
-          diasTrabajados: diasEfectivos,
+          diasTrabajados: diasTrab,
           montoCalculado,
           registro,
         };
       })
       .sort((a, b) => b.montoCalculado - a.montoCalculado);
-  }, [empleados, sueldos, aguinaldos, año, semestre, filtroLocal, busqueda]);
+  }, [empleados, pagosSueldos, aguinaldos, año, semestre, filtroLocal, busqueda]);
 
   const kpis = useMemo(() => {
     const con = filas.filter((f) => f.montoCalculado > 0);
@@ -215,20 +255,6 @@ export function AguinaldoTab() {
       elegibles: con.length,
     };
   }, [filas, año, semestre]);
-
-  function marcarPagado(fila: FilaAguinaldo) {
-    upsertAguinaldo.mutate({
-      empleado_id: fila.empleado.id,
-      anio: año,
-      semestre,
-      mejor_sueldo: fila.mejorSueldo,
-      dias_trabajados: fila.diasTrabajados,
-      monto_calculado: fila.montoCalculado,
-      monto_pagado: fila.montoCalculado,
-      pagado: true,
-      fecha_pago: ymd(new Date()),
-    } as any);
-  }
 
   return (
     <div className="space-y-4">
@@ -370,7 +396,7 @@ export function AguinaldoTab() {
                       {f.mesEnQueGano ? nombreMes(f.mesEnQueGano) : '—'}
                     </td>
                     <td className="px-2 py-2 text-center text-xs text-gray-500">
-                      {f.diasTrabajados} / {rangoDelSemestre(año, semestre).diasTotales}
+                      {f.diasTrabajados} / {DIAS_SEMESTRE_LCT}
                       {f.mesesConSueldo < 6 && f.mesesConSueldo > 0 && (
                         <div className="text-[10px] text-gray-400">
                           {f.mesesConSueldo} mes{f.mesesConSueldo !== 1 ? 'es' : ''} c/sueldo
@@ -394,27 +420,25 @@ export function AguinaldoTab() {
                       )}
                     </td>
                     <td className="space-x-1 whitespace-nowrap px-4 py-2 text-right">
-                      {!sinDatos && !pagado && (
-                        <button
-                          onClick={() => marcarPagado(f)}
-                          className="rounded bg-green-600 px-2 py-1 text-[10px] text-white hover:bg-green-700"
-                        >
-                          Marcar pagado
-                        </button>
-                      )}
                       {!sinDatos && (
                         <button
                           onClick={() => setModalFila(f)}
-                          className="text-[10px] text-rodziny-600 hover:text-rodziny-800"
+                          className="rounded bg-rodziny-600 px-2 py-1 text-[10px] text-white hover:bg-rodziny-700"
                         >
-                          Editar
+                          {pagado ? 'Editar' : 'Marcar pagado'}
                         </button>
                       )}
                       {f.registro && (
                         <button
                           onClick={() => {
-                            if (window.confirm('¿Borrar el registro de aguinaldo?'))
-                              eliminar.mutate(f.registro!.id);
+                            if (
+                              window.confirm(
+                                f.registro!.gasto_id
+                                  ? '¿Borrar el registro? El gasto asociado se cancelará.'
+                                  : '¿Borrar el registro de aguinaldo?',
+                              )
+                            )
+                              eliminar.mutate(f.registro!);
                           }}
                           className="text-[10px] text-red-500 hover:text-red-700"
                         >
@@ -447,9 +471,11 @@ export function AguinaldoTab() {
           fila={modalFila}
           año={año}
           semestre={semestre}
+          categoriaAguinaldoId={categoriaAguinaldo ?? null}
           onClose={() => setModalFila(null)}
           onSaved={() => {
             qc.invalidateQueries({ queryKey: ['aguinaldos'] });
+            qc.invalidateQueries({ queryKey: ['gastos'] });
             setModalFila(null);
           }}
         />
@@ -463,19 +489,24 @@ function ModalAguinaldo({
   fila,
   año,
   semestre,
+  categoriaAguinaldoId,
   onClose,
   onSaved,
 }: {
   fila: FilaAguinaldo;
   año: number;
   semestre: number;
+  categoriaAguinaldoId: string | null;
   onClose: () => void;
   onSaved: () => void;
 }) {
   const r = fila.registro;
   const [montoPagado, setMontoPagado] = useState(r?.monto_pagado ?? fila.montoCalculado);
-  const [pagado, setPagado] = useState(r?.pagado ?? false);
+  const [pagado, setPagado] = useState(r?.pagado ?? true); // default true: abrir el modal ya implica querer marcar
   const [fechaPago, setFechaPago] = useState(r?.fecha_pago ?? ymd(new Date()));
+  const [medioPago, setMedioPago] = useState<MedioPagoGasto>(
+    (r?.medio_pago as MedioPagoGasto) ?? 'transferencia_mp',
+  );
   const [notas, setNotas] = useState(r?.notas ?? '');
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -484,7 +515,64 @@ function ModalAguinaldo({
     setError(null);
     setGuardando(true);
     try {
-      const { error: err } = await supabase.from('aguinaldos').upsert(
+      let gastoIdFinal: string | null = r?.gasto_id ?? null;
+
+      // ── Sincronizar gasto en Finanzas ────────────────────────────────────
+      if (pagado) {
+        if (!categoriaAguinaldoId) {
+          throw new Error("No se encontró la categoría 'Aguinaldo' en categorías_gasto.");
+        }
+        const periodoGasto = periodoDePago(fechaPago);
+        const proveedorTxt = `${fila.empleado.apellido}, ${fila.empleado.nombre}`;
+        const comentarioTxt = `Aguinaldo ${semestre}° sem ${año} · ${proveedorTxt}`;
+        const payloadGasto = {
+          local: null as string | null, // 'Ambos' / empresa
+          fecha: fechaPago,
+          importe_total: montoPagado,
+          importe_neto: montoPagado,
+          iva: 0,
+          iibb: 0,
+          proveedor: proveedorTxt,
+          categoria: 'Aguinaldo',
+          subcategoria: 'Aguinaldo',
+          categoria_id: categoriaAguinaldoId,
+          estado_pago: 'Pagado',
+          medio_pago: medioPago,
+          comentario: comentarioTxt,
+          creado_manual: true,
+          cancelado: false,
+          periodo: periodoGasto,
+        };
+
+        if (gastoIdFinal) {
+          // Actualizar gasto existente
+          const { error: errUpd } = await supabase
+            .from('gastos')
+            .update(payloadGasto)
+            .eq('id', gastoIdFinal);
+          if (errUpd) throw errUpd;
+        } else {
+          // Crear gasto nuevo
+          const { data: nuevo, error: errIns } = await supabase
+            .from('gastos')
+            .insert(payloadGasto)
+            .select('id')
+            .single();
+          if (errIns) throw errIns;
+          gastoIdFinal = (nuevo as { id: string }).id;
+        }
+      } else if (gastoIdFinal) {
+        // Se desmarca pagado → cancelar gasto vinculado (no lo borramos para mantener historial)
+        const { error: errCancel } = await supabase
+          .from('gastos')
+          .update({ cancelado: true })
+          .eq('id', gastoIdFinal);
+        if (errCancel) throw errCancel;
+        gastoIdFinal = null;
+      }
+
+      // ── Upsert del aguinaldo ─────────────────────────────────────────────
+      const { error: errAg } = await supabase.from('aguinaldos').upsert(
         {
           empleado_id: fila.empleado.id,
           anio: año,
@@ -492,15 +580,18 @@ function ModalAguinaldo({
           mejor_sueldo: fila.mejorSueldo,
           dias_trabajados: fila.diasTrabajados,
           monto_calculado: fila.montoCalculado,
-          monto_pagado: montoPagado || null,
+          monto_pagado: pagado ? montoPagado : null,
           pagado,
           fecha_pago: pagado ? fechaPago : null,
+          medio_pago: pagado ? medioPago : null,
+          gasto_id: gastoIdFinal,
           notas: notas || null,
           updated_at: new Date().toISOString(),
         },
         { onConflict: 'empleado_id,anio,semestre' },
       );
-      if (err) throw err;
+      if (errAg) throw errAg;
+
       onSaved();
     } catch (e: any) {
       setError(e.message || 'Error al guardar.');
@@ -531,7 +622,9 @@ function ModalAguinaldo({
             </div>
             <div>
               Días trabajados:{' '}
-              <span className="font-semibold text-gray-900">{fila.diasTrabajados}</span>
+              <span className="font-semibold text-gray-900">
+                {fila.diasTrabajados} / {DIAS_SEMESTRE_LCT}
+              </span>
             </div>
             <div>
               SAC teórico:{' '}
@@ -548,7 +641,10 @@ function ModalAguinaldo({
                 onChange={(e) => setPagado(e.target.checked)}
                 className="h-4 w-4"
               />
-              Pagado
+              Pagado{' '}
+              <span className="text-[11px] text-gray-400">
+                (al guardar crea un gasto en Finanzas)
+              </span>
             </label>
           </div>
           {pagado && (
@@ -563,6 +659,22 @@ function ModalAguinaldo({
                   onChange={(e) => setMontoPagado(Number(e.target.value))}
                   className="w-full rounded border border-gray-300 px-3 py-1.5 text-sm"
                 />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-600">
+                  Medio de pago
+                </label>
+                <select
+                  value={medioPago}
+                  onChange={(e) => setMedioPago(e.target.value as MedioPagoGasto)}
+                  className="w-full rounded border border-gray-300 px-3 py-1.5 text-sm"
+                >
+                  {MEDIO_PAGO_OPCIONES.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
               </div>
               <div>
                 <label className="mb-1 block text-xs font-medium text-gray-600">
@@ -587,6 +699,11 @@ function ModalAguinaldo({
             />
           </div>
           {error && <div className="rounded bg-red-50 px-3 py-2 text-xs text-red-600">{error}</div>}
+          {r?.gasto_id && (
+            <div className="rounded bg-blue-50 px-3 py-2 text-[11px] text-blue-700">
+              Hay un gasto vinculado en Finanzas — se actualizará al guardar.
+            </div>
+          )}
         </div>
         <div className="flex justify-end gap-2 border-t border-gray-100 px-6 py-3">
           <button
@@ -597,7 +714,7 @@ function ModalAguinaldo({
           </button>
           <button
             onClick={guardar}
-            disabled={guardando}
+            disabled={guardando || (pagado && !categoriaAguinaldoId)}
             className="rounded bg-rodziny-600 px-4 py-1.5 text-sm text-white hover:bg-rodziny-700 disabled:opacity-50"
           >
             {guardando ? 'Guardando...' : 'Guardar'}
