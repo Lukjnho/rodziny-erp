@@ -1048,6 +1048,19 @@ const CATALOGO_TIPOS_VEDIA: { tipo: string; titulo: string }[] = [
   { tipo: 'postre', titulo: '🍰 Postres' },
 ];
 
+// Sumar floats acumula residuos binarios (0.205 + 0.5 = 0.7050000000000001).
+// En kg eso se ve crudo (319.57500000000005); para enteros (porciones/unidades) no
+// queremos arrastrar ",000". Redondeo al gramo y formateo según unidad.
+function formatStock(valor: number, unidad: string): string {
+  if (unidad === 'kg') {
+    return valor.toLocaleString('es-AR', {
+      minimumFractionDigits: 3,
+      maximumFractionDigits: 3,
+    });
+  }
+  return Math.round(valor).toLocaleString('es-AR');
+}
+
 function CatalogoStock({
   productos,
   local,
@@ -1152,7 +1165,9 @@ function CatalogoStock({
                       >
                         <td className="px-4 py-2 font-medium">{p.nombre}</td>
                         <td className="px-4 py-2 font-mono text-xs">{p.codigo}</td>
-                        <td className="px-4 py-2 text-right font-semibold">{stock}</td>
+                        <td className="px-4 py-2 text-right font-semibold tabular-nums">
+                          {formatStock(stock, p.unidad)}
+                        </td>
                         <td className="px-4 py-2 text-gray-500">{p.unidad}</td>
                         <td className="px-4 py-2">{min || '—'}</td>
                         <td className="px-4 py-2">
