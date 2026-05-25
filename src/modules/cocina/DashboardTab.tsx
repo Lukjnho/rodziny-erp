@@ -1082,57 +1082,41 @@ export function DashboardTab() {
     },
   });
 
-  // ── Query: stock de salsas/postres derivado de cocina_lotes_produccion ──
-  // Agrupa lotes activos por receta y aplica override manual si está pesada la batea.
-  // Reemplaza al viejo cocina_conteo_stock — fuente única con StockProduccionSection.
-  const { data: stockSalsasPostres } = useQuery({
+  // ── Query: lotes activos de cocina_lotes_produccion (raw, sin agregar) ──
+  // Devuelve lotes con datos de receta necesarios para el FIFO con descuento Fudo.
+  // El cálculo final del stock vive en `stockSalsasPostres` (useMemo abajo).
+  type LoteProdRaw = {
+    id: string;
+    fecha: string;
+    categoria: string;
+    receta_id: string | null;
+    nombre_libre: string | null;
+    cantidad_producida: number;
+    unidad: 'kg' | 'unid' | 'lt';
+    merma_cantidad: number | null;
+    cantidad_restante_manual: number | null;
+    created_at: string;
+    receta?: {
+      id: string;
+      nombre: string;
+      tipo: 'receta' | 'subreceta';
+      gramos_por_porcion: number | null;
+      fudo_productos: string[] | null;
+    } | null;
+  };
+  const { data: lotesProduccionRaw } = useQuery({
     queryKey: ['cocina_stock_salsas_postres', local],
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cocina_lotes_produccion')
         .select(
-          'id, fecha, categoria, receta_id, nombre_libre, cantidad_producida, unidad, merma_cantidad, cantidad_restante_manual, created_at, receta:cocina_recetas(id, nombre)',
+          'id, fecha, categoria, receta_id, nombre_libre, cantidad_producida, unidad, merma_cantidad, cantidad_restante_manual, created_at, receta:cocina_recetas(id, nombre, tipo, gramos_por_porcion, fudo_productos)',
         )
         .eq('local', local)
-        .eq('en_stock', true);
+        .eq('en_stock', true)
+        .order('created_at'); // FIFO: del más viejo al más nuevo
       if (error) throw error;
-
-      const porNombre = new Map<string, StockPorReceta>();
-      type Row = {
-        id: string;
-        fecha: string;
-        categoria: string;
-        receta_id: string | null;
-        nombre_libre: string | null;
-        cantidad_producida: number;
-        unidad: 'kg' | 'unid' | 'lt';
-        merma_cantidad: number | null;
-        cantidad_restante_manual: number | null;
-        created_at: string;
-        receta?: { id: string; nombre: string } | null;
-      };
-      for (const r of (data ?? []) as unknown as Row[]) {
-        const nombre = r.receta?.nombre ?? r.nombre_libre ?? '';
-        if (!nombre) continue;
-        const restante =
-          r.cantidad_restante_manual != null
-            ? Number(r.cantidad_restante_manual)
-            : Math.max(0, Number(r.cantidad_producida) - Number(r.merma_cantidad ?? 0));
-        const key = normNombre(nombre);
-        const prev = porNombre.get(key);
-        if (!prev) {
-          porNombre.set(key, {
-            cantidad: restante,
-            unidad: r.unidad,
-            fecha: r.fecha,
-            recetaId: r.receta_id,
-          });
-        } else {
-          prev.cantidad += restante;
-          if (r.fecha > prev.fecha) prev.fecha = r.fecha;
-        }
-      }
-      return porNombre;
+      return (data ?? []) as unknown as LoteProdRaw[];
     },
   });
 
@@ -1167,6 +1151,102 @@ export function DashboardTab() {
     },
     staleTime: 10 * 60 * 1000,
   });
+
+  // ── Stock final con FIFO + descuento de ventas Fudo ──────────────────────
+  // Mismo modelo que StockProduccionSection: agrupa lotes por receta, calcula
+  // consumo proyectado (ventas Fudo × g/porción si kg, ventas × 1 si unidades) y
+  // descuenta del lote más viejo al más nuevo. Si la batea fue pesada
+  // (cantidad_restante_manual != null), ese valor manda sobre el cálculo FIFO.
+  //
+  // Antes el Dashboard sumaba `cantidad_producida` cruda y los postres se veían
+  // acumulados (Flan 201u, Tiramisú 182u, etc.) porque el modelo aditivo nunca
+  // descontaba ventas. Las salsas zafaban porque el QR Salsa hace overwrite.
+  const stockSalsasPostres = useMemo<Map<string, StockPorReceta> | null>(() => {
+    if (!lotesProduccionRaw) return null;
+
+    // 1) Agrupar lotes por receta (key = receta_id o nombre_libre normalizado)
+    const porReceta = new Map<
+      string,
+      { lotes: LoteProdRaw[]; nombre: string; recetaId: string | null }
+    >();
+    for (const l of lotesProduccionRaw) {
+      // Subrecetas (ej. Pomodoro Base) son insumos internos, no producto final
+      if (l.receta?.tipo === 'subreceta') continue;
+      const nombre = l.receta?.nombre ?? l.nombre_libre ?? '';
+      if (!nombre) continue;
+      const key = l.receta_id ?? `libre:${nombre}`;
+      const prev = porReceta.get(key);
+      if (!prev)
+        porReceta.set(key, { lotes: [l], nombre, recetaId: l.receta_id });
+      else prev.lotes.push(l);
+    }
+
+    // 2) Ventas Fudo por nombre normalizado (para auto-match e override manual)
+    const rankingByNombre = new Map<string, number>();
+    for (const p of fudoData?.ranking ?? [])
+      rankingByNombre.set(p.nombre.toLowerCase(), p.cantidad);
+    const productosFudoList = fudoData?.ranking ?? [];
+
+    // 3) FIFO por receta
+    const out = new Map<string, StockPorReceta>();
+    for (const [, grp] of porReceta) {
+      const receta = grp.lotes[0].receta;
+      const gramosPorcion = receta?.gramos_por_porcion ?? null;
+      const unidadBatch = grp.lotes[0].unidad;
+      const nombreReceta = grp.nombre.toLowerCase().trim();
+
+      // Productos Fudo: override manual si existe, si no auto-match por nombre
+      const fudoManual = receta?.fudo_productos ?? [];
+      let fudoNombres: string[] = [];
+      if (fudoManual.length > 0) {
+        fudoNombres = fudoManual;
+      } else if (nombreReceta.length >= 3) {
+        fudoNombres = productosFudoList
+          .filter((p) => p.nombre.toLowerCase().includes(nombreReceta))
+          .map((p) => p.nombre);
+      }
+
+      // Consumo proyectado en la misma unidad que los lotes
+      let ventasAsociadas = 0;
+      for (const n of fudoNombres)
+        ventasAsociadas += rankingByNombre.get(n.toLowerCase()) ?? 0;
+      let consumoRestante: number;
+      if (gramosPorcion && (unidadBatch === 'kg' || unidadBatch === 'lt')) {
+        consumoRestante = (ventasAsociadas * gramosPorcion) / 1000;
+      } else {
+        consumoRestante = ventasAsociadas;
+      }
+
+      // FIFO: descontar del más viejo al más nuevo. La query ya viene ordenada
+      // por created_at, así que basta con iterar en orden.
+      let totalRestante = 0;
+      let fechaMax = grp.lotes[0].fecha;
+      for (const l of grp.lotes) {
+        const disponibleBruto = Math.max(
+          0,
+          Number(l.cantidad_producida) - Number(l.merma_cantidad ?? 0),
+        );
+        const consumidoFifo = Math.min(Math.max(0, consumoRestante), disponibleBruto);
+        consumoRestante = Math.max(0, consumoRestante - consumidoFifo);
+        const restanteCalc = Math.max(0, disponibleBruto - consumidoFifo);
+        // Override manual: si pesaron la batea, ese valor manda sobre el FIFO
+        const restanteReal =
+          l.cantidad_restante_manual != null
+            ? Number(l.cantidad_restante_manual)
+            : restanteCalc;
+        totalRestante += restanteReal;
+        if (l.fecha > fechaMax) fechaMax = l.fecha;
+      }
+
+      out.set(normNombre(grp.nombre), {
+        cantidad: totalRestante,
+        unidad: unidadBatch,
+        fecha: fechaMax,
+        recetaId: grp.recetaId,
+      });
+    }
+    return out;
+  }, [lotesProduccionRaw, fudoData]);
 
   // ── Query: ventas de la VENTANA reciente (configurable: 1/3/7 días) ──
   // Termina ayer (no incluye hoy porque el día está incompleto).
