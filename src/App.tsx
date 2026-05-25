@@ -47,6 +47,9 @@ const ProductosPage = lazy(() =>
 const DashboardPage = lazy(() =>
   import('@/modules/dashboard/DashboardPage').then((m) => ({ default: m.DashboardPage })),
 );
+const AgendaPage = lazy(() =>
+  import('@/modules/agenda/AgendaPage').then((m) => ({ default: m.AgendaPage })),
+);
 
 const qc = new QueryClient({ defaultOptions: { queries: { staleTime: 1000 * 60 * 2 } } });
 
@@ -136,9 +139,11 @@ function AppInterna() {
               ? '/almacen'
               : tienePermiso('productos')
                 ? '/productos'
-                : tienePermiso('usuarios')
-                  ? '/usuarios'
-                  : null;
+                : tienePermiso('agenda')
+                  ? '/agenda'
+                  : tienePermiso('usuarios')
+                    ? '/usuarios'
+                    : null;
 
   return (
     <div className="flex min-h-screen">
@@ -207,6 +212,14 @@ function AppInterna() {
               element={
                 <Ruta modulo="productos">
                   <ProductosPage />
+                </Ruta>
+              }
+            />
+            <Route
+              path="/agenda"
+              element={
+                <Ruta modulo="agenda">
+                  <AgendaPage />
                 </Ruta>
               }
             />

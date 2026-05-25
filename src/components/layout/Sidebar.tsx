@@ -15,6 +15,7 @@ const NAV: { to: string; label: string; icon: string; modulo: Modulo | 'finanzas
   { to: '/cocina', label: 'Cocina', icon: '🍝', modulo: 'cocina' },
   { to: '/almacen', label: 'Almacén', icon: '🏪', modulo: 'almacen' },
   { to: '/productos', label: 'Productos', icon: '🏷️', modulo: 'productos' },
+  { to: '/agenda', label: 'Agenda', icon: '📅', modulo: 'agenda' },
   { to: '/usuarios', label: 'Usuarios', icon: '🔑', modulo: 'usuarios' },
 ];
 
