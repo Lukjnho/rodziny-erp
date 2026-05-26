@@ -27,6 +27,7 @@ interface LotePasta {
   ubicacion: 'freezer_produccion' | 'camara_congelado';
   fecha: string; // YYYY-MM-DD — para alertar si una bandeja lleva 3+ días en freezer
   created_at: string; // timestamp — para el indicador "última carga" del header
+  responsable: string | null; // nombre cargado en el QR de Producción
 }
 interface Traspaso {
   producto_id: string;
@@ -128,28 +129,36 @@ function horasDesde(date: Date): number {
   return (Date.now() - date.getTime()) / (1000 * 60 * 60);
 }
 
+interface UltimaCargaInfo {
+  fecha: string;
+  responsable: string | null;
+}
+
 // Indicador "última carga" para el header de cada categoría del tab Stock.
 // - Sin cargas → texto rojo
 // - >24h sin carga → rojo + ⚠
 // - ≤24h → gris claro
+// Si hay responsable cargado en el QR, se suma con "· <nombre>".
 // Tooltip nativo (title) con la fecha+hora absoluta para verificar puntual.
-function UltimaCarga({ fecha }: { fecha: string | null }) {
-  if (!fecha) {
+function UltimaCarga({ info }: { info: UltimaCargaInfo | null }) {
+  if (!info) {
     return (
       <span className="ml-2 text-xs font-medium text-red-500">⚠ Sin cargas</span>
     );
   }
-  const d = new Date(fecha);
+  const d = new Date(info.fecha);
   const vieja = horasDesde(d) > HORAS_CARGA_VIEJA;
+  const responsable = info.responsable?.trim() || null;
   return (
     <span
       className={cn(
         'ml-2 text-xs font-normal',
         vieja ? 'font-medium text-red-600' : 'text-gray-400',
       )}
-      title={`Última carga: ${formatTiempoAbsoluto(d)}`}
+      title={`Última carga: ${formatTiempoAbsoluto(d)}${responsable ? ` · ${responsable}` : ''}`}
     >
       última carga {formatTiempoRelativo(d)}
+      {responsable && <> · {responsable}</>}
       {vieja && ' ⚠'}
     </span>
   );
@@ -298,7 +307,9 @@ export function StockTab() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cocina_lotes_pasta')
-        .select('producto_id, porciones, cantidad_cajones, local, ubicacion, fecha, created_at');
+        .select(
+          'producto_id, porciones, cantidad_cajones, local, ubicacion, fecha, created_at, responsable',
+        );
       if (error) throw error;
       return data as LotePasta[];
     },
@@ -476,14 +487,14 @@ export function StockTab() {
     !productos || !lotesPasta || !traspasos || !mermas || !traspasosHoy || !mermasHoy;
 
   // Última carga de pastas en el local activo (MAX created_at). null si no hay lotes.
-  const ultimaCargaPastas = useMemo(() => {
+  const ultimaCargaPastas = useMemo<UltimaCargaInfo | null>(() => {
     if (!lotesPasta) return null;
-    let max: string | null = null;
+    let best: LotePasta | null = null;
     for (const l of lotesPasta) {
       if (l.local !== filtroLocal) continue;
-      if (!max || l.created_at > max) max = l.created_at;
+      if (!best || l.created_at > best.created_at) best = l;
     }
-    return max;
+    return best ? { fecha: best.created_at, responsable: best.responsable } : null;
   }, [lotesPasta, filtroLocal]);
 
   // Calcular stock por producto × local
@@ -785,7 +796,7 @@ export function StockTab() {
             <h3 className="text-base font-semibold text-gray-800">
               🍝 Pastas{' '}
               <span className="text-sm font-normal capitalize text-gray-500">· {locKey}</span>
-              <UltimaCarga fecha={ultimaCargaPastas} />
+              <UltimaCarga info={ultimaCargaPastas} />
             </h3>
             <div className="overflow-x-auto rounded-lg border border-surface-border bg-white">
               <table className="w-full text-sm">
@@ -1176,6 +1187,7 @@ interface LoteProdCatalogo {
   cantidad_producida: number;
   merma_cantidad: number | null;
   created_at: string;
+  responsable: string | null;
 }
 
 const CATALOGO_TIPOS_SAAVEDRA: { tipo: string; titulo: string }[] = [
@@ -1223,7 +1235,9 @@ function CatalogoStock({
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cocina_lotes_produccion')
-        .select('receta_id, nombre_libre, categoria, cantidad_producida, merma_cantidad, created_at')
+        .select(
+          'receta_id, nombre_libre, categoria, cantidad_producida, merma_cantidad, created_at, responsable',
+        )
         .eq('local', local)
         .eq('en_stock', true);
       if (error) throw error;
@@ -1265,14 +1279,17 @@ function CatalogoStock({
   // Última carga por tipo (MAX created_at de lotes en stock cuya `categoria`
   // matchea el tipo del catálogo). Si no hay lotes para ese tipo → null.
   const ultimaCargaPorTipo = useMemo(() => {
-    const m = new Map<string, string | null>();
+    const m = new Map<string, UltimaCargaInfo | null>();
     for (const { tipo } of tipos) {
-      let max: string | null = null;
+      let best: LoteProdCatalogo | null = null;
       for (const l of lotes ?? []) {
         if (l.categoria !== tipo) continue;
-        if (!max || l.created_at > max) max = l.created_at;
+        if (!best || l.created_at > best.created_at) best = l;
       }
-      m.set(tipo, max);
+      m.set(
+        tipo,
+        best ? { fecha: best.created_at, responsable: best.responsable } : null,
+      );
     }
     return m;
   }, [lotes, tipos]);
@@ -1291,7 +1308,7 @@ function CatalogoStock({
               <span className="text-sm font-normal capitalize text-gray-500">
                 · {local}
               </span>
-              <UltimaCarga fecha={ultimaCargaPorTipo.get(tipo) ?? null} />
+              <UltimaCarga info={ultimaCargaPorTipo.get(tipo) ?? null} />
             </h3>
             <div className="overflow-x-auto rounded-lg border border-surface-border bg-white">
               <table className="w-full text-sm">
