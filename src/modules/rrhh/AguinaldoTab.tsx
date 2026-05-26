@@ -7,12 +7,6 @@ import type { Empleado } from './RRHHPage';
 import { parseYmd, ymd, normalizarTexto } from './utils';
 
 // ── Tipos ────────────────────────────────────────────────────────────────────
-interface PagoSueldo {
-  empleado_id: string;
-  periodo: string; // 'YYYY-MM-Q1' | 'YYYY-MM-Q2'
-  monto: number;
-}
-
 type MedioPagoGasto =
   | 'transferencia_mp'
   | 'transferencia_galicia'
@@ -47,9 +41,7 @@ interface Aguinaldo {
 
 interface FilaAguinaldo {
   empleado: Empleado;
-  mejorSueldo: number;
-  mesEnQueGano: string | null; // 'YYYY-MM'
-  mesesConSueldo: number;
+  sueldoLegajo: number;
   diasTrabajados: number;
   montoCalculado: number;
   registro: Aguinaldo | null;
@@ -59,14 +51,6 @@ interface FilaAguinaldo {
 const DIAS_SEMESTRE_LCT = 180;
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
-function mesesDelSemestre(año: number, sem: number): string[] {
-  const start = sem === 1 ? 0 : 6;
-  return Array.from({ length: 6 }, (_, i) => {
-    const m = start + i;
-    return `${año}-${String(m + 1).padStart(2, '0')}`;
-  });
-}
-
 function rangoDelSemestre(año: number, sem: number): { inicio: Date; fin: Date } {
   const inicio = sem === 1 ? new Date(año, 0, 1) : new Date(año, 6, 1);
   const fin = sem === 1 ? new Date(año, 5, 30) : new Date(año, 11, 31);
@@ -94,13 +78,6 @@ function diasAlVencimiento(año: number, sem: number): number {
   return Math.round((v.getTime() - hoy.getTime()) / 86400000);
 }
 
-function nombreMes(periodo: string): string {
-  const [, m] = periodo.split('-').map(Number);
-  return ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'][
-    m - 1
-  ];
-}
-
 function periodoDePago(fechaPago: string): string {
   // Devuelve 'YYYY-MM' a partir de un 'YYYY-MM-DD'
   return fechaPago.slice(0, 7);
@@ -116,30 +93,12 @@ export function AguinaldoTab() {
   const [busqueda, setBusqueda] = useState('');
   const [modalFila, setModalFila] = useState<FilaAguinaldo | null>(null);
 
-  const mesesSemestre = useMemo(() => mesesDelSemestre(año, semestre), [año, semestre]);
-
   const { data: empleados } = useQuery({
     queryKey: ['empleados'],
     queryFn: async () => {
       const { data, error } = await supabase.from('empleados').select('*').order('apellido');
       if (error) throw error;
       return data as Empleado[];
-    },
-  });
-
-  // El "mejor sueldo del semestre" se reconstruye sumando Q1+Q2 de cada mes
-  // a partir de pagos_sueldos reales (los que liquida el tab Sueldos).
-  // periodo en pagos_sueldos = 'YYYY-MM-Q1' | 'YYYY-MM-Q2'.
-  const { data: pagosSueldos } = useQuery({
-    queryKey: ['pagos_sueldos_sac', año, semestre],
-    queryFn: async () => {
-      const periodos = mesesSemestre.flatMap((m) => [`${m}-Q1`, `${m}-Q2`]);
-      const { data, error } = await supabase
-        .from('pagos_sueldos')
-        .select('empleado_id, periodo, monto')
-        .in('periodo', periodos);
-      if (error) throw error;
-      return (data ?? []) as PagoSueldo[];
     },
   });
 
@@ -188,10 +147,10 @@ export function AguinaldoTab() {
     onError: (e: Error) => window.alert(`Error: ${e.message}`),
   });
 
-  const cargando = !empleados || !pagosSueldos || !aguinaldos;
+  const cargando = !empleados || !aguinaldos;
 
   const filas = useMemo<FilaAguinaldo[]>(() => {
-    if (!empleados || !pagosSueldos || !aguinaldos) return [];
+    if (!empleados || !aguinaldos) return [];
     const activos = empleados.filter((e) => e.activo && e.estado_laboral !== 'baja');
     const filtrados = activos.filter((e) => {
       if (filtroLocal === 'vedia' && e.local !== 'vedia') return false;
@@ -206,39 +165,22 @@ export function AguinaldoTab() {
 
     return filtrados
       .map((emp) => {
-        // Sumar pagos por mes: monto_mes = Σ pagos (Q1 + Q2) de ese empleado en ese mes
-        const sueldoPorMes = new Map<string, number>();
-        for (const p of pagosSueldos) {
-          if (p.empleado_id !== emp.id) continue;
-          const mes = p.periodo.slice(0, 7); // 'YYYY-MM'
-          sueldoPorMes.set(mes, (sueldoPorMes.get(mes) ?? 0) + Number(p.monto || 0));
-        }
-        let mejorSueldo = 0;
-        let mesEnQueGano: string | null = null;
-        for (const [mes, monto] of sueldoPorMes) {
-          if (monto > mejorSueldo) {
-            mejorSueldo = monto;
-            mesEnQueGano = mes;
-          }
-        }
-        const mesesConSueldo = Array.from(sueldoPorMes.values()).filter((v) => v > 0).length;
+        const sueldoLegajo = Number(emp.sueldo_neto || 0);
         const diasTrab = diasTrabajadosEnSemestre(emp.fecha_ingreso, año, semestre);
-        // Fórmula LCT art. 121: (mejor sueldo / 2) × (días trabajados / 180)
+        // Fórmula LCT art. 121 simplificada: (sueldo del legajo / 2) × (días / 180)
         const montoCalculado =
-          mejorSueldo > 0 ? (mejorSueldo / 2) * (diasTrab / DIAS_SEMESTRE_LCT) : 0;
+          sueldoLegajo > 0 ? (sueldoLegajo / 2) * (diasTrab / DIAS_SEMESTRE_LCT) : 0;
         const registro = aguinaldos.find((a) => a.empleado_id === emp.id) || null;
         return {
           empleado: emp,
-          mejorSueldo,
-          mesEnQueGano,
-          mesesConSueldo,
+          sueldoLegajo,
           diasTrabajados: diasTrab,
           montoCalculado,
           registro,
         };
       })
       .sort((a, b) => b.montoCalculado - a.montoCalculado);
-  }, [empleados, pagosSueldos, aguinaldos, año, semestre, filtroLocal, busqueda]);
+  }, [empleados, aguinaldos, año, semestre, filtroLocal, busqueda]);
 
   const kpis = useMemo(() => {
     const con = filas.filter((f) => f.montoCalculado > 0);
@@ -346,8 +288,7 @@ export function AguinaldoTab() {
           <thead className="bg-gray-50 text-xs uppercase text-gray-500">
             <tr>
               <th className="px-4 py-2 text-left">Empleado</th>
-              <th className="px-2 py-2 text-right">Mejor sueldo</th>
-              <th className="px-2 py-2 text-center">Mes</th>
+              <th className="px-2 py-2 text-right">Sueldo legajo</th>
               <th className="px-2 py-2 text-center">Días trabajados</th>
               <th className="px-2 py-2 text-right">SAC teórico</th>
               <th className="px-2 py-2 text-center">Estado</th>
@@ -357,14 +298,14 @@ export function AguinaldoTab() {
           <tbody>
             {cargando && (
               <tr>
-                <td colSpan={7} className="py-8 text-center text-gray-400">
+                <td colSpan={6} className="py-8 text-center text-gray-400">
                   Cargando...
                 </td>
               </tr>
             )}
             {!cargando && filas.length === 0 && (
               <tr>
-                <td colSpan={7} className="py-8 text-center text-gray-400">
+                <td colSpan={6} className="py-8 text-center text-gray-400">
                   Sin empleados
                 </td>
               </tr>
@@ -390,18 +331,10 @@ export function AguinaldoTab() {
                       </div>
                     </td>
                     <td className="px-2 py-2 text-right text-gray-700">
-                      {f.mejorSueldo > 0 ? formatARS(f.mejorSueldo) : '—'}
-                    </td>
-                    <td className="px-2 py-2 text-center text-xs text-gray-500">
-                      {f.mesEnQueGano ? nombreMes(f.mesEnQueGano) : '—'}
+                      {f.sueldoLegajo > 0 ? formatARS(f.sueldoLegajo) : '—'}
                     </td>
                     <td className="px-2 py-2 text-center text-xs text-gray-500">
                       {f.diasTrabajados} / {DIAS_SEMESTRE_LCT}
-                      {f.mesesConSueldo < 6 && f.mesesConSueldo > 0 && (
-                        <div className="text-[10px] text-gray-400">
-                          {f.mesesConSueldo} mes{f.mesesConSueldo !== 1 ? 'es' : ''} c/sueldo
-                        </div>
-                      )}
                     </td>
                     <td className="px-2 py-2 text-right font-semibold text-gray-900">
                       {sinDatos ? '—' : formatARS(f.montoCalculado)}
@@ -412,7 +345,7 @@ export function AguinaldoTab() {
                           ✓ Pagado
                         </span>
                       ) : sinDatos ? (
-                        <span className="text-[10px] text-gray-400">sin sueldos</span>
+                        <span className="text-[10px] text-gray-400">sin sueldo en legajo</span>
                       ) : (
                         <span className="rounded bg-yellow-100 px-1.5 py-0.5 text-[10px] font-medium text-yellow-700">
                           Pendiente
@@ -453,7 +386,7 @@ export function AguinaldoTab() {
           {!cargando && filas.some((f) => f.montoCalculado > 0) && (
             <tfoot className="bg-gray-50 text-sm">
               <tr className="border-t border-gray-200">
-                <td colSpan={4} className="px-4 py-2 text-right font-semibold text-gray-700">
+                <td colSpan={3} className="px-4 py-2 text-right font-semibold text-gray-700">
                   TOTAL
                 </td>
                 <td className="px-2 py-2 text-right font-bold text-rodziny-700">
@@ -577,7 +510,7 @@ function ModalAguinaldo({
           empleado_id: fila.empleado.id,
           anio: año,
           semestre,
-          mejor_sueldo: fila.mejorSueldo,
+          mejor_sueldo: fila.sueldoLegajo,
           dias_trabajados: fila.diasTrabajados,
           monto_calculado: fila.montoCalculado,
           monto_pagado: pagado ? montoPagado : null,
@@ -617,8 +550,8 @@ function ModalAguinaldo({
         <div className="space-y-3 px-6 py-4">
           <div className="space-y-1 rounded bg-gray-50 p-3 text-xs text-gray-600">
             <div>
-              Mejor sueldo del semestre:{' '}
-              <span className="font-semibold text-gray-900">{formatARS(fila.mejorSueldo)}</span>
+              Sueldo del legajo:{' '}
+              <span className="font-semibold text-gray-900">{formatARS(fila.sueldoLegajo)}</span>
             </div>
             <div>
               Días trabajados:{' '}
