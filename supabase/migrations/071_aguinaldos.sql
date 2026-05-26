@@ -2,6 +2,10 @@
 -- El tab RRHH > Aguinaldo guarda 1 fila por (empleado, año, semestre).
 -- Cuando se marca pagado, se crea un gasto en categorías_gasto > Aguinaldo y
 -- se persiste el gasto_id acá para que el upsert sea idempotente.
+--
+-- Idempotente: en producción la tabla 'aguinaldos' ya existía con un schema
+-- previo (sin medio_pago ni gasto_id), de cuando el tab era código suelto sin
+-- migración. Usamos ADD COLUMN IF NOT EXISTS para no chocar con esa instancia.
 
 begin;
 
@@ -16,13 +20,30 @@ create table if not exists public.aguinaldos (
   monto_pagado    numeric(14,2),
   pagado          boolean not null default false,
   fecha_pago      date,
-  medio_pago      text,
-  gasto_id        uuid references public.gastos(id) on delete set null,
   notas           text,
   created_at      timestamptz not null default now(),
-  updated_at      timestamptz not null default now(),
-  unique (empleado_id, anio, semestre)
+  updated_at      timestamptz not null default now()
 );
+
+-- Columnas nuevas para vincular con Finanzas
+alter table public.aguinaldos add column if not exists medio_pago text;
+alter table public.aguinaldos
+  add column if not exists gasto_id uuid references public.gastos(id) on delete set null;
+
+-- Unique (empleado, año, semestre) si todavía no existe
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.aguinaldos'::regclass
+      and contype = 'u'
+      and pg_get_constraintdef(oid) ilike '%(empleado_id, anio, semestre)%'
+  ) then
+    alter table public.aguinaldos
+      add constraint aguinaldos_empleado_anio_semestre_key
+      unique (empleado_id, anio, semestre);
+  end if;
+end $$;
 
 create index if not exists idx_aguinaldos_anio_sem on public.aguinaldos (anio, semestre);
 create index if not exists idx_aguinaldos_empleado on public.aguinaldos (empleado_id);
