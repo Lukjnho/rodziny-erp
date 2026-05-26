@@ -25,6 +25,7 @@ interface LotePasta {
   cantidad_cajones: number | null;
   local: string;
   ubicacion: 'freezer_produccion' | 'camara_congelado';
+  fecha: string; // YYYY-MM-DD — para alertar si una bandeja lleva 3+ días en freezer
 }
 interface Traspaso {
   producto_id: string;
@@ -75,6 +76,8 @@ interface StockRow {
   producido: number;
   fresco: number; // porciones en freezer_produccion (sirve para histórico ya porcionado)
   frescoBandejas: number; // bandejas en cola para porcionar (cantidad_cajones)
+  bandejasViejas: number; // bandejas en freezer con ≥3 días — alerta
+  loteMasViejoFecha: string | null; // fecha YYYY-MM-DD del lote más antiguo en freezer_produccion
   traspasado: number;
   vendidoHoy: number;
   mostrador: number; // clamp >= 0 para mostrar
@@ -85,6 +88,16 @@ interface StockRow {
   ajusteCamara: number;
   ajusteMostrador: number;
 }
+
+// Días enteros transcurridos desde una fecha YYYY-MM-DD (zona horaria local).
+function diasDesdeFecha(fechaISO: string): number {
+  const d = new Date(fechaISO + 'T00:00:00');
+  const h = new Date(HOY() + 'T00:00:00');
+  return Math.floor((h.getTime() - d.getTime()) / (1000 * 60 * 60 * 24));
+}
+
+// Umbral en días para considerar una bandeja "vieja" en freezer de producción.
+const DIAS_BANDEJA_VIEJA = 3;
 
 // Fecha de hoy en zona horaria de Argentina (UTC-3, sin horario de verano).
 // No usar toISOString() porque devuelve UTC: a las 22hs en Argentina ya es el día
@@ -133,6 +146,40 @@ export function StockTab() {
   const qc = useQueryClient();
   const esAdmin = perfil?.es_admin ?? false;
   const localRestringido = perfil?.local_restringido ?? null;
+
+  // Realtime: el QR de traslado lo escanean desde el celular del mostrador
+  // mientras el admin mira esta pantalla en la PC. Sin esto el StockTab se
+  // entera del INSERT recién al volver a hacer foco en la pestaña. Suscribimos
+  // a las 3 tablas que componen las columnas Cámara/Mostrador.
+  useEffect(() => {
+    const channel = supabase
+      .channel('cocina-stock-realtime')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'cocina_traspasos' },
+        () => {
+          qc.invalidateQueries({ queryKey: ['cocina-stock-traspasos'] });
+          qc.invalidateQueries({ queryKey: ['cocina-stock-traspasos-hoy'] });
+        },
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'cocina_lotes_pasta' },
+        () => qc.invalidateQueries({ queryKey: ['cocina-stock-lotes'] }),
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'cocina_merma' },
+        () => {
+          qc.invalidateQueries({ queryKey: ['cocina-stock-merma'] });
+          qc.invalidateQueries({ queryKey: ['cocina-stock-merma-hoy'] });
+        },
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [qc]);
 
   // Toggle admin: sacar/poner un producto del control de stock (independiente de
   // 'activo'). Lo usan la tabla Pastas (Vedia) y el catálogo (Saavedra).
@@ -195,7 +242,7 @@ export function StockTab() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cocina_lotes_pasta')
-        .select('producto_id, porciones, cantidad_cajones, local, ubicacion');
+        .select('producto_id, porciones, cantidad_cajones, local, ubicacion, fecha');
       if (error) throw error;
       return data as LotePasta[];
     },
@@ -406,6 +453,19 @@ export function StockTab() {
         );
         const fresco = lotesFresco.reduce((s, l) => s + (l.porciones ?? 0), 0);
         const frescoBandejas = lotesFresco.reduce((s, l) => s + (l.cantidad_cajones ?? 0), 0);
+        // Bandejas viejas: lotes en freezer con ≥3 días. Cada lote individual cuenta.
+        // Si el producto tiene un lote de 4 band. con 4 días y otro de 6 band. con 1 día,
+        // bandejasViejas = 4 (no 10).
+        const bandejasViejas = lotesFresco
+          .filter((l) => diasDesdeFecha(l.fecha) >= DIAS_BANDEJA_VIEJA)
+          .reduce((s, l) => s + (l.cantidad_cajones ?? 0), 0);
+        const loteMasViejoFecha =
+          lotesFresco.length > 0
+            ? lotesFresco.reduce<string | null>(
+                (min, l) => (min === null || l.fecha < min ? l.fecha : min),
+                null,
+              )
+            : null;
         const traspasado = traspasos
           .filter((t) => t.producto_id === prod.id && t.local === loc)
           .reduce((s, t) => s + t.porciones, 0);
@@ -491,6 +551,8 @@ export function StockTab() {
           producido,
           fresco,
           frescoBandejas,
+          bandejasViejas,
+          loteMasViejoFecha,
           traspasado,
           vendidoHoy,
           mostrador,
@@ -692,8 +754,19 @@ export function StockTab() {
                     {r.frescoBandejas > 0 || r.fresco > 0 ? (
                       <div className="flex flex-col items-end leading-tight">
                         {r.frescoBandejas > 0 && (
-                          <span className="font-medium text-blue-600">
+                          <span
+                            className={cn(
+                              'font-medium',
+                              r.bandejasViejas > 0 ? 'text-red-600' : 'text-blue-600',
+                            )}
+                            title={
+                              r.bandejasViejas > 0 && r.loteMasViejoFecha
+                                ? `⚠ ${r.bandejasViejas} bandeja${r.bandejasViejas === 1 ? '' : 's'} con ${DIAS_BANDEJA_VIEJA}+ días en freezer de producción.\nLote más antiguo: ${r.loteMasViejoFecha} (hace ${diasDesdeFecha(r.loteMasViejoFecha)} días)`
+                                : undefined
+                            }
+                          >
                             {r.frescoBandejas} band.
+                            {r.bandejasViejas > 0 && <span className="ml-1">⚠</span>}
                           </span>
                         )}
                         {r.fresco > 0 && (

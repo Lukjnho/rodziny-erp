@@ -183,6 +183,11 @@ export function TrasladoPastasForm({
       qc.invalidateQueries({ queryKey: ['compras-pastas-traspasos'] });
       qc.invalidateQueries({ queryKey: ['cocina_stock_pastas'] });
       qc.invalidateQueries({ queryKey: ['cocina-traspasos-hoy-qr'] });
+      // Tab Cocina > Stock lee con estas keys; sin invalidarlas no refresca
+      // hasta el próximo focus de ventana (ver feedback con Lucas 2026-05-26).
+      qc.invalidateQueries({ queryKey: ['cocina-stock-traspasos'] });
+      qc.invalidateQueries({ queryKey: ['cocina-stock-traspasos-hoy'] });
+      qc.invalidateQueries({ queryKey: ['cocina-stock-lotes'] });
       if (onGuardado && seleccionado) {
         onGuardado(`Traslado registrado · ${porciones} porc. de ${seleccionado.nombre}`);
         return;
