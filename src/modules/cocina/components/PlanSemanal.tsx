@@ -4,7 +4,14 @@ import { supabase } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
 import { TimelineModal } from './TimelineModal';
 
-type TipoPlan = 'relleno' | 'masa' | 'salsa' | 'postre' | 'pasteleria' | 'panaderia';
+type TipoPlan =
+  | 'relleno'
+  | 'masa'
+  | 'salsa'
+  | 'postre'
+  | 'pasteleria'
+  | 'panaderia'
+  | 'pasta_simple';
 // Estados visibles en el pizarrón. en_mostrador_* viven solo en tab Stock.
 type EstadoItem = 'pendiente' | 'en_produccion' | 'en_bandejas' | 'ciclo_completo';
 
@@ -57,6 +64,7 @@ const TIPO_LABEL: Record<TipoPlan, string> = {
   postre: 'Postres',
   pasteleria: 'Pastelería',
   panaderia: 'Panadería',
+  pasta_simple: 'Pastas simples',
 };
 
 const TIPO_EMOJI: Record<TipoPlan, string> = {
@@ -66,12 +74,20 @@ const TIPO_EMOJI: Record<TipoPlan, string> = {
   postre: '🍰',
   pasteleria: '🥐',
   panaderia: '🍞',
+  pasta_simple: '🍝',
 };
 
 // Tipos a mostrar como categoría en el día. Las masas se omiten porque
 // se hacen a demanda (no se planifican) y se ven dentro de la card del
 // relleno con el que se usaron.
-const TIPOS_VISIBLES: TipoPlan[] = ['relleno', 'salsa', 'postre', 'pasteleria', 'panaderia'];
+const TIPOS_VISIBLES: TipoPlan[] = [
+  'relleno',
+  'pasta_simple',
+  'salsa',
+  'postre',
+  'pasteleria',
+  'panaderia',
+];
 
 const DIAS_CORTOS = ['DOM', 'LUN', 'MAR', 'MIE', 'JUE', 'VIE', 'SAB'];
 
@@ -590,7 +606,11 @@ function ItemAgrupadoCard({
         <span className="flex-1 truncate" title={grupo.nombre}>
           {grupo.nombre}
           {cantidadLabel != null && (
-            <span className="ml-1 text-gray-400">×{cantidadLabel}</span>
+            <span className="ml-1 text-gray-400">
+              {grupo.tipo === 'pasta_simple'
+                ? `${cantidadLabel} porc.`
+                : `×${cantidadLabel}`}
+            </span>
           )}
         </span>
       </div>

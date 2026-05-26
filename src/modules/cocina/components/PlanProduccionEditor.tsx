@@ -15,6 +15,7 @@ interface Receta {
 
 // Mapea el TipoItem del pizarrón (relleno/masa/salsa/postre/pasteleria/panaderia)
 // a las recetas/subrecetas correspondientes en el modelo nuevo.
+// `pasta_simple` no usa recetas — se planifica por producto (ver getOpcionesPasta).
 function recetasDelTipoPlan(recetas: Receta[], tipoPlan: TipoItem): Receta[] {
   switch (tipoPlan) {
     case 'relleno':
@@ -29,6 +30,8 @@ function recetasDelTipoPlan(recetas: Receta[], tipoPlan: TipoItem): Receta[] {
       return recetas.filter((r) => r.rol === 'panificado' || r.categoria === 'panificado');
     case 'pasteleria':
       return recetas.filter((r) => r.rol === 'pasteleria_base');
+    case 'pasta_simple':
+      return [];
   }
 }
 
@@ -44,7 +47,14 @@ interface Sugerencia {
   urgencia: 'critico' | 'bajo';
 }
 
-type TipoItem = 'relleno' | 'masa' | 'salsa' | 'postre' | 'pasteleria' | 'panaderia';
+type TipoItem =
+  | 'relleno'
+  | 'masa'
+  | 'salsa'
+  | 'postre'
+  | 'pasteleria'
+  | 'panaderia'
+  | 'pasta_simple';
 
 interface PlanItem {
   id: string;
@@ -58,14 +68,18 @@ interface PlanItem {
 }
 
 // Las masas no se planifican acá — se hacen a demanda según producción.
+// Las "pastas simples" (tagliatelle, spaghetti, etc) se planifican por porciones,
+// no por receta (se arman en el momento con la masa disponible).
 const TIPOS_VEDIA: { tipo: TipoItem; label: string; emoji: string }[] = [
   { tipo: 'relleno', label: 'Rellenos', emoji: '🥟' },
+  { tipo: 'pasta_simple', label: 'Pastas simples', emoji: '🍝' },
   { tipo: 'salsa', label: 'Salsas', emoji: '🍅' },
   { tipo: 'postre', label: 'Postres', emoji: '🍰' },
 ];
 
 const TIPOS_SAAVEDRA: { tipo: TipoItem; label: string; emoji: string }[] = [
   { tipo: 'relleno', label: 'Rellenos', emoji: '🥟' },
+  { tipo: 'pasta_simple', label: 'Pastas simples', emoji: '🍝' },
   { tipo: 'salsa', label: 'Salsas', emoji: '🍅' },
   { tipo: 'pasteleria', label: 'Pastelería', emoji: '🥐' },
   { tipo: 'panaderia', label: 'Panadería', emoji: '🍞' },
@@ -159,6 +173,25 @@ export function PlanProduccionEditor({
         .order('nombre');
       if (error) throw error;
       return (data ?? []) as Receta[];
+    },
+  });
+
+  // Catálogo de pastas (productos tipo='pasta') del local. Se usa solo en la
+  // sección "Pastas simples" — el select muestra nombres de productos, y el plan
+  // se guarda como texto_libre (sin receta_id) porque tagliatelles/spaghetti se
+  // hacen en el momento con la masa disponible.
+  const { data: productosPasta } = useQuery({
+    queryKey: ['cocina-productos-pasta-plan', local],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('cocina_productos')
+        .select('nombre')
+        .eq('local', local)
+        .eq('activo', true)
+        .eq('tipo', 'pasta')
+        .order('nombre');
+      if (error) throw error;
+      return ((data ?? []) as { nombre: string }[]).map((r) => r.nombre);
     },
   });
 
@@ -478,6 +511,8 @@ export function PlanProduccionEditor({
   }
 
   function agregarItem(fecha: string, tipo: TipoItem) {
+    // Pasta simple se carga por porciones (no por recetas) y arranca en 100.
+    const cantidadInicial = tipo === 'pasta_simple' ? 100 : 1;
     setItems((prev) => ({
       ...prev,
       [fecha]: [
@@ -487,7 +522,7 @@ export function PlanProduccionEditor({
           tipo,
           receta_id: null,
           texto_libre: null,
-          cantidad_recetas: 1,
+          cantidad_recetas: cantidadInicial,
           turno: tipo === 'salsa' || tipo === 'postre' ? 'tarde' : 'mañana',
           notas: null,
         },
@@ -750,56 +785,89 @@ export function PlanProduccionEditor({
                               : 'border-gray-200 bg-white',
                           )}
                         >
-                          {/* Receta */}
+                          {/* Receta o producto (pasta simple usa texto_libre con el nombre del producto) */}
                           <div className="col-span-5">
-                            <select
-                              value={it.receta_id ?? ''}
-                              onChange={(e) =>
-                                actualizarItem(fechaActiva, it.id, {
-                                  receta_id: e.target.value || null,
-                                })
-                              }
-                              disabled={bloqueado}
-                              className="w-full rounded border border-gray-300 bg-white px-2 py-1 text-sm disabled:bg-gray-100"
-                            >
-                              <option value="">Elegí receta…</option>
-                              {recetasTipo.map((r) => (
-                                <option key={r.id} value={r.id}>
-                                  {r.nombre}
-                                </option>
-                              ))}
-                            </select>
+                            {it.tipo === 'pasta_simple' ? (
+                              <select
+                                value={it.texto_libre ?? ''}
+                                onChange={(e) =>
+                                  actualizarItem(fechaActiva, it.id, {
+                                    texto_libre: e.target.value || null,
+                                  })
+                                }
+                                disabled={bloqueado}
+                                className="w-full rounded border border-gray-300 bg-white px-2 py-1 text-sm disabled:bg-gray-100"
+                              >
+                                <option value="">Elegí pasta…</option>
+                                {(productosPasta ?? []).map((nombre) => (
+                                  <option key={nombre} value={nombre}>
+                                    {nombre}
+                                  </option>
+                                ))}
+                              </select>
+                            ) : (
+                              <select
+                                value={it.receta_id ?? ''}
+                                onChange={(e) =>
+                                  actualizarItem(fechaActiva, it.id, {
+                                    receta_id: e.target.value || null,
+                                  })
+                                }
+                                disabled={bloqueado}
+                                className="w-full rounded border border-gray-300 bg-white px-2 py-1 text-sm disabled:bg-gray-100"
+                              >
+                                <option value="">Elegí receta…</option>
+                                {recetasTipo.map((r) => (
+                                  <option key={r.id} value={r.id}>
+                                    {r.nombre}
+                                  </option>
+                                ))}
+                              </select>
+                            )}
                           </div>
 
-                          {/* Cantidad */}
+                          {/* Cantidad: pasta simple va por porciones (paso de 50, mínimo 50);
+                              el resto por recetas (paso de 0.5, mínimo 0.5). */}
                           <div className="col-span-2">
-                            <div className="flex items-center rounded border border-gray-300 bg-white">
-                              <button
-                                onClick={() =>
-                                  actualizarItem(fechaActiva, it.id, {
-                                    cantidad_recetas: Math.max(0.5, it.cantidad_recetas - 0.5),
-                                  })
-                                }
-                                disabled={bloqueado}
-                                className="px-2 py-1 text-gray-500 hover:bg-gray-100 disabled:opacity-30"
-                              >
-                                −
-                              </button>
-                              <span className="flex-1 text-center text-sm font-semibold tabular-nums">
-                                ×{it.cantidad_recetas}
-                              </span>
-                              <button
-                                onClick={() =>
-                                  actualizarItem(fechaActiva, it.id, {
-                                    cantidad_recetas: it.cantidad_recetas + 0.5,
-                                  })
-                                }
-                                disabled={bloqueado}
-                                className="px-2 py-1 text-gray-500 hover:bg-gray-100 disabled:opacity-30"
-                              >
-                                +
-                              </button>
-                            </div>
+                            {(() => {
+                              const esPastaSimple = it.tipo === 'pasta_simple';
+                              const paso = esPastaSimple ? 50 : 0.5;
+                              const minimo = esPastaSimple ? 50 : 0.5;
+                              return (
+                                <div className="flex items-center rounded border border-gray-300 bg-white">
+                                  <button
+                                    onClick={() =>
+                                      actualizarItem(fechaActiva, it.id, {
+                                        cantidad_recetas: Math.max(
+                                          minimo,
+                                          it.cantidad_recetas - paso,
+                                        ),
+                                      })
+                                    }
+                                    disabled={bloqueado}
+                                    className="px-2 py-1 text-gray-500 hover:bg-gray-100 disabled:opacity-30"
+                                  >
+                                    −
+                                  </button>
+                                  <span className="flex-1 text-center text-sm font-semibold tabular-nums">
+                                    {esPastaSimple
+                                      ? `${it.cantidad_recetas} porc.`
+                                      : `×${it.cantidad_recetas}`}
+                                  </span>
+                                  <button
+                                    onClick={() =>
+                                      actualizarItem(fechaActiva, it.id, {
+                                        cantidad_recetas: it.cantidad_recetas + paso,
+                                      })
+                                    }
+                                    disabled={bloqueado}
+                                    className="px-2 py-1 text-gray-500 hover:bg-gray-100 disabled:opacity-30"
+                                  >
+                                    +
+                                  </button>
+                                </div>
+                              );
+                            })()}
                           </div>
 
                           {/* Turno */}
