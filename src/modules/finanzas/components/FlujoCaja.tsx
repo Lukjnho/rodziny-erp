@@ -3,6 +3,8 @@ import { Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { formatARS, formatFecha, cn } from '@/lib/utils';
+import { procesarComprobantePago } from '@/lib/ocrComprobantePago';
+import { useAuth } from '@/lib/auth';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 
 // ── tipos ────────────────────────────────────────────────────────────────────
@@ -204,6 +206,7 @@ function esMovCapital(m: MovBancario): boolean {
 
 export function FlujoCaja({ onNavigateToTab }: { onNavigateToTab?: (tab: string) => void } = {}) {
   const qc = useQueryClient();
+  const { user } = useAuth();
   // El flujo de caja es a nivel empresa (Rodziny SAS) — los movimientos bancarios
   // son de la SAS, no del local. Filtrar por local daba una vista parcial confusa.
   const [periodo, setPeriodo] = useState(() => new Date().toISOString().substring(0, 7));
@@ -233,6 +236,12 @@ export function FlujoCaja({ onNavigateToTab }: { onNavigateToTab?: (tab: string)
   // para que cada retiro tenga trazabilidad bancaria igual que el resto de pagos.
   const [divNumOp, setDivNumOp] = useState('');
   const [divComprobante, setDivComprobante] = useState<File | null>(null);
+  // Path en Storage devuelto por el helper de OCR — si está seteado, guardarDiv
+  // lo reusa en vez de re-subir el archivo.
+  const [divComprobantePath, setDivComprobantePath] = useState<string | null>(null);
+  const [divOcrEjecutando, setDivOcrEjecutando] = useState(false);
+  const [divOcrInfo, setDivOcrInfo] = useState<string | null>(null);
+  const [divOcrWarning, setDivOcrWarning] = useState<string | null>(null);
 
   // ── queries ──────────────────────────────────────────────────────────────────
 
@@ -374,6 +383,43 @@ export function FlujoCaja({ onNavigateToTab }: { onNavigateToTab?: (tab: string)
     }
   };
 
+  // ── OCR comprobante dividendo ─────────────────────────────────────────────
+  // Mismo patrón que PagarGastoModal / ChecklistPagos: al seleccionar el
+  // archivo lo subimos por el helper, que extrae el N° de operación con
+  // Claude Haiku 4.5 para conciliar contra el export de MercadoPago.
+
+  async function handleSelectDivComprobante(file: File | null) {
+    setDivComprobante(file);
+    setDivComprobantePath(null);
+    setDivOcrInfo(null);
+    setDivOcrWarning(null);
+    if (!file) return;
+    setDivOcrEjecutando(true);
+    try {
+      const res = await procesarComprobantePago({
+        archivo: file,
+        subfolder: `dividendos/${divFecha.substring(0, 7)}`,
+        userId: user?.id ?? null,
+      });
+      if (!res.ok && res.error) {
+        setDivOcrWarning(res.error);
+        return;
+      }
+      setDivComprobantePath(res.file_path);
+      if (res.n_operacion) {
+        // Solo autocompletamos si el usuario aún no había tipeado nada.
+        if (!divNumOp.trim()) setDivNumOp(res.n_operacion);
+        const pct = Math.round((res.confianza ?? 0) * 100);
+        setDivOcrInfo(`✓ N° detectado: ${res.n_operacion}${pct ? ` (${pct}% confianza)` : ''}`);
+      } else {
+        setDivOcrInfo('Archivo subido. Completá el N° de operación manualmente.');
+      }
+      if (res.warning) setDivOcrWarning(res.warning);
+    } finally {
+      setDivOcrEjecutando(false);
+    }
+  }
+
   // ── mutation: dividendo ────────────────────────────────────────────────────
 
   const guardarDiv = useMutation({
@@ -391,9 +437,11 @@ export function FlujoCaja({ onNavigateToTab }: { onNavigateToTab?: (tab: string)
         }
       }
 
-      // Subir comprobante si vino
-      let comprobantePath: string | null = null;
-      if (divComprobante) {
+      // El comprobante ya quedó subido por el helper de OCR al seleccionar
+      // el archivo. Si por algún motivo no se subió (OCR falló pero hay file),
+      // hacemos fallback al upload manual para no perder el archivo del usuario.
+      let comprobantePath: string | null = divComprobantePath;
+      if (divComprobante && !comprobantePath) {
         const ext = divComprobante.name.split('.').pop()?.toLowerCase() || 'pdf';
         const carpeta = `dividendos/${divFecha.substring(0, 7)}`;
         comprobantePath = `${carpeta}/${divSocio}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
@@ -426,6 +474,9 @@ export function FlujoCaja({ onNavigateToTab }: { onNavigateToTab?: (tab: string)
       setDivConcepto('');
       setDivNumOp('');
       setDivComprobante(null);
+      setDivComprobantePath(null);
+      setDivOcrInfo(null);
+      setDivOcrWarning(null);
     },
   });
 
@@ -1408,25 +1459,41 @@ export function FlujoCaja({ onNavigateToTab }: { onNavigateToTab?: (tab: string)
                     <input
                       type="file"
                       accept="image/*,application/pdf"
-                      onChange={(e) => setDivComprobante(e.target.files?.[0] ?? null)}
-                      className="block w-full text-xs file:mr-2 file:rounded file:border file:border-gray-300 file:bg-white file:px-2 file:py-1 file:text-xs file:text-gray-700"
+                      disabled={divOcrEjecutando}
+                      onChange={(e) => handleSelectDivComprobante(e.target.files?.[0] ?? null)}
+                      className="block w-full text-xs file:mr-2 file:rounded file:border file:border-gray-300 file:bg-white file:px-2 file:py-1 file:text-xs file:text-gray-700 disabled:opacity-50"
                     />
                     {divComprobante && (
                       <p className="mt-1 truncate text-[11px] text-green-700">📎 {divComprobante.name}</p>
+                    )}
+                    {divOcrEjecutando && (
+                      <p className="mt-1 text-[11px] text-gray-500">Leyendo N° de operación…</p>
+                    )}
+                    {divOcrInfo && !divOcrEjecutando && (
+                      <p className="mt-1 text-[11px] text-green-700">{divOcrInfo}</p>
+                    )}
+                    {divOcrWarning && !divOcrEjecutando && (
+                      <p className="mt-1 text-[11px] text-amber-700">{divOcrWarning}</p>
                     )}
                   </div>
                 </div>
               )}
               <div className="mt-3 flex justify-end gap-2">
                 <button
-                  onClick={() => setShowDivForm(false)}
+                  onClick={() => {
+                    setShowDivForm(false);
+                    setDivComprobante(null);
+                    setDivComprobantePath(null);
+                    setDivOcrInfo(null);
+                    setDivOcrWarning(null);
+                  }}
                   className="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-800"
                 >
                   Cancelar
                 </button>
                 <button
                   onClick={() => guardarDiv.mutate()}
-                  disabled={guardarDiv.isPending || !divMonto}
+                  disabled={guardarDiv.isPending || divOcrEjecutando || !divMonto}
                   className="rounded bg-rodziny-700 px-4 py-1.5 text-sm font-medium text-white hover:bg-rodziny-800 disabled:bg-gray-300"
                 >
                   {guardarDiv.isPending ? 'Guardando...' : 'Guardar'}
