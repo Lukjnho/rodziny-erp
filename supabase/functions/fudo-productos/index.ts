@@ -1,6 +1,8 @@
 // Edge Function: fudo-productos
 // Trae ventas por producto de un rango de fechas, agrupado por producto.
-// Body: { local: "vedia" | "saavedra", fechaDesde: "YYYY-MM-DD", fechaHasta: "YYYY-MM-DD" }
+// Body: { local: "vedia" | "saavedra", fechaDesde: "YYYY-MM-DD", fechaHasta: "YYYY-MM-DD",
+//         desdeISO?: ISO8601, hastaISO?: ISO8601 }
+// Si se pasan desdeISO/hastaISO, override del rango (sirve para cortar por turno).
 
 const CREDENCIALES: Record<string, { apiKey: string; apiSecret: string }> = {
   vedia: {
@@ -69,6 +71,8 @@ Deno.serve(async (req) => {
     const local: string = body.local
     const fechaDesde: string = body.fechaDesde
     const fechaHasta: string = body.fechaHasta
+    const desdeISO: string | undefined = body.desdeISO
+    const hastaISO: string | undefined = body.hastaISO
 
     if (!local || !fechaDesde || !fechaHasta) {
       throw new Error('Faltan parámetros: local, fechaDesde, fechaHasta (YYYY-MM-DD)')
@@ -79,11 +83,16 @@ Deno.serve(async (req) => {
 
     const token = await autenticar(local)
 
-    // Rango UTC (Argentina = UTC-3)
-    const inicioUTC = `${fechaDesde}T03:00:00Z`
-    const dFin = new Date(fechaHasta + 'T12:00:00Z')
-    dFin.setUTCDate(dFin.getUTCDate() + 1)
-    const finUTC = `${dFin.toISOString().substring(0, 10)}T02:59:59Z`
+    // Rango UTC (Argentina = UTC-3). Si vienen desdeISO/hastaISO, override.
+    const inicioUTC = desdeISO ?? `${fechaDesde}T03:00:00Z`
+    let finUTC: string
+    if (hastaISO) {
+      finUTC = hastaISO
+    } else {
+      const dFin = new Date(fechaHasta + 'T12:00:00Z')
+      dFin.setUTCDate(dFin.getUTCDate() + 1)
+      finUTC = `${dFin.toISOString().substring(0, 10)}T02:59:59Z`
+    }
 
     // Encontrar última página (búsqueda binaria)
     let lo = 1, hi = 500
