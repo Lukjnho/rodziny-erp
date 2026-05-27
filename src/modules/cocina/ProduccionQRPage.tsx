@@ -2383,13 +2383,14 @@ function FormGenerico({
   const recetaSel = recetas.find((r) => r.id === recetaId);
   const unidades = unidadesDisponibles(categoria, permitirLitros);
   const titulo = `Cargar ${CATEGORIA_LABEL[categoria]}`;
-  // Postres y pastelería se ACUMULAN: cada carga es un lote nuevo que se suma al
-  // stock (la pastelera produce varias tandas al día). El resto pisa el stock
-  // anterior ("último pesaje manda").
-  const esAditivo = categoria === 'postre' || categoria === 'pasteleria';
+  // Postres, pastelería y salsa se ACUMULAN: cada carga es un lote nuevo que se
+  // suma al stock. El cierre físico (Mostrador) es el único que re-baselinea con
+  // el conteo real. Pasta/milanesa siguen overwrite ("último pesaje manda").
+  const esAditivo =
+    categoria === 'postre' || categoria === 'pasteleria' || categoria === 'salsa';
 
-  // Salsa es overwrite: avisar al cocinero si ya cargó esa receta hoy,
-  // así no se duplican filas en el detalle ni hay sorpresa de stock pisado.
+  // Para salsas: avisar al cocinero si ya cargó esa receta hoy, así sabe que la
+  // próxima carga se suma al total (no reemplaza).
   const { data: cargasHoy } = useQuery({
     queryKey: ['cocina-lotes-produccion-qr', local, categoria, hoy()],
     queryFn: async () => {
@@ -2472,13 +2473,23 @@ function FormGenerico({
       );
       if (!ok) return;
     }
+    if (categoria === 'salsa') {
+      const nombre = recetaSel?.nombre ?? nombreLibre.trim() ?? 'esta salsa';
+      const ok = window.confirm(
+        `Vas a sumar ${formatNum(cantNum)} ${unidad} de ${nombre} al stock total.\n\n` +
+          `Esta cantidad se suma al stock actual (no lo reemplaza).\n` +
+          `El stock se re-baselinea sólo cuando se hace el cierre físico de salsas.\n\n` +
+          `¿Confirmás?`,
+      );
+      if (!ok) return;
+    }
     setGuardando(true);
     setError('');
 
     // Overwrite — "último pesaje manda". Antes de cargar el lote nuevo a stock,
     // desactivamos los lotes activos previos de esta misma receta (o nombre
-    // libre) + local, para que no se acumulen batch tras batch. Aplica a salsa /
-    // pasta / milanesa. Postres y pastelería NO entran acá: se acumulan (cada
+    // libre) + local, para que no se acumulen batch tras batch. Aplica a pasta /
+    // milanesa. Salsa, postres y pastelería NO entran acá: se acumulan (cada
     // carga es un lote más) y el cierre físico de /mostrador re-baselinea el
     // stock con lo contado. Solo cuando este lote va a stock (enStock).
     if (enStock && !esAditivo) {
@@ -2642,7 +2653,7 @@ function FormGenerico({
               {cargaPrevia.cargas === 1
                 ? `A las ${cargaPrevia.hora} (${cargaPrevia.cantidad}${cargaPrevia.unidad}).`
                 : `${cargaPrevia.cargas} veces · última a las ${cargaPrevia.hora} (${cargaPrevia.cantidad}${cargaPrevia.unidad}).`}{' '}
-              Si guardás de nuevo, el stock se <strong>reemplaza</strong> por el nuevo valor.
+              Si guardás de nuevo, esta cantidad <strong>se suma</strong> al stock total.
             </p>
           </div>
         )}
