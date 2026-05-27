@@ -313,9 +313,10 @@ Deno.serve(async (req) => {
     }
 
     // 4) Obtener número(s) de arqueo de Fudo (CashCount.id = "#" del ticket).
-    //    Recorre páginas hacia atrás hasta encontrar arqueos cuyo openedAt caiga
-    //    dentro del rango horario del turno y (si aplica) en la caja indicada.
-    //    Cortamos cuando openedAt < fechaInicio (ya pasamos el rango hacia atrás).
+    //    Recorre páginas hacia atrás filtrando por rango horario del turno y caja.
+    //    Los cash-counts en cada página vienen ASC por id (~ASC por openedAt),
+    //    entonces solo cortamos cuando el PRIMER record de la página ya es
+    //    anterior a fechaInicio (la página entera quedó atrás del rango).
     const nrosArqueo: string[] = []
     {
       // Búsqueda binaria de la última página con datos en /cash-counts
@@ -330,11 +331,11 @@ Deno.serve(async (req) => {
         else cHi = mid - 1
       }
       let cPag = cLo
-      let cTerminamos = false
-      while (cPag >= 1 && !cTerminamos) {
+      while (cPag >= 1) {
         const res = await fudoGet(token, 'cash-counts', {
           'page[size]': String(PAGE_SIZE),
           'page[number]': String(cPag),
+          'include': 'cashRegister',
         })
         if (res.data.length === 0) { cPag--; continue }
         for (const cc of res.data as JsonApiResource[]) {
@@ -342,7 +343,7 @@ Deno.serve(async (req) => {
           const canceled = cc.attributes.canceled
           if (!openedAt) continue
           if (canceled) continue
-          if (openedAt < fechaInicio) { cTerminamos = true; continue }
+          if (openedAt < fechaInicio) continue
           if (openedAt > fechaFin) continue
           if (cajaId) {
             const crData = cc.relationships?.cashRegister?.data
@@ -351,6 +352,10 @@ Deno.serve(async (req) => {
           }
           nrosArqueo.push(cc.id)
         }
+        // Cortamos sólo si la página entera quedó atrás del rango.
+        const primer = res.data[0]
+        const primerOpenedAt = primer?.attributes?.openedAt as string | null
+        if (primerOpenedAt && primerOpenedAt < fechaInicio) break
         cPag--
       }
       // Orden estable por id numérico ascendente para que el "#" más bajo aparezca primero
