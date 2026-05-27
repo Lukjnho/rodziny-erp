@@ -181,6 +181,8 @@ interface BebidaReventa {
   nombre: string;
   local: FiltroLocal;
   insumo_reventa_id: string | null;
+  // NULL = vende la unidad entera. >0 = formato copa/shot, prorratea costo.
+  ml_por_venta: number | null;
 }
 
 export function MenuTab() {
@@ -215,7 +217,7 @@ export function MenuTab() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cocina_productos')
-        .select('id, nombre, local, insumo_reventa_id')
+        .select('id, nombre, local, insumo_reventa_id, ml_por_venta')
         .eq('activo', true)
         .eq('tipo', 'bebida')
         .not('insumo_reventa_id', 'is', null)
@@ -228,9 +230,15 @@ export function MenuTab() {
   const { data: insumosReventa } = useQuery({
     queryKey: ['menu-insumos-reventa'],
     queryFn: async () => {
-      const { data, error } = await supabase.from('productos').select('id, costo_unitario');
+      const { data, error } = await supabase
+        .from('productos')
+        .select('id, costo_unitario, contenido_ml');
       if (error) throw error;
-      return data as Array<{ id: string; costo_unitario: number }>;
+      return data as Array<{
+        id: string;
+        costo_unitario: number;
+        contenido_ml: number | null;
+      }>;
     },
   });
 
@@ -261,9 +269,12 @@ export function MenuTab() {
   const { config: configGen } = useConfigCosteo();
   const { getComision } = useComisionMpConfig();
 
-  const costoInsumo = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const i of insumosReventa ?? []) m.set(i.id, Number(i.costo_unitario));
+  // Mapa insumo_id -> {costo_unitario, contenido_ml}. Necesitamos contenido_ml
+  // para prorratear el costo en formato copa/shot (ml_por_venta > 0).
+  const insumoInfo = useMemo(() => {
+    const m = new Map<string, { costo: number; contenido_ml: number | null }>();
+    for (const i of insumosReventa ?? [])
+      m.set(i.id, { costo: Number(i.costo_unitario), contenido_ml: i.contenido_ml });
     return m;
   }, [insumosReventa]);
 
@@ -348,6 +359,21 @@ export function MenuTab() {
       });
     }
     for (const b of bebidas ?? []) {
+      // Costo de bebida reventa: si tiene ml_por_venta > 0 (copa/shot) se prorratea
+      // sobre contenido_ml del insumo. Si no, costo = costo entero del insumo.
+      let costo: number | null = null;
+      if (b.insumo_reventa_id) {
+        const ins = insumoInfo.get(b.insumo_reventa_id);
+        if (ins) {
+          if (b.ml_por_venta && b.ml_por_venta > 0) {
+            if (ins.contenido_ml && ins.contenido_ml > 0) {
+              costo = (ins.costo / Number(ins.contenido_ml)) * Number(b.ml_por_venta);
+            }
+          } else {
+            costo = ins.costo;
+          }
+        }
+      }
       out.push({
         key: `reventa:${b.id}`,
         origen: 'reventa',
@@ -356,12 +382,12 @@ export function MenuTab() {
         tipo: 'bebida',
         subcategoria: null,
         local: b.local,
-        costo: b.insumo_reventa_id ? (costoInsumo.get(b.insumo_reventa_id) ?? null) : null,
+        costo,
         esSubreceta: false,
       });
     }
     return out;
-  }, [recetas, bebidas, costos, costoInsumo]);
+  }, [recetas, bebidas, costos, insumoInfo]);
 
   const filtrados = useMemo(() => {
     let lista = items.filter((p) => p.local === filtroLocal);
