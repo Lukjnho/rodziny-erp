@@ -159,7 +159,7 @@ export const ROL_LABEL: Record<SubrecetaRol, string> = {
   otros: 'Otros',
 };
 
-export const UNIDADES = ['g', 'kg', 'ml', 'lt', 'unid', 'cdta', 'cda'] as const;
+export const UNIDADES = ['g', 'kg', 'ml', 'lt', 'oz', 'unid', 'cdta', 'cda'] as const;
 
 export function RecetasTab() {
   const qc = useQueryClient();

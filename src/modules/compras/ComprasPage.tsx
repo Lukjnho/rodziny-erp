@@ -36,6 +36,7 @@ interface Producto {
   stock_minimo: number;
   proveedor: string;
   costo_unitario: number;
+  contenido_ml: number | null;
   activo: boolean;
   local: string;
 }
@@ -3590,8 +3591,25 @@ function ModalProducto({
   const [costoUnitario, setCostoUnitario] = useState(
     producto ? String(producto.costo_unitario) : '0',
   );
+  // Contenido en ml por unidad: solo aplica cuando la unidad de compra es un
+  // envase discreto (botella/lata/etc). Permite costear copas/shots y recetas
+  // que usen el insumo en ml/oz.
+  const [contenidoMl, setContenidoMl] = useState(
+    producto?.contenido_ml != null ? String(producto.contenido_ml) : '',
+  );
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState('');
+
+  // El campo aparece para envases discretos. "kg" y "litro" no lo necesitan
+  // porque ya están en una unidad medible.
+  const unidadEsEnvase = [
+    'unidad',
+    'paquete',
+    'caja',
+    'bolsa',
+    'botella',
+    'lata',
+  ].includes(unidad);
 
   async function guardar() {
     if (!nombre.trim()) {
@@ -3605,6 +3623,14 @@ function ModalProducto({
     setGuardando(true);
     setError('');
 
+    const contenidoMlNum = (() => {
+      if (!unidadEsEnvase) return null;
+      const raw = contenidoMl.trim().replace(',', '.');
+      if (raw === '') return null;
+      const n = parseFloat(raw);
+      return isFinite(n) && n > 0 ? n : null;
+    })();
+
     const payload = {
       nombre: nombre.trim(),
       marca: marca.trim() || null,
@@ -3613,6 +3639,7 @@ function ModalProducto({
       stock_minimo: parseFloat(stockMinimo.replace(',', '.')) || 0,
       proveedor: proveedor.trim() || '',
       costo_unitario: parseFloat(costoUnitario.replace(',', '.')) || 0,
+      contenido_ml: contenidoMlNum,
       local,
       updated_at: new Date().toISOString(),
     };
@@ -3743,6 +3770,26 @@ function ModalProducto({
               className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm"
             />
           </div>
+
+          {unidadEsEnvase && (
+            <div className="col-span-2">
+              <label className="mb-1 block text-xs font-medium text-gray-600">
+                Contenido (ml) — opcional
+              </label>
+              <input
+                type="number"
+                step="any"
+                value={contenidoMl}
+                onChange={(e) => setContenidoMl(e.target.value)}
+                placeholder="Ej: 750 (botella de vino), 354 (lata)"
+                className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm"
+              />
+              <p className="mt-1 text-[10px] text-gray-500">
+                Cargá esto si vendés el insumo en copas/shots o lo usás en tragos.
+                Permite costear en ml/oz. Dejá vacío si no aplica.
+              </p>
+            </div>
+          )}
         </div>
 
         <div className="flex justify-end gap-2 pt-2">

@@ -61,7 +61,7 @@ export function useCostosRecetas() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('productos')
-        .select('id, nombre, unidad, costo_unitario, merma_pct')
+        .select('id, nombre, unidad, costo_unitario, merma_pct, contenido_ml')
         .eq('activo', true);
       if (error) throw error;
       return data as ProductoRow[];

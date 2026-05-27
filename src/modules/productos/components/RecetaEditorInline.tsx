@@ -195,10 +195,13 @@ export function RecetaEditorInline({
   // Solo subrecetas del MISMO local de la receta (más null/'ambos' por las
   // dudas, hoy no hay). Evita listar masas/rellenos del otro local — y el
   // costeoEngine resuelve la subreceta por (nombre, local) igual.
+  // Filtra inactivas para no contaminar el autocomplete con recetas dadas de baja.
   const recetasDelLocal = useMemo(
     () =>
       todasLasRecetas.filter(
-        (r) => !r.local || r.local === 'ambos' || r.local === local,
+        (r) =>
+          r.activo !== false &&
+          (!r.local || r.local === 'ambos' || r.local === local),
       ),
     [todasLasRecetas, local],
   );

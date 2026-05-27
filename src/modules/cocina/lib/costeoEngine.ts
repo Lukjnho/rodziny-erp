@@ -31,6 +31,9 @@ export interface ProductoRow {
   unidad: string;
   costo_unitario: number;
   merma_pct: number;
+  // Líquido por unidad (ej: botella 750 ml). Permite usar el insumo en ml/oz
+  // aunque la unidad de compra sea 'unid'. NULL si no aplica.
+  contenido_ml: number | null;
 }
 
 export interface DetalleIngrediente {
@@ -64,11 +67,34 @@ export function normalizarUnidad(u: string): string {
   if (x === 'g' || x === 'gr' || x === 'grs' || x === 'gramos' || x === 'gramo') return 'g';
   if (x === 'lt' || x === 'l' || x === 'lts' || x === 'litros' || x === 'litro') return 'lt';
   if (x === 'ml' || x === 'mililitros') return 'ml';
-  if (x === 'unid.' || x === 'unid' || x === 'u' || x === 'unidades' || x === 'unidad')
+  if (x === 'oz' || x === 'onza' || x === 'onzas') return 'oz';
+  if (
+    x === 'unid.' ||
+    x === 'unid' ||
+    x === 'u' ||
+    x === 'unidades' ||
+    x === 'unidad' ||
+    // Envases discretos: el ERP los ofrece en Compras como "unidad" funcional.
+    // Para costear bebidas en ml/oz se usa contenido_ml.
+    x === 'botella' ||
+    x === 'botellas' ||
+    x === 'lata' ||
+    x === 'latas' ||
+    x === 'paquete' ||
+    x === 'paquetes' ||
+    x === 'caja' ||
+    x === 'cajas' ||
+    x === 'bolsa' ||
+    x === 'bolsas'
+  )
     return 'unid';
   if (x === 'cda' || x === 'cdta') return x;
   return x;
 }
+
+// 1 oz redondeada a 30 ml para simplificar costeo de barra (estándar interno
+// Rodziny). Si más adelante queremos el valor exacto (29.5735) cambiarlo acá.
+const ML_POR_OZ = 30;
 
 // factor de unidad → unidad base del grupo
 // peso: base g; volumen: base ml; unidad: base unid
@@ -81,6 +107,7 @@ function aBase(
   if (u === 'g') return { cantidad, grupo: 'peso' };
   if (u === 'lt') return { cantidad: cantidad * 1000, grupo: 'vol' };
   if (u === 'ml') return { cantidad, grupo: 'vol' };
+  if (u === 'oz') return { cantidad: cantidad * ML_POR_OZ, grupo: 'vol' };
   if (u === 'unid') return { cantidad, grupo: 'unid' };
   return { cantidad, grupo: null };
 }
@@ -131,6 +158,22 @@ function calcularCostoProducto(
   if (base.grupo === null || baseProd.grupo === null) {
     return { costo: null, error: `Unidad "${unidadIng}" desconocida` };
   }
+  const merma = prod.merma_pct ?? 0;
+  const factorMerma = merma > 0 && merma < 1 ? 1 / (1 - merma) : 1;
+  // Puente unidad↔volumen: si el insumo se compra como "unid" pero la receta
+  // lo pide en ml/oz/lt, usamos contenido_ml (ej: botella 750 ml). 1 unidad =
+  // contenido_ml ml. Requiere el campo cargado en el insumo.
+  if (base.grupo === 'vol' && baseProd.grupo === 'unid') {
+    if (!prod.contenido_ml || prod.contenido_ml <= 0) {
+      return {
+        costo: null,
+        error: `"${prod.nombre}" está en unidad, falta cargar "Contenido (ml)" en el insumo para usarlo en ml/oz`,
+      };
+    }
+    // costo por ml = costo de 1 unidad / ml por unidad
+    const costoPorMl = (prod.costo_unitario * factorMerma) / prod.contenido_ml;
+    return { costo: base.cantidad * costoPorMl, error: null };
+  }
   if (base.grupo !== baseProd.grupo) {
     return { costo: null, error: `No se puede convertir ${unidadIng} → ${prod.unidad}` };
   }
@@ -139,8 +182,6 @@ function calcularCostoProducto(
   // Aplicamos merma del insumo: si pelar la cebolla pierde 15%, para "tener" 1kg
   // útil hay que comprar 1/(1-0.15)≈1.176kg. Equivalente: el costo efectivo del
   // kg útil es costo × 1/(1-merma). Usamos esta forma.
-  const merma = prod.merma_pct ?? 0;
-  const factorMerma = merma > 0 && merma < 1 ? 1 / (1 - merma) : 1;
   const costoPorBase = (prod.costo_unitario * factorMerma) / baseProd.cantidad;
   const costo = base.cantidad * costoPorBase;
   return { costo, error: null };
