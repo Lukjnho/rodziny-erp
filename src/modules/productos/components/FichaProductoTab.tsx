@@ -948,8 +948,20 @@ function BebidaReventaPanel({
     setGuardando(true);
     try {
       if (creando) {
+        // cocina_productos.codigo es UNIQUE NOT NULL sin default. Generamos un
+        // slug del nombre + random corto para minimizar colisiones (UNIQUE
+        // garantiza fallo si por casualidad chocara).
+        const slug = nombre
+          .trim()
+          .toLowerCase()
+          .normalize('NFD')
+          .replace(/[̀-ͯ]/g, '')
+          .replace(/[^a-z0-9]+/g, '')
+          .slice(0, 12) || 'beb';
+        const codigo = `${slug}_${Math.random().toString(36).slice(2, 6)}`;
         const { error: errIns } = await supabase.from('cocina_productos').insert({
           nombre: nombre.trim(),
+          codigo,
           tipo: 'bebida',
           unidad: 'unid',
           local,
