@@ -64,6 +64,7 @@ export interface VentasFudoResumen {
   otros: number;
   cajero: string | null;
   porCaja: Record<string, CajaResumen>;
+  nrosArqueo: string[];
 }
 
 // ── Obtener ventas de Fudo via Edge Function ────────────────────────────────

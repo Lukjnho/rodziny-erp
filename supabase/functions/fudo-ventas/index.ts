@@ -312,6 +312,51 @@ Deno.serve(async (req) => {
       }
     }
 
+    // 4) Obtener número(s) de arqueo de Fudo (CashCount.id = "#" del ticket).
+    //    Recorre páginas hacia atrás hasta encontrar arqueos cuyo openedAt caiga
+    //    dentro del rango horario del turno y (si aplica) en la caja indicada.
+    //    Cortamos cuando openedAt < fechaInicio (ya pasamos el rango hacia atrás).
+    const nrosArqueo: string[] = []
+    {
+      // Búsqueda binaria de la última página con datos en /cash-counts
+      let cLo = 1, cHi = 50
+      while (cLo < cHi) {
+        const mid = Math.floor((cLo + cHi + 1) / 2)
+        const test = await fudoGet(token, 'cash-counts', {
+          'page[size]': String(PAGE_SIZE),
+          'page[number]': String(mid),
+        })
+        if (test.data.length > 0) cLo = mid
+        else cHi = mid - 1
+      }
+      let cPag = cLo
+      let cTerminamos = false
+      while (cPag >= 1 && !cTerminamos) {
+        const res = await fudoGet(token, 'cash-counts', {
+          'page[size]': String(PAGE_SIZE),
+          'page[number]': String(cPag),
+        })
+        if (res.data.length === 0) { cPag--; continue }
+        for (const cc of res.data as JsonApiResource[]) {
+          const openedAt = cc.attributes.openedAt as string | null
+          const canceled = cc.attributes.canceled
+          if (!openedAt) continue
+          if (canceled) continue
+          if (openedAt < fechaInicio) { cTerminamos = true; continue }
+          if (openedAt > fechaFin) continue
+          if (cajaId) {
+            const crData = cc.relationships?.cashRegister?.data
+            const ccCajaId = crData && !Array.isArray(crData) ? crData.id : null
+            if (ccCajaId !== cajaId) continue
+          }
+          nrosArqueo.push(cc.id)
+        }
+        cPag--
+      }
+      // Orden estable por id numérico ascendente para que el "#" más bajo aparezca primero
+      nrosArqueo.sort((a, b) => Number(a) - Number(b))
+    }
+
     // Mapeo de medios de pago del local. Si no existe, fallar explícito en vez
     // de devolver silenciosamente los IDs de otro local (serían ceros engañosos).
     const pm = PM_POR_LOCAL[local]
@@ -335,6 +380,7 @@ Deno.serve(async (req) => {
         .reduce((s, [, v]) => s + v, 0),
       cajero,
       porCaja,
+      nrosArqueo,
     }
 
     return new Response(

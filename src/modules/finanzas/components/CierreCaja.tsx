@@ -80,6 +80,7 @@ interface CierreRow {
   verificado_at: string | null;
   monto_llevado_caja_fuerte: number | null;
   nota_caja_fuerte: string | null;
+  nro_arqueo_fudo: string | null;
 }
 
 // Fondo de cambio que se deja al cierre del turno para que el próximo arranque.
@@ -117,6 +118,7 @@ export function CierreCaja() {
   const [fOtrosRetNota, setFOtrosRetNota] = useState('');
   const [fNota, setFNota] = useState('');
   const [fCajeroId, setFCajeroId] = useState(''); // ID usuario Fudo (vacío = todos)
+  const [fNroArqueo, setFNroArqueo] = useState(''); // N° de arqueo Fudo (CashCount.id)
 
   // Fudo API state
   const [fudoCargando, setFudoCargando] = useState(false);
@@ -157,6 +159,10 @@ export function CierreCaja() {
       // MP Lucas: PM 7 de Fudo. NO es ingreso del negocio — pasa por el POSnet
       // personal de Lucas, se registra como dividendo automáticamente al guardar.
       setFFudoMpLucas(resumen.mpLucas > 0 ? String(Math.round(resumen.mpLucas)) : '');
+      // N° arqueo Fudo (CashCount.id). Si hay varios, se concatenan con coma.
+      if (resumen.nrosArqueo?.length) {
+        setFNroArqueo(resumen.nrosArqueo.join(', '));
+      }
       const turnoLabel = turnoConfig ? ` (${turnoConfig.label})` : '';
       setFudoProgreso(
         `${resumen.cantidadTickets} tickets del ${fFecha}${turnoLabel} — Total: ${new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(resumen.totalVentas)}`,
@@ -288,6 +294,7 @@ export function CierreCaja() {
           nota: fNota || null,
           creado_por: 'Lucas',
           cajero_nombre: fudoResumen?.cajero || null,
+          nro_arqueo_fudo: fNroArqueo.trim() || null,
         },
         { onConflict: 'local,fecha,turno,caja' },
       );
@@ -396,6 +403,7 @@ export function CierreCaja() {
     setFOtrosRetiros('');
     setFOtrosRetNota('');
     setFNota('');
+    setFNroArqueo('');
     setFudoResumen(null);
     setFudoError('');
     setFudoProgreso('');
@@ -426,6 +434,7 @@ export function CierreCaja() {
     setFOtrosRetiros(c.otros_retiros ? String(c.otros_retiros) : '');
     setFOtrosRetNota(c.otros_retiros_nota ?? '');
     setFNota(c.nota ?? '');
+    setFNroArqueo(c.nro_arqueo_fudo ?? '');
     setFudoResumen(null);
     setFudoError('');
     setFudoProgreso('');
@@ -754,6 +763,22 @@ export function CierreCaja() {
                 onChange={(e) => setFHoraCierre(e.target.value)}
                 className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500"
               />
+            </div>
+
+            <div>
+              <label className="mb-1 block text-xs font-medium text-gray-600">
+                N° arqueo (Fudo)
+              </label>
+              <input
+                type="text"
+                value={fNroArqueo}
+                onChange={(e) => setFNroArqueo(e.target.value)}
+                placeholder="Se autocompleta al sincronizar"
+                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500"
+              />
+              <p className="mt-0.5 text-[10px] text-gray-400">
+                El "#" que aparece en el ticket impreso. Si hubo más de uno, van separados por coma.
+              </p>
             </div>
 
             {/* ── Datos de Fudo ── */}
@@ -1119,6 +1144,11 @@ export function CierreCaja() {
                         {c.hora_inicio && c.hora_cierre && (
                           <div className="text-[10px] text-gray-400">
                             {c.hora_inicio.substring(0, 5)}–{c.hora_cierre.substring(0, 5)}
+                          </div>
+                        )}
+                        {c.nro_arqueo_fudo && (
+                          <div className="text-[10px] font-medium text-blue-600">
+                            #{c.nro_arqueo_fudo}
                           </div>
                         )}
                       </td>
