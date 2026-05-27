@@ -76,6 +76,9 @@ interface ProductoRow {
   activo: boolean;
   receta_id: string | null;
   insumo_reventa_id: string | null;
+  // Para bebidas reventa por copa/shot: ml servidos. Se gestiona desde
+  // BebidaReventaPanel — acá lo preservamos al editar para no pisarlo en NULL.
+  ml_por_venta: number | null;
   fudo_nombres: string[] | null;
 }
 
@@ -103,7 +106,7 @@ export function ProductoFormPanel({
     queryFn: async (): Promise<ProductoRow | null> => {
       const { data, error } = await supabase
         .from('cocina_productos')
-        .select('id, nombre, codigo, tipo, unidad, minimo_produccion, local, activo, receta_id, insumo_reventa_id, fudo_nombres')
+        .select('id, nombre, codigo, tipo, unidad, minimo_produccion, local, activo, receta_id, insumo_reventa_id, ml_por_venta, fudo_nombres')
         .eq('id', productoId)
         .maybeSingle();
       if (error) throw error;

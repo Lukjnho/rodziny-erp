@@ -8,6 +8,7 @@ import { useComisionMpConfig } from './useComisionMpConfig';
 import { usePackagingProducto } from './usePackagingProducto';
 import { useAdicionalesProducto } from './useAdicionalesProducto';
 import { useManoObra } from './useManoObra';
+import { calcularCostoBebidaReventa } from '@/modules/productos/lib/bebidaReventaCosto';
 
 export type Canal = 'plato' | 'vianda' | 'congelado';
 
@@ -66,6 +67,7 @@ interface ProductoElaborado {
   unidad: string;
   receta_id: string | null;
   insumo_reventa_id: string | null;
+  ml_por_venta: number | null;
   precio_venta: number | null;
   costo_empaque: number | null;
 }
@@ -87,7 +89,7 @@ export function useCostoCompleto(
       if (!productoId) return null;
       const { data, error } = await supabase
         .from('cocina_productos')
-        .select('id, nombre, tipo, unidad, receta_id, insumo_reventa_id, precio_venta, costo_empaque')
+        .select('id, nombre, tipo, unidad, receta_id, insumo_reventa_id, ml_por_venta, precio_venta, costo_empaque')
         .eq('id', productoId)
         .maybeSingle();
       if (error) throw error;
@@ -104,11 +106,16 @@ export function useCostoCompleto(
     queryFn: async () => {
       const { data, error } = await supabase
         .from('productos')
-        .select('id, nombre, costo_unitario')
+        .select('id, nombre, costo_unitario, contenido_ml')
         .eq('id', insumoReventaId)
         .maybeSingle();
       if (error) throw error;
-      return data as { id: string; nombre: string; costo_unitario: number } | null;
+      return data as {
+        id: string;
+        nombre: string;
+        costo_unitario: number;
+        contenido_ml: number | null;
+      } | null;
     },
   });
 
@@ -177,10 +184,28 @@ export function useCostoCompleto(
       capaBaseDetalle = 'Aplica merma_pct de insumos y costos de subrecetas';
     } else if (producto.insumo_reventa_id) {
       const ins = insumoReventaQ.data;
-      costoReceta = ins?.costo_unitario ?? 0;
+      // Si la bebida se vende en formato copa/shot (ml_por_venta > 0) se
+      // prorratea sobre contenido_ml del insumo. Si no, costo = botella entera.
+      const costoProrr = calcularCostoBebidaReventa(
+        { ml_por_venta: producto.ml_por_venta },
+        ins ? { costo_unitario: ins.costo_unitario, contenido_ml: ins.contenido_ml } : null,
+      );
+      costoReceta = costoProrr ?? 0;
       capaBaseLabel = 'Costo de compra (reventa)';
       if (ins) {
-        capaBaseDetalle = `Insumo: ${ins.nombre}`;
+        const mlVenta = producto.ml_por_venta ?? null;
+        if (mlVenta && mlVenta > 0) {
+          if (ins.contenido_ml && Number(ins.contenido_ml) > 0) {
+            capaBaseDetalle = `Insumo: ${ins.nombre} — ${mlVenta} ml de ${Number(ins.contenido_ml)} ml`;
+          } else {
+            capaBaseDetalle = `Insumo: ${ins.nombre}`;
+            warnings.push(
+              `Vende por ml (${mlVenta}) pero el insumo no tiene "Contenido (ml)" cargado — no se puede prorratear`,
+            );
+          }
+        } else {
+          capaBaseDetalle = `Insumo: ${ins.nombre}`;
+        }
         if (!ins.costo_unitario || ins.costo_unitario <= 0) {
           warnings.push('El insumo de reventa no tiene costo_unitario cargado (cargalo en Insumos)');
         }

@@ -8,6 +8,7 @@ import { useConfigCosteo } from '@/modules/cocina/hooks/useConfigCosteo';
 import { useComisionMpConfig } from '../hooks/useComisionMpConfig';
 import { CANALES_PRECIO, type CanalPrecio } from '../hooks/usePreciosCanal';
 import { SUBCATEGORIA_LABEL } from '@/modules/cocina/RecetasTab';
+import { calcularCostoBebidaReventa } from '@/modules/productos/lib/bebidaReventaCosto';
 
 // El Menú es una PROYECCIÓN de Costeo: lista las recetas marcadas "vendible"
 // (su costo sale del motor de Costeo, no se duplica) + las bebidas de reventa
@@ -359,21 +360,10 @@ export function MenuTab() {
       });
     }
     for (const b of bebidas ?? []) {
-      // Costo de bebida reventa: si tiene ml_por_venta > 0 (copa/shot) se prorratea
-      // sobre contenido_ml del insumo. Si no, costo = costo entero del insumo.
-      let costo: number | null = null;
-      if (b.insumo_reventa_id) {
-        const ins = insumoInfo.get(b.insumo_reventa_id);
-        if (ins) {
-          if (b.ml_por_venta && b.ml_por_venta > 0) {
-            if (ins.contenido_ml && ins.contenido_ml > 0) {
-              costo = (ins.costo / Number(ins.contenido_ml)) * Number(b.ml_por_venta);
-            }
-          } else {
-            costo = ins.costo;
-          }
-        }
-      }
+      const ins = b.insumo_reventa_id ? insumoInfo.get(b.insumo_reventa_id) : null;
+      const costo = calcularCostoBebidaReventa(b, ins
+        ? { costo_unitario: ins.costo, contenido_ml: ins.contenido_ml }
+        : null);
       out.push({
         key: `reventa:${b.id}`,
         origen: 'reventa',

@@ -6,6 +6,7 @@ import { useAuth } from '@/lib/auth';
 import { DialogDuplicar, FichaTecnica, type Receta, type Ingrediente } from '@/modules/cocina/RecetasTab';
 import { useCostosRecetas } from '@/modules/cocina/hooks/useCostosRecetas';
 import { RecetaEditorInline } from './RecetaEditorInline';
+import { calcularCostoBebidaReventa } from '@/modules/productos/lib/bebidaReventaCosto';
 
 // Costeo = recetas y subrecetas (Crema Pastelera, Masa Facturas, salsas base,
 // rellenos, etc.). Solo ingredientes + costo. El producto vendible (precio por
@@ -186,18 +187,9 @@ export function FichaProductoTab() {
     return m;
   }, [insumosBebida]);
 
-  // Costo de una bebida reventa. Si tiene ml_por_venta > 0 y el insumo tiene
-  // contenido_ml, se prorratea (ej: Copa Malbec 150ml sobre botella 750ml = 1/5
-  // del costo). Si no, devuelve el costo entero del insumo (Pepsi lata).
+  // Costo de una bebida reventa (delegado al helper compartido).
   function costoReventa(b: BebidaReventa): number | null {
-    const ins = insumoById.get(b.insumo_reventa_id);
-    if (!ins?.costo_unitario) return null;
-    const costoUnit = Number(ins.costo_unitario);
-    if (b.ml_por_venta && b.ml_por_venta > 0) {
-      if (!ins.contenido_ml || ins.contenido_ml <= 0) return null;
-      return (costoUnit / Number(ins.contenido_ml)) * Number(b.ml_por_venta);
-    }
-    return costoUnit;
+    return calcularCostoBebidaReventa(b, insumoById.get(b.insumo_reventa_id) ?? null);
   }
 
   const { costos, ctx } = useCostosRecetas();

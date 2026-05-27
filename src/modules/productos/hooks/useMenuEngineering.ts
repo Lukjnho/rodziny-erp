@@ -4,6 +4,7 @@ import { supabase } from '@/lib/supabase';
 import { useCostosRecetas } from '@/modules/cocina/hooks/useCostosRecetas';
 import { useConfigCosteo } from '@/modules/cocina/hooks/useConfigCosteo';
 import { useProductosCosteoConfig } from './useProductosCosteoConfig';
+import { calcularCostoBebidaReventa } from '@/modules/productos/lib/bebidaReventaCosto';
 
 export type CuadranteME = 'estrella' | 'vaca' | 'puzzle' | 'perro';
 
@@ -52,6 +53,8 @@ interface CocinaProductoRow {
   tipo: string;
   local: string;
   receta_id: string | null;
+  insumo_reventa_id: string | null;
+  ml_por_venta: number | null;
   es_ancla: boolean;
   fudo_nombres: string[];
   costo_empaque: number | null;
@@ -95,10 +98,28 @@ export function useMenuEngineering(opts: MenuEngineeringOptions) {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cocina_productos')
-        .select('id, codigo, nombre, tipo, local, receta_id, es_ancla, fudo_nombres, costo_empaque')
+        .select('id, codigo, nombre, tipo, local, receta_id, insumo_reventa_id, ml_por_venta, es_ancla, fudo_nombres, costo_empaque')
         .eq('activo', true);
       if (error) throw error;
       return data as CocinaProductoRow[];
+    },
+  });
+
+  // Insumos para costear bebidas reventa (productos del menú sin receta pero
+  // con insumo_reventa_id, como Pepsi lata o Copa Malbec). Sin esto, los
+  // productos de reventa aparecen en la matriz con costo NULL → margen mal.
+  const insumosReventaQ = useQuery({
+    queryKey: ['menu-engineering-insumos-reventa'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('productos')
+        .select('id, costo_unitario, contenido_ml');
+      if (error) throw error;
+      return data as Array<{
+        id: string;
+        costo_unitario: number;
+        contenido_ml: number | null;
+      }>;
     },
   });
 
@@ -109,10 +130,14 @@ export function useMenuEngineering(opts: MenuEngineeringOptions) {
   return useMemo<{ productos: ProductoME[]; isLoading: boolean; periodos: string[] }>(() => {
     const ventas = ventasQ.data;
     const cocinaProds = productosQ.data;
-    const isLoading = ventasQ.isLoading || productosQ.isLoading;
+    const isLoading = ventasQ.isLoading || productosQ.isLoading || insumosReventaQ.isLoading;
     if (!ventas || !cocinaProds) {
       return { productos: [], isLoading, periodos: opts.periodos };
     }
+
+    const insumoById = new Map<string, { costo_unitario: number; contenido_ml: number | null }>();
+    for (const i of insumosReventaQ.data ?? [])
+      insumoById.set(i.id, { costo_unitario: i.costo_unitario, contenido_ml: i.contenido_ml });
 
     // ─── Agrupar ventas por codigo ──────────────────────────────────────────
     const agg = new Map<
@@ -169,6 +194,8 @@ export function useMenuEngineering(opts: MenuEngineeringOptions) {
       // No incluye packaging y adicionales por canal (eso es el waterfall de
       // useCostoCompleto, requiere conocer canal). Para la matriz usamos una
       // aproximación válida si el producto no varía mucho entre canales.
+      // Para bebidas reventa (sin receta) usamos el helper que prorratea por
+      // ml_por_venta cuando es copa/shot.
       let costoUnitario: number | null = null;
       if (prod?.receta_id) {
         const c = costosRecetas.get(prod.receta_id);
@@ -176,6 +203,12 @@ export function useMenuEngineering(opts: MenuEngineeringOptions) {
           const base = c.costoPorPorcion ?? c.costoPorKg ?? null;
           if (base != null) costoUnitario = base + (prod.costo_empaque ?? 0);
         }
+      } else if (prod?.insumo_reventa_id) {
+        const ins = insumoById.get(prod.insumo_reventa_id);
+        costoUnitario = calcularCostoBebidaReventa(
+          { ml_por_venta: prod.ml_por_venta },
+          ins ?? null,
+        );
       }
 
       const precioPromedio = a.uds > 0 ? a.total / a.uds : 0;
@@ -245,6 +278,8 @@ export function useMenuEngineering(opts: MenuEngineeringOptions) {
     ventasQ.isLoading,
     productosQ.data,
     productosQ.isLoading,
+    insumosReventaQ.data,
+    insumosReventaQ.isLoading,
     costosRecetas,
     configGen,
     opts.periodos,
