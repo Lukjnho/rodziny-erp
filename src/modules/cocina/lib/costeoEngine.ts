@@ -375,9 +375,18 @@ export function costearReceta(
       const u = normalizarUnidad(ing.unidad);
       let costoUnit: number | null = null;
       let error: string | null = null;
-      if (u === 'kg' || u === 'g') {
+      // Para subrecetas líquidas (almíbares, jarabes, bebidas base) usadas en
+      // ml/lt/oz: asumimos densidad = 1 g/ml. 1 ml = 1 g = 0.001 kg. Es válido
+      // para todo lo a base de agua. Para sólidos densos (miel pura, aceite)
+      // el costo queda levemente desviado pero usable.
+      if (u === 'kg' || u === 'g' || u === 'ml' || u === 'lt' || u === 'oz') {
         if (sub.costoPorKg != null) {
-          const cantKg = u === 'kg' ? ing.cantidad : ing.cantidad / 1000;
+          let cantKg: number;
+          if (u === 'kg') cantKg = ing.cantidad;
+          else if (u === 'g') cantKg = ing.cantidad / 1000;
+          else if (u === 'ml') cantKg = ing.cantidad / 1000;          // densidad 1
+          else if (u === 'lt') cantKg = ing.cantidad;                  // 1 lt ≈ 1 kg
+          else /* oz */ cantKg = (ing.cantidad * 30) / 1000;           // 1 oz = 30 ml
           costoUnit = sub.costoPorKg;
           const costoTotal = cantKg * sub.costoPorKg;
           costoBase += costoTotal;
