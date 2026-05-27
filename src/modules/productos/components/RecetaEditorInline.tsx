@@ -195,12 +195,15 @@ export function RecetaEditorInline({
   // Solo subrecetas del MISMO local de la receta (más null/'ambos' por las
   // dudas, hoy no hay). Evita listar masas/rellenos del otro local — y el
   // costeoEngine resuelve la subreceta por (nombre, local) igual.
-  // Filtra inactivas para no contaminar el autocomplete con recetas dadas de baja.
+  // - Filtra inactivas para no contaminar el autocomplete con recetas dadas de baja.
+  // - Solo tipo='subreceta': las recetas vendibles NO son ingredientes de otras
+  //   recetas; lo que se reutiliza como ingrediente es siempre una subreceta.
   const recetasDelLocal = useMemo(
     () =>
       todasLasRecetas.filter(
         (r) =>
           r.activo !== false &&
+          r.tipo === 'subreceta' &&
           (!r.local || r.local === 'ambos' || r.local === local),
       ),
     [todasLasRecetas, local],
