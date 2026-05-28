@@ -1175,6 +1175,7 @@ export function FlujoCaja({ onNavigateToTab }: { onNavigateToTab?: (tab: string)
             items={[...ingresos.ventasMPPorMedio.entries()]
               .map(([medio, monto]) => ({ nombre: MEDIO_PAGO_MP_LABEL[medio] || medio, monto }))
               .sort((a, b) => b.monto - a.monto)}
+            tipo="ingreso"
           />
           <LineaDetalle
             label="Otros ingresos bancarios (dev. impuestos, cheques rechazados)"
@@ -1647,11 +1648,13 @@ function GrupoEgreso({
   total,
   items,
   porLocal,
+  tipo = 'egreso',
 }: {
   label: string;
   total: number;
   items: { nombre: string; monto: number }[];
   porLocal?: Map<string, number>;
+  tipo?: 'ingreso' | 'egreso';
 }) {
   const [open, setOpen] = useState(false);
   const sorted = [...items].sort((a, b) => b.monto - a.monto);
@@ -1676,7 +1679,14 @@ function GrupoEgreso({
           <span className="text-[10px] text-gray-400">{open ? '▼' : '▶'}</span>
           <span className="text-sm text-gray-700">{label}</span>
         </div>
-        <span className="text-sm font-semibold tabular-nums text-red-700">-{formatARS(total)}</span>
+        <span
+          className={`text-sm font-semibold tabular-nums ${
+            tipo === 'ingreso' ? 'text-green-700' : 'text-red-700'
+          }`}
+        >
+          {tipo === 'ingreso' ? '' : '-'}
+          {formatARS(total)}
+        </span>
       </button>
       {/* Desglose por local — visible siempre, no requiere expandir */}
       {localesSorted.length > 0 && (
