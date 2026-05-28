@@ -23,7 +23,8 @@ export function useCostosRecetas() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cocina_recetas')
-        .select('id, nombre, tipo, rendimiento_kg, rendimiento_porciones, local');
+        .select('id, nombre, tipo, rendimiento_kg, rendimiento_porciones, local')
+        .eq('activo', true);
       if (error) throw error;
       return data as RecetaRow[];
     },
