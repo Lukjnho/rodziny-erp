@@ -140,13 +140,20 @@ export function useMenuEngineering(opts: MenuEngineeringOptions) {
     for (const i of insumosReventaQ.data ?? [])
       insumoById.set(i.id, { costo_unitario: i.costo_unitario, contenido_ml: i.contenido_ml });
 
-    // ─── Agrupar ventas por codigo ──────────────────────────────────────────
+    // ─── Agrupar ventas por (local, codigo) o (local, nombre) cuando codigo vacío ──
+    // Muchos productos de Fudo no tienen `code` (Saavedra: todos; Vedia: ~30%).
+    // Si agrupamos solo por codigo, todos esos productos colapsan en un único
+    // bucket "${local}|" y se pierden nombres + categorías → el dropdown de
+    // categorías queda incompleto y los cuadrantes se rompen.
     const agg = new Map<
       string,
       { codigo: string; nombre: string; categoria: string | null; local: string; uds: number; total: number }
     >();
     for (const v of ventas) {
-      const key = `${v.local}|${v.codigo}`;
+      const tieneCodigo = v.codigo && v.codigo.trim().length > 0;
+      const key = tieneCodigo
+        ? `${v.local}|c:${v.codigo}`
+        : `${v.local}|n:${normalizarNombre(v.nombre)}`;
       const prev = agg.get(key);
       if (prev) {
         prev.uds += Number(v.cantidad);
