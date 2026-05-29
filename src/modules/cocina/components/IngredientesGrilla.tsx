@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabaseAnon as supabase } from '@/lib/supabaseAnon';
+import { normalizarDecimal, parseDecimal } from '@/lib/numero';
 import { useCostosRecetas } from '../hooks/useCostosRecetas';
 
 export interface IngredienteReal {
@@ -74,7 +75,10 @@ export function IngredientesGrilla({
   useEffect(() => {
     if (ingredientes) {
       const initial: Record<string, string> = {};
-      for (const i of ingredientes) initial[i.id] = String(+(i.cantidad * factor).toFixed(3));
+      // Default con coma decimal (es-AR) — el input no acepta punto, así que
+      // mostrar "0,005" en lugar de "0.005".
+      for (const i of ingredientes)
+        initial[i.id] = String(+(i.cantidad * factor).toFixed(3)).replace('.', ',');
       setCantidades(initial);
       setTildados(new Set());
     }
@@ -89,7 +93,7 @@ export function IngredientesGrilla({
       ing_id: i.id,
       nombre: i.nombre,
       cantidad_receta: +(i.cantidad * factor).toFixed(3),
-      cantidad_real: Number(cantidades[i.id] ?? i.cantidad * factor),
+      cantidad_real: parseDecimal(cantidades[i.id]) || i.cantidad * factor,
       unidad: i.unidad,
       producto_id: i.producto_id,
     }));
@@ -131,7 +135,7 @@ export function IngredientesGrilla({
     let total = 0;
     for (const i of ingredientes) {
       const base = costoPorIng.get(i.id) ?? 0;
-      const real = Number(cantidades[i.id] ?? i.cantidad * factor);
+      const real = parseDecimal(cantidades[i.id]) || i.cantidad * factor;
       const ratio = i.cantidad > 0 ? real / i.cantidad : 1;
       total += base * ratio;
     }
@@ -209,11 +213,11 @@ export function IngredientesGrilla({
       <div className="max-h-72 space-y-1.5 overflow-y-auto p-2">
         {ingredientes.map((i) => {
           const esperado = +(i.cantidad * factor).toFixed(3);
-          const raw = cantidades[i.id] ?? String(esperado);
-          const realNum = Number(raw);
-          const ajustado = !Number.isNaN(realNum) && Math.abs(realNum - esperado) > 0.001;
+          const raw = cantidades[i.id] ?? String(esperado).replace('.', ',');
+          const realNum = parseDecimal(raw);
+          const ajustado = realNum > 0 && Math.abs(realNum - esperado) > 0.001;
           const costoBaseIng = costoPorIng.get(i.id) ?? null;
-          const ratio = i.cantidad > 0 && !Number.isNaN(realNum) ? realNum / i.cantidad : 1;
+          const ratio = i.cantidad > 0 && realNum > 0 ? realNum / i.cantidad : 1;
           const costoIng = costoBaseIng != null ? costoBaseIng * ratio : null;
           const tildado = tildados.has(i.id);
           return (
@@ -246,12 +250,16 @@ export function IngredientesGrilla({
                 {i.nombre}
               </span>
               <input
-                type="number"
+                type="text"
                 inputMode="decimal"
-                step="0.01"
-                min={0}
+                pattern="[0-9]*[.,]?[0-9]*"
                 value={raw}
-                onChange={(e) => setCantidades((prev) => ({ ...prev, [i.id]: e.target.value }))}
+                onChange={(e) =>
+                  setCantidades((prev) => ({
+                    ...prev,
+                    [i.id]: normalizarDecimal(e.target.value),
+                  }))
+                }
                 onClick={(e) => e.stopPropagation()}
                 className={
                   'w-20 rounded border px-2 py-1 text-right text-xs ' +
@@ -272,7 +280,7 @@ export function IngredientesGrilla({
             onClick={() => {
               const reset: Record<string, string> = {};
               for (const i of ingredientes)
-                reset[i.id] = String(+(i.cantidad * factor).toFixed(3));
+                reset[i.id] = String(+(i.cantidad * factor).toFixed(3)).replace('.', ',');
               setCantidades(reset);
             }}
             className="underline hover:text-gray-700"
