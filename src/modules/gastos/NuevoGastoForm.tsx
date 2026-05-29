@@ -409,7 +409,7 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
         .from('productos')
         .select('id, nombre, unidad, costo_unitario, stock_actual, categoria_gasto_id')
         .eq('local', local)
-        .not('activo', 'is', false)
+        .eq('activo', true)
         .order('nombre');
       if (error) throw error;
       return (data ?? []) as ProductoLite[];
