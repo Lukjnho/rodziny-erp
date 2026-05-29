@@ -30,3 +30,24 @@ const NUM_FMT = new Intl.NumberFormat('es-AR', {
 export function formatNum(n: number): string {
   return NUM_FMT.format(n);
 }
+
+// Lectura humana de un valor en kg: "8 kilos 900 g", "12 kg 75 g", "500 g",
+// "10 toneladas 180 kg". Sirve para acompañar el display numérico y eliminar
+// la ambigüedad punto/coma de un vistazo: si el operario ve "10.180 kg
+// (10 toneladas 180 kg)" entiende rápido que está mal.
+export function equivalenteKgGramos(kg: number): string | null {
+  if (!isFinite(kg) || kg <= 0) return null;
+  // ≥ 1000 kg → mostrar en toneladas para hacer obvio el error de unidad.
+  if (kg >= 1000) {
+    const ton = Math.floor(kg / 1000);
+    const restoKg = Math.round(kg - ton * 1000);
+    if (restoKg === 0) return `${ton} ${ton === 1 ? 'tonelada' : 'toneladas'} justas`;
+    return `${ton} ${ton === 1 ? 'tonelada' : 'toneladas'} ${restoKg} kg`;
+  }
+  const totalG = Math.round(kg * 1000);
+  const kilos = Math.floor(totalG / 1000);
+  const gramos = totalG - kilos * 1000;
+  if (kilos === 0) return `${gramos} g`;
+  if (gramos === 0) return `${kilos} ${kilos === 1 ? 'kilo' : 'kilos'} justos`;
+  return `${kilos} ${kilos === 1 ? 'kilo' : 'kilos'} ${gramos} g`;
+}

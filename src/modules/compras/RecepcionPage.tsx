@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import { supabaseAnon as supabase } from '@/lib/supabaseAnon';
 import { cn } from '@/lib/utils';
-import { normalizarDecimal, parseDecimal, formatNum } from '@/lib/numero';
+import { normalizarDecimal, parseDecimal, formatNum, equivalenteKgGramos } from '@/lib/numero';
 
 // Umbrales de sanity por unidad. Calibrados con percentiles de los últimos 60d
 // de movimientos_stock (entradas): kg p95=71, unid p95=400, L p95=72. El
@@ -407,11 +407,16 @@ function RecepcionPageInner() {
               {(() => {
                 // Preview en vivo del valor: cantidad × costo_unitario. Si supera
                 // $500.000 lo destaca en rojo — un sólo producto rara vez vale
-                // tanto, casi siempre es typo (7.400 kg de queso = $82M).
+                // tanto, casi siempre es typo (7.400 kg de queso = $82M). Para
+                // kg/L también muestra la lectura humana ("= 7 kilos 400 g") para
+                // dejar bien claro lo que se está cargando.
                 const cantPrev = parseDecimal(cantidadTemp[p.id]);
-                if (!cantPrev || cantPrev <= 0 || !p.costo_unitario) return null;
-                const valor = cantPrev * p.costo_unitario;
-                const alarma = valor >= 500000;
+                if (!cantPrev || cantPrev <= 0) return null;
+                const valor =
+                  p.costo_unitario != null ? cantPrev * p.costo_unitario : null;
+                const alarma = valor != null && valor >= 500000;
+                const esPeso = ['kg', 'L', 'l', 'lt'].includes(p.unidad);
+                const lectura = esPeso ? equivalenteKgGramos(cantPrev) : null;
                 return (
                   <div
                     className={cn(
@@ -420,10 +425,16 @@ function RecepcionPageInner() {
                     )}
                   >
                     {alarma ? '⚠ ' : '≈ '}
-                    {formatNum(cantPrev)} {p.unidad} × {ARS_FMT.format(p.costo_unitario)} ={' '}
-                    <span className={alarma ? 'text-red-700' : 'text-gray-700'}>
-                      {ARS_FMT.format(valor)}
-                    </span>
+                    {formatNum(cantPrev)} {p.unidad}
+                    {lectura && ` (${lectura})`}
+                    {valor != null && (
+                      <>
+                        {' '}× {ARS_FMT.format(p.costo_unitario ?? 0)} ={' '}
+                        <span className={alarma ? 'text-red-700' : 'text-gray-700'}>
+                          {ARS_FMT.format(valor)}
+                        </span>
+                      </>
+                    )}
                     {alarma && ' — revisá la coma decimal'}
                   </div>
                 );

@@ -9,6 +9,7 @@ import {
   parseDecimal as parseDecimalShared,
   normalizarDecimal as normalizarDecimalShared,
   formatNum as formatNumShared,
+  equivalenteKgGramos as equivalenteKgGramosShared,
 } from '@/lib/numero';
 import { TrasladoPastasForm } from '@/modules/compras/components/TrasladoPastasForm';
 import { useCierresFaltantes } from './hooks/useCierresFaltantes';
@@ -51,18 +52,9 @@ const parseDecimal = parseDecimalShared;
 const normalizarDecimal = normalizarDecimalShared;
 const formatNum = formatNumShared;
 
-// Equivalente "humano" para kg: "8,9 kg = 8 kilos 900 g". Útil como sanity check
-// visual cuando el operario tipea con decimales — si quiso 8,9 y puso 8,993, el
-// "= 8 kilos 993 g" hace evidente el typo antes de guardar.
-function equivalenteKgGramos(n: number): string | null {
-  if (!isFinite(n) || n <= 0) return null;
-  const totalG = Math.round(n * 1000);
-  const kilos = Math.floor(totalG / 1000);
-  const gramos = totalG - kilos * 1000;
-  if (kilos === 0) return `${gramos} g`;
-  if (gramos === 0) return `${kilos} ${kilos === 1 ? 'kilo' : 'kilos'} justos`;
-  return `${kilos} ${kilos === 1 ? 'kilo' : 'kilos'} ${gramos} g`;
-}
+// Equivalente "humano" para kg: importado de @/lib/numero. Acompaña el display
+// numérico para eliminar la ambigüedad punto/coma.
+const equivalenteKgGramos = equivalenteKgGramosShared;
 // Un lote de pasta no usa más de ~50 kg de masa ni de relleno. Si el valor
 // supera esto, casi seguro se cargó en gramos (ej: 1167 = 1,167 kg). Sirve para
 // avisar/corregir en el QR antes de ensuciar cocina_lotes_pasta.
@@ -1096,6 +1088,11 @@ function FormRelleno({
               className="w-full rounded border border-gray-300 px-3 py-2.5 text-sm"
               placeholder="Ej: 5,2"
             />
+            {parseDecimal(pesoKg) > 0 && equivalenteKgGramos(parseDecimal(pesoKg)) && (
+              <p className="mt-1 text-[11px] text-gray-500">
+                = {equivalenteKgGramos(parseDecimal(pesoKg))}
+              </p>
+            )}
           </div>
         </div>
 
@@ -1427,14 +1424,16 @@ function FormPasta({
               // hasta que lo corrija desde el admin.
               const sospechoso = l.excluido_analisis === true;
               const pesoSugerido = sospechoso ? +(peso / 1000).toFixed(3) : null;
+              const lectura = equivalenteKgGramos(peso);
               return (
                 <option key={l.id} value={l.id}>
                   {sospechoso ? '⚠ ' : ''}
                   {l.receta?.nombre ?? 'Relleno'}
                   {fechaSufijo} — {formatNum(peso)} kg
+                  {lectura ? ` (${lectura})` : ''}
                   {sospechoso
-                    ? ` (¿debería ser ${formatNum(pesoSugerido ?? 0)} kg?)`
-                    : ' disponibles'}
+                    ? ` ¿debería ser ${formatNum(pesoSugerido ?? 0)} kg?`
+                    : ''}
                 </option>
               );
             })}
@@ -1505,14 +1504,16 @@ function FormPasta({
                   const peso = m.disponible_kg ?? m.kg_producidos;
                   const sospechoso = m.excluido_analisis === true;
                   const pesoSugerido = sospechoso ? +(peso / 1000).toFixed(3) : null;
+                  const lectura = equivalenteKgGramos(peso);
                   return (
                     <option key={m.id} value={m.id}>
                       {sospechoso ? '⚠ ' : ''}
                       {m.receta?.nombre ?? 'Masa'}
                       {fechaSufijo} — {formatNum(peso)} kg
+                      {lectura ? ` (${lectura})` : ''}
                       {sospechoso
-                        ? ` (¿debería ser ${formatNum(pesoSugerido ?? 0)} kg?)`
-                        : ' disponibles'}
+                        ? ` ¿debería ser ${formatNum(pesoSugerido ?? 0)} kg?`
+                        : ''}
                     </option>
                   );
                 })}
@@ -2150,6 +2151,12 @@ function FormMasa({
               className="w-full rounded border border-gray-300 px-3 py-2.5 text-sm"
               placeholder="Ej: 10,5"
             />
+            {parseDecimal(kgProducidos) > 0 &&
+              equivalenteKgGramos(parseDecimal(kgProducidos)) && (
+                <p className="mt-1 text-[11px] text-gray-500">
+                  = {equivalenteKgGramos(parseDecimal(kgProducidos))}
+                </p>
+              )}
           </div>
         </div>
 
