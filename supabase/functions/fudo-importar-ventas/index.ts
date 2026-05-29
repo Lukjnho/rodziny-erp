@@ -163,6 +163,58 @@ Deno.serve(async (req) => {
       // ignorar
     }
 
+    // Cargar productCategories (mapa id → nombre). Lo usamos para enriquecer
+    // ventas_items.categoria desde Product.relationships.productCategory.
+    const catNombre = new Map<string, string>()
+    try {
+      let p = 1
+      while (true) {
+        const r = await fudoGet(token, 'product-categories', {
+          'page[size]': String(PAGE_SIZE),
+          'page[number]': String(p),
+        })
+        if (!r.data?.length) break
+        for (const c of r.data as JsonApiResource[]) {
+          const name = (c.attributes?.name as string | undefined) ?? `cat-${c.id}`
+          catNombre.set(c.id, name)
+        }
+        if (r.data.length < PAGE_SIZE) break
+        p++
+      }
+    } catch (_e) {
+      // si /product-categories no existe en este local, categoria queda null
+    }
+
+    // Cargar products (mapa id → { code, name, categoryId }). Pagina hasta
+    // que la API devuelva una página vacía o incompleta.
+    interface ProductLite {
+      code: string | null
+      name: string
+      categoryId: string | null
+    }
+    const productoById = new Map<string, ProductLite>()
+    {
+      let p = 1
+      while (true) {
+        const r = await fudoGet(token, 'products', {
+          'page[size]': String(PAGE_SIZE),
+          'page[number]': String(p),
+        })
+        if (!r.data?.length) break
+        for (const prod of r.data as JsonApiResource[]) {
+          const pcData = prod.relationships?.productCategory?.data
+          const catId = pcData && !Array.isArray(pcData) ? pcData.id : null
+          productoById.set(prod.id, {
+            code: (prod.attributes?.code as string | null) ?? null,
+            name: (prod.attributes?.name as string | undefined) ?? `prod-${prod.id}`,
+            categoryId: catId,
+          })
+        }
+        if (r.data.length < PAGE_SIZE) break
+        p++
+      }
+    }
+
     // Búsqueda binaria de la última página
     let lo = 1
     let hi = 1000
@@ -286,9 +338,20 @@ Deno.serve(async (req) => {
       caja: string
       es_dividendo: boolean
     }
+    interface VentaItemRow {
+      local: string
+      periodo: string
+      codigo: string
+      nombre: string
+      categoria: string | null
+      subcategoria: string | null
+      cantidad: number
+      total: number
+    }
 
     const ticketsRows: TicketRow[] = []
     const pagosRows: PagoRow[] = []
+    const ventasItemsRows: VentaItemRow[] = []
     const dividendosRows: {
       socio: string
       fecha: string
@@ -420,6 +483,33 @@ Deno.serve(async (req) => {
         periodo,
       })
 
+      // Persistir items del ticket en ventas_items (necesario para Menu Engineering
+      // y Price Engineering). Cada Item tiene attributes.price (total del line item,
+      // ya con quantity aplicada) y attributes.quantity. El Product asociado nos da
+      // codigo + nombre + categoría (vía productCategory).
+      for (const it of items) {
+        const prRel = it.relationships?.product?.data
+        const productId = prRel && !Array.isArray(prRel) ? prRel.id : null
+        const prod = productId ? productoById.get(productId) : null
+        const codigo = prod?.code ?? ''
+        const nombre = prod?.name ?? ''
+        const categoria = prod?.categoryId ? catNombre.get(prod.categoryId) ?? null : null
+        const cantidad = Number(it.attributes.quantity ?? 0)
+        const totalItem = Number(it.attributes.price ?? 0)
+        // Saltar items sin nombre y sin código (no aportan info útil)
+        if (!nombre && !codigo) continue
+        ventasItemsRows.push({
+          local,
+          periodo,
+          codigo,
+          nombre,
+          categoria,
+          subcategoria: null,
+          cantidad,
+          total: totalItem,
+        })
+      }
+
       // Acumular descuentos del ticket en el periodo.
       // Fudo guarda el discount con percentage pero amount=0 cuando es % sobre la venta,
       // así que el monto real lo calculamos como (subtotal de items) - (total post-descuento).
@@ -450,6 +540,7 @@ Deno.serve(async (req) => {
     // ticketsRows, así que borrar acá no pierde nada.
     await supabase.from('ventas_tickets').delete().eq('local', local).in('periodo', meses)
     await supabase.from('ventas_pagos').delete().eq('local', local).in('periodo', meses)
+    await supabase.from('ventas_items').delete().eq('local', local).in('periodo', meses)
     await supabase
       .from('dividendos')
       .delete()
@@ -471,6 +562,7 @@ Deno.serve(async (req) => {
 
     if (ticketsRows.length) await insertChunk('ventas_tickets', ticketsRows)
     if (pagosRows.length) await insertChunk('ventas_pagos', pagosRows)
+    if (ventasItemsRows.length) await insertChunk('ventas_items', ventasItemsRows)
     if (dividendosRows.length) await insertChunk('dividendos', dividendosRows)
 
     // Cortesías y descuentos en edr_partidas (informativo, no afecta cálculos del EdR).
@@ -523,6 +615,7 @@ Deno.serve(async (req) => {
           anio,
           ticketsImportados: ticketsRows.length,
           pagosImportados: pagosRows.length,
+          itemsImportados: ventasItemsRows.length,
           dividendosImportados: dividendosRows.length,
           partidasImportadas: partidasRows.length,
           countPorEstado,

@@ -69,11 +69,19 @@ export function MenuEngineeringTab() {
     categoria,
   });
 
+  // Lista de categorías disponibles para el dropdown.
+  // Se carga sin filtro de categoría para que el dropdown muestre todas las
+  // opciones aunque el usuario haya filtrado a una sola.
+  const { productos: todosLosProductos } = useMenuEngineering({
+    periodos: periodosSel,
+    local,
+    categoria: 'todas',
+  });
   const categorias = useMemo(() => {
     const set = new Set<string>();
-    for (const p of productos) if (p.tipo) set.add(p.tipo);
+    for (const p of todosLosProductos) if (p.categoriaFudo) set.add(p.categoriaFudo);
     return Array.from(set).sort();
-  }, [productos]);
+  }, [todosLosProductos]);
 
   // Contar por cuadrante
   const conteo = useMemo(() => {
@@ -157,13 +165,16 @@ export function MenuEngineeringTab() {
             onChange={(e) => setCategoria(e.target.value)}
             className="rounded border border-gray-300 px-2 py-1 text-xs"
           >
-            <option value="todas">Todas</option>
+            <option value="todas">Todas (no recomendado)</option>
             {categorias.map((c) => (
               <option key={c} value={c}>
                 {c}
               </option>
             ))}
           </select>
+          <div className="mt-0.5 text-[9px] text-gray-400">
+            Las medianas se calculan dentro de la categoría
+          </div>
         </div>
         <div className="ml-auto text-xs text-gray-400">
           {productos.length} productos · {productos.filter((p) => p.cuadrante).length} clasificados
@@ -264,7 +275,9 @@ function TablaProductosME({ productos }: { productos: ProductoME[] }) {
                 <div className="font-medium">{p.nombre}</div>
                 <div className="text-[9px] text-gray-400">{p.codigo}</div>
               </td>
-              <td className="px-3 py-2 capitalize text-gray-600">{p.tipo}</td>
+              <td className="px-3 py-2 text-gray-600">
+                {p.categoriaFudo ?? <span className="capitalize">{p.tipo}</span>}
+              </td>
               <td className="px-3 py-2 capitalize text-gray-600">{p.local}</td>
               <td className="px-3 py-2 text-right tabular-nums">{p.unidadesVendidas}</td>
               <td className="px-3 py-2 text-right tabular-nums">{formatARS(p.precioPromedio)}</td>

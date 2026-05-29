@@ -12,7 +12,8 @@ export interface ProductoME {
   cocinaProductoId: string | null;
   codigo: string;
   nombre: string;
-  tipo: string; // categoría: pasta, salsa, etc.
+  tipo: string; // categoría gruesa del ERP: pasta, salsa, etc.
+  categoriaFudo: string | null; // categoría fina de Fudo (Pastas Salón, Bebidas Sin Alcohol, etc.) — base del filtro
   local: string;
   esAncla: boolean;
 
@@ -185,10 +186,13 @@ export function useMenuEngineering(opts: MenuEngineeringOptions) {
 
       const cocinaProductoId = prod?.id ?? null;
       const tipo = prod?.tipo ?? (a.categoria ?? '').toLowerCase();
+      const categoriaFudo = a.categoria ?? null;
       const esAncla = prod?.es_ancla ?? false;
 
-      // Aplicar filtro de categoría si corresponde
-      if (opts.categoria && opts.categoria !== 'todas' && tipo !== opts.categoria) continue;
+      // Aplicar filtro de categoría Fudo (la fina, viene de ventas_items.categoria).
+      // Comparamos sobre categoriaFudo para que las medianas se calculen únicamente
+      // sobre productos comparables (no mezclar Pastas Salón con Bebidas).
+      if (opts.categoria && opts.categoria !== 'todas' && categoriaFudo !== opts.categoria) continue;
 
       // Costo estimado: usar costoPorPorcion de la receta + costo_empaque legacy.
       // No incluye packaging y adicionales por canal (eso es el waterfall de
@@ -228,6 +232,7 @@ export function useMenuEngineering(opts: MenuEngineeringOptions) {
         codigo: a.codigo,
         nombre: prod?.nombre ?? a.nombre,
         tipo,
+        categoriaFudo,
         local: a.local,
         esAncla,
         unidadesVendidas: a.uds,
