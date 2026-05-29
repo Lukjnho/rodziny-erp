@@ -48,6 +48,9 @@ export interface Empleado {
   manipulacion_alimentos_vence: string | null;
   certificado_domicilio: boolean;
   certificado_domicilio_fecha: string | null;
+  cbu: string | null;
+  alias_bancario: string | null;
+  cuenta_sueldo: boolean;
   created_at: string;
 }
 
@@ -732,6 +735,9 @@ function ModalEmpleado({
     manipulacion_alimentos_vence: empleado?.manipulacion_alimentos_vence ?? '',
     certificado_domicilio: empleado?.certificado_domicilio ?? false,
     certificado_domicilio_fecha: empleado?.certificado_domicilio_fecha ?? '',
+    cbu: empleado?.cbu ?? '',
+    alias_bancario: empleado?.alias_bancario ?? '',
+    cuenta_sueldo: empleado?.cuenta_sueldo ?? false,
   });
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -761,6 +767,9 @@ function ModalEmpleado({
         manipulacion_alimentos_vence: form.manipulacion_alimentos_vence || null,
         certificado_domicilio: form.certificado_domicilio,
         certificado_domicilio_fecha: form.certificado_domicilio_fecha || null,
+        cbu: form.cbu.replace(/\s+/g, '') || null,
+        alias_bancario: form.alias_bancario.trim() || null,
+        cuenta_sueldo: form.cuenta_sueldo,
         updated_at: new Date().toISOString(),
       };
       if (empleado) {
@@ -964,6 +973,50 @@ function ModalEmpleado({
                   />
                 )}
               </div>
+            </div>
+          </div>
+
+          {/* Datos bancarios */}
+          <div className="border-t border-gray-100 pt-3">
+            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-700">
+              Datos bancarios
+            </div>
+            <label className="mb-2 flex items-center gap-2 text-sm text-gray-700">
+              <input
+                type="checkbox"
+                checked={form.cuenta_sueldo}
+                onChange={(e) => setForm({ ...form, cuenta_sueldo: e.target.checked })}
+                className="h-4 w-4"
+              />
+              Tiene cuenta sueldo con Rodziny
+            </label>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="CBU / CVU">
+                <input
+                  value={form.cbu}
+                  onChange={(e) => setForm({ ...form, cbu: e.target.value })}
+                  inputMode="numeric"
+                  maxLength={22}
+                  placeholder="22 dígitos"
+                  className="input tabular-nums"
+                />
+                {form.cbu && form.cbu.replace(/\s+/g, '').length !== 22 && (
+                  <div className="mt-0.5 text-[10px] text-amber-600">
+                    {form.cbu.replace(/\s+/g, '').length} de 22 dígitos
+                  </div>
+                )}
+              </Field>
+              <Field label="Alias">
+                <input
+                  value={form.alias_bancario}
+                  onChange={(e) => setForm({ ...form, alias_bancario: e.target.value })}
+                  placeholder="nombre.apellido.mp"
+                  className="input"
+                />
+                <div className="mt-0.5 text-[10px] text-gray-400">
+                  Sirve para MP, Ualá u otro banco
+                </div>
+              </Field>
             </div>
           </div>
 

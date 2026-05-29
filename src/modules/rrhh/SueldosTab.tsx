@@ -1485,10 +1485,63 @@ function FilaEmpleado({
                 <span className="text-blue-700">{formatARS(montoTransferenciaPagado)}</span>
               </button>
             )}
+            {(medioPago === 'transferencia' || medioPago === 'mixto') && (
+              <DatosBancariosEmpleado empleado={empleado} />
+            )}
           </div>
         )}
       </td>
     </tr>
+  );
+}
+
+// ─── Datos bancarios para pago por transferencia ────────────────────────────
+function DatosBancariosEmpleado({ empleado }: { empleado: Empleado }) {
+  const cbu = empleado.cbu?.trim() ?? '';
+  const alias = empleado.alias_bancario?.trim() ?? '';
+  const sinDatos = !cbu && !alias;
+
+  async function copiar(texto: string) {
+    try {
+      await navigator.clipboard.writeText(texto);
+    } catch {
+      /* clipboard puede fallar fuera de HTTPS — silencioso */
+    }
+  }
+
+  if (sinDatos) {
+    return (
+      <div
+        className="mt-0.5 text-[9px] text-amber-600"
+        title="Cargar CBU/CVU o alias en el legajo del empleado"
+      >
+        ⚠ sin datos bancarios
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-0.5 flex flex-col items-center gap-0 text-[9px] leading-tight">
+      {alias && (
+        <button
+          onClick={() => copiar(alias)}
+          className="text-blue-700 hover:underline"
+          title={`Copiar alias${empleado.cuenta_sueldo ? ' (cuenta sueldo Rodziny)' : ''}`}
+        >
+          {empleado.cuenta_sueldo ? '★ ' : ''}
+          {alias} 📋
+        </button>
+      )}
+      {cbu && (
+        <button
+          onClick={() => copiar(cbu)}
+          className="font-mono text-gray-600 hover:underline"
+          title="Copiar CBU"
+        >
+          {cbu} 📋
+        </button>
+      )}
+    </div>
   );
 }
 
