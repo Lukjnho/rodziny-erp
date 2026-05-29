@@ -733,6 +733,9 @@ function CierreSimple({
         }
 
         if (cantidad > 0) {
+          // origen='cierre' evita que el trigger trg_pizarron_lote_produccion
+          // marque items del pizarrón como ciclo_completo: el cierre es
+          // re-baselining de stock, no producción real.
           const { error: errIns } = await supabase.from('cocina_lotes_produccion').insert({
             fecha,
             local,
@@ -742,6 +745,7 @@ function CierreSimple({
             cantidad_producida: cantidad,
             unidad: unidadLote,
             en_stock: true,
+            origen: 'cierre',
           });
           if (errIns) throw errIns;
         }
