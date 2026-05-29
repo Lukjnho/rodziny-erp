@@ -122,6 +122,7 @@ interface LoteRelleno {
   peso_total_kg: number;
   local: string;
   fecha: string;
+  excluido_analisis?: boolean;
   receta?: {
     nombre: string;
     g_semolin_por_kg: number | null;
@@ -138,6 +139,7 @@ interface LoteMasa {
   kg_sobrante: number | null;
   destino_sobrante: string | null;
   fecha: string;
+  excluido_analisis?: boolean;
   receta?: { nombre: string } | null;
   consumido_kg?: number;
   disponible_kg?: number;
@@ -308,11 +310,10 @@ export function ProduccionQRPage() {
       const { data, error } = await supabase
         .from('cocina_lotes_relleno')
         .select(
-          'id, receta_id, peso_total_kg, fecha, local, receta:cocina_recetas(nombre, g_semolin_por_kg, g_huevo_por_kg)',
+          'id, receta_id, peso_total_kg, fecha, local, excluido_analisis, receta:cocina_recetas(nombre, g_semolin_por_kg, g_huevo_por_kg)',
         )
         .gte('fecha', desdeLotes)
         .eq('local', local)
-        .eq('excluido_analisis', false)
         .order('created_at', { ascending: false });
       if (error) throw error;
       return data as unknown as LoteRelleno[];
@@ -325,11 +326,10 @@ export function ProduccionQRPage() {
       const { data, error } = await supabase
         .from('cocina_lotes_masa')
         .select(
-          'id, receta_id, kg_producidos, kg_sobrante, destino_sobrante, fecha, receta:cocina_recetas(nombre)',
+          'id, receta_id, kg_producidos, kg_sobrante, destino_sobrante, fecha, excluido_analisis, receta:cocina_recetas(nombre)',
         )
         .gte('fecha', desdeLotes)
         .eq('local', local)
-        .eq('excluido_analisis', false)
         .order('created_at', { ascending: false });
       if (error) throw error;
       return data as unknown as LoteMasa[];
@@ -1421,10 +1421,20 @@ function FormPasta({
             {lotesRelleno.map((l) => {
               const esDeHoy = l.fecha === hoy();
               const fechaSufijo = esDeHoy ? '' : ` (${formatDDMM(l.fecha)})`;
+              const peso = l.disponible_kg ?? l.peso_total_kg;
+              // Lote marcado por error de unidad: sugerimos el valor probable
+              // (÷1000) para que el cocinero entienda y use el "correcto" mentalmente
+              // hasta que lo corrija desde el admin.
+              const sospechoso = l.excluido_analisis === true;
+              const pesoSugerido = sospechoso ? +(peso / 1000).toFixed(3) : null;
               return (
                 <option key={l.id} value={l.id}>
+                  {sospechoso ? '⚠ ' : ''}
                   {l.receta?.nombre ?? 'Relleno'}
-                  {fechaSufijo} — {formatNum(l.disponible_kg ?? l.peso_total_kg)} kg disponibles
+                  {fechaSufijo} — {formatNum(peso)} kg
+                  {sospechoso
+                    ? ` (¿debería ser ${formatNum(pesoSugerido ?? 0)} kg?)`
+                    : ' disponibles'}
                 </option>
               );
             })}
@@ -1492,10 +1502,17 @@ function FormPasta({
                 {masasFiltradas.map((m) => {
                   const esDeHoy = m.fecha === hoy();
                   const fechaSufijo = esDeHoy ? '' : ` (${formatDDMM(m.fecha)})`;
+                  const peso = m.disponible_kg ?? m.kg_producidos;
+                  const sospechoso = m.excluido_analisis === true;
+                  const pesoSugerido = sospechoso ? +(peso / 1000).toFixed(3) : null;
                   return (
                     <option key={m.id} value={m.id}>
+                      {sospechoso ? '⚠ ' : ''}
                       {m.receta?.nombre ?? 'Masa'}
-                      {fechaSufijo} — {formatNum(m.disponible_kg ?? m.kg_producidos)} kg disponibles
+                      {fechaSufijo} — {formatNum(peso)} kg
+                      {sospechoso
+                        ? ` (¿debería ser ${formatNum(pesoSugerido ?? 0)} kg?)`
+                        : ' disponibles'}
                     </option>
                   );
                 })}
