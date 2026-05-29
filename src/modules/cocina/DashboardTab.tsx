@@ -1096,6 +1096,7 @@ export function DashboardTab() {
     merma_cantidad: number | null;
     cantidad_restante_manual: number | null;
     created_at: string;
+    origen: 'produccion' | 'cierre';
     receta?: {
       id: string;
       nombre: string;
@@ -1110,7 +1111,7 @@ export function DashboardTab() {
       const { data, error } = await supabase
         .from('cocina_lotes_produccion')
         .select(
-          'id, fecha, categoria, receta_id, nombre_libre, cantidad_producida, unidad, merma_cantidad, cantidad_restante_manual, created_at, receta:cocina_recetas(id, nombre, tipo, gramos_por_porcion, fudo_productos)',
+          'id, fecha, categoria, receta_id, nombre_libre, cantidad_producida, unidad, merma_cantidad, cantidad_restante_manual, created_at, origen, receta:cocina_recetas(id, nombre, tipo, gramos_por_porcion, fudo_productos)',
         )
         .eq('local', local)
         .eq('en_stock', true)
@@ -1216,6 +1217,14 @@ export function DashboardTab() {
       } else {
         consumoRestante = ventasAsociadas;
       }
+
+      // Si el grupo tiene un lote de hoy con origen='cierre', el peso registrado
+      // ya es el stock real post-ventas del día — no se le descuenta Fudo encima.
+      // Mismo modelo que el bloque de pastas con cocina_cierre_dia.
+      const tieneCierreHoy = grp.lotes.some(
+        (l) => l.origen === 'cierre' && l.fecha === hoy,
+      );
+      if (tieneCierreHoy) consumoRestante = 0;
 
       // FIFO: descontar del más viejo al más nuevo. La query ya viene ordenada
       // por created_at, así que basta con iterar en orden.
