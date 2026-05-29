@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabaseAnon as supabase } from '@/lib/supabaseAnon';
 import { cn } from '@/lib/utils';
 import { IngredientesGrilla, type IngredienteReal } from './components/IngredientesGrilla';
+import { ResponsableSelect } from './components/ResponsableSelect';
 import { TrasladoPastasForm } from '@/modules/compras/components/TrasladoPastasForm';
 import { useCierresFaltantes } from './hooks/useCierresFaltantes';
 
@@ -930,6 +931,7 @@ function FormRelleno({
   const [responsable, setResponsable] = useState('');
   const [notas, setNotas] = useState('');
   const [ingredientesReales, setIngredientesReales] = useState<IngredienteReal[]>([]);
+  const [ingredientesOk, setIngredientesOk] = useState(true);
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState('');
 
@@ -962,7 +964,11 @@ function FormRelleno({
       return;
     }
     if (!responsable.trim()) {
-      setError('Indicá tu nombre (responsable)');
+      setError('Elegí responsable');
+      return;
+    }
+    if (!ingredientesOk) {
+      setError('Tildá todos los ingredientes pesados antes de guardar');
       return;
     }
     setGuardando(true);
@@ -997,6 +1003,11 @@ function FormRelleno({
       </div>
 
       <div className="space-y-3 rounded-lg border border-gray-200 bg-white p-4">
+        <ResponsableSelect
+          local={local as 'vedia' | 'saavedra'}
+          value={responsable}
+          onChange={setResponsable}
+        />
         {hayPlan ? (
           <div className="flex items-center justify-between rounded border border-rodziny-200 bg-rodziny-50 px-2.5 py-1.5 text-[11px]">
             <span className="font-medium text-rodziny-800">
@@ -1069,17 +1080,8 @@ function FormRelleno({
           recetaId={recetaId || null}
           onChange={onGrillaChange}
           multiplicador={Number(cantRecetas) || 1}
+          onValidezChange={setIngredientesOk}
         />
-
-        <div>
-          <label className="mb-1 block text-xs font-medium text-gray-700">Responsable</label>
-          <input
-            value={responsable}
-            onChange={(e) => setResponsable(e.target.value)}
-            className="w-full rounded border border-gray-300 px-3 py-2.5 text-sm"
-            placeholder="Nombre"
-          />
-        </div>
 
         <div>
           <label className="mb-1 block text-xs font-medium text-gray-700">Notas (opcional)</label>
@@ -1096,7 +1098,7 @@ function FormRelleno({
 
       <button
         onClick={guardar}
-        disabled={guardando}
+        disabled={guardando || !ingredientesOk || !responsable.trim()}
         className="w-full rounded-lg bg-green-600 py-3.5 text-sm font-semibold text-white shadow transition-transform hover:bg-green-700 active:scale-[0.98] disabled:opacity-50"
       >
         {guardando ? 'Guardando...' : 'Sumar relleno al depósito'}
@@ -1282,7 +1284,7 @@ function FormPasta({
       }
     }
     if (!responsable.trim()) {
-      setError('Indicá tu nombre (responsable)');
+      setError('Elegí responsable');
       return;
     }
     // Sanity de unidades: >50 kg de masa/relleno por lote es casi seguro gramos.
@@ -1357,6 +1359,11 @@ function FormPasta({
       </div>
 
       <div className="space-y-3 rounded-lg border border-gray-200 bg-white p-4">
+        <ResponsableSelect
+          local={local as 'vedia' | 'saavedra'}
+          value={responsable}
+          onChange={setResponsable}
+        />
         {/* Paso 1 — Relleno disponible */}
         <div>
           <label className="mb-1 block text-xs font-medium text-gray-700">
@@ -1686,16 +1693,6 @@ function FormPasta({
         </div>
 
         <div>
-          <label className="mb-1 block text-xs font-medium text-gray-700">Responsable</label>
-          <input
-            value={responsable}
-            onChange={(e) => setResponsable(e.target.value)}
-            className="w-full rounded border border-gray-300 px-3 py-2.5 text-sm"
-            placeholder="Nombre"
-          />
-        </div>
-
-        <div>
           <label className="mb-1 block text-xs font-medium text-gray-700">Notas (opcional)</label>
           <input
             value={notas}
@@ -1709,7 +1706,7 @@ function FormPasta({
 
       <button
         onClick={guardar}
-        disabled={guardando}
+        disabled={guardando || !responsable.trim()}
         className="w-full rounded-lg bg-rodziny-700 py-3.5 text-sm font-semibold text-white shadow transition-transform hover:bg-rodziny-800 active:scale-[0.98] disabled:opacity-50"
       >
         {guardando
@@ -1779,7 +1776,7 @@ function FormPorcionar({
       return;
     }
     if (!responsable.trim()) {
-      setError('Indicá tu nombre (responsable)');
+      setError('Elegí responsable');
       return;
     }
     setGuardando(true);
@@ -1844,6 +1841,11 @@ function FormPorcionar({
       </div>
 
       <div className="space-y-3 rounded-lg border border-gray-200 bg-white p-4">
+        <ResponsableSelect
+          local={local as 'vedia' | 'saavedra'}
+          value={responsable}
+          onChange={setResponsable}
+        />
         <div>
           <label className="mb-1 block text-xs font-medium text-gray-700">Lote a porcionar</label>
           <select
@@ -1948,16 +1950,6 @@ function FormPorcionar({
         </div>
 
         <div>
-          <label className="mb-1 block text-xs font-medium text-gray-700">Responsable</label>
-          <input
-            value={responsable}
-            onChange={(e) => setResponsable(e.target.value)}
-            className="w-full rounded border border-gray-300 px-3 py-2.5 text-sm"
-            placeholder="Nombre"
-          />
-        </div>
-
-        <div>
           <label className="mb-1 block text-xs font-medium text-gray-700">Notas (opcional)</label>
           <input
             value={notas}
@@ -1972,7 +1964,7 @@ function FormPorcionar({
 
       <button
         onClick={guardar}
-        disabled={guardando}
+        disabled={guardando || !responsable.trim()}
         className="w-full rounded-lg bg-blue-600 py-3.5 text-sm font-semibold text-white shadow transition-transform hover:bg-blue-700 active:scale-[0.98] disabled:opacity-50"
       >
         {guardando ? 'Guardando...' : 'Mover a cámara de congelado'}
@@ -2000,6 +1992,7 @@ function FormMasa({
   const [responsable, setResponsable] = useState('');
   const [notas, setNotas] = useState('');
   const [ingredientesReales, setIngredientesReales] = useState<IngredienteReal[]>([]);
+  const [ingredientesOk, setIngredientesOk] = useState(true);
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState('');
 
@@ -2016,7 +2009,11 @@ function FormMasa({
       return;
     }
     if (!responsable.trim()) {
-      setError('Indicá tu nombre (responsable)');
+      setError('Elegí responsable');
+      return;
+    }
+    if (!ingredientesOk) {
+      setError('Tildá todos los ingredientes pesados antes de guardar');
       return;
     }
     setGuardando(true);
@@ -2050,6 +2047,11 @@ function FormMasa({
       </div>
 
       <div className="space-y-3 rounded-lg border border-gray-200 bg-white p-4">
+        <ResponsableSelect
+          local={local as 'vedia' | 'saavedra'}
+          value={responsable}
+          onChange={setResponsable}
+        />
         <div>
           <label className="mb-1 block text-xs font-medium text-gray-700">Receta de masa</label>
           <select
@@ -2097,17 +2099,8 @@ function FormMasa({
           recetaId={recetaId || null}
           onChange={onGrillaChange}
           multiplicador={Number(cantRecetas) || 1}
+          onValidezChange={setIngredientesOk}
         />
-
-        <div>
-          <label className="mb-1 block text-xs font-medium text-gray-700">Responsable</label>
-          <input
-            value={responsable}
-            onChange={(e) => setResponsable(e.target.value)}
-            className="w-full rounded border border-gray-300 px-3 py-2.5 text-sm"
-            placeholder="Nombre"
-          />
-        </div>
 
         <div>
           <label className="mb-1 block text-xs font-medium text-gray-700">Notas (opcional)</label>
@@ -2124,7 +2117,7 @@ function FormMasa({
 
       <button
         onClick={guardar}
-        disabled={guardando}
+        disabled={guardando || !ingredientesOk || !responsable.trim()}
         className="w-full rounded-lg bg-amber-500 py-3.5 text-sm font-semibold text-white shadow transition-transform hover:bg-amber-600 active:scale-[0.98] disabled:opacity-50"
       >
         {guardando ? 'Guardando...' : 'Sumar masa al depósito'}
@@ -2375,6 +2368,7 @@ function FormGenerico({
   const [responsable, setResponsable] = useState('');
   const [notas, setNotas] = useState('');
   const [ingredientesReales, setIngredientesReales] = useState<IngredienteReal[]>([]);
+  const [ingredientesOk, setIngredientesOk] = useState(true);
   const [enStock, setEnStock] = useState(true);
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState('');
@@ -2461,7 +2455,11 @@ function FormGenerico({
       return;
     }
     if (!responsable.trim()) {
-      setError('Indicá tu nombre (responsable)');
+      setError('Elegí responsable');
+      return;
+    }
+    if (!ingredientesOk) {
+      setError('Tildá todos los ingredientes pesados antes de guardar');
       return;
     }
     if (valorAnomalo && recetaSel) {
@@ -2546,6 +2544,11 @@ function FormGenerico({
       </div>
 
       <div className="space-y-3 rounded-lg border border-gray-200 bg-white p-4">
+        <ResponsableSelect
+          local={local as 'vedia' | 'saavedra'}
+          value={responsable}
+          onChange={setResponsable}
+        />
         {recetas.length === 0 && !permitirLibre && (
           <div className="rounded border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
             <p className="mb-1 font-semibold">
@@ -2665,7 +2668,11 @@ function FormGenerico({
           </div>
         )}
 
-        <IngredientesGrilla recetaId={recetaId || null} onChange={onGrillaChange} />
+        <IngredientesGrilla
+          recetaId={recetaId || null}
+          onChange={onGrillaChange}
+          onValidezChange={setIngredientesOk}
+        />
 
         <div>
           <div className="grid grid-cols-2 gap-3">
@@ -2745,16 +2752,6 @@ function FormGenerico({
         </div>
 
         <div>
-          <label className="mb-1 block text-xs font-medium text-gray-700">Responsable</label>
-          <input
-            value={responsable}
-            onChange={(e) => setResponsable(e.target.value)}
-            placeholder="Nombre de quien produjo"
-            className="w-full rounded border border-gray-300 px-3 py-2.5 text-sm"
-          />
-        </div>
-
-        <div>
           <label className="mb-1 block text-xs font-medium text-gray-700">Notas (opcional)</label>
           <textarea
             value={notas}
@@ -2785,7 +2782,7 @@ function FormGenerico({
 
         <button
           onClick={guardar}
-          disabled={guardando}
+          disabled={guardando || !ingredientesOk || !responsable.trim()}
           className="w-full rounded-lg bg-rodziny-700 py-3 text-sm font-semibold text-white hover:bg-rodziny-800 disabled:opacity-50"
         >
           {guardando ? 'Guardando...' : 'Guardar'}
@@ -2929,7 +2926,7 @@ function FormMerma({
       return;
     }
     if (!responsable.trim()) {
-      setError('Indicá el responsable');
+      setError('Elegí responsable');
       return;
     }
     setGuardando(true);
@@ -2970,6 +2967,12 @@ function FormMerma({
           Volver
         </button>
       </div>
+
+      <ResponsableSelect
+        local={local as 'vedia' | 'saavedra'}
+        value={responsable}
+        onChange={setResponsable}
+      />
 
       <div>
         <label className="mb-1 block text-xs font-medium text-gray-700">Producto</label>
@@ -3016,22 +3019,11 @@ function FormMerma({
         />
       </div>
 
-      <div>
-        <label className="mb-1 block text-xs font-medium text-gray-700">Responsable</label>
-        <input
-          type="text"
-          value={responsable}
-          onChange={(e) => setResponsable(e.target.value)}
-          placeholder="Nombre"
-          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
-        />
-      </div>
-
       {error && <div className="rounded bg-red-50 px-3 py-2 text-xs text-red-700">{error}</div>}
 
       <button
         onClick={guardar}
-        disabled={guardando}
+        disabled={guardando || !responsable.trim()}
         className="w-full rounded-lg bg-red-600 py-3 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50"
       >
         {guardando ? 'Guardando...' : 'Registrar Merma'}

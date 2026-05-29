@@ -34,13 +34,24 @@ interface Props {
   // Cantidad de recetas que se van a producir. Los ingredientes se pre-llenan
   // multiplicados por este número. Default: 1.
   multiplicador?: number;
+  // Callback con el estado de validez: true cuando TODOS los ingredientes están
+  // tildados como "pesado y agregado" (o cuando la receta no tiene ingredientes
+  // cargados, donde no aplica el checklist).
+  onValidezChange?: (todosTildados: boolean) => void;
 }
 
-// Muestra los ingredientes de la receta seleccionada con cantidades editables.
-// Si no hay ingredientes cargados en la receta, no renderiza nada.
-export function IngredientesGrilla({ recetaId, onChange, multiplicador = 1 }: Props) {
-  const [expandido, setExpandido] = useState(false);
+// Lista expandida de ingredientes de la receta seleccionada, con checkbox
+// obligatorio por cada uno ("pesado y agregado") y cantidad ajustable.
+// El padre se entera vía onValidezChange si TODOS están tildados y puede
+// bloquear el submit hasta entonces.
+export function IngredientesGrilla({
+  recetaId,
+  onChange,
+  multiplicador = 1,
+  onValidezChange,
+}: Props) {
   const [cantidades, setCantidades] = useState<Record<string, string>>({});
+  const [tildados, setTildados] = useState<Set<string>>(new Set());
   const { costos } = useCostosRecetas();
   const factor = multiplicador > 0 ? multiplicador : 1;
 
@@ -59,14 +70,13 @@ export function IngredientesGrilla({ recetaId, onChange, multiplicador = 1 }: Pr
     enabled: !!recetaId,
   });
 
-  // Inicializar cantidades con defaults de la receta cuando cambia la receta
-  // o el multiplicador (cantidad de recetas a producir). Multiplica cada
-  // ingrediente base × factor para que el operario vea directamente cuánto usar.
+  // Inicializar cantidades + reset de tildados al cambiar receta o factor.
   useEffect(() => {
     if (ingredientes) {
       const initial: Record<string, string> = {};
       for (const i of ingredientes) initial[i.id] = String(+(i.cantidad * factor).toFixed(3));
       setCantidades(initial);
+      setTildados(new Set());
     }
   }, [ingredientes, factor]);
 
@@ -88,6 +98,17 @@ export function IngredientesGrilla({ recetaId, onChange, multiplicador = 1 }: Pr
   useEffect(() => {
     onChange(reales);
   }, [reales, onChange]);
+
+  // Avisar al padre del estado de validez. Si no hay ingredientes (receta sin
+  // detalle cargado), consideramos válido — no hay nada que tildar.
+  const todosTildados = useMemo(() => {
+    if (!ingredientes || ingredientes.length === 0) return true;
+    return ingredientes.every((i) => tildados.has(i.id));
+  }, [ingredientes, tildados]);
+
+  useEffect(() => {
+    onValidezChange?.(todosTildados);
+  }, [todosTildados, onValidezChange]);
 
   // Costos por ingrediente — escalar según ratio cantidad_real/cantidad_receta
   const costoReceta = recetaId ? costos.get(recetaId) : null;
@@ -131,98 +152,135 @@ export function IngredientesGrilla({ recetaId, onChange, multiplicador = 1 }: Pr
     costoBaseTotal != null &&
     Math.abs(costoAjustadoTotal - costoBaseTotal) > 1;
 
+  const total = ingredientes.length;
+  const cuenta = ingredientes.filter((i) => tildados.has(i.id)).length;
+
+  const toggleTodos = () => {
+    if (cuenta === total) {
+      setTildados(new Set());
+    } else {
+      setTildados(new Set(ingredientes.map((i) => i.id)));
+    }
+  };
+
   return (
-    <div className="rounded-lg border border-gray-200 bg-gray-50">
-      <button
-        type="button"
-        onClick={() => setExpandido((v) => !v)}
-        className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-left hover:bg-gray-100"
-      >
+    <div
+      className={
+        'rounded-lg border bg-white ' +
+        (todosTildados ? 'border-emerald-300' : 'border-amber-300')
+      }
+    >
+      <div className={'flex items-center justify-between px-3 py-2 ' + (todosTildados ? 'bg-emerald-50' : 'bg-amber-50')}>
         <div className="flex-1">
-          <p className="text-xs font-medium text-gray-700">
-            Ingredientes de la receta ({ingredientes.length})
+          <p className="text-xs font-semibold text-gray-800">
+            Ingredientes ({cuenta} de {total} pesados)
+            {todosTildados && <span className="ml-2 text-emerald-700">✓ Listo</span>}
           </p>
-          <p className="text-[10px] text-gray-500">
-            {ajustados > 0
-              ? `${ajustados} ajustado${ajustados > 1 ? 's' : ''} — se guarda la cantidad real`
-              : factor > 1
-                ? `Multiplicado por ${factor} recetas · Tocá para ajustar`
-                : 'Cantidades por receta · Tocá para ajustar si hubo variación'}
+          <p className="text-[10px] text-gray-600">
+            Tildá cada ingrediente a medida que lo pesás y agregás.
+            {factor > 1 && ` Cantidades × ${factor} recetas.`}
           </p>
         </div>
-        {costoAjustadoTotal != null && costoAjustadoTotal > 0 && (
-          <div className="mr-2 text-right">
-            <p
+        <div className="flex flex-col items-end gap-1">
+          {costoAjustadoTotal != null && costoAjustadoTotal > 0 && (
+            <div className="text-right">
+              <p
+                className={
+                  'text-xs font-semibold ' + (hayAjuste ? 'text-amber-700' : 'text-emerald-700')
+                }
+              >
+                {formatARS(costoAjustadoTotal)}
+              </p>
+              {hayAjuste && costoBaseTotal != null && (
+                <p className="text-[9px] text-gray-400">base: {formatARS(costoBaseTotal)}</p>
+              )}
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={toggleTodos}
+            className="text-[10px] text-rodziny-700 underline hover:text-rodziny-800"
+          >
+            {cuenta === total ? 'Destildar todos' : 'Tildar todos'}
+          </button>
+        </div>
+      </div>
+
+      <div className="max-h-72 space-y-1.5 overflow-y-auto p-2">
+        {ingredientes.map((i) => {
+          const esperado = +(i.cantidad * factor).toFixed(3);
+          const raw = cantidades[i.id] ?? String(esperado);
+          const realNum = Number(raw);
+          const ajustado = !Number.isNaN(realNum) && Math.abs(realNum - esperado) > 0.001;
+          const costoBaseIng = costoPorIng.get(i.id) ?? null;
+          const ratio = i.cantidad > 0 && !Number.isNaN(realNum) ? realNum / i.cantidad : 1;
+          const costoIng = costoBaseIng != null ? costoBaseIng * ratio : null;
+          const tildado = tildados.has(i.id);
+          return (
+            <label
+              key={i.id}
               className={
-                'text-xs font-semibold ' + (hayAjuste ? 'text-amber-700' : 'text-emerald-700')
+                'flex cursor-pointer items-center gap-2 rounded border px-2 py-1.5 transition-colors ' +
+                (tildado ? 'border-emerald-200 bg-emerald-50' : 'border-gray-200 bg-white hover:bg-gray-50')
               }
             >
-              {formatARS(costoAjustadoTotal)}
-            </p>
-            {hayAjuste && costoBaseTotal != null && (
-              <p className="text-[9px] text-gray-400">base: {formatARS(costoBaseTotal)}</p>
-            )}
-          </div>
-        )}
-        <span className="text-xs text-gray-400">{expandido ? '▲' : '▼'}</span>
-      </button>
-
-      {expandido && (
-        <div className="max-h-64 space-y-1.5 overflow-y-auto border-t border-gray-200 p-2">
-          {ingredientes.map((i) => {
-            const esperado = +(i.cantidad * factor).toFixed(3);
-            const raw = cantidades[i.id] ?? String(esperado);
-            const realNum = Number(raw);
-            const ajustado = !Number.isNaN(realNum) && Math.abs(realNum - esperado) > 0.001;
-            const costoBaseIng = costoPorIng.get(i.id) ?? null;
-            const ratio = i.cantidad > 0 && !Number.isNaN(realNum) ? realNum / i.cantidad : 1;
-            const costoIng = costoBaseIng != null ? costoBaseIng * ratio : null;
-            return (
-              <div key={i.id} className="flex items-center gap-2">
-                <span
-                  className={
-                    'flex-1 truncate text-xs ' +
-                    (ajustado ? 'font-medium text-amber-700' : 'text-gray-700')
-                  }
-                >
-                  {i.nombre}
-                </span>
-                <input
-                  type="number"
-                  inputMode="decimal"
-                  step="0.01"
-                  min={0}
-                  value={raw}
-                  onChange={(e) => setCantidades((prev) => ({ ...prev, [i.id]: e.target.value }))}
-                  className={
-                    'w-20 rounded border px-2 py-1 text-right text-xs ' +
-                    (ajustado ? 'border-amber-400 bg-amber-50' : 'border-gray-300 bg-white')
-                  }
-                />
-                <span className="w-8 text-[10px] text-gray-500">{i.unidad}</span>
-                <span className="w-14 text-right text-[10px] tabular-nums text-gray-500">
-                  {costoIng != null ? formatARS(costoIng) : '—'}
-                </span>
-              </div>
-            );
-          })}
-          <div className="flex justify-between pt-1 text-[10px] text-gray-400">
-            <span>{factor > 1 ? `Base × ${factor} recetas` : 'Base de la receta'}</span>
-            <button
-              type="button"
-              onClick={() => {
-                const reset: Record<string, string> = {};
-                for (const i of ingredientes)
-                  reset[i.id] = String(+(i.cantidad * factor).toFixed(3));
-                setCantidades(reset);
-              }}
-              className="underline hover:text-gray-700"
-            >
-              Resetear
-            </button>
-          </div>
+              <input
+                type="checkbox"
+                checked={tildado}
+                onChange={(e) =>
+                  setTildados((prev) => {
+                    const next = new Set(prev);
+                    if (e.target.checked) next.add(i.id);
+                    else next.delete(i.id);
+                    return next;
+                  })
+                }
+                className="h-4 w-4 cursor-pointer accent-emerald-600"
+              />
+              <span
+                className={
+                  'flex-1 truncate text-xs ' +
+                  (ajustado ? 'font-medium text-amber-700' : tildado ? 'text-gray-800' : 'text-gray-700')
+                }
+              >
+                {i.nombre}
+              </span>
+              <input
+                type="number"
+                inputMode="decimal"
+                step="0.01"
+                min={0}
+                value={raw}
+                onChange={(e) => setCantidades((prev) => ({ ...prev, [i.id]: e.target.value }))}
+                onClick={(e) => e.stopPropagation()}
+                className={
+                  'w-20 rounded border px-2 py-1 text-right text-xs ' +
+                  (ajustado ? 'border-amber-400 bg-amber-50' : 'border-gray-300 bg-white')
+                }
+              />
+              <span className="w-8 text-[10px] text-gray-500">{i.unidad}</span>
+              <span className="w-14 text-right text-[10px] tabular-nums text-gray-500">
+                {costoIng != null ? formatARS(costoIng) : '—'}
+              </span>
+            </label>
+          );
+        })}
+        <div className="flex justify-between pt-1 text-[10px] text-gray-400">
+          <span>{factor > 1 ? `Base × ${factor} recetas` : 'Base de la receta'}</span>
+          <button
+            type="button"
+            onClick={() => {
+              const reset: Record<string, string> = {};
+              for (const i of ingredientes)
+                reset[i.id] = String(+(i.cantidad * factor).toFixed(3));
+              setCantidades(reset);
+            }}
+            className="underline hover:text-gray-700"
+          >
+            Resetear cantidades
+          </button>
         </div>
-      )}
+      </div>
     </div>
   );
 }
