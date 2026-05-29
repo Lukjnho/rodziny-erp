@@ -312,6 +312,7 @@ export function ProduccionQRPage() {
         )
         .gte('fecha', desdeLotes)
         .eq('local', local)
+        .eq('excluido_analisis', false)
         .order('created_at', { ascending: false });
       if (error) throw error;
       return data as unknown as LoteRelleno[];
@@ -328,6 +329,7 @@ export function ProduccionQRPage() {
         )
         .gte('fecha', desdeLotes)
         .eq('local', local)
+        .eq('excluido_analisis', false)
         .order('created_at', { ascending: false });
       if (error) throw error;
       return data as unknown as LoteMasa[];
@@ -1422,7 +1424,7 @@ function FormPasta({
               return (
                 <option key={l.id} value={l.id}>
                   {l.receta?.nombre ?? 'Relleno'}
-                  {fechaSufijo} — {l.disponible_kg ?? l.peso_total_kg} kg disponibles
+                  {fechaSufijo} — {formatNum(l.disponible_kg ?? l.peso_total_kg)} kg disponibles
                 </option>
               );
             })}
@@ -1493,7 +1495,7 @@ function FormPasta({
                   return (
                     <option key={m.id} value={m.id}>
                       {m.receta?.nombre ?? 'Masa'}
-                      {fechaSufijo} — {m.disponible_kg ?? m.kg_producidos} kg disponibles
+                      {fechaSufijo} — {formatNum(m.disponible_kg ?? m.kg_producidos)} kg disponibles
                     </option>
                   );
                 })}
