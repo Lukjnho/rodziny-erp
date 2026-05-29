@@ -551,7 +551,7 @@ export function StockTab() {
           .filter((m) => m.producto_id === prod.id && m.local === loc)
           .reduce((s, m) => s + m.porciones, 0);
 
-        // Vendido hoy (para la columna "Vendido hoy" — no necesariamente lo mismo que se descuenta del mostrador)
+        // Vendido hoy de Fudo: descuenta de "En mostrador" (mostradorRaw).
         const vendidoHoy = ventasFudoDelProducto(prod, fudoHoy?.[loc]?.ranking);
 
         // Ajustes manuales acumulados por ubicación
@@ -807,7 +807,6 @@ export function StockTab() {
                     <th className="px-4 py-2 text-right">Pastas en produ</th>
                     <th className="px-4 py-2 text-right">En cámara</th>
                     <th className="px-4 py-2 text-right">En mostrador</th>
-                    <th className="px-4 py-2 text-right">Vendido hoy</th>
                     <th className="px-4 py-2 text-right">Merma</th>
                     <th className="px-4 py-2">Mín.</th>
                     <th className="px-4 py-2">Estado</th>
@@ -910,9 +909,6 @@ export function StockTab() {
                         ✎
                       </span>
                     </button>
-                  </td>
-                  <td className="px-4 py-2 text-right text-gray-500">
-                    {r.vendidoHoy > 0 ? r.vendidoHoy : '—'}
                   </td>
                   <td className="px-4 py-2 text-right">{r.merma}</td>
                   <td className="px-4 py-2">{min || '—'}</td>

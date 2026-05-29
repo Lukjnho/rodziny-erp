@@ -338,7 +338,6 @@ function DetalleDia({ local, fecha }: { local: Local; fecha: string }) {
                 <th className="px-4 py-2">Turno</th>
                 <th className="px-4 py-2 text-right">Inicial</th>
                 <th className="px-4 py-2 text-right">Entrega</th>
-                <th className="px-4 py-2 text-right">Vendido</th>
                 <th className="px-4 py-2 text-right">Real</th>
                 <th className="px-4 py-2">Responsable</th>
               </tr>
@@ -367,9 +366,6 @@ function DetalleDia({ local, fecha }: { local: Local; fecha: string }) {
                     </td>
                     <td className="px-4 py-2 text-right tabular-nums text-gray-500">
                       {c.entrega ?? '—'}
-                    </td>
-                    <td className="px-4 py-2 text-right tabular-nums text-gray-500">
-                      {c.vendido ?? '—'}
                     </td>
                     <td className="px-4 py-2 text-right font-semibold tabular-nums text-gray-800">
                       {c.cantidad_real} {c.unidad === 'kg' ? 'kg' : c.unidad === 'unidades' ? 'u' : 'p'}
