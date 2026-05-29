@@ -11,7 +11,7 @@
 //  7) Usuario edita/confirma; se crea fila en `gastos` con FK a comprobantes
 //  8) Si importe_total >= umbral_minimo de config_aprobaciones: estado_aprobacion='requiere_aprobacion'
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../lib/auth';
@@ -529,6 +529,30 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
       }
       return c;
     });
+  }
+
+  function toggleActualizarCosto(idx: number, checked: boolean) {
+    setItems((prev) =>
+      prev.map((it, i) => (i === idx ? { ...it, actualizar_costo: checked } : it)),
+    );
+  }
+
+  // Costo de referencia por producto (snapshot del catálogo). Se usa para detectar
+  // si el precio_unitario del item difiere del costo_unitario guardado en productos.
+  const costoPorProducto = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const p of productosLocal) {
+      if (p.costo_unitario != null && p.costo_unitario > 0) m.set(p.id, p.costo_unitario);
+    }
+    return m;
+  }, [productosLocal]);
+
+  function detectarVariacion(it: ItemGastoStock) {
+    const costoActual = costoPorProducto.get(it.producto_id);
+    if (!costoActual || !it.precio_unitario || it.precio_unitario <= 0) return null;
+    const variacion = (it.precio_unitario - costoActual) / costoActual;
+    if (Math.abs(variacion) < 0.0001) return null;
+    return { costoActual, variacion };
   }
 
   function aplicarTotalDesdeItems() {
@@ -1085,27 +1109,53 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
       }
 
       // 4) Stock + movimientos + self-learning de categoria_gasto_id en productos
+      //    El costo_unitario solo se actualiza si el usuario tildó "actualizar costo"
+      //    en el item (variación inline en el modal); si no, se suma stock al precio
+      //    de referencia anterior y la compra queda como caso puntual.
       if (vincularStock && items.length > 0) {
         const proveedorNombre = proveedor?.razon_social ?? '';
         const tipoLabel = (tipoComprobante ?? '').toUpperCase();
         const refLabel = nOperacion ? ` ${nOperacion}` : '';
+        const gastoHistorialId = gastosCreados[0] ?? null;
         for (const it of items) {
           const { data: prodActual } = await supabase
             .from('productos')
-            .select('stock_actual, categoria_gasto_id')
+            .select('stock_actual, categoria_gasto_id, costo_unitario')
             .eq('id', it.producto_id)
             .single();
           if (prodActual) {
             const updates: Record<string, unknown> = {
               stock_actual: (prodActual.stock_actual ?? 0) + it.cantidad,
-              costo_unitario: it.precio_unitario,
               updated_at: new Date().toISOString(),
             };
             // Self-learning: si el producto no tenía subcat guardada, persistir la actual
             if (!prodActual.categoria_gasto_id && it.categoria_gasto_id) {
               updates.categoria_gasto_id = it.categoria_gasto_id;
             }
+            // Solo actualizar costo si el encargado lo confirmó en el alerta inline
+            if (it.actualizar_costo && it.precio_unitario > 0) {
+              updates.costo_unitario = it.precio_unitario;
+            }
             await supabase.from('productos').update(updates).eq('id', it.producto_id);
+
+            // Registrar en historial cuando hubo cambio de costo aprobado
+            if (it.actualizar_costo && it.precio_unitario > 0) {
+              const costoAnterior = prodActual.costo_unitario ?? null;
+              const variacionPct =
+                costoAnterior && costoAnterior > 0
+                  ? (it.precio_unitario - costoAnterior) / costoAnterior
+                  : null;
+              await supabase.from('productos_costo_historial').insert({
+                producto_id: it.producto_id,
+                costo_anterior: costoAnterior,
+                costo_nuevo: it.precio_unitario,
+                variacion_pct: variacionPct,
+                fuente: 'gasto_item',
+                gasto_id: gastoHistorialId,
+                usuario: user?.id ?? null,
+                comentario: 'Aceptado inline desde Nuevo gasto',
+              });
+            }
           }
           await supabase.from('movimientos_stock').insert({
             local,
@@ -1533,8 +1583,11 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
                                 </tr>
                               </thead>
                               <tbody className="divide-y divide-gray-100">
-                                {items.map((it, idx) => (
-                                  <tr key={idx}>
+                                {items.map((it, idx) => {
+                                  const variacion = detectarVariacion(it);
+                                  return (
+                                    <Fragment key={idx}>
+                                  <tr>
                                     <td className="px-2 py-1.5 font-medium text-gray-800">
                                       {it.producto_nombre}
                                     </td>
@@ -1614,7 +1667,34 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
                                       </button>
                                     </td>
                                   </tr>
-                                ))}
+                                  {variacion && (
+                                    <tr className="bg-amber-50">
+                                      <td colSpan={7} className="px-2 py-1.5 text-[11px] text-amber-900">
+                                        <label className="flex cursor-pointer items-center gap-2">
+                                          <input
+                                            type="checkbox"
+                                            checked={it.actualizar_costo ?? false}
+                                            onChange={(e) =>
+                                              toggleActualizarCosto(idx, e.target.checked)
+                                            }
+                                            className="rounded"
+                                          />
+                                          <span>
+                                            ⚠ Era{' '}
+                                            <strong>{formatARS(variacion.costoActual)}</strong> →{' '}
+                                            ahora{' '}
+                                            <strong>{formatARS(it.precio_unitario)}</strong>{' '}
+                                            ({variacion.variacion > 0 ? '+' : ''}
+                                            {(variacion.variacion * 100).toFixed(1)}%) —
+                                            actualizar costo del producto
+                                          </span>
+                                        </label>
+                                      </td>
+                                    </tr>
+                                  )}
+                                    </Fragment>
+                                  );
+                                })}
                               </tbody>
                             </table>
                           </div>
@@ -1719,6 +1799,33 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
                                 <div className="mt-1 text-right text-[10px] text-gray-400">
                                   {formatARS(it.precio_unitario || 0)}/u
                                 </div>
+                                {(() => {
+                                  const variacion = detectarVariacion(it);
+                                  if (!variacion) return null;
+                                  return (
+                                    <div className="mt-2 rounded bg-amber-50 px-2 py-1.5 text-[11px] text-amber-900">
+                                      <label className="flex cursor-pointer items-start gap-2">
+                                        <input
+                                          type="checkbox"
+                                          checked={it.actualizar_costo ?? false}
+                                          onChange={(e) =>
+                                            toggleActualizarCosto(idx, e.target.checked)
+                                          }
+                                          className="mt-0.5 rounded"
+                                        />
+                                        <span>
+                                          ⚠ Era{' '}
+                                          <strong>{formatARS(variacion.costoActual)}</strong> →{' '}
+                                          ahora{' '}
+                                          <strong>{formatARS(it.precio_unitario)}</strong>{' '}
+                                          ({variacion.variacion > 0 ? '+' : ''}
+                                          {(variacion.variacion * 100).toFixed(1)}%) —
+                                          actualizar costo del producto
+                                        </span>
+                                      </label>
+                                    </div>
+                                  );
+                                })()}
                               </div>
                             ))}
                           </div>

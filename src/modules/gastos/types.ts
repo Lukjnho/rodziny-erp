@@ -155,4 +155,8 @@ export interface ItemGastoStock {
   // Subcategoría del EdR (hoja). Se elige en el modal al cargar.
   // Permite dividir una misma factura en varios gastos según a qué línea del EdR va cada item.
   categoria_gasto_id: string | null;
+  // Si está en true, al guardar el gasto se actualiza productos.costo_unitario
+  // con el precio_unitario y se inserta un registro en productos_costo_historial.
+  // Default false: una compra chica a precio distinto no debe pisar el costo de referencia.
+  actualizar_costo?: boolean;
 }

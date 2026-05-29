@@ -3,7 +3,6 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth';
 import { formatARS, cn } from '@/lib/utils';
-import { VariacionesCostoPanel } from './VariacionesCostoPanel';
 
 interface Insumo {
   id: string;
@@ -103,10 +102,8 @@ export function InsumosTab() {
         <strong>Insumos = materia prima comprada</strong> (cebollas, harinas, packaging, queso
         sardo, etc.). La <strong>merma</strong> es lo que se pierde al usarlo (ej: cebolla pelada =
         15-20%) y se aplica automáticamente al costear recetas. El <strong>costo unitario</strong>{' '}
-        se actualiza vía el panel de variaciones de abajo.
-      </div>
-
-      <VariacionesCostoPanel />
+        se actualiza al cargar un gasto en <strong>Gastos-Compras → Nuevo gasto</strong>: cuando
+        el precio difiere del actual, aparece un aviso inline para confirmar la actualización.</div>
 
       <div className="flex flex-wrap items-center gap-2 rounded-lg border border-gray-200 bg-white p-3">
         <div className="flex gap-1">
