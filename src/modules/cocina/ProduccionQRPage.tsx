@@ -81,6 +81,23 @@ function equivalenteKgGramos(n: number): string | null {
 // supera esto, casi seguro se cargó en gramos (ej: 1167 = 1,167 kg). Sirve para
 // avisar/corregir en el QR antes de ensuciar cocina_lotes_pasta.
 const MAX_KG_PASTA = 50;
+
+// Umbrales generales para detectar error de unidad (coma/punto) al cargar
+// recetas: si el real ingresado supera 30× el teórico, se bloquea — Rodziny
+// no hace lotes tan grandes. >3× pide confirm pero deja pasar.
+const RATIO_CONFIRMA = 3;
+const RATIO_BLOQUEA = 30;
+function evaluarCantidadVsTeorico(
+  realPorReceta: number,
+  teorico: number,
+): 'ok' | 'confirma' | 'bloquea' {
+  if (!isFinite(realPorReceta) || !isFinite(teorico) || realPorReceta <= 0 || teorico <= 0)
+    return 'ok';
+  const ratio = realPorReceta / teorico;
+  if (ratio >= RATIO_BLOQUEA) return 'bloquea';
+  if (ratio >= RATIO_CONFIRMA) return 'confirma';
+  return 'ok';
+}
 function pareceGramosPasta(raw: string): number | null {
   const v = parseDecimal(raw);
   return isFinite(v) && v > MAX_KG_PASTA ? v : null;
@@ -970,6 +987,24 @@ function FormRelleno({
     if (!ingredientesOk) {
       setError('Tildá todos los ingredientes pesados antes de guardar');
       return;
+    }
+    // Sanity vs rendimiento teórico de la receta (evita coma/punto).
+    const cantRec = Math.max(1, Number(cantRecetas) || 1);
+    const realPorReceta = parseDecimal(pesoKg) / cantRec;
+    const teoricoR = recetaSel?.rendimiento_kg ?? 0;
+    const veredictoR = evaluarCantidadVsTeorico(realPorReceta, teoricoR);
+    if (veredictoR === 'bloquea') {
+      setError(
+        `${formatNum(realPorReceta)} kg por receta es ${Math.round(realPorReceta / teoricoR)}× el rendimiento (${formatNum(teoricoR)} kg). Revisá la coma decimal (1,8 = un kilo ochocientos).`,
+      );
+      return;
+    }
+    if (veredictoR === 'confirma') {
+      const ok = window.confirm(
+        `Vas a cargar ${formatNum(realPorReceta)} kg por receta, ` +
+          `pero la receta rinde ~${formatNum(teoricoR)} kg. ¿Es correcto?`,
+      );
+      if (!ok) return;
     }
     setGuardando(true);
     setError('');
@@ -2016,6 +2051,24 @@ function FormMasa({
       setError('Tildá todos los ingredientes pesados antes de guardar');
       return;
     }
+    // Sanity vs rendimiento teórico de la receta (evita coma/punto).
+    const cantRecM = Math.max(1, Number(cantRecetas) || 1);
+    const realPorRecetaM = parseDecimal(kgProducidos) / cantRecM;
+    const teoricoM = recetaSel?.rendimiento_kg ?? 0;
+    const veredictoM = evaluarCantidadVsTeorico(realPorRecetaM, teoricoM);
+    if (veredictoM === 'bloquea') {
+      setError(
+        `${formatNum(realPorRecetaM)} kg por receta es ${Math.round(realPorRecetaM / teoricoM)}× el rendimiento (${formatNum(teoricoM)} kg). Revisá la coma decimal (1,8 = un kilo ochocientos).`,
+      );
+      return;
+    }
+    if (veredictoM === 'confirma') {
+      const ok = window.confirm(
+        `Vas a cargar ${formatNum(realPorRecetaM)} kg por receta, ` +
+          `pero la receta rinde ~${formatNum(teoricoM)} kg. ¿Es correcto?`,
+      );
+      if (!ok) return;
+    }
     setGuardando(true);
     setError('');
 
@@ -2462,14 +2515,23 @@ function FormGenerico({
       setError('Tildá todos los ingredientes pesados antes de guardar');
       return;
     }
-    if (valorAnomalo && recetaSel) {
-      const ok = window.confirm(
-        `Estás por guardar ${formatNum(cantNum)} ${unidad} de ${recetaSel.nombre}, ` +
-          `pero la receta suele rendir ${formatNum(recetaSel.rendimiento_kg ?? 0)} ${unidadReceta(recetaSel)}. ` +
-          `¿Es correcto?\n\n` +
-          `Si quisiste poner 1,8 (un kilo ochocientos), usá la coma como separador decimal.`,
-      );
-      if (!ok) return;
+    if (recetaSel?.rendimiento_kg && unidadesComparables && cantNum > 0) {
+      const veredictoG = evaluarCantidadVsTeorico(cantNum, recetaSel.rendimiento_kg);
+      if (veredictoG === 'bloquea') {
+        setError(
+          `${formatNum(cantNum)} ${unidad} es ${Math.round(cantNum / recetaSel.rendimiento_kg)}× el rendimiento de "${recetaSel.nombre}" (${formatNum(recetaSel.rendimiento_kg)} ${unidadReceta(recetaSel)}). Revisá la coma decimal (1,8 = un kilo ochocientos).`,
+        );
+        return;
+      }
+      if (veredictoG === 'confirma') {
+        const ok = window.confirm(
+          `Estás por guardar ${formatNum(cantNum)} ${unidad} de ${recetaSel.nombre}, ` +
+            `pero la receta suele rendir ${formatNum(recetaSel.rendimiento_kg)} ${unidadReceta(recetaSel)}. ` +
+            `¿Es correcto?\n\n` +
+            `Si quisiste poner 1,8 (un kilo ochocientos), usá la coma como separador decimal.`,
+        );
+        if (!ok) return;
+      }
     }
     if (categoria === 'salsa') {
       const nombre = recetaSel?.nombre ?? nombreLibre.trim() ?? 'esta salsa';

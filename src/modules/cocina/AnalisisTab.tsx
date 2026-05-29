@@ -169,6 +169,7 @@ export function AnalisisTab() {
         .from('cocina_lotes_relleno')
         .select('id, receta_id, fecha, cantidad_recetas, peso_total_kg, local')
         .eq('local', local)
+        .eq('excluido_analisis', false)
         .gte('fecha', desde);
       if (error) throw error;
       return data as LoteRelleno[];
@@ -183,6 +184,7 @@ export function AnalisisTab() {
         .from('cocina_lotes_masa')
         .select('id, receta_id, fecha, kg_producidos, local')
         .eq('local', local)
+        .eq('excluido_analisis', false)
         .gte('fecha', desde);
       if (error) throw error;
       return data as LoteMasa[];
@@ -199,6 +201,7 @@ export function AnalisisTab() {
           'id, receta_id, nombre_libre, categoria, fecha, cantidad_producida, unidad, merma_cantidad, merma_motivo, local',
         )
         .eq('local', local)
+        .eq('excluido_analisis', false)
         .gte('fecha', desde);
       if (error) throw error;
       return data as LoteProduccion[];
