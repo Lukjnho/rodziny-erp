@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
+import { normalizarDecimal, parseDecimal, equivalenteKgGramos } from '@/lib/numero';
 import { PRODUCTOS_COCINA, normNombre } from './DashboardTab';
 
 type Local = 'vedia' | 'saavedra';
@@ -838,7 +839,13 @@ function CierreSimple({
                 inputMode={unidad === 'kg' ? 'decimal' : 'numeric'}
                 pattern={unidad === 'kg' ? '[0-9]*[.,]?[0-9]*' : undefined}
                 value={valores[p.id] ?? ''}
-                onChange={(e) => setValores((prev) => ({ ...prev, [p.id]: e.target.value }))}
+                onChange={(e) =>
+                  setValores((prev) => ({
+                    ...prev,
+                    [p.id]:
+                      unidad === 'kg' ? normalizarDecimal(e.target.value) : e.target.value,
+                  }))
+                }
                 placeholder={unidad === 'kg' ? '1,5' : '8'}
                 className="flex-1 rounded border-2 border-gray-300 px-3 py-2 text-base font-semibold tabular-nums focus:border-rodziny-500 focus:outline-none"
               />
@@ -846,6 +853,13 @@ function CierreSimple({
                 {unidad === 'kg' ? 'kg' : 'u'}
               </span>
             </div>
+            {unidad === 'kg' &&
+              parseDecimal(valores[p.id]) > 0 &&
+              equivalenteKgGramos(parseDecimal(valores[p.id])) && (
+                <p className="mt-1 text-[11px] text-gray-500">
+                  = {equivalenteKgGramos(parseDecimal(valores[p.id]))}
+                </p>
+              )}
             <input
               type="text"
               value={notas[p.id] ?? ''}

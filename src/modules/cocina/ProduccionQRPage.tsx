@@ -1531,6 +1531,11 @@ function FormPasta({
                   onChange={(e) => setMasaKg(normalizarDecimal(e.target.value))}
                   className="w-full rounded border border-gray-300 px-3 py-2.5 text-sm"
                 />
+                {parseDecimal(masaKg) > 0 && equivalenteKgGramos(parseDecimal(masaKg)) && (
+                  <p className="mt-1 text-[11px] text-gray-500">
+                    = {equivalenteKgGramos(parseDecimal(masaKg))}
+                  </p>
+                )}
                 {(() => {
                   const m = lotesMasa.find((x) => x.id === loteMasaId);
                   const disp = m?.disponible_kg ?? null;
@@ -1559,6 +1564,11 @@ function FormPasta({
                   className="w-full rounded border border-gray-300 px-3 py-2.5 text-sm"
                   disabled={!loteRellenoId}
                 />
+                {parseDecimal(rellenoKg) > 0 && equivalenteKgGramos(parseDecimal(rellenoKg)) && (
+                  <p className="mt-1 text-[11px] text-gray-500">
+                    = {equivalenteKgGramos(parseDecimal(rellenoKg))}
+                  </p>
+                )}
                 {(() => {
                   const r = lotesRelleno.find((x) => x.id === loteRellenoId);
                   const disp = r?.disponible_kg ?? null;
@@ -1598,6 +1608,11 @@ function FormPasta({
                   : 'Cantidad de puré para esta bandeja'
               }
             />
+            {parseDecimal(rellenoKg) > 0 && equivalenteKgGramos(parseDecimal(rellenoKg)) && (
+              <p className="mt-1 text-[11px] text-gray-500">
+                = {equivalenteKgGramos(parseDecimal(rellenoKg))}
+              </p>
+            )}
             {(() => {
               const disp = rellenoSel?.disponible_kg ?? null;
               const v = parseDecimal(rellenoKg);
@@ -2304,6 +2319,11 @@ function FormCerrarMasa({
             className="w-full rounded border border-gray-300 px-3 py-2.5 text-sm"
             placeholder="0"
           />
+          {parseDecimal(kgSobrante) > 0 && equivalenteKgGramos(parseDecimal(kgSobrante)) && (
+            <p className="mt-1 text-[11px] text-gray-500">
+              = {equivalenteKgGramos(parseDecimal(kgSobrante))}
+            </p>
+          )}
         </div>
 
         {parseDecimal(kgSobrante) > 0 && (
@@ -2791,7 +2811,7 @@ function FormGenerico({
               Vas a registrar: <strong>
                 {formatNum(cantNum)} {unidad}
               </strong>
-              {unidad === 'kg' && equivalenteKgGramos(cantNum)
+              {(unidad === 'kg' || unidad === 'lt') && equivalenteKgGramos(cantNum)
                 ? ` = ${equivalenteKgGramos(cantNum)}`
                 : ''}
               {valorAnomalo && recetaSel?.rendimiento_kg
@@ -2813,6 +2833,13 @@ function FormGenerico({
               placeholder={`0 ${unidad}`}
               className="w-full rounded border border-gray-300 px-3 py-2.5 text-sm"
             />
+            {(unidad === 'kg' || unidad === 'lt') &&
+              parseDecimal(merma) > 0 &&
+              equivalenteKgGramos(parseDecimal(merma)) && (
+                <p className="mt-1 text-[11px] text-gray-500">
+                  = {equivalenteKgGramos(parseDecimal(merma))}
+                </p>
+              )}
           </div>
           <div>
             <label className="mb-1 block text-xs font-medium text-gray-700">Motivo de merma</label>
@@ -3080,6 +3107,13 @@ function FormMerma({
           placeholder={unidad === 'kg' ? 'Ej: 1,5' : 'Ej: 10'}
           className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
         />
+        {unidad === 'kg' &&
+          parseDecimal(cantidad) > 0 &&
+          equivalenteKgGramos(parseDecimal(cantidad)) && (
+            <p className="mt-1 text-[11px] text-gray-500">
+              = {equivalenteKgGramos(parseDecimal(cantidad))}
+            </p>
+          )}
       </div>
 
       <div>
