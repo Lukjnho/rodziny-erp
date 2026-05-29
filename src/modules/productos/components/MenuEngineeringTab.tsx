@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { useQueryClient, useMutation } from '@tanstack/react-query';
+import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth';
 import { formatARS, cn } from '@/lib/utils';
@@ -69,19 +69,29 @@ export function MenuEngineeringTab() {
     categoria,
   });
 
-  // Lista de categorías disponibles para el dropdown.
-  // Se carga sin filtro de categoría para que el dropdown muestre todas las
-  // opciones aunque el usuario haya filtrado a una sola.
-  const { productos: todosLosProductos } = useMenuEngineering({
-    periodos: periodosSel,
-    local,
-    categoria: 'todas',
+  // Lista de categorías disponibles para el dropdown. Query independiente para
+  // que el dropdown muestre todas las opciones aunque el usuario haya filtrado
+  // a una sola. Se llamaba antes useMenuEngineering por segunda vez con
+  // categoria='todas', pero la doble llamada en el mismo componente generaba
+  // estado inconsistente (header con N productos, tabla con otros).
+  const { data: categorias = [] } = useQuery({
+    queryKey: ['menu-engineering-categorias', periodosSel, local],
+    enabled: periodosSel.length > 0,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('ventas_items')
+        .select('categoria')
+        .eq('local', local)
+        .in('periodo', periodosSel)
+        .not('categoria', 'is', null);
+      if (error) throw error;
+      const set = new Set<string>();
+      for (const r of (data ?? []) as { categoria: string | null }[]) {
+        if (r.categoria) set.add(r.categoria);
+      }
+      return Array.from(set).sort();
+    },
   });
-  const categorias = useMemo(() => {
-    const set = new Set<string>();
-    for (const p of todosLosProductos) if (p.categoriaFudo) set.add(p.categoriaFudo);
-    return Array.from(set).sort();
-  }, [todosLosProductos]);
 
   // Contar por cuadrante
   const conteo = useMemo(() => {
