@@ -70,7 +70,15 @@ interface Producto {
   unidad: string;
   stock_actual: number;
   proveedor: string | null;
+  costo_unitario: number | null;
 }
+
+// Formatea pesos argentinos sin decimales (recepción es ronda gruesa).
+const ARS_FMT = new Intl.NumberFormat('es-AR', {
+  style: 'currency',
+  currency: 'ARS',
+  maximumFractionDigits: 0,
+});
 
 interface ItemCarrito {
   producto_id: string;
@@ -123,7 +131,7 @@ function RecepcionPageInner() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('productos')
-        .select('id, nombre, categoria, unidad, stock_actual, proveedor, activo')
+        .select('id, nombre, categoria, unidad, stock_actual, proveedor, activo, costo_unitario')
         .eq('local', local)
         .not('activo', 'is', false)
         .order('nombre');
@@ -396,6 +404,30 @@ function RecepcionPageInner() {
                   + Agregar
                 </button>
               </div>
+              {(() => {
+                // Preview en vivo del valor: cantidad × costo_unitario. Si supera
+                // $500.000 lo destaca en rojo — un sólo producto rara vez vale
+                // tanto, casi siempre es typo (7.400 kg de queso = $82M).
+                const cantPrev = parseDecimal(cantidadTemp[p.id]);
+                if (!cantPrev || cantPrev <= 0 || !p.costo_unitario) return null;
+                const valor = cantPrev * p.costo_unitario;
+                const alarma = valor >= 500000;
+                return (
+                  <div
+                    className={cn(
+                      'mt-1 text-[11px] tabular-nums',
+                      alarma ? 'font-semibold text-red-700' : 'text-gray-500',
+                    )}
+                  >
+                    {alarma ? '⚠ ' : '≈ '}
+                    {formatNum(cantPrev)} {p.unidad} × {ARS_FMT.format(p.costo_unitario)} ={' '}
+                    <span className={alarma ? 'text-red-700' : 'text-gray-700'}>
+                      {ARS_FMT.format(valor)}
+                    </span>
+                    {alarma && ' — revisá la coma decimal'}
+                  </div>
+                );
+              })()}
             </div>
           ))}
         </div>
