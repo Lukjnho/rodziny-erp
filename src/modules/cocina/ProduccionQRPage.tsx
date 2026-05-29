@@ -5,6 +5,11 @@ import { supabaseAnon as supabase } from '@/lib/supabaseAnon';
 import { cn } from '@/lib/utils';
 import { IngredientesGrilla, type IngredienteReal } from './components/IngredientesGrilla';
 import { ResponsableSelect } from './components/ResponsableSelect';
+import {
+  parseDecimal as parseDecimalShared,
+  normalizarDecimal as normalizarDecimalShared,
+  formatNum as formatNumShared,
+} from '@/lib/numero';
 import { TrasladoPastasForm } from '@/modules/compras/components/TrasladoPastasForm';
 import { useCierresFaltantes } from './hooks/useCierresFaltantes';
 
@@ -39,31 +44,12 @@ function unidadReceta(r: { rendimiento_unidad: 'kg' | 'l' | 'unidad' | null }): 
 
 // Parse decimal aceptando coma o punto como separador. Devuelve 0 si vacío/inválido.
 // Necesario porque type="text" + pattern permite ambos separadores y los teclados de
-// algunos Android en español sólo muestran ",".
-function parseDecimal(v: string | number | null | undefined): number {
-  if (v == null || v === '') return 0;
-  const n = parseFloat(String(v).replace(',', '.'));
-  return isNaN(n) ? 0 : n;
-}
-
-// Normaliza el input que tipea el operario: cualquier "." se transforma en "," al
-// instante, deja solo una coma decimal y descarta caracteres no numéricos. El
-// cocinero ve siempre formato es-AR ("8,9") aunque haya tipeado "8.9" con teclado
-// internacional — elimina la ambigüedad punto-decimal / punto-de-miles.
-function normalizarDecimal(v: string): string {
-  let s = v.replace(/\./g, ',').replace(/[^0-9,]/g, '');
-  const i = s.indexOf(',');
-  if (i !== -1) s = s.slice(0, i + 1) + s.slice(i + 1).replace(/,/g, '');
-  return s;
-}
-
-const NUM_FMT = new Intl.NumberFormat('es-AR', {
-  minimumFractionDigits: 0,
-  maximumFractionDigits: 3,
-});
-function formatNum(n: number): string {
-  return NUM_FMT.format(n);
-}
+// algunos Android en español sólo muestran ",". Reexportamos los helpers del
+// módulo compartido @/lib/numero para no duplicar lógica (también usados en
+// compras/RecepcionPage).
+const parseDecimal = parseDecimalShared;
+const normalizarDecimal = normalizarDecimalShared;
+const formatNum = formatNumShared;
 
 // Equivalente "humano" para kg: "8,9 kg = 8 kilos 900 g". Útil como sanity check
 // visual cuando el operario tipea con decimales — si quiso 8,9 y puso 8,993, el

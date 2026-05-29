@@ -3,6 +3,32 @@ import { useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import { supabaseAnon as supabase } from '@/lib/supabaseAnon';
 import { cn } from '@/lib/utils';
+import { normalizarDecimal, parseDecimal, formatNum } from '@/lib/numero';
+
+// Umbrales de sanity por unidad. Calibrados con percentiles de los últimos 60d
+// de movimientos_stock (entradas): kg p95=71, unid p95=400, L p95=72. El
+// "confirma" cubre compras grandes legítimas (harina, papa, etc); el "bloquea"
+// frena cargas claramente erróneas por confusión punto/coma (ej. tipear
+// "25.000" en lugar de "25,000").
+const UMBRALES_RECEPCION: Record<string, { confirma: number; bloquea: number }> = {
+  kg: { confirma: 500, bloquea: 5000 },
+  L: { confirma: 200, bloquea: 2000 },
+  l: { confirma: 200, bloquea: 2000 },
+  lt: { confirma: 200, bloquea: 2000 },
+  unid: { confirma: 2000, bloquea: 20000 },
+  'unid.': { confirma: 2000, bloquea: 20000 },
+  unidad: { confirma: 2000, bloquea: 20000 },
+};
+
+function evaluarCantidadRecepcion(
+  cant: number,
+  unidad: string,
+): 'ok' | 'confirma' | 'bloquea' {
+  const u = UMBRALES_RECEPCION[unidad] ?? UMBRALES_RECEPCION.unid;
+  if (cant >= u.bloquea) return 'bloquea';
+  if (cant >= u.confirma) return 'confirma';
+  return 'ok';
+}
 
 // Error boundary para capturar crashes y mostrar el error en vez de pantalla blanca
 class RecepcionErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
@@ -128,10 +154,24 @@ function RecepcionPageInner() {
   }, [productos, busqueda]);
 
   function agregarAlCarrito(p: Producto) {
-    const cant = parseFloat((cantidadTemp[p.id] ?? '').replace(',', '.'));
+    const cant = parseDecimal(cantidadTemp[p.id]);
     if (!cant || cant <= 0) {
       setError(`Ingresá la cantidad para ${p.nombre}`);
       return;
+    }
+    // Sanity por unidad: frena errores de coma/punto que mandan miles al stock.
+    const veredicto = evaluarCantidadRecepcion(cant, p.unidad);
+    if (veredicto === 'bloquea') {
+      setError(
+        `${formatNum(cant)} ${p.unidad} es demasiado para una recepción de "${p.nombre}". Revisá la coma decimal (25 = veinticinco; 25,5 = veinticinco y medio; "25.000" se interpreta como 25.000 unidades).`,
+      );
+      return;
+    }
+    if (veredicto === 'confirma') {
+      const ok = window.confirm(
+        `Estás por agregar ${formatNum(cant)} ${p.unidad} de "${p.nombre}". ¿Es correcto?`,
+      );
+      if (!ok) return;
     }
     setError(null);
     setCarrito((prev) => {
@@ -338,8 +378,14 @@ function RecepcionPageInner() {
                 <input
                   type="text"
                   inputMode="decimal"
+                  pattern="[0-9]*[.,]?[0-9]*"
                   value={cantidadTemp[p.id] ?? ''}
-                  onChange={(e) => setCantidadTemp((prev) => ({ ...prev, [p.id]: e.target.value }))}
+                  onChange={(e) =>
+                    setCantidadTemp((prev) => ({
+                      ...prev,
+                      [p.id]: normalizarDecimal(e.target.value),
+                    }))
+                  }
                   placeholder={`Cantidad (${p.unidad})`}
                   className="flex-1 rounded border border-gray-300 px-3 py-2 text-sm"
                 />
