@@ -280,7 +280,10 @@ function TablaProductosME({ productos }: { productos: ProductoME[] }) {
             </tr>
           )}
           {productos.map((p) => (
-            <tr key={`${p.local}-${p.codigo}`} className="hover:bg-gray-50">
+            <tr
+              key={`${p.local}|${p.codigo || `n:${p.nombre}`}`}
+              className="hover:bg-gray-50"
+            >
               <td className="px-3 py-2">
                 <div className="font-medium">{p.nombre}</div>
                 <div className="text-[9px] text-gray-400">{p.codigo}</div>
