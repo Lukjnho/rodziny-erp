@@ -550,19 +550,49 @@ Deno.serve(async (req) => {
 
     const errores: string[] = []
 
-    // Insertar en chunks de 1000 para no superar límites
+    // Helper para marcar progreso intermedio en el log. Si la función se mata
+    // (timeout) podemos ver hasta qué punto llegó. No bloquea si falla.
+    async function marcarProgreso(msg: string) {
+      if (!runId) return
+      try {
+        await supabase
+          .from('fudo_sync_runs')
+          .update({ error_msg: msg })
+          .eq('id', runId)
+      } catch (_) { /* ignorar */ }
+    }
+
+    // Insertar en chunks de 2000 + hasta 3 chunks en paralelo. Antes hacía
+    // chunks de 1000 secuenciales (~106 chunks × 300ms = 32s sólo en inserts).
+    // Con 2000 + concurrencia 3 baja a ~5-7s por tabla grande.
     async function insertChunk<T>(table: string, rows: T[]) {
-      const CHUNK = 1000
-      for (let i = 0; i < rows.length; i += CHUNK) {
-        const slice = rows.slice(i, i + CHUNK)
-        const { error } = await supabase.from(table).insert(slice)
-        if (error) errores.push(`${table} chunk ${i / CHUNK}: ${error.message}`)
+      const CHUNK = 2000
+      const CONCURRENCY = 3
+      const slices: T[][] = []
+      for (let i = 0; i < rows.length; i += CHUNK) slices.push(rows.slice(i, i + CHUNK))
+      for (let i = 0; i < slices.length; i += CONCURRENCY) {
+        const batch = slices.slice(i, i + CONCURRENCY)
+        const results = await Promise.all(
+          batch.map((slice) => supabase.from(table).insert(slice)),
+        )
+        results.forEach((r, j) => {
+          if (r.error) errores.push(`${table} batch ${i + j}: ${r.error.message}`)
+        })
       }
     }
 
-    if (ticketsRows.length) await insertChunk('ventas_tickets', ticketsRows)
-    if (pagosRows.length) await insertChunk('ventas_pagos', pagosRows)
-    if (ventasItemsRows.length) await insertChunk('ventas_items', ventasItemsRows)
+    if (ticketsRows.length) {
+      await insertChunk('ventas_tickets', ticketsRows)
+      await marcarProgreso(`Insertados ${ticketsRows.length} tickets`)
+    }
+    if (pagosRows.length) {
+      await insertChunk('ventas_pagos', pagosRows)
+      await marcarProgreso(`Insertados ${pagosRows.length} pagos`)
+    }
+    if (ventasItemsRows.length) {
+      await insertChunk('ventas_items', ventasItemsRows)
+      await marcarProgreso(`Insertados ${ventasItemsRows.length} items`)
+    }
     if (dividendosRows.length) await insertChunk('dividendos', dividendosRows)
 
     // Cortesías y descuentos en edr_partidas (informativo, no afecta cálculos del EdR).
