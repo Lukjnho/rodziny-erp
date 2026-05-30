@@ -117,9 +117,6 @@ export function MenuEngineeringTab() {
   return (
     <div className="space-y-4">
       <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs text-blue-800">
-        <span className="float-right rounded bg-blue-200 px-1.5 py-0.5 font-mono text-[10px] text-blue-900">
-          v3-rollback
-        </span>
         Matriz Menu Engineering (Cortijo): cruza popularidad × rentabilidad para identificar{' '}
         <strong>estrellas, vacas, puzzles y perros</strong>. Las medianas de cada eje definen los
         umbrales. Los productos <strong>ancla</strong> tienen badge y reciben sugerencias más
