@@ -132,9 +132,24 @@ Deno.serve(async (req) => {
 
     const token = await autenticar(local)
 
-    // Rango: 1 ene hasta 31 dic del año (ARG → UTC)
-    const inicioUTC = `${anio}-01-01T03:00:00Z`
-    const finUTC = `${Number(anio) + 1}-01-01T02:59:59Z`
+    // Permite sincronizar solo meses específicos para evitar timeouts cuando
+    // un local tiene muchos tickets/items (Vedia con año entero supera 150s).
+    // Si no se pasa, sincroniza el año completo.
+    const mesesBody = body.meses
+    const mesesSync: string[] = Array.isArray(mesesBody) && mesesBody.length > 0
+      ? (mesesBody as string[]).filter((m) => /^\d{4}-\d{2}$/.test(m)).sort()
+      : Array.from({ length: 12 }, (_, i) => `${anio}-${String(i + 1).padStart(2, '0')}`)
+
+    const primerMes = mesesSync[0]
+    const ultimoMes = mesesSync[mesesSync.length - 1]
+    const [yF, mF] = ultimoMes.split('-').map(Number)
+    const yNext = mF === 12 ? yF + 1 : yF
+    const mNext = mF === 12 ? 1 : mF + 1
+
+    // Rango ARG → UTC: ARG 00:00 = UTC 03:00. Tope inclusivo del último mes
+    // = UTC 02:59:59 del día 1 del mes siguiente.
+    const inicioUTC = `${primerMes}-01T03:00:00Z`
+    const finUTC = `${yNext}-${String(mNext).padStart(2, '0')}-01T02:59:59Z`
 
     // Cargar paymentMethods (catalogo) — para resolver el nombre del medio.
     // Si el endpoint no existe o cambia de formato, seguimos con map vacío.
@@ -368,9 +383,8 @@ Deno.serve(async (req) => {
     // Acumulador de descuentos por periodo (cortesía = 100% off, otros = el resto)
     const descPorMes: Record<string, { cortesias_monto: number; cortesias_cant: number; otros_descuentos: number }> = {}
 
-    // Lista de meses del año (usada para borrar/pre-cargar)
-    const meses: string[] = []
-    for (let i = 1; i <= 12; i++) meses.push(`${anio}-${String(i).padStart(2, '0')}`)
+    // Meses a sincronizar (subset del año o año entero, según body.meses)
+    const meses: string[] = mesesSync
 
     // Preservar campos fiscales (iva / total_neto / es_fiscal) que vienen del
     // Excel de Fudo. La API pública v1alpha1 no los expone, así que si los

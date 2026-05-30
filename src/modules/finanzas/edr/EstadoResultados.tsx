@@ -436,15 +436,24 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
   });
 
   // Sync de ambos locales en paralelo. Un solo botón en el header.
+  // Por default sincroniza solo el mes actual + el anterior para evitar
+  // timeouts en Vedia (año entero supera 150s en edge function).
   async function sincronizarFudoAmbos() {
     setSincronizando(true);
     setResumenSync(null);
     try {
+      // Mes actual y el anterior (formato YYYY-MM)
+      const hoy = new Date();
+      const mesActual = `${hoy.getFullYear()}-${String(hoy.getMonth() + 1).padStart(2, '0')}`;
+      const dAnt = new Date(hoy.getFullYear(), hoy.getMonth() - 1, 1);
+      const mesAnterior = `${dAnt.getFullYear()}-${String(dAnt.getMonth() + 1).padStart(2, '0')}`;
+      const mesesSync = [mesAnterior, mesActual];
+
       const results = await Promise.all(
         (['vedia', 'saavedra'] as const).map(async (loc) => {
           const { data: resp, error: err } = await supabase.functions.invoke(
             'fudo-importar-ventas',
-            { body: { local: loc, anio: año } },
+            { body: { local: loc, anio: año, meses: mesesSync } },
           );
           if (err) return { loc, ok: false, error: err.message };
           if (!resp?.ok) return { loc, ok: false, error: resp?.error ?? 'Error desconocido' };
