@@ -110,13 +110,6 @@ function nombresFudoDe(prod: ProductoCat): string[] {
   return cfg?.fudoNombres ?? [prod.nombre];
 }
 
-// Porciones por unidad del producto (postres: 1 flan = 8 porciones). Las pastas
-// se manejan en porciones (1:1). Sale del mapa legacy; fallback 1.
-function porcionesPorUnidadDe(prod: ProductoCat): number {
-  const cfg = PRODUCTO_POR_NOMBRE.get(normNombre(prod.nombre));
-  return cfg?.porcionesporunidad ?? 1;
-}
-
 const ORDEN_ESTADO: Record<Estado, number> = {
   corto: 0,
   ajustado: 1,
@@ -218,10 +211,10 @@ export function ResumenSemanalCard({
   });
 
   // ── Stock actual de POSTRES (cocina_lotes_produccion activos, por receta_id) ──
-  // Suma simple de lotes en_stock (cantidad − merma), en su unidad nativa (unid).
-  // Es el "stock físico actual" (modelo aditivo, re-baselineado en el cierre);
-  // no descuenta Fudo acá porque la demanda se compara aparte. Luego se convierte
-  // a porciones con porcionesPorUnidad del producto.
+  // Suma simple de lotes en_stock (cantidad − merma). MISMO número que muestra el
+  // tab Stock (CatalogoStock): el valor ya está en la unidad de venta (porciones),
+  // sin descuento por venta ("último pesaje manda"). NO multiplicar por porciones
+  // por unidad — los lotes ya vienen en porciones.
   const { data: stockPostres } = useQuery({
     queryKey: ['resumen-semanal-stock-postres', local],
     queryFn: async () => {
@@ -323,21 +316,19 @@ export function ResumenSemanalCard({
       return total;
     }
 
-    // Stock actual en porciones. Pastas: directo de la vista. Postres: lotes
-    // (unidades) × porcionesPorUnidad.
+    // Stock actual en porciones, igual que el tab Stock. Pastas: directo de la
+    // vista. Postres: suma cruda de lotes activos (ya en porciones, sin convertir).
     function stockDe(prod: ProductoCat): number {
       if (prod.tipo === 'pasta') {
         return stockPastas?.get(prod.id) ?? 0;
       }
       if (!prod.receta_id) return 0;
-      const unidades = stockPostres?.get(prod.receta_id) ?? 0;
-      return unidades * porcionesPorUnidadDe(prod);
+      return stockPostres?.get(prod.receta_id) ?? 0;
     }
 
-    // Pedidos comprometidos en porciones (unidades × porcionesPorUnidad).
+    // Pedidos comprometidos (en la misma unidad que el stock).
     function pedidosDe(prod: ProductoCat): number {
-      const unidades = pedidosPend?.get(prod.id) ?? 0;
-      return unidades * porcionesPorUnidadDe(prod);
+      return pedidosPend?.get(prod.id) ?? 0;
     }
 
     const items = productos
