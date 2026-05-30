@@ -192,12 +192,6 @@ function FormInterno({
   );
   const [activo, setActivo] = useState<boolean>(producto?.activo ?? true);
   const [fudoNombres, setFudoNombres] = useState<string[]>(producto?.fudo_nombres ?? []);
-  const [fudoInput, setFudoInput] = useState('');
-  function agregarFudoNombre() {
-    const v = fudoInput.trim();
-    if (v && !fudoNombres.includes(v)) setFudoNombres((arr) => [...arr, v]);
-    setFudoInput('');
-  }
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState('');
 
