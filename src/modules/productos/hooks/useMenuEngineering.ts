@@ -204,26 +204,23 @@ export function useMenuEngineering(opts: MenuEngineeringOptions) {
       }
     }
 
-    // ─── Index cocina_productos por (local, codigo) y por (local, nombre normalizado) ──
-    const prodByCodigo = new Map<string, CocinaProductoRow>();
+    // ─── Index cocina_productos por fudo_nombres[] ──
+    // Solo matching explícito. El código autogenerado del ERP no coincide
+    // con el SKU de Fudo así que no se usa.
     const prodByFudoNombre = new Map<string, CocinaProductoRow>();
     for (const p of cocinaProds) {
-      prodByCodigo.set(`${p.local}|${p.codigo}`, p);
-      // También indexar fudo_nombres como matching alterno
       for (const fn of p.fudo_nombres ?? []) {
         prodByFudoNombre.set(`${p.local}|${normalizarNombre(fn)}`, p);
       }
     }
 
-    // ─── Index cocina_recetas vendibles por (local, fudo_producto) y por (local, nombre) ──
-    // Fuente principal para platos costeados que existen como receta vendible
-    // (Bolognesa, Parisienne, etc.). El matching contra ventas_items.nombre va
-    // primero por aquí, fallback a cocina_productos.
+    // ─── Index cocina_recetas vendibles por (local, fudo_producto) ──
+    // Solo matching EXPLÍCITO vía fudo_productos[]. Si la receta no tiene
+    // nombres Fudo cargados, no aparece — Lucas vincula manualmente desde el
+    // editor de Costeo y el selector inteligente le sugiere los huérfanos.
     const recetaByFudoProducto = new Map<string, RecetaVendibleRow>();
-    const recetaByNombre = new Map<string, RecetaVendibleRow>();
     for (const r of recetasVendibles) {
       if (!r.local) continue;
-      recetaByNombre.set(`${r.local}|${normalizarNombre(r.nombre)}`, r);
       for (const fp of r.fudo_productos ?? []) {
         recetaByFudoProducto.set(`${r.local}|${normalizarNombre(fp)}`, r);
       }
@@ -234,20 +231,15 @@ export function useMenuEngineering(opts: MenuEngineeringOptions) {
     const productosME: ProductoME[] = [];
 
     for (const [, a] of agg) {
-      // Prioridad de matching para identificar el ítem vendido:
-      //  1. Receta vendible por fudo_productos[] (mapeo explícito)
-      //  2. Receta vendible por nombre normalizado
-      //  3. cocina_productos por código (modelo viejo, bebidas reventa)
-      //  4. cocina_productos por fudo_nombres[] (mapeo legacy)
+      // Matching SOLO explícito (sin fallback por nombre):
+      //  1. Receta vendible por fudo_productos[]
+      //  2. cocina_productos por fudo_nombres[] (bebidas reventa, legacy)
+      // Si nada matchea, el ítem queda sin costear (huérfano) y se ve en la
+      // sección informativa del Menú para que Lucas lo vincule manualmente.
       const nombreNorm = normalizarNombre(a.nombre);
-      const receta =
-        recetaByFudoProducto.get(`${a.local}|${nombreNorm}`) ??
-        recetaByNombre.get(`${a.local}|${nombreNorm}`) ??
-        null;
+      const receta = recetaByFudoProducto.get(`${a.local}|${nombreNorm}`) ?? null;
       const prod = !receta
-        ? prodByCodigo.get(`${a.local}|${a.codigo}`) ??
-          prodByFudoNombre.get(`${a.local}|${nombreNorm}`) ??
-          null
+        ? (prodByFudoNombre.get(`${a.local}|${nombreNorm}`) ?? null)
         : null;
 
       const cocinaProductoId = prod?.id ?? null;
