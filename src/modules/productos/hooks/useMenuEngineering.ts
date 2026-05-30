@@ -61,19 +61,6 @@ interface CocinaProductoRow {
   costo_empaque: number | null;
 }
 
-// Recetas vendibles del tab Menú (cocina_recetas con vendible=true). Hoy son
-// la fuente principal de productos del menú; cocina_productos quedó para
-// bebidas de reventa (con insumo_reventa_id). El matching contra ventas_items
-// usa fudo_productos[] como mapeo a los nombres de Fudo.
-interface RecetaVendibleRow {
-  id: string;
-  nombre: string;
-  tipo: string;
-  categoria: string | null;
-  local: string | null;
-  fudo_productos: string[] | null;
-}
-
 function mediana(arr: number[]): number {
   if (arr.length === 0) return 0;
   const ord = [...arr].sort((a, b) => a - b);
@@ -119,21 +106,6 @@ export function useMenuEngineering(opts: MenuEngineeringOptions) {
     },
   });
 
-  // Recetas vendibles del tab Menú — fuente principal del matching para platos
-  // costeados (pastas, salsas, postres, etc.).
-  const recetasQ = useQuery({
-    queryKey: ['menu-engineering-recetas-vendibles'],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('cocina_recetas')
-        .select('id, nombre, tipo, categoria, local, fudo_productos')
-        .eq('vendible', true)
-        .eq('activo', true);
-      if (error) throw error;
-      return data as RecetaVendibleRow[];
-    },
-  });
-
   // Insumos para costear bebidas reventa (productos del menú sin receta pero
   // con insumo_reventa_id, como Pepsi lata o Copa Malbec). Sin esto, los
   // productos de reventa aparecen en la matriz con costo NULL → margen mal.
@@ -159,13 +131,8 @@ export function useMenuEngineering(opts: MenuEngineeringOptions) {
   return useMemo<{ productos: ProductoME[]; isLoading: boolean; periodos: string[] }>(() => {
     const ventas = ventasQ.data;
     const cocinaProds = productosQ.data;
-    const recetasVendibles = recetasQ.data;
-    const isLoading =
-      ventasQ.isLoading ||
-      productosQ.isLoading ||
-      recetasQ.isLoading ||
-      insumosReventaQ.isLoading;
-    if (!ventas || !cocinaProds || !recetasVendibles) {
+    const isLoading = ventasQ.isLoading || productosQ.isLoading || insumosReventaQ.isLoading;
+    if (!ventas || !cocinaProds) {
       return { productos: [], isLoading, periodos: opts.periodos };
     }
 
@@ -214,48 +181,18 @@ export function useMenuEngineering(opts: MenuEngineeringOptions) {
       }
     }
 
-    // ─── Index cocina_recetas vendibles por (local, fudo_producto) y por nombre ──
-    // Esta es la fuente principal del matching. Las recetas que aparecen en el
-    // tab Menú con `vendible=true` son los items que se venden en Fudo, y su
-    // costo se calcula vía useCostosRecetas. fudo_productos[] es el mapeo a
-    // los nombres exactos que llegan en ventas_items.nombre.
-    const recetaByFudoProducto = new Map<string, RecetaVendibleRow>();
-    const recetaByNombre = new Map<string, RecetaVendibleRow>();
-    for (const r of recetasVendibles) {
-      if (!r.local) continue;
-      recetaByNombre.set(`${r.local}|${normalizarNombre(r.nombre)}`, r);
-      for (const fp of r.fudo_productos ?? []) {
-        recetaByFudoProducto.set(`${r.local}|${normalizarNombre(fp)}`, r);
-      }
-    }
-
     // ─── Construir productos ME ─────────────────────────────────────────────
     const ivaPct = configGen?.iva_pct ?? 0.21;
     const productosME: ProductoME[] = [];
 
     for (const [, a] of agg) {
-      // Prioridad de matching:
-      // 1. Receta vendible por fudo_productos[] (mapeo explícito)
-      // 2. Receta vendible por nombre normalizado (cuando coincide exacto)
-      // 3. cocina_productos por código (modelo viejo para bebidas reventa)
-      // 4. cocina_productos por fudo_nombres[] (mapeo legacy)
-      const nombreNorm = normalizarNombre(a.nombre);
-      const receta =
-        recetaByFudoProducto.get(`${a.local}|${nombreNorm}`) ??
-        recetaByNombre.get(`${a.local}|${nombreNorm}`) ??
+      const prod =
+        prodByCodigo.get(`${a.local}|${a.codigo}`) ??
+        prodByFudoNombre.get(`${a.local}|${normalizarNombre(a.nombre)}`) ??
         null;
-      const prod = !receta
-        ? prodByCodigo.get(`${a.local}|${a.codigo}`) ??
-          prodByFudoNombre.get(`${a.local}|${nombreNorm}`) ??
-          null
-        : null;
 
       const cocinaProductoId = prod?.id ?? null;
-      const recetaIdMatch = receta?.id ?? prod?.receta_id ?? null;
-      // tipo grueso: prioriza categoria de la receta vendible (salsa/pasta/bebida/etc.),
-      // cae a cocina_producto.tipo, y como último recurso a la categoría Fudo en minúsculas.
-      const tipo =
-        receta?.categoria ?? prod?.tipo ?? (a.categoria ?? '').toLowerCase();
+      const tipo = prod?.tipo ?? (a.categoria ?? '').toLowerCase();
       const categoriaFudo = a.categoria ?? null;
       const esAncla = prod?.es_ancla ?? false;
 
@@ -264,15 +201,18 @@ export function useMenuEngineering(opts: MenuEngineeringOptions) {
       // sobre productos comparables (no mezclar Pastas Salón con Bebidas).
       if (opts.categoria && opts.categoria !== 'todas' && categoriaFudo !== opts.categoria) continue;
 
-      // Costo estimado: usar costoPorPorcion de la receta + costo_empaque legacy
-      // si el match vino vía cocina_productos. Para bebidas reventa sin receta,
-      // helper que prorratea por ml_por_venta.
+      // Costo estimado: usar costoPorPorcion de la receta + costo_empaque legacy.
+      // No incluye packaging y adicionales por canal (eso es el waterfall de
+      // useCostoCompleto, requiere conocer canal). Para la matriz usamos una
+      // aproximación válida si el producto no varía mucho entre canales.
+      // Para bebidas reventa (sin receta) usamos el helper que prorratea por
+      // ml_por_venta cuando es copa/shot.
       let costoUnitario: number | null = null;
-      if (recetaIdMatch) {
-        const c = costosRecetas.get(recetaIdMatch);
+      if (prod?.receta_id) {
+        const c = costosRecetas.get(prod.receta_id);
         if (c) {
           const base = c.costoPorPorcion ?? c.costoPorKg ?? null;
-          if (base != null) costoUnitario = base + (prod?.costo_empaque ?? 0);
+          if (base != null) costoUnitario = base + (prod.costo_empaque ?? 0);
         }
       } else if (prod?.insumo_reventa_id) {
         const ins = insumoById.get(prod.insumo_reventa_id);
@@ -297,7 +237,7 @@ export function useMenuEngineering(opts: MenuEngineeringOptions) {
       productosME.push({
         cocinaProductoId,
         codigo: a.codigo,
-        nombre: receta?.nombre ?? prod?.nombre ?? a.nombre,
+        nombre: prod?.nombre ?? a.nombre,
         tipo,
         categoriaFudo,
         local: a.local,
@@ -350,8 +290,6 @@ export function useMenuEngineering(opts: MenuEngineeringOptions) {
     ventasQ.isLoading,
     productosQ.data,
     productosQ.isLoading,
-    recetasQ.data,
-    recetasQ.isLoading,
     insumosReventaQ.data,
     insumosReventaQ.isLoading,
     costosRecetas,
