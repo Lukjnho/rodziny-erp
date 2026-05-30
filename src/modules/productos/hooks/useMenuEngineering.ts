@@ -159,16 +159,13 @@ export function useMenuEngineering(opts: MenuEngineeringOptions) {
   return useMemo<{ productos: ProductoME[]; isLoading: boolean; periodos: string[] }>(() => {
     const ventas = ventasQ.data;
     const cocinaProds = productosQ.data;
-    // recetasVendibles es opcional: si la query falla o RLS bloquea, caemos
-    // a [] y el matching usa solo cocina_productos como antes. No bloquear
-    // todo el render por una fuente secundaria.
-    const recetasVendibles = recetasQ.data ?? [];
+    const recetasVendibles = recetasQ.data;
     const isLoading =
       ventasQ.isLoading ||
       productosQ.isLoading ||
       recetasQ.isLoading ||
       insumosReventaQ.isLoading;
-    if (!ventas || !cocinaProds) {
+    if (!ventas || !cocinaProds || !recetasVendibles) {
       return { productos: [], isLoading, periodos: opts.periodos };
     }
 
