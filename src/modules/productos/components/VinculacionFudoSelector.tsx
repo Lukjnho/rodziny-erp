@@ -132,6 +132,13 @@ export function VinculacionFudoSelector({
 
       {mostrarLista && (
         <div className={hayVinculados ? 'rounded border border-gray-200 bg-gray-50 p-2' : ''}>
+          {!hayVinculados && (
+            <div className="mb-1.5 rounded bg-amber-50 px-2 py-1 text-[11px] text-amber-800">
+              ⚠ <strong>Sin vincular aún.</strong> Elegí abajo el/los nombre(s) con los que
+              este producto aparece en Fudo. Si no lo vinculás, las ventas no se descuentan ni
+              entran al Menu Engineering.
+            </div>
+          )}
           {hayVinculados && (
             <div className="mb-1.5 flex items-center justify-between">
               <span className="text-[10px] uppercase tracking-wide text-gray-500">

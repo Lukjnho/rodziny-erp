@@ -765,6 +765,23 @@ export function FichaProductoTab() {
                   subreceta
                 </span>
               )}
+              {receta.tipo === 'receta' &&
+                receta.vendible &&
+                ((receta.fudo_productos?.length ?? 0) > 0 ? (
+                  <span
+                    title={`Vinculado a Fudo: ${receta.fudo_productos!.join(' · ')}`}
+                    className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700"
+                  >
+                    🔗 {receta.fudo_productos!.length} Fudo
+                  </span>
+                ) : (
+                  <span
+                    title="Esta receta vendible no tiene nombres Fudo vinculados — sus ventas no descuentan ni entran al Menu Engineering. Tocá 'Editar receta' para vincular."
+                    className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700"
+                  >
+                    ⚠ sin Fudo
+                  </span>
+                ))}
             </div>
             <div className="mt-1 text-xs text-gray-500">
               <span className="capitalize">{receta.local ?? '—'}</span> · solo costo (el precio
