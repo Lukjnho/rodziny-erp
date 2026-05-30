@@ -27,6 +27,7 @@ import {
   type IngredienteRow,
   type RecetaRow,
 } from '@/modules/cocina/lib/costeoEngine';
+import { VinculacionFudoSelector } from './VinculacionFudoSelector';
 
 interface IngredienteForm {
   tempId: string;
@@ -101,6 +102,9 @@ export function RecetaEditorInline({
   // Solo al CREAR una receta tipo Pasta: producto (pasta) al que se le vincula
   // la receta recién creada, en un solo paso (evita ir al ABM aparte).
   const [productoDestino, setProductoDestino] = useState('');
+  // Nombres con los que esta receta vendible aparece en ventas_items (Fudo).
+  // Solo aplica si tipo === 'receta'. Subrecetas no se venden directamente.
+  const [fudoProductos, setFudoProductos] = useState<string[]>(receta?.fudo_productos ?? []);
 
   const local = creando ? localState : (receta?.local ?? localRestringido ?? 'vedia');
 
@@ -272,6 +276,13 @@ export function RecetaEditorInline({
         subcategoria: subcategoriaPayload,
         rol: tipo === 'subreceta' ? rol : null,
       };
+      // fudo_productos solo aplica a recetas vendibles (tipo='receta'). Si es
+      // subreceta, nullificamos para no dejar vinculaciones colgadas si Lucas
+      // cambió el tipo después.
+      const fudoProductosPayload =
+        tipo === 'receta'
+          ? fudoProductos.map((s) => s.trim()).filter(Boolean)
+          : null;
       let recetaId: string;
       if (creando) {
         const { data, error: errIns } = await supabase
@@ -284,6 +295,7 @@ export function RecetaEditorInline({
             rendimiento_kg: rendKgNum,
             rendimiento_unidad: rendUnidad,
             rendimiento_porciones: rendPorcNum,
+            fudo_productos: fudoProductosPayload,
           })
           .select('id')
           .single();
@@ -299,6 +311,7 @@ export function RecetaEditorInline({
             rendimiento_kg: rendKgNum,
             rendimiento_unidad: rendUnidad,
             rendimiento_porciones: rendPorcNum,
+            fudo_productos: fudoProductosPayload,
             updated_at: new Date().toISOString(),
           })
           .eq('id', recetaId);
@@ -343,6 +356,12 @@ export function RecetaEditorInline({
             .insert(payload);
           if (insErr) throw insErr;
         }
+      }
+
+      // Refrescar huérfanos Fudo si tocamos fudo_productos (selector inline +
+      // sección informativa del MenuTab).
+      if (tipo === 'receta') {
+        qc.invalidateQueries({ queryKey: ['fudo-huerfanos-recetas'] });
       }
 
       // Vincular la receta nueva al producto pasta elegido (un solo paso).
@@ -678,6 +697,21 @@ export function RecetaEditorInline({
           )}
         </div>
       </div>
+
+      {/* Vinculación con Fudo — solo para recetas vendibles */}
+      {tipo === 'receta' && (local === 'vedia' || local === 'saavedra') && (
+        <div className="rounded-lg border border-rodziny-200 bg-white p-3">
+          <label className="mb-2 block text-[10px] font-medium uppercase tracking-wide text-gray-500">
+            Nombres en Fudo
+          </label>
+          <VinculacionFudoSelector
+            local={local as 'vedia' | 'saavedra'}
+            value={fudoProductos}
+            onChange={setFudoProductos}
+            ownerKey={receta ? `receta:${receta.id}` : undefined}
+          />
+        </div>
+      )}
 
       {/* Tabla editable con costo en vivo */}
       <div className="overflow-hidden rounded-lg border border-gray-200">

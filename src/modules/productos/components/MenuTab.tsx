@@ -9,6 +9,7 @@ import { useComisionMpConfig } from '../hooks/useComisionMpConfig';
 import { CANALES_PRECIO, type CanalPrecio } from '../hooks/usePreciosCanal';
 import { SUBCATEGORIA_LABEL } from '@/modules/cocina/RecetasTab';
 import { calcularCostoBebidaReventa } from '@/modules/productos/lib/bebidaReventaCosto';
+import { useFudoHuerfanos } from '@/modules/productos/hooks/useFudoHuerfanos';
 
 // El Menú es una PROYECCIÓN de Costeo: lista las recetas marcadas "vendible"
 // (su costo sale del motor de Costeo, no se duplica) + las bebidas de reventa
@@ -586,7 +587,54 @@ export function MenuTab() {
           </section>
         );
       })}
+
+      <HuerfanosSinCandidato local={filtroLocal} />
     </div>
+  );
+}
+
+// Sección informativa al pie del Menú: lista nombres Fudo (últ. 2 meses) que
+// NO están vinculados a ninguna receta vendible ni cocina_producto del local.
+// Sin acción inline: Lucas crea la receta desde Costeo y al guardarla con el
+// nombre en fudo_productos, desaparece de la lista (reactivo via React Query).
+function HuerfanosSinCandidato({ local }: { local: FiltroLocal }) {
+  const { data, isLoading } = useFudoHuerfanos(local);
+  const sinCandidato = useMemo(
+    () => (data ?? []).filter((h) => !h.vinculadoA),
+    [data],
+  );
+  if (isLoading || sinCandidato.length === 0) return null;
+  return (
+    <section className="rounded-lg border border-amber-200 bg-amber-50/50 p-3">
+      <header className="mb-2 flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-amber-900">
+          ⚠ Productos vendidos en Fudo sin contraparte en el catálogo
+        </h3>
+        <span className="text-[10px] text-amber-700">
+          {sinCandidato.length} ítem{sinCandidato.length === 1 ? '' : 's'} · últ. 2 meses
+        </span>
+      </header>
+      <p className="mb-2 text-[10px] text-amber-700">
+        Estos nombres aparecen en ventas de Fudo pero no están vinculados a ninguna receta
+        vendible ni producto del catálogo. Crealos desde el tab <strong>Costeo</strong> y al
+        marcarlos vendibles con su nombre Fudo, desaparecen de esta lista.
+      </p>
+      <ul className="divide-y divide-amber-100 rounded bg-white">
+        {sinCandidato.map((h) => (
+          <li
+            key={h.nombre}
+            className="flex items-center justify-between gap-2 px-2 py-1 text-xs"
+          >
+            <span className="flex-1 truncate text-gray-800" title={h.nombre}>
+              {h.nombre}
+            </span>
+            <span className="whitespace-nowrap rounded bg-amber-100 px-1.5 py-0.5 text-[10px] tabular-nums text-amber-900">
+              {h.uds} uds · {formatARS(h.total)}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 

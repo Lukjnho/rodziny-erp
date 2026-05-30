@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { formatARS } from '@/lib/utils';
 import { useCostosRecetas } from '@/modules/cocina/hooks/useCostosRecetas';
+import { VinculacionFudoSelector } from './VinculacionFudoSelector';
 
 // ABM de cocina_productos como APARTADO inline ancho (no modal): alta/edición
 // de la definición del producto + vincular receta existente + activo + eliminar.
@@ -190,9 +191,7 @@ function FormInterno({
     producto?.insumo_reventa_id ?? '',
   );
   const [activo, setActivo] = useState<boolean>(producto?.activo ?? true);
-  const [fudoNombres, setFudoNombres] = useState<string>(
-    (producto?.fudo_nombres ?? []).join('\n'),
-  );
+  const [fudoNombres, setFudoNombres] = useState<string[]>(producto?.fudo_nombres ?? []);
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState('');
 
@@ -251,10 +250,7 @@ function FormInterno({
       receta_id: recetaId || null,
       // Reventa y receta son excluyentes: si hay receta, manda receta.
       insumo_reventa_id: recetaId ? null : insumoReventaId || null,
-      fudo_nombres: fudoNombres
-        .split('\n')
-        .map((s) => s.trim())
-        .filter(Boolean),
+      fudo_nombres: fudoNombres.map((s) => s.trim()).filter(Boolean),
     };
     const { error: err } = producto
       ? await supabase.from('cocina_productos').update(row).eq('id', producto.id)
@@ -455,20 +451,19 @@ function FormInterno({
         )}
 
         <div className="border-t border-gray-100 pt-4">
-          <label className={labelCls}>
-            Nombres en Fudo <span className="normal-case text-gray-400">(uno por línea)</span>
-          </label>
-          <textarea
-            value={fudoNombres}
-            onChange={(e) => setFudoNombres(e.target.value)}
-            rows={3}
-            className={`${inputCls} max-w-md font-mono text-xs`}
-            placeholder={'Sorrentino Jamón, Queso y Cebollas\nSorrentino Jamón, Cebollas y Quesos VIANDA'}
-          />
-          <p className="mt-1 text-[10px] italic text-gray-400">
-            Cómo aparece este producto en el reporte de Fudo. Si está vacío, no se descuenta del
-            stock por venta. Copialo tal cual aparece en Fudo (con tildes y mayúsculas).
-          </p>
+          <label className={labelCls}>Nombres en Fudo</label>
+          {local === 'vedia' || local === 'saavedra' ? (
+            <VinculacionFudoSelector
+              local={local}
+              value={fudoNombres}
+              onChange={setFudoNombres}
+              ownerKey={producto ? `producto:${producto.id}` : undefined}
+            />
+          ) : (
+            <p className="text-[10px] italic text-gray-400">
+              Elegí un local para ver los nombres Fudo disponibles.
+            </p>
+          )}
         </div>
 
         <label className="flex items-center gap-2 border-t border-gray-100 pt-4 text-sm text-gray-700">
