@@ -4,11 +4,20 @@ import { supabase } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
 import { PRODUCTOS_COCINA, normNombre } from '../DashboardTab';
 
-// El Resumen semanal proyecta la PRODUCCIÓN PLANIFICADA esta semana
-// (cocina_pizarron_items × rendimiento_porciones de la receta) vs la demanda
-// Fudo 7d. Aplica solo a pastas y postres. Match por receta_id: el item del
-// pizarrón vincula receta, y la pasta-producto vincula la MISMA receta en
-// cocina_productos.receta_id (típicamente la del relleno).
+// El Resumen semanal estima la COBERTURA de cada producto esta semana:
+//
+//   disponible = (stock actual − pedidos comprometidos) + producción planificada
+//   estado     = disponible / demanda semanal (Fudo 7d)
+//
+// - stock actual: lo que ya hay en cámara/fresco (pastas) o en lotes activos
+//   (postres). Es la foto de HOY.
+// - pedidos comprometidos: pedidos anticipados de Almacén (congelados/viandas)
+//   pendientes — ese stock ya está prometido, así que se descuenta.
+// - planificado: items del pizarrón de la semana × rendimiento_porciones.
+// - demanda: ventas Fudo (incluye salón + vianda + congelado por nombre).
+//
+// Aplica solo a pastas y postres. Match: pastas por producto_id (vista de stock),
+// postres por receta_id (lotes de producción). Pedidos por producto_id.
 
 type LocalCocina = 'vedia' | 'saavedra';
 
@@ -39,6 +48,9 @@ interface ResumenItem {
   nombre: string;
   tipo: string;
   planificado: number;
+  stock: number; // porciones disponibles hoy (ya neto de pedidos)
+  pedidos: number; // porciones comprometidas en pedidos de almacén
+  disponible: number; // stock libre + planificado
   demandaSemanal: number;
   estado: Estado;
 }
@@ -96,6 +108,13 @@ function nombresFudoDe(prod: ProductoCat): string[] {
   if (prod.fudo_nombres && prod.fudo_nombres.length > 0) return prod.fudo_nombres;
   const cfg = PRODUCTO_POR_NOMBRE.get(normNombre(prod.nombre));
   return cfg?.fudoNombres ?? [prod.nombre];
+}
+
+// Porciones por unidad del producto (postres: 1 flan = 8 porciones). Las pastas
+// se manejan en porciones (1:1). Sale del mapa legacy; fallback 1.
+function porcionesPorUnidadDe(prod: ProductoCat): number {
+  const cfg = PRODUCTO_POR_NOMBRE.get(normNombre(prod.nombre));
+  return cfg?.porcionesporunidad ?? 1;
 }
 
 const ORDEN_ESTADO: Record<Estado, number> = {
@@ -164,6 +183,98 @@ export function ResumenSemanalCard({
     },
   });
 
+  // ── Stock actual de PASTAS (vista v_cocina_stock_pastas, por producto_id) ──
+  // Disponible = cámara neto (cámara − traspasos − merma) + fresco (freezer
+  // producción). No incluye mostrador: para una vista semanal es marginal y
+  // requeriría las ventas de hoy. Key = producto_id (= id del catálogo).
+  const { data: stockPastas } = useQuery({
+    queryKey: ['resumen-semanal-stock-pastas', local],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('v_cocina_stock_pastas')
+        .select(
+          'producto_id, porciones_camara, porciones_fresco, porciones_traspasadas, porciones_merma',
+        )
+        .eq('local', local);
+      if (error) throw error;
+      const m = new Map<string, number>();
+      for (const r of (data ?? []) as Array<{
+        producto_id: string;
+        porciones_camara: number | null;
+        porciones_fresco: number | null;
+        porciones_traspasadas: number | null;
+        porciones_merma: number | null;
+      }>) {
+        const camara = Number(r.porciones_camara) || 0; // ya incluye ajuste de cámara
+        const fresco = Number(r.porciones_fresco) || 0;
+        const traspasos = Number(r.porciones_traspasadas) || 0;
+        const merma = Number(r.porciones_merma) || 0;
+        const disponible = Math.max(0, camara - traspasos - merma) + Math.max(0, fresco);
+        m.set(r.producto_id, disponible);
+      }
+      return m;
+    },
+    refetchInterval: 60_000,
+  });
+
+  // ── Stock actual de POSTRES (cocina_lotes_produccion activos, por receta_id) ──
+  // Suma simple de lotes en_stock (cantidad − merma), en su unidad nativa (unid).
+  // Es el "stock físico actual" (modelo aditivo, re-baselineado en el cierre);
+  // no descuenta Fudo acá porque la demanda se compara aparte. Luego se convierte
+  // a porciones con porcionesPorUnidad del producto.
+  const { data: stockPostres } = useQuery({
+    queryKey: ['resumen-semanal-stock-postres', local],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('cocina_lotes_produccion')
+        .select('receta_id, cantidad_producida, merma_cantidad')
+        .eq('local', local)
+        .eq('en_stock', true)
+        .not('receta_id', 'is', null);
+      if (error) throw error;
+      const m = new Map<string, number>();
+      for (const r of (data ?? []) as Array<{
+        receta_id: string;
+        cantidad_producida: number | null;
+        merma_cantidad: number | null;
+      }>) {
+        const neto = Math.max(
+          0,
+          (Number(r.cantidad_producida) || 0) - (Number(r.merma_cantidad) || 0),
+        );
+        m.set(r.receta_id, (m.get(r.receta_id) ?? 0) + neto);
+      }
+      return m;
+    },
+    refetchInterval: 60_000,
+  });
+
+  // ── Pedidos anticipados de Almacén pendientes (congelados / viandas) ──
+  // Stock ya comprometido: se descuenta del disponible. Key = producto_id.
+  // cantidad = unidades del producto → se convierten a porciones con
+  // porcionesPorUnidad (1 para pastas, N para postres/tortas).
+  const { data: pedidosPend } = useQuery({
+    queryKey: ['resumen-semanal-pedidos', local],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('almacen_pedidos')
+        .select('producto_id, cantidad, estado')
+        .eq('local', local)
+        .not('producto_id', 'is', null)
+        .not('estado', 'in', '(entregado,cancelado)');
+      if (error) throw error;
+      const m = new Map<string, number>();
+      for (const r of (data ?? []) as Array<{
+        producto_id: string;
+        cantidad: number | null;
+      }>) {
+        m.set(r.producto_id, (m.get(r.producto_id) ?? 0) + (Number(r.cantidad) || 0));
+      }
+      return m;
+    },
+    refetchInterval: 60_000,
+  });
+
   // Ventas Fudo (14d) para estimar la demanda semanal.
   const hace14 = useMemo(
     () => new Date(Date.now() - 14 * 86400000).toISOString().split('T')[0],
@@ -212,16 +323,37 @@ export function ResumenSemanalCard({
       return total;
     }
 
+    // Stock actual en porciones. Pastas: directo de la vista. Postres: lotes
+    // (unidades) × porcionesPorUnidad.
+    function stockDe(prod: ProductoCat): number {
+      if (prod.tipo === 'pasta') {
+        return stockPastas?.get(prod.id) ?? 0;
+      }
+      if (!prod.receta_id) return 0;
+      const unidades = stockPostres?.get(prod.receta_id) ?? 0;
+      return unidades * porcionesPorUnidadDe(prod);
+    }
+
+    // Pedidos comprometidos en porciones (unidades × porcionesPorUnidad).
+    function pedidosDe(prod: ProductoCat): number {
+      const unidades = pedidosPend?.get(prod.id) ?? 0;
+      return unidades * porcionesPorUnidadDe(prod);
+    }
+
     const items = productos
       .filter((p) => tiposLocal.includes(p.tipo))
       .map<ResumenItem>((p) => {
         const demandaSemanal = demandaSemanalDe(p);
         const planificado = planificadoDe(p);
+        const stockBruto = stockDe(p);
+        const pedidos = pedidosDe(p);
+        const stockLibre = Math.max(0, stockBruto - pedidos);
+        const disponible = stockLibre + planificado;
         let estado: Estado;
         if (demandaSemanal <= 0) {
           estado = 'sin_demanda';
         } else {
-          const ratio = planificado / demandaSemanal;
+          const ratio = disponible / demandaSemanal;
           if (ratio < 0.8) estado = 'corto';
           else if (ratio < 0.95) estado = 'ajustado';
           else if (ratio <= 1.2) estado = 'cubre';
@@ -232,6 +364,9 @@ export function ResumenSemanalCard({
           nombre: p.nombre,
           tipo: p.tipo,
           planificado,
+          stock: stockLibre,
+          pedidos,
+          disponible,
           demandaSemanal,
           estado,
         };
@@ -242,7 +377,7 @@ export function ResumenSemanalCard({
         return ORDEN_ESTADO[a.estado] - ORDEN_ESTADO[b.estado];
       return b.demandaSemanal - a.demandaSemanal;
     });
-  }, [productos, itemsPlan, fudoData, tiposLocal]);
+  }, [productos, itemsPlan, fudoData, stockPastas, stockPostres, pedidosPend, tiposLocal]);
 
   // Agrupado por tipo, respetando el orden de tipos del local. resumen ya viene
   // ordenado por estado, así que cada grupo conserva ese orden interno.
@@ -270,7 +405,7 @@ export function ResumenSemanalCard({
             <span className="text-xs font-normal capitalize text-gray-500">· {local}</span>
           </h3>
           <p className="text-[11px] text-gray-500">
-            {resumen.length} producto{resumen.length === 1 ? '' : 's'} · planificado (semana) vs
+            {resumen.length} producto{resumen.length === 1 ? '' : 's'} · (stock + planificado) vs
             demanda Fudo (7d)
             {cortos > 0 && (
               <span className="ml-1 font-medium text-red-700">
@@ -296,7 +431,7 @@ export function ResumenSemanalCard({
                   const lbl = ESTADO_LABEL[r.estado];
                   const pct =
                     r.demandaSemanal > 0
-                      ? Math.round((r.planificado / r.demandaSemanal) * 100)
+                      ? Math.round((r.disponible / r.demandaSemanal) * 100)
                       : null;
                   return (
                     <div
@@ -309,7 +444,14 @@ export function ResumenSemanalCard({
                             {r.nombre}
                           </div>
                           <div className="text-[10px] text-gray-500">
-                            planif. ~{Math.round(r.planificado)}
+                            stock ~{Math.round(r.stock)} + plan ~{Math.round(r.planificado)} = ~
+                            {Math.round(r.disponible)}
+                            {r.pedidos > 0 && (
+                              <span className="text-purple-600">
+                                {' '}
+                                (−{Math.round(r.pedidos)} pedidos)
+                              </span>
+                            )}
                             {r.demandaSemanal > 0 ? (
                               <>
                                 {' · demanda ~'}
