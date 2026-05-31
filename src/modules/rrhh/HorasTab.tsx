@@ -124,10 +124,25 @@ function formatHoras(h: number): string {
 
 export function HorasTab() {
   const hoy = new Date();
-  const [year, setYear] = useState(hoy.getFullYear());
-  const [month, setMonth] = useState(hoy.getMonth());
+  // Estado inicial según hoy. Como el último día del mes (día de pago) pertenece
+  // a la Q1 del mes siguiente, ese día arrancamos directamente en el mes próximo.
+  const estadoInicial = (() => {
+    const d = hoy.getDate();
+    const esDiaDePago = d === ultimoDiaDelMes(hoy.getFullYear(), hoy.getMonth());
+    if (esDiaDePago) {
+      const next = new Date(hoy.getFullYear(), hoy.getMonth() + 1, 1);
+      return { year: next.getFullYear(), month: next.getMonth(), quincena: 'q1' as Quincena };
+    }
+    return {
+      year: hoy.getFullYear(),
+      month: hoy.getMonth(),
+      quincena: (d <= 14 ? 'q1' : 'q2') as Quincena,
+    };
+  })();
+  const [year, setYear] = useState(estadoInicial.year);
+  const [month, setMonth] = useState(estadoInicial.month);
   const [periodoTipo, setPeriodoTipo] = useState<PeriodoTipo>('quincena');
-  const [quincena, setQuincena] = useState<Quincena>(hoy.getDate() <= 14 ? 'q1' : 'q2');
+  const [quincena, setQuincena] = useState<Quincena>(estadoInicial.quincena);
   const [filtroLocal, setFiltroLocal] = useState<FiltroLocal>('todos');
   const [busqueda, setBusqueda] = useState('');
   const [expandidos, setExpandidos] = useState<Set<string>>(new Set());
@@ -135,27 +150,29 @@ export function HorasTab() {
 
   const { fechaDesde, fechaHasta, labelPeriodo, todosDias } = useMemo(() => {
     const ultimoDia = ultimoDiaDelMes(year, month);
-    let desde: string, hasta: string, label: string;
+    // Modelo de pago: se paga el 15 y el último día del mes. Cada quincena CIERRA
+    // un día antes del pago (el 14 y el 29/30). El último día del mes (día de pago)
+    // rueda a la Q1 del mes siguiente para no perder horas trabajadas.
+    //   Q1: último día del mes anterior → 14   (cierra 14, paga 15)
+    //   Q2: 15 → anteúltimo del mes (29/30)     (cierra 29/30, paga 30/31)
+    let dFrom: Date, dTo: Date, label: string;
     if (periodoTipo === 'mes') {
-      desde = ymd(new Date(year, month, 1));
-      hasta = ymd(new Date(year, month, ultimoDia));
+      // Mes = ambas quincenas: del último día del mes anterior al anteúltimo de este.
+      dFrom = new Date(year, month, 0);
+      dTo = new Date(year, month, ultimoDia - 1);
       label = `${MESES[month]} ${year}`;
+    } else if (quincena === 'q1') {
+      dFrom = new Date(year, month, 0); // último día del mes anterior (día de pago que rodó)
+      dTo = new Date(year, month, 14); // cierra el 14, se paga el 15
+      label = `${MESES[month]} ${year} · Q1 (al 14)`;
     } else {
-      const d = quincena === 'q1' ? 1 : 15;
-      const h = quincena === 'q1' ? 14 : ultimoDia;
-      desde = ymd(new Date(year, month, d));
-      hasta = ymd(new Date(year, month, h));
-      label = `${MESES[month]} ${year} · ${quincena === 'q1' ? 'Q1 (1-14)' : `Q2 (15-${ultimoDia})`}`;
+      dFrom = new Date(year, month, 15);
+      dTo = new Date(year, month, ultimoDia - 1); // cierra el 29/30, se paga el 30/31
+      label = `${MESES[month]} ${year} · Q2 (15 al ${ultimoDia - 1})`;
     }
     const out: string[] = [];
-    const dFrom = new Date(year, month, periodoTipo === 'mes' ? 1 : quincena === 'q1' ? 1 : 15);
-    const dTo = new Date(
-      year,
-      month,
-      periodoTipo === 'mes' ? ultimoDia : quincena === 'q1' ? 14 : ultimoDia,
-    );
     for (let d = new Date(dFrom); d <= dTo; d.setDate(d.getDate() + 1)) out.push(ymd(d));
-    return { fechaDesde: desde, fechaHasta: hasta, labelPeriodo: label, todosDias: out };
+    return { fechaDesde: ymd(dFrom), fechaHasta: ymd(dTo), labelPeriodo: label, todosDias: out };
   }, [year, month, periodoTipo, quincena]);
 
   const { data: empleados } = useQuery({
