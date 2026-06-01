@@ -22,6 +22,7 @@ interface Producto {
   codigo: string;
   tipo: string;
   local: string;
+  es_mixto: boolean;
 }
 interface Receta {
   id: string;
@@ -233,7 +234,7 @@ export function ProduccionQRPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cocina_productos')
-        .select('id, nombre, codigo, tipo, local')
+        .select('id, nombre, codigo, tipo, local, es_mixto')
         .eq('activo', true)
         .order('nombre');
       if (error) throw error;
@@ -358,6 +359,23 @@ export function ProduccionQRPage() {
     },
   });
 
+  // Consumo de masa registrado en armados multi-masa (tabla puente). En el caso
+  // mixto el lote de pasta queda con lote_masa_id=null y el detalle por masa va
+  // acá, así que hay que sumarlo al consumo directo para no descuadrar el
+  // disponible de cada masa.
+  const { data: masasMixConsumoHoy } = useQuery({
+    queryKey: ['cocina-pasta-masas-consumo-qr', desdeLotes, local],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('cocina_lotes_pasta_masas')
+        .select('lote_masa_id, masa_kg, pasta:cocina_lotes_pasta!inner(fecha, local)')
+        .eq('pasta.local', local)
+        .gte('pasta.fecha', desdeLotes);
+      if (error) throw error;
+      return (data ?? []) as unknown as { lote_masa_id: string; masa_kg: number | null }[];
+    },
+  });
+
   // Sumas de consumo por lote
   const consumoPorRelleno = useMemo(() => {
     const m = new Map<string, number>();
@@ -376,8 +394,15 @@ export function ProduccionQRPage() {
         m.set(p.lote_masa_id, (m.get(p.lote_masa_id) ?? 0) + p.masa_kg);
       }
     }
+    // Armados multi-masa (tabla puente): el lote de pasta tiene lote_masa_id=null,
+    // así que el consumo solo está acá.
+    for (const r of masasMixConsumoHoy ?? []) {
+      if (r.lote_masa_id && r.masa_kg) {
+        m.set(r.lote_masa_id, (m.get(r.lote_masa_id) ?? 0) + Number(r.masa_kg));
+      }
+    }
     return m;
-  }, [pastasConsumoHoy]);
+  }, [pastasConsumoHoy, masasMixConsumoHoy]);
 
   // Enriquecer los lotes con consumido + disponible, y filtrar los que ya
   // quedaron en cero (no tiene sentido ofrecerlos para armar otra pasta).
@@ -1166,6 +1191,20 @@ function FormPasta({
   const [notas, setNotas] = useState('');
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState('');
+  // Multi-masa: solo para pastas "mixtas" (es_mixto), que se arman con varios
+  // lotes de masa. Cada fila = un lote + los kg usados.
+  const [masasMix, setMasasMix] = useState<{ loteMasaId: string; kg: string }[]>([
+    { loteMasaId: '', kg: '' },
+  ]);
+  function setMasaRow(idx: number, patch: Partial<{ loteMasaId: string; kg: string }>) {
+    setMasasMix((rows) => rows.map((r, i) => (i === idx ? { ...r, ...patch } : r)));
+  }
+  function agregarMasaRow() {
+    setMasasMix((rows) => [...rows, { loteMasaId: '', kg: '' }]);
+  }
+  function quitarMasaRow(idx: number) {
+    setMasasMix((rows) => (rows.length > 1 ? rows.filter((_, i) => i !== idx) : rows));
+  }
 
   // Mapping invertido: receta_id -> Set de pasta_id
   const pastasPorReceta = useMemo(() => {
@@ -1203,6 +1242,7 @@ function FormPasta({
   }, [pastaRecetas]);
 
   const productoSel = productos.find((p) => p.id === productoId);
+  const esMixto = !!productoSel?.es_mixto;
   const productoAdmiteRelleno = productoSel ? pastasConRelleno.has(productoSel.id) : true;
 
   // Si elegí una pasta que NO admite relleno, limpiar el relleno seleccionado.
@@ -1307,6 +1347,28 @@ function FormPasta({
       setError('Elegí responsable');
       return;
     }
+    // Multi-masa (pastas mixtas): validar filas y calcular el total de masa.
+    let masasParaInsertar: { lote_masa_id: string; masa_kg: number }[] = [];
+    let masaKgTotalMix: number | null = null;
+    if (esMixto) {
+      masasParaInsertar = masasMix
+        .filter((r) => r.loteMasaId && parseDecimal(r.kg) > 0)
+        .map((r) => ({ lote_masa_id: r.loteMasaId, masa_kg: parseDecimal(r.kg) }));
+      if (masasParaInsertar.length === 0) {
+        setError('Elegí al menos una masa con sus kg');
+        return;
+      }
+      masaKgTotalMix = +masasParaInsertar.reduce((s, m) => s + m.masa_kg, 0).toFixed(3);
+      // Sanity: >50 kg de masa por lote casi seguro está cargado en gramos.
+      const sospechosas = masasParaInsertar.filter((m) => m.masa_kg > 50);
+      if (sospechosas.length > 0) {
+        const ok = window.confirm(
+          `Cargaste masa(s) de ${sospechosas.map((m) => m.masa_kg).join(', ')} kg. ` +
+            `Eso parece estar en GRAMOS, no en kg. ¿Confirmás igual estos valores en kg?`,
+        );
+        if (!ok) return;
+      }
+    }
     // Sanity de unidades: >50 kg de masa/relleno por lote es casi seguro gramos.
     const masaSospechosa = pareceGramosPasta(masaKg);
     const rellenoSospechoso = pareceGramosPasta(rellenoKg);
@@ -1326,35 +1388,59 @@ function FormPasta({
     setError('');
 
     const cantidad = cantidadCajones ? Number(cantidadCajones) : null;
-    const { error: err } = await supabase.from('cocina_lotes_pasta').insert({
-      producto_id: productoId,
-      lote_relleno_id: loteRellenoId || null,
-      lote_masa_id: loteMasaId || null,
-      fecha: hoy(),
-      codigo_lote: codigoLote,
-      receta_masa_id: lotesMasa.find((m) => m.id === loteMasaId)?.receta_id ?? null,
-      masa_kg: masaKg ? parseDecimal(masaKg) : null,
-      relleno_kg: rellenoKg ? parseDecimal(rellenoKg) : null,
-      muzzarella_gramos: esConMuzzarella && muzzarellaGramos ? Number(muzzarellaGramos) : null,
-      semolin_gramos: requiereSemolinHuevo && semolinGramos ? Number(semolinGramos) : null,
-      huevo_gramos: requiereSemolinHuevo && huevoGramos ? Number(huevoGramos) : null,
-      // Sin relleno (fideos): el campo ingresado son porciones (bolsitas 140g)
-      // y va directo a cámara. Con relleno: el campo son bandejas pendientes
-      // de porcionar al día siguiente (bolsitas 200g).
-      porciones: esPastaSinRelleno ? cantidad : null,
-      cantidad_cajones: esPastaSinRelleno ? null : cantidad,
-      ubicacion: esPastaSinRelleno ? 'camara_congelado' : 'freezer_produccion',
-      fecha_porcionado: esPastaSinRelleno ? hoy() : null,
-      responsable_porcionado: esPastaSinRelleno ? responsable.trim() : null,
-      responsable: responsable.trim(),
-      local,
-      notas: notas.trim() || null,
-    });
+    const { data: loteCreado, error: err } = await supabase
+      .from('cocina_lotes_pasta')
+      .insert({
+        producto_id: productoId,
+        lote_relleno_id: loteRellenoId || null,
+        // Mixto: el lote no apunta a una sola masa (el detalle por lote va en
+        // cocina_lotes_pasta_masas). Guardamos el total en masa_kg.
+        lote_masa_id: esMixto ? null : loteMasaId || null,
+        fecha: hoy(),
+        codigo_lote: codigoLote,
+        receta_masa_id: esMixto
+          ? null
+          : (lotesMasa.find((m) => m.id === loteMasaId)?.receta_id ?? null),
+        masa_kg: esMixto ? masaKgTotalMix : masaKg ? parseDecimal(masaKg) : null,
+        relleno_kg: rellenoKg ? parseDecimal(rellenoKg) : null,
+        muzzarella_gramos: esConMuzzarella && muzzarellaGramos ? Number(muzzarellaGramos) : null,
+        semolin_gramos: requiereSemolinHuevo && semolinGramos ? Number(semolinGramos) : null,
+        huevo_gramos: requiereSemolinHuevo && huevoGramos ? Number(huevoGramos) : null,
+        // Sin relleno (fideos): el campo ingresado son porciones (bolsitas 140g)
+        // y va directo a cámara. Con relleno: el campo son bandejas pendientes
+        // de porcionar al día siguiente (bolsitas 200g).
+        porciones: esPastaSinRelleno ? cantidad : null,
+        cantidad_cajones: esPastaSinRelleno ? null : cantidad,
+        ubicacion: esPastaSinRelleno ? 'camara_congelado' : 'freezer_produccion',
+        fecha_porcionado: esPastaSinRelleno ? hoy() : null,
+        responsable_porcionado: esPastaSinRelleno ? responsable.trim() : null,
+        responsable: responsable.trim(),
+        local,
+        notas: notas.trim() || null,
+      })
+      .select('id')
+      .single();
 
     if (err) {
       setError(err.message);
       setGuardando(false);
       return;
+    }
+
+    // Detalle de masas del armado mixto (tabla puente).
+    if (esMixto && loteCreado) {
+      const { error: errMasas } = await supabase.from('cocina_lotes_pasta_masas').insert(
+        masasParaInsertar.map((m) => ({
+          lote_pasta_id: loteCreado.id,
+          lote_masa_id: m.lote_masa_id,
+          masa_kg: m.masa_kg,
+        })),
+      );
+      if (errMasas) {
+        setError(`Pasta guardada, pero falló el detalle de masas: ${errMasas.message}`);
+        setGuardando(false);
+        return;
+      }
     }
     onGuardado(
       esPastaSinRelleno
@@ -1479,9 +1565,86 @@ function FormPasta({
           </div>
         )}
 
-        {/* Paso 3 — Masa (oculto cuando el relleno es puré: los ñoquis no llevan masa) */}
-        {!requiereSemolinHuevo && (
-          <>
+        {/* Paso 3 — Masa (oculto cuando el relleno es puré: los ñoquis no llevan masa).
+            Pastas mixtas (es_mixto): lista de varias masas con sus kg. */}
+        {!requiereSemolinHuevo &&
+          (esMixto ? (
+            <div>
+              <label className="mb-1 block text-xs font-medium text-gray-700">
+                3) Masas (pasta mixta)
+              </label>
+              <div className="space-y-2">
+                {masasMix.map((row, idx) => (
+                  <div key={idx} className="flex items-center gap-2">
+                    <select
+                      value={row.loteMasaId}
+                      onChange={(e) => {
+                        const id = e.target.value;
+                        const m = lotesMasa.find((x) => x.id === id);
+                        setMasaRow(idx, {
+                          loteMasaId: id,
+                          kg:
+                            m && m.disponible_kg != null
+                              ? String(m.disponible_kg)
+                              : id
+                                ? row.kg
+                                : '',
+                        });
+                      }}
+                      className="flex-1 rounded border border-gray-300 px-2 py-2 text-sm"
+                    >
+                      <option value="">Elegí masa…</option>
+                      {masasFiltradas.map((m) => {
+                        const esDeHoy = m.fecha === hoy();
+                        const peso = m.disponible_kg ?? m.kg_producidos;
+                        return (
+                          <option key={m.id} value={m.id}>
+                            {m.receta?.nombre ?? 'Masa'}
+                            {esDeHoy ? '' : ` (${formatDDMM(m.fecha)})`} — {formatNum(peso)} kg
+                          </option>
+                        );
+                      })}
+                    </select>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      pattern="[0-9]*[.,]?[0-9]*"
+                      placeholder="kg"
+                      value={row.kg}
+                      onChange={(e) => setMasaRow(idx, { kg: normalizarDecimal(e.target.value) })}
+                      className="w-20 rounded border border-gray-300 px-2 py-2 text-sm"
+                    />
+                    {masasMix.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => quitarMasaRow(idx)}
+                        className="px-1 text-sm text-red-500 hover:text-red-700"
+                        title="Quitar masa"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+              <button
+                type="button"
+                onClick={agregarMasaRow}
+                className="mt-2 text-xs font-medium text-rodziny-700 underline"
+              >
+                + agregar masa
+              </button>
+              {(() => {
+                const total = masasMix.reduce((s, r) => s + parseDecimal(r.kg), 0);
+                return total > 0 ? (
+                  <p className="mt-1 text-[11px] text-gray-500">
+                    Total masa: {formatNum(+total.toFixed(3))} kg
+                  </p>
+                ) : null;
+              })()}
+            </div>
+          ) : (
+            <>
             <div>
               <label className="mb-1 block text-xs font-medium text-gray-700">
                 3) Masa disponible
@@ -1585,8 +1748,8 @@ function FormPasta({
                 <AvisoPosibleGramos raw={rellenoKg} onCorregir={setRellenoKg} />
               </div>
             </div>
-          </>
-        )}
+            </>
+          ))}
 
         {/* Para ñoquis: un único campo "Puré a usar". El semolín y huevo se calculan
             sobre este valor (ver panel ámbar más abajo). */}

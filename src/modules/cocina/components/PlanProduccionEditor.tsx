@@ -64,6 +64,9 @@ interface PlanItem {
   cantidad_recetas: number;
   turno: 'mañana' | 'tarde' | null;
   notas: string | null;
+  // Para rellenos que alimentan a varios vendibles (ej: pure → ñoquis rellenos
+  // o simples): a qué producto vendible se imputa en el Resumen semanal.
+  destino_producto_id: string | null;
   estado?: 'pendiente' | 'en_produccion' | 'en_bandejas' | 'ciclo_completo' | 'cancelado';
 }
 
@@ -176,6 +179,38 @@ export function PlanProduccionEditor({
     },
   });
 
+  // Mapa receta → vendibles que la usan (cocina_pasta_recetas). Habilita el
+  // selector "Destino" cuando un relleno alimenta a VARIOS vendibles (ej: pure
+  // de papa → ñoquis rellenos o simples) para desambiguar la imputación en el
+  // Resumen semanal. Solo recetas que mapean a ≥2 vendibles del local.
+  const { data: destinoPorReceta } = useQuery({
+    queryKey: ['plan-destino-por-receta', local],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('cocina_pasta_recetas')
+        .select('receta_id, pasta:cocina_productos!inner(id, nombre, local, activo)')
+        .eq('pasta.local', local)
+        .eq('pasta.activo', true);
+      if (error) throw error;
+      const m = new Map<string, { id: string; nombre: string }[]>();
+      for (const row of (data ?? []) as unknown as {
+        receta_id: string;
+        pasta: { id: string; nombre: string } | { id: string; nombre: string }[] | null;
+      }[]) {
+        const p = Array.isArray(row.pasta) ? row.pasta[0] : row.pasta;
+        if (!p) continue;
+        const arr = m.get(row.receta_id) ?? [];
+        if (!arr.some((x) => x.id === p.id)) arr.push({ id: p.id, nombre: p.nombre });
+        m.set(row.receta_id, arr);
+      }
+      const out = new Map<string, { id: string; nombre: string }[]>();
+      for (const [k, v] of m) {
+        if (v.length >= 2) out.set(k, v.sort((a, b) => a.nombre.localeCompare(b.nombre)));
+      }
+      return out;
+    },
+  });
+
   // Catálogo de pastas (productos tipo='pasta') del local. Se usa solo en la
   // sección "Pastas simples" — el select muestra nombres de productos, y el plan
   // se guarda como texto_libre (sin receta_id) porque tagliatelles/spaghetti se
@@ -202,7 +237,7 @@ export function PlanProduccionEditor({
       const { data, error } = await supabase
         .from('cocina_pizarron_items')
         .select(
-          'id, fecha_objetivo, local, turno, tipo, receta_id, texto_libre, cantidad_recetas, estado, notas',
+          'id, fecha_objetivo, local, turno, tipo, receta_id, texto_libre, cantidad_recetas, estado, notas, destino_producto_id',
         )
         .eq('local', local)
         .gte('fecha_objetivo', fechas[0])
@@ -327,6 +362,7 @@ export function PlanProduccionEditor({
         cantidad_recetas: number;
         turno: 'mañana' | 'tarde' | null;
         notas: string | null;
+        destino_producto_id: string | null;
         estado: 'pendiente' | 'en_produccion' | 'en_bandejas' | 'ciclo_completo' | 'cancelado';
       };
       if (!porFecha[r.fecha_objetivo]) porFecha[r.fecha_objetivo] = [];
@@ -338,6 +374,7 @@ export function PlanProduccionEditor({
         cantidad_recetas: r.cantidad_recetas,
         turno: r.turno,
         notas: r.notas,
+        destino_producto_id: r.destino_producto_id,
         estado: r.estado,
       });
     }
@@ -505,6 +542,7 @@ export function PlanProduccionEditor({
           cantidad_recetas: s.cantidadRecetas,
           turno: s.tipoPlan === 'salsa' || s.tipoPlan === 'postre' ? 'tarde' : 'mañana',
           notas: `Sugerido: cubre ${s.porcionesFaltantes} porc.`,
+          destino_producto_id: null,
         },
       ],
     }));
@@ -525,6 +563,7 @@ export function PlanProduccionEditor({
           cantidad_recetas: cantidadInicial,
           turno: tipo === 'salsa' || tipo === 'postre' ? 'tarde' : 'mañana',
           notas: null,
+          destino_producto_id: null,
         },
       ],
     }));
@@ -573,6 +612,7 @@ export function PlanProduccionEditor({
             texto_libre: it.texto_libre?.trim() || null,
             cantidad_recetas: it.cantidad_recetas,
             notas: it.notas?.trim() || null,
+            destino_producto_id: it.destino_producto_id ?? null,
             estado: 'pendiente',
           }));
 
@@ -811,6 +851,7 @@ export function PlanProduccionEditor({
                                 onChange={(e) =>
                                   actualizarItem(fechaActiva, it.id, {
                                     receta_id: e.target.value || null,
+                                    destino_producto_id: null,
                                   })
                                 }
                                 disabled={bloqueado}
@@ -912,6 +953,34 @@ export function PlanProduccionEditor({
                               </button>
                             )}
                           </div>
+
+                          {/* Destino: solo cuando la receta alimenta a ≥2 vendibles
+                              (ej: pure de papa → ñoquis rellenos o simples). */}
+                          {it.receta_id &&
+                            (destinoPorReceta?.get(it.receta_id)?.length ?? 0) >= 2 && (
+                              <div className="col-span-12 flex items-center gap-2">
+                                <span className="shrink-0 text-[11px] font-medium text-gray-500">
+                                  🎯 Destino
+                                </span>
+                                <select
+                                  value={it.destino_producto_id ?? ''}
+                                  onChange={(e) =>
+                                    actualizarItem(fechaActiva, it.id, {
+                                      destino_producto_id: e.target.value || null,
+                                    })
+                                  }
+                                  disabled={bloqueado}
+                                  className="flex-1 rounded border border-gray-300 bg-white px-2 py-1 text-xs disabled:bg-gray-100"
+                                >
+                                  <option value="">— Sin destino (cuenta para todos)</option>
+                                  {(destinoPorReceta?.get(it.receta_id) ?? []).map((o) => (
+                                    <option key={o.id} value={o.id}>
+                                      {o.nombre}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                            )}
 
                           {/* Notas opcionales */}
                           <div className="col-span-12">

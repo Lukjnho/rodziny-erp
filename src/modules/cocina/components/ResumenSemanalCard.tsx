@@ -34,6 +34,9 @@ interface ItemPlan {
   cantidad_recetas: number;
   estado: string;
   rendimiento_porciones: number | null;
+  // Si el chef eligió a qué vendible imputar este relleno (ej: pure → ñoquis
+  // rellenos o simples). NULL = legacy (matchea por receta_id).
+  destino_producto_id: string | null;
 }
 
 interface FudoResp {
@@ -156,7 +159,7 @@ export function ResumenSemanalCard({
       const { data, error } = await supabase
         .from('cocina_pizarron_items')
         .select(
-          'receta_id, cantidad_recetas, estado, receta:cocina_recetas(rendimiento_porciones)',
+          'receta_id, cantidad_recetas, estado, destino_producto_id, receta:cocina_recetas(rendimiento_porciones)',
         )
         .eq('local', local)
         .gte('fecha_objetivo', semana.lunes)
@@ -171,6 +174,7 @@ export function ResumenSemanalCard({
           cantidad_recetas: Number(r.cantidad_recetas) || 0,
           estado: r.estado as string,
           rendimiento_porciones: rec?.rendimiento_porciones ?? null,
+          destino_producto_id: (r.destino_producto_id as string | null) ?? null,
         } as ItemPlan;
       });
     },
@@ -300,18 +304,23 @@ export function ResumenSemanalCard({
       return (total / fudoData.dias) * 7;
     }
 
-    // Proyección: items del pizarrón de la semana cuya receta coincide con
-    // la receta vinculada al producto, × rinde. Si el producto no tiene
-    // receta_id o la receta no tiene rinde, queda en 0 (señal de qué falta
-    // cargar para que el cálculo funcione).
+    // Proyección: items del pizarrón de la semana × rinde de la receta.
+    // - Si el ítem tiene destino_producto_id (el chef eligió a qué vendible
+    //   imputarlo, ej: pure → ñoquis rellenos), cuenta SOLO para ese producto.
+    // - Si no tiene destino, comportamiento legacy: matchea por la receta
+    //   vinculada al producto. Si el producto no tiene receta_id o la receta no
+    //   tiene rinde, queda en 0 (señal de qué falta cargar).
     function planificadoDe(prod: ProductoCat): number {
-      if (!prod.receta_id) return 0;
       let total = 0;
       for (const it of itemsPlan ?? []) {
-        if (it.receta_id !== prod.receta_id) continue;
         const rinde = Number(it.rendimiento_porciones) || 0;
         if (rinde <= 0) continue;
-        total += it.cantidad_recetas * rinde;
+        const aporte = it.cantidad_recetas * rinde;
+        if (it.destino_producto_id) {
+          if (it.destino_producto_id === prod.id) total += aporte;
+          continue;
+        }
+        if (prod.receta_id && it.receta_id === prod.receta_id) total += aporte;
       }
       return total;
     }
