@@ -29,6 +29,8 @@ interface PlanItem {
   lote_tabla: string | null;
   lote_id: string | null;
   receta?: { nombre: string } | null;
+  destino_producto_id: string | null;
+  destino?: { nombre: string } | null;
 }
 
 interface LoteMasa {
@@ -202,6 +204,7 @@ export interface ItemAgrupado {
   tipo: TipoPlan;
   nombre: string;
   recetaId: string | null;
+  destinoNombre: string | null; // vendible al que se imputa (ej: pure → Ñoquis rellenos)
   fechaObjetivo: string;
   totalCantidad: number;
   cuentaPlan: number;
@@ -233,7 +236,7 @@ export function PlanSemanal({
       const { data, error } = await supabase
         .from('cocina_pizarron_items')
         .select(
-          'id, fecha_objetivo, local, turno, tipo, receta_id, texto_libre, cantidad_recetas, cantidad_hecha, estado, lote_tabla, lote_id, receta:cocina_recetas(nombre)',
+          'id, fecha_objetivo, local, turno, tipo, receta_id, texto_libre, cantidad_recetas, cantidad_hecha, estado, lote_tabla, lote_id, destino_producto_id, receta:cocina_recetas(nombre), destino:cocina_productos(nombre)',
         )
         .eq('local', local)
         .gte('fecha_objetivo', desde)
@@ -336,6 +339,7 @@ export function PlanSemanal({
           tipo,
           nombre,
           recetaId,
+          destinoNombre: null,
           fechaObjetivo: fecha,
           totalCantidad: 0,
           cuentaPlan: 0,
@@ -359,6 +363,7 @@ export function PlanSemanal({
       const nombre = it.receta?.nombre ?? it.texto_libre ?? '(sin receta)';
       const g = getGrupo(it.fecha_objetivo, it.tipo, nombre, it.receta_id);
       if (!g) continue;
+      if (it.destino?.nombre && !g.destinoNombre) g.destinoNombre = it.destino.nombre;
       const estado: EstadoItem = it.estado === 'cancelado' ? 'pendiente' : it.estado;
       g.totalCantidad += Number(it.cantidad_recetas ?? 0);
       g.cuentaPlan += 1;
@@ -614,6 +619,11 @@ function ItemAgrupadoCard({
           )}
         </span>
       </div>
+      {grupo.destinoNombre && (
+        <div className="text-[9px] font-medium text-rodziny-600">
+          🎯 {grupo.destinoNombre}
+        </div>
+      )}
       <div
         className={cn(
           'mt-0.5 text-[9px] font-semibold uppercase',

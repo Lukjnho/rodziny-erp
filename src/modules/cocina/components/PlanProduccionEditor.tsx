@@ -631,6 +631,9 @@ export function PlanProduccionEditor({
       qc.invalidateQueries({ queryKey: ['cocina-pizarron-editor'] });
       qc.invalidateQueries({ queryKey: ['cocina-pizarron-hoy'] });
       qc.invalidateQueries({ queryKey: ['plan-semanal-pizarron'] });
+      // El Resumen semanal lee el plan aparte: sin esto, el destino recién
+      // elegido no se refleja hasta refrescar la página.
+      qc.invalidateQueries({ queryKey: ['resumen-semanal-plan'] });
     },
   });
 

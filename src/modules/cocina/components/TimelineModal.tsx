@@ -125,6 +125,11 @@ export function TimelineModal({
             <p className="mt-0.5 text-xs text-gray-500 capitalize">
               Planificado: {fechaLarga(grupo.fechaObjetivo)}
             </p>
+            {grupo.destinoNombre && (
+              <p className="mt-1 text-xs font-medium text-rodziny-600">
+                🎯 Destino: {grupo.destinoNombre}
+              </p>
+            )}
           </div>
           <button
             onClick={onClose}
