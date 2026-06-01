@@ -30,7 +30,11 @@ interface ProductoCat {
 }
 
 interface ItemPlan {
-  receta_id: string;
+  receta_id: string | null;
+  // Pastas simples se planifican por nombre (sin receta): el texto es el nombre
+  // del producto y cantidad_recetas ya viene en porciones.
+  texto_libre: string | null;
+  tipo: string;
   cantidad_recetas: number;
   estado: string;
   rendimiento_porciones: number | null;
@@ -159,18 +163,19 @@ export function ResumenSemanalCard({
       const { data, error } = await supabase
         .from('cocina_pizarron_items')
         .select(
-          'receta_id, cantidad_recetas, estado, destino_producto_id, receta:cocina_recetas(rendimiento_porciones)',
+          'receta_id, texto_libre, tipo, cantidad_recetas, estado, destino_producto_id, receta:cocina_recetas(rendimiento_porciones)',
         )
         .eq('local', local)
         .gte('fecha_objetivo', semana.lunes)
         .lte('fecha_objetivo', semana.domingo)
-        .neq('estado', 'cancelado')
-        .not('receta_id', 'is', null);
+        .neq('estado', 'cancelado');
       if (error) throw error;
       return (data ?? []).map((r) => {
         const rec = Array.isArray(r.receta) ? r.receta[0] : r.receta;
         return {
-          receta_id: r.receta_id as string,
+          receta_id: (r.receta_id as string | null) ?? null,
+          texto_libre: (r.texto_libre as string | null) ?? null,
+          tipo: r.tipo as string,
           cantidad_recetas: Number(r.cantidad_recetas) || 0,
           estado: r.estado as string,
           rendimiento_porciones: rec?.rendimiento_porciones ?? null,
@@ -279,16 +284,27 @@ export function ResumenSemanalCard({
   );
   const hoyStr = useMemo(() => new Date().toISOString().split('T')[0], []);
 
-  const { data: fudoData } = useQuery({
+  const {
+    data: fudoData,
+    isError: fudoError,
+  } = useQuery({
     queryKey: ['resumen-semanal-fudo', local, hace14, hoyStr],
     queryFn: async () => {
       const { data, error } = await supabase.functions.invoke('fudo-productos', {
         body: { local, fechaDesde: hace14, fechaHasta: hoyStr },
       });
-      if (error || !data?.ok) return null;
+      // Lanzar (en vez de devolver null) para que React Query REINTENTE y no
+      // cachee un "0 ventas" falso cuando Fudo tiene un 500 transitorio.
+      if (error || !data?.ok)
+        throw new Error(error?.message ?? data?.error ?? 'Fudo no disponible');
       return data.data as FudoResp;
     },
     staleTime: 10 * 60 * 1000,
+    retry: 2,
+    retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 8000),
+    // Mantener la última demanda buena mientras reintenta, así un blip de Fudo
+    // no deja todo en "s/ vta.".
+    placeholderData: (prev) => prev,
   });
 
   const resumen = useMemo<ResumenItem[]>(() => {
@@ -312,7 +328,16 @@ export function ResumenSemanalCard({
     //   tiene rinde, queda en 0 (señal de qué falta cargar).
     function planificadoDe(prod: ProductoCat): number {
       let total = 0;
+      const nombreProd = normNombre(prod.nombre);
       for (const it of itemsPlan ?? []) {
+        // Pasta simple: planificada por nombre del producto (sin receta). La
+        // cantidad ya está en porciones, así que suma directo.
+        if (it.tipo === 'pasta_simple') {
+          if (it.texto_libre && normNombre(it.texto_libre) === nombreProd) {
+            total += it.cantidad_recetas;
+          }
+          continue;
+        }
         const rinde = Number(it.rendimiento_porciones) || 0;
         if (rinde <= 0) continue;
         const aporte = it.cantidad_recetas * rinde;
@@ -413,6 +438,11 @@ export function ResumenSemanalCard({
               </span>
             )}
           </p>
+          {fudoError && !fudoData && (
+            <p className="mt-0.5 text-[11px] font-medium text-amber-600">
+              ⚠ Fudo no disponible ahora — la demanda no se pudo calcular (reintentando…)
+            </p>
+          )}
         </div>
         <span className="text-xs text-gray-500">{abierto ? '▾' : '▸'}</span>
       </button>
