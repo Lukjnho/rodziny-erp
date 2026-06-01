@@ -988,6 +988,14 @@ function FilaFichada({
           {fichada.origen}
         </span>
         <span className="text-gray-500">{fichada.local}</span>
+        {fichada.origen === 'pwa' && fichada.lat === null && (
+          <span
+            className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800"
+            title="Fichó desde la app sin compartir su ubicación (GPS bloqueado o no disponible)"
+          >
+            📍 sin ubicación
+          </span>
+        )}
         <div className="ml-auto flex items-center gap-2">
           {fichada.foto_path && (
             <button

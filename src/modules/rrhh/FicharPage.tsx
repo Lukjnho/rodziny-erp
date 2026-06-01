@@ -16,7 +16,7 @@ const LOCALES = {
   vedia: { nombre: 'Rodziny Vedia', lat: -27.45042, lng: -58.98962 },
   saavedra: { nombre: 'Rodziny Saavedra', lat: -27.44856, lng: -58.97886 },
 } as const;
-const RADIO_METROS = 120;
+const RADIO_METROS = 100;
 const FOTO_MAX_LADO = 640; // px
 const FOTO_QUALITY = 0.7;
 
@@ -84,6 +84,14 @@ function detectarLocal(lat: number, lng: number): { key: LocalKey; distancia: nu
   const mejor = candidatos[0];
   if (mejor.distancia <= RADIO_METROS) return mejor;
   return null;
+}
+
+function distanciaAlLocalMasCercano(lat: number, lng: number): number {
+  return Math.min(
+    ...(Object.keys(LOCALES) as LocalKey[]).map((key) =>
+      haversineMetros(lat, lng, LOCALES[key].lat, LOCALES[key].lng),
+    ),
+  );
 }
 
 async function comprimirImagen(blob: Blob): Promise<Blob> {
@@ -576,7 +584,7 @@ function Inicio({
 }
 
 // ─── Flujo de fichaje ───────────────────────────────────────────────────────
-type PasoFichaje = 'foto' | 'subiendo' | 'ok' | 'error';
+type PasoFichaje = 'gps' | 'gps_bloqueado' | 'foto' | 'subiendo' | 'ok' | 'error';
 
 function Fichando({
   empleado,
@@ -587,10 +595,12 @@ function Fichando({
   onCancelar: () => void;
   onListo: () => void;
 }) {
-  const [paso, setPaso] = useState<PasoFichaje>('foto');
+  const [paso, setPaso] = useState<PasoFichaje>('gps');
   const [mensaje, setMensaje] = useState<string>('');
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [localDetectado, setLocalDetectado] = useState<LocalKey | null>(null);
+  const [sinUbicacion, setSinUbicacion] = useState(false);
+  const [distanciaFuera, setDistanciaFuera] = useState<number | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -598,27 +608,52 @@ function Fichando({
   const [fotoPreview, setFotoPreview] = useState<string | null>(null);
   const [resultado, setResultado] = useState<{ tipo: string; minutos: number | null } | null>(null);
 
-  // GPS silencioso en background — no bloquea, solo registra
+  // Verificación de ubicación — corre al entrar en el paso 'gps'.
+  // Bloquea si el GPS funciona pero el empleado está fuera del local.
+  // Si el GPS no da permiso / falla / no hay soporte → deja pasar pero marca "sin ubicación".
   useEffect(() => {
+    if (paso !== 'gps') return;
     if (import.meta.env.DEV) {
       const v = LOCALES.vedia;
       setCoords({ lat: v.lat, lng: v.lng });
       setLocalDetectado('vedia');
+      setSinUbicacion(false);
+      setPaso('foto');
       return;
     }
-    if (!navigator.geolocation) return;
+    if (!navigator.geolocation) {
+      setSinUbicacion(true);
+      setPaso('foto');
+      return;
+    }
+    let resuelto = false;
     navigator.geolocation.getCurrentPosition(
       (pos) => {
-        setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-        const det = detectarLocal(pos.coords.latitude, pos.coords.longitude);
-        if (det) setLocalDetectado(det.key);
+        if (resuelto) return;
+        resuelto = true;
+        const { latitude, longitude } = pos.coords;
+        setCoords({ lat: latitude, lng: longitude });
+        const det = detectarLocal(latitude, longitude);
+        if (det) {
+          setLocalDetectado(det.key);
+          setSinUbicacion(false);
+          setPaso('foto');
+        } else {
+          // GPS OK pero fuera del radio del local → bloquear
+          setDistanciaFuera(Math.round(distanciaAlLocalMasCercano(latitude, longitude)));
+          setPaso('gps_bloqueado');
+        }
       },
       () => {
-        /* GPS falló silenciosamente, no pasa nada */
+        if (resuelto) return;
+        resuelto = true;
+        // Permiso denegado / timeout / sin señal → deja pasar con marca
+        setSinUbicacion(true);
+        setPaso('foto');
       },
-      { enableHighAccuracy: false, timeout: 10000 },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 },
     );
-  }, []);
+  }, [paso]);
 
   // Cámara — arranca directo
   useEffect(() => {
@@ -793,6 +828,47 @@ function Fichando({
 
   return (
     <div className="rounded-lg border border-gray-200 bg-white p-4">
+      {paso === 'gps' && (
+        <div className="py-8 text-center">
+          <div className="mb-2 text-3xl">📍</div>
+          <p className="text-sm text-gray-700">Verificando que estés en el local...</p>
+          <button
+            onClick={onCancelar}
+            className="mt-4 block w-full text-xs text-gray-500 underline"
+          >
+            Cancelar
+          </button>
+        </div>
+      )}
+
+      {paso === 'gps_bloqueado' && (
+        <div className="py-6 text-center">
+          <div className="mb-2 text-3xl">🚫</div>
+          <p className="text-base font-semibold text-red-700">Estás fuera del local</p>
+          <p className="mt-1 text-xs text-gray-600">
+            Acercate al local para poder fichar.
+            {distanciaFuera !== null && ` Estás a ~${distanciaFuera} m del local más cercano.`}
+          </p>
+          <div className="mt-4 grid grid-cols-2 gap-2">
+            <button
+              onClick={onCancelar}
+              className="rounded bg-gray-100 py-2.5 text-sm text-gray-700 hover:bg-gray-200"
+            >
+              Volver
+            </button>
+            <button
+              onClick={() => {
+                setDistanciaFuera(null);
+                setPaso('gps');
+              }}
+              className="rounded bg-rodziny-700 py-2.5 text-sm text-white hover:bg-rodziny-800"
+            >
+              Reintentar
+            </button>
+          </div>
+        </div>
+      )}
+
       {paso === 'foto' && (
         <>
           {!fotoPreview ? (
@@ -873,8 +949,16 @@ function Fichando({
                   : `${resultado.minutos} min vs horario`}
             </p>
           )}
-          {/* Mensaje disuasorio — el empleado cree que se verifica la ubicación */}
-          <p className="mt-2 text-[10px] text-gray-400">Ubicación y foto registradas</p>
+          {sinUbicacion ? (
+            <p className="mt-2 text-[10px] text-amber-600">
+              ⚠ Fichaste sin ubicación (GPS no disponible)
+            </p>
+          ) : (
+            <p className="mt-2 text-[10px] text-gray-400">
+              ✓ Ubicación verificada{localDetectado ? ` · ${LOCALES[localDetectado].nombre}` : ''} ·
+              foto registrada
+            </p>
+          )}
           {warning && <p className="mt-2 text-xs text-amber-700">{warning}</p>}
           <button
             onClick={onListo}
