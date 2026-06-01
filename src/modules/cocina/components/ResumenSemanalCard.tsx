@@ -307,6 +307,40 @@ export function ResumenSemanalCard({
     placeholderData: (prev) => prev,
   });
 
+  // Rendimiento real promedio por lote (porciones) de cada pasta, según el QR
+  // (cocina_lotes_pasta) de los últimos 60 días. Convierte la planificación con
+  // destino (ej: pure → ñoquis) a porciones reales: 1 tanda/bolsa planificada =
+  // un lote promedio (~84 porc), no el batch teórico de la receta (~9).
+  const hace60 = useMemo(
+    () => new Date(Date.now() - 60 * 86400000).toISOString().split('T')[0],
+    [],
+  );
+  const { data: rindePorLote } = useQuery({
+    queryKey: ['resumen-semanal-rinde-lote', local, hace60],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('cocina_lotes_pasta')
+        .select('producto_id, porciones')
+        .eq('local', local)
+        .gte('fecha', hace60)
+        .not('porciones', 'is', null);
+      if (error) throw error;
+      const acc = new Map<string, { suma: number; n: number }>();
+      for (const r of (data ?? []) as { producto_id: string; porciones: number | null }[]) {
+        const p = Number(r.porciones) || 0;
+        if (p <= 0) continue;
+        const a = acc.get(r.producto_id) ?? { suma: 0, n: 0 };
+        a.suma += p;
+        a.n += 1;
+        acc.set(r.producto_id, a);
+      }
+      const m = new Map<string, number>();
+      for (const [id, a] of acc) if (a.n > 0) m.set(id, a.suma / a.n);
+      return m;
+    },
+    staleTime: 10 * 60 * 1000,
+  });
+
   const resumen = useMemo<ResumenItem[]>(() => {
     if (!productos) return [];
 
@@ -338,14 +372,23 @@ export function ResumenSemanalCard({
           }
           continue;
         }
-        const rinde = Number(it.rendimiento_porciones) || 0;
-        if (rinde <= 0) continue;
-        const aporte = it.cantidad_recetas * rinde;
+        // Imputación explícita (destino, ej: pure → ñoquis): 1 unidad de plan =
+        // 1 tanda/bolsa real. Usa el promedio REAL de porciones por lote del
+        // vendible (QR, 60d); si no hay datos, cae al rinde de la receta.
         if (it.destino_producto_id) {
-          if (it.destino_producto_id === prod.id) total += aporte;
+          if (it.destino_producto_id === prod.id) {
+            const rindeReal = rindePorLote?.get(prod.id) ?? 0;
+            const rinde = rindeReal > 0 ? rindeReal : Number(it.rendimiento_porciones) || 0;
+            total += it.cantidad_recetas * rinde;
+          }
           continue;
         }
-        if (prod.receta_id && it.receta_id === prod.receta_id) total += aporte;
+        // Legacy: matchea por la receta vinculada al producto × rinde de receta.
+        const rinde = Number(it.rendimiento_porciones) || 0;
+        if (rinde <= 0) continue;
+        if (prod.receta_id && it.receta_id === prod.receta_id) {
+          total += it.cantidad_recetas * rinde;
+        }
       }
       return total;
     }
@@ -402,7 +445,16 @@ export function ResumenSemanalCard({
         return ORDEN_ESTADO[a.estado] - ORDEN_ESTADO[b.estado];
       return b.demandaSemanal - a.demandaSemanal;
     });
-  }, [productos, itemsPlan, fudoData, stockPastas, stockPostres, pedidosPend, tiposLocal]);
+  }, [
+    productos,
+    itemsPlan,
+    fudoData,
+    stockPastas,
+    stockPostres,
+    pedidosPend,
+    rindePorLote,
+    tiposLocal,
+  ]);
 
   // Agrupado por tipo, respetando el orden de tipos del local. resumen ya viene
   // ordenado por estado, así que cada grupo conserva ese orden interno.
