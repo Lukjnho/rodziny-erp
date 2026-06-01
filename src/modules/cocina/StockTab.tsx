@@ -89,6 +89,10 @@ interface StockRow {
   stockRaw: number; // sin clamp
   ajusteCamara: number;
   ajusteMostrador: number;
+  demanda7d: number; // porciones vendidas (Fudo) en los últimos 7 días
+  demandaDiaria: number; // demanda7d / días reales del rango
+  diasCobertura: number | null; // stock cámara / demandaDiaria (null si no hay demanda)
+  objetivoSemanal: number; // demanda7d × 1,15 (margen seguridad) — reemplaza el mínimo fijo
 }
 
 // Días enteros transcurridos desde una fecha YYYY-MM-DD (zona horaria local).
@@ -100,6 +104,20 @@ function diasDesdeFecha(fechaISO: string): number {
 
 // Umbral en días para considerar una bandeja "vieja" en freezer de producción.
 const DIAS_BANDEJA_VIEJA = 3;
+
+// Días de cobertura objetivo: el stock de cámara debe alcanzar para ≥7 días de
+// demanda (ventas Fudo de los últimos 7 días) para considerarse "OK".
+const DIAS_COBERTURA_OBJETIVO = 7;
+
+// Estado por demanda real (días de cobertura), no por mínimo fijo. Etiquetas:
+// - Sin stock: cámara en 0
+// - Bajo mínimo: cubre menos de DIAS_COBERTURA_OBJETIVO días de venta
+// - OK: cubre el objetivo, o no hubo ventas en 7 días (nada que cubrir)
+function estadoPorCobertura(r: StockRow): 'sin-stock' | 'bajo' | 'ok' {
+  if (r.stock <= 0) return 'sin-stock';
+  if (r.diasCobertura !== null && r.diasCobertura < DIAS_COBERTURA_OBJETIVO) return 'bajo';
+  return 'ok';
+}
 
 // Umbral en horas para colorear el indicador "última carga" como viejo (>24h sin carga).
 const HORAS_CARGA_VIEJA = 24;
@@ -271,6 +289,12 @@ export function StockTab() {
     'todos',
   );
   const hoy = HOY();
+  // Inicio de la ventana de 7 días para la demanda (estado por cobertura).
+  const hace7 = useMemo(() => {
+    const d = new Date(hoy + 'T12:00:00');
+    d.setDate(d.getDate() - 7);
+    return d.toISOString().slice(0, 10);
+  }, [hoy]);
 
   // Modal de ajuste de stock
   const [ajusteModal, setAjusteModal] = useState<{
@@ -483,6 +507,24 @@ export function StockTab() {
     staleTime: 2 * 60 * 1000,
   });
 
+  // Ventas Fudo de los últimos 7 días por local. Alimenta el estado por demanda
+  // (días de cobertura) y la columna "Demanda 7d". Ventana independiente de las
+  // de "hoy"/"desde cierre" (que sirven para descontar mostrador).
+  const { data: fudo7d } = useQuery({
+    queryKey: ['cocina-stock-fudo-7d', localesScope, hace7, hoy],
+    queryFn: async () => {
+      const res: Record<string, FudoData | null> = {};
+      for (const loc of localesScope) {
+        const { data, error } = await supabase.functions.invoke('fudo-productos', {
+          body: { local: loc, fechaDesde: hace7, fechaHasta: hoy },
+        });
+        res[loc] = !error && data?.ok ? (data.data as FudoData) : null;
+      }
+      return res;
+    },
+    staleTime: 10 * 60 * 1000, // demanda histórica: refrescar cada 10 min
+  });
+
   const isLoading =
     !productos || !lotesPasta || !traspasos || !mermas || !traspasosHoy || !mermasHoy;
 
@@ -623,6 +665,15 @@ export function StockTab() {
         const stockRaw = producido - traspasado - mermaTotal + ajusteCamara;
         const stock = Math.max(0, stockRaw);
 
+        // Demanda real: ventas Fudo de los últimos 7 días (vía fudo_nombres).
+        // El estado se mide en días de cobertura del stock de cámara contra la
+        // venta diaria promedio; la columna muestra la demanda semanal + 15%.
+        const demanda7d = ventasFudoDelProducto(prod, fudo7d?.[loc]?.ranking);
+        const diasRango = fudo7d?.[loc]?.dias ?? 0;
+        const demandaDiaria = diasRango > 0 ? demanda7d / diasRango : 0;
+        const diasCobertura = demandaDiaria > 0 ? stock / demandaDiaria : null;
+        const objetivoSemanal = Math.round(demanda7d * 1.15);
+
         rows.push({
           producto: prod,
           local: loc,
@@ -640,6 +691,10 @@ export function StockTab() {
           stockRaw,
           ajusteCamara,
           ajusteMostrador,
+          demanda7d,
+          demandaDiaria,
+          diasCobertura,
+          objetivoSemanal,
         });
       }
     }
@@ -654,6 +709,7 @@ export function StockTab() {
     mermasHoy,
     fudoHoy,
     fudoDesdeCierre,
+    fudo7d,
     cierresPorProducto,
     hoy,
     ajustes,
@@ -662,10 +718,8 @@ export function StockTab() {
 
   const kpis = useMemo(() => {
     const totalProductos = stockRows.filter((r) => r.stock > 0).length;
-    const bajoMinimo = stockRows.filter(
-      (r) => r.producto.minimo_produccion && r.stock < r.producto.minimo_produccion && r.stock > 0,
-    ).length;
-    const sinStock = stockRows.filter((r) => r.stock <= 0).length;
+    const bajoMinimo = stockRows.filter((r) => estadoPorCobertura(r) === 'bajo').length;
+    const sinStock = stockRows.filter((r) => estadoPorCobertura(r) === 'sin-stock').length;
     const totalPorciones = stockRows.reduce((s, r) => s + Math.max(0, r.stock), 0);
     // El KPI "Pastas en produ" muestra bandejas (cola para porcionar). Las porciones
     // recién se asignan al porcionar, así que sumar porciones acá daría 0 en este flujo.
@@ -689,12 +743,10 @@ export function StockTab() {
   const stockRowsFiltrados = useMemo(() => {
     if (filtroEstado === 'todos') return stockRows;
     if (filtroEstado === 'bajo') {
-      return stockRows.filter(
-        (r) =>
-          r.producto.minimo_produccion && r.stock < r.producto.minimo_produccion && r.stock > 0,
-      );
+      return stockRows.filter((r) => estadoPorCobertura(r) === 'bajo');
     }
-    if (filtroEstado === 'sin_stock') return stockRows.filter((r) => r.stock <= 0);
+    if (filtroEstado === 'sin_stock')
+      return stockRows.filter((r) => estadoPorCobertura(r) === 'sin-stock');
     if (filtroEstado === 'con_fresco')
       return stockRows.filter((r) => r.frescoBandejas > 0 || r.fresco > 0);
     return stockRows;
@@ -808,15 +860,14 @@ export function StockTab() {
                     <th className="px-4 py-2 text-right">En cámara</th>
                     <th className="px-4 py-2 text-right">En mostrador</th>
                     <th className="px-4 py-2 text-right">Merma</th>
-                    <th className="px-4 py-2">Mín.</th>
+                    <th className="px-4 py-2 text-right">Demanda 7d</th>
                     <th className="px-4 py-2">Estado</th>
                     {esAdmin && <th className="px-4 py-2 text-center">Control</th>}
                   </tr>
                 </thead>
                 <tbody>
                   {filasLocal.map((r, i) => {
-              const min = r.producto.minimo_produccion ?? 0;
-              const estado = r.stock <= 0 ? 'sin-stock' : r.stock < min ? 'bajo' : 'ok';
+              const estado = estadoPorCobertura(r);
               return (
                 <tr
                   key={`${r.producto.id}-${r.local}-${i}`}
@@ -911,7 +962,22 @@ export function StockTab() {
                     </button>
                   </td>
                   <td className="px-4 py-2 text-right">{r.merma}</td>
-                  <td className="px-4 py-2">{min || '—'}</td>
+                  <td className="px-4 py-2 text-right">
+                    {r.objetivoSemanal > 0 ? (
+                      <span
+                        className="cursor-default tabular-nums"
+                        title={`Ventas últimos 7 días: ${r.demanda7d} porc.\n+15% margen = ${r.objetivoSemanal} porc.${
+                          r.diasCobertura !== null
+                            ? `\nCobertura actual: ${r.diasCobertura.toFixed(1)} días (objetivo ${DIAS_COBERTURA_OBJETIVO})`
+                            : ''
+                        }`}
+                      >
+                        {r.objetivoSemanal}
+                      </span>
+                    ) : (
+                      '—'
+                    )}
+                  </td>
                   <td className="px-4 py-2">
                     {estado === 'ok' && (
                       <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs text-green-700">
