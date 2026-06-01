@@ -202,6 +202,20 @@ function esMovCapital(m: MovBancario): boolean {
   return PATRONES_CAPITAL.some((p) => p.test(m.descripcion ?? ''));
 }
 
+// Texto "hace X min" / "hace X h" / "hace X días" para la última sync de MP.
+function tiempoRelativoSync(iso: string | null): string {
+  if (!iso) return 'sin sincronizar';
+  const diff = Date.now() - new Date(iso).getTime();
+  const min = Math.floor(diff / 60_000);
+  if (min < 1) return 'recién';
+  if (min < 60) return `hace ${min} min`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `hace ${h} h`;
+  const d = Math.floor(h / 24);
+  if (d < 7) return `hace ${d} d`;
+  return new Date(iso).toLocaleDateString('es-AR');
+}
+
 // Cobros de POSnet personal de Lucas que entran como dividendo automático.
 // Son 1 fila por cobro → en la tabla se colapsan en una sola línea total.
 function esMpLucasAuto(d: Dividendo): boolean {
@@ -365,6 +379,22 @@ export function FlujoCaja({ onNavigateToTab }: { onNavigateToTab?: (tab: string)
     },
   });
 
+  // Última sincronización de MP del período (max sincronizado_at)
+  const { data: ultimaSyncMP } = useQuery({
+    queryKey: ['fc_ultima_sync_mp', periodo],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('pagos_mp')
+        .select('sincronizado_at')
+        .eq('periodo', periodo)
+        .order('sincronizado_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      return (data?.sincronizado_at ?? null) as string | null;
+    },
+    refetchInterval: 60_000, // refresca el "hace X min" cada minuto
+  });
+
   // Pagos de sueldos (RRHH)
   const { data: pagosSueldos } = useQuery({
     queryKey: ['fc_pagos_sueldos', periodo],
@@ -391,6 +421,7 @@ export function FlujoCaja({ onNavigateToTab }: { onNavigateToTab?: (tab: string)
       if (error) throw error;
       setSyncResult(data);
       qc.invalidateQueries({ queryKey: ['fc_pagos_mp'] });
+      qc.invalidateQueries({ queryKey: ['fc_ultima_sync_mp'] });
     } catch (e) {
       setSyncResult({ ok: false, error: (e as Error).message });
     } finally {
@@ -1026,6 +1057,28 @@ export function FlujoCaja({ onNavigateToTab }: { onNavigateToTab?: (tab: string)
               {pagosMPFiltrados.length} pagos MP
             </span>
           )}
+          {(() => {
+            const min = ultimaSyncMP
+              ? Math.floor((Date.now() - new Date(ultimaSyncMP).getTime()) / 60_000)
+              : null;
+            // Verde si es de hoy (<24h), ámbar si es más viejo o nunca
+            const reciente = min !== null && min < 24 * 60;
+            return (
+              <span
+                className={cn(
+                  'flex items-center gap-1 text-[11px] font-medium',
+                  reciente ? 'text-green-700' : 'text-amber-700',
+                )}
+                title={
+                  ultimaSyncMP
+                    ? `Última sincronización MP: ${new Date(ultimaSyncMP).toLocaleString('es-AR')}`
+                    : 'Sin pagos MP sincronizados en este período'
+                }
+              >
+                {reciente ? '✅' : '⚠️'} Sync {tiempoRelativoSync(ultimaSyncMP ?? null)}
+              </span>
+            );
+          })()}
         </div>
       </div>
 
