@@ -4,6 +4,7 @@ import { PageContainer } from '@/components/layout/PageContainer';
 import { UploadFudo } from './components/UploadFudo';
 import { CierreCaja } from './components/CierreCaja';
 import { FlujoCaja } from './components/FlujoCaja';
+import { ProyeccionFlujo } from './components/ProyeccionFlujo';
 import { VentasPage } from '@/modules/ventas/VentasPage';
 import { GastosPage } from '@/modules/gastos/GastosPage';
 import { EstadoResultados } from './edr/EstadoResultados';
@@ -18,6 +19,7 @@ type Tab =
   | 'compras'
   | 'edr'
   | 'flujo'
+  | 'proyeccion'
   | 'cierre_mes'
   | 'amortizaciones'
   | 'checklist'
@@ -59,6 +61,13 @@ const TABS: TabDef[] = [
     label: 'Flujo de caja',
     icon: '💰',
     subtitle: 'Movimientos bancarios y efectivo',
+    modulo: 'flujo_caja',
+  },
+  {
+    id: 'proyeccion',
+    label: 'Proyección',
+    icon: '📊',
+    subtitle: 'Flujo de caja proyectado a 12 meses · caja operativa vs reserva',
     modulo: 'flujo_caja',
   },
   {
@@ -153,6 +162,7 @@ export function FinanzasPage() {
       {tab === 'compras' && <GastosPage embedded />}
       {tab === 'edr' && <EstadoResultados embedded />}
       {tab === 'flujo' && <FlujoCaja onNavigateToTab={(t) => setTab(t as Tab)} />}
+      {tab === 'proyeccion' && <ProyeccionFlujo />}
       {tab === 'cierre_mes' && (
         <CierreMesPanel onNavigateToTab={(t) => setTab(t as Tab)} />
       )}

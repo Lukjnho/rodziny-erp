@@ -202,6 +202,19 @@ function esMovCapital(m: MovBancario): boolean {
   return PATRONES_CAPITAL.some((p) => p.test(m.descripcion ?? ''));
 }
 
+// Cobros de POSnet personal de Lucas que entran como dividendo automático.
+// Son 1 fila por cobro → en la tabla se colapsan en una sola línea total.
+function esMpLucasAuto(d: Dividendo): boolean {
+  const medio = (d.medio_pago ?? '').toLowerCase();
+  const concepto = (d.concepto ?? '').toLowerCase();
+  return (
+    medio === 'mercadopago lucas' ||
+    medio === 'mp' ||
+    concepto.includes('posnet') ||
+    concepto.includes('autoasignado')
+  );
+}
+
 // ── componente principal ─────────────────────────────────────────────────────
 
 export function FlujoCaja({ onNavigateToTab }: { onNavigateToTab?: (tab: string) => void } = {}) {
@@ -216,6 +229,8 @@ export function FlujoCaja({ onNavigateToTab }: { onNavigateToTab?: (tab: string)
   const [dividendosOpen, setDividendosOpen] = useState(false);
   const [noOperativoOpen, setNoOperativoOpen] = useState(false);
   const [showDivForm, setShowDivForm] = useState(false);
+  // Filtro por socio en la tabla de dividendos (click en tarjeta o nombre)
+  const [filtroSocio, setFiltroSocio] = useState<string | null>(null);
 
   // Sync MP state
   const [syncing, setSyncing] = useState(false);
@@ -491,6 +506,35 @@ export function FlujoCaja({ onNavigateToTab }: { onNavigateToTab?: (tab: string)
   const cierresFiltrados = cierres ?? [];
   const pagosFiltrados = pagosRealizados ?? [];
   const divsFiltrados = dividendos ?? [];
+
+  // Filas a mostrar en la tabla de dividendos: aplica el filtro por socio y
+  // colapsa todos los cobros de POSnet de Lucas en una única línea total.
+  type FilaDiv = Dividendo & { _agg?: boolean };
+  const filasDividendos = useMemo<FilaDiv[]>(() => {
+    const base = filtroSocio
+      ? divsFiltrados.filter((d) => d.socio === filtroSocio)
+      : divsFiltrados;
+    const autos = base.filter(esMpLucasAuto);
+    const filas: FilaDiv[] = base.filter((d) => !esMpLucasAuto(d));
+    if (autos.length > 0) {
+      const total = autos.reduce((s, d) => s + Number(d.monto), 0);
+      const maxFecha = autos.reduce((a, d) => (d.fecha > a ? d.fecha : a), autos[0].fecha);
+      filas.push({
+        id: '__mp_lucas_agg__',
+        socio: 'lucas',
+        fecha: maxFecha,
+        monto: total,
+        medio_pago: 'Mercadopago Lucas',
+        concepto: `${autos.length} cobros POSnet (autoasignado)`,
+        local: null,
+        periodo,
+        numero_operacion: null,
+        comprobante_path: null,
+        _agg: true,
+      });
+    }
+    return filas.sort((a, b) => (a.fecha < b.fecha ? 1 : a.fecha > b.fecha ? -1 : 0));
+  }, [divsFiltrados, filtroSocio, periodo]);
   const sueldosFiltrados = pagosSueldos ?? [];
   const pagosMPFiltrados = pagosMP ?? [];
 
@@ -1344,11 +1388,22 @@ export function FlujoCaja({ onNavigateToTab }: { onNavigateToTab?: (tab: string)
               const total = divsFiltrados
                 .filter((d) => d.socio === s)
                 .reduce((sum, d) => sum + Number(d.monto), 0);
+              const activo = filtroSocio === s;
               return (
-                <div key={s} className="rounded-lg bg-gray-50 p-3 text-center">
+                <button
+                  key={s}
+                  onClick={() => setFiltroSocio(activo ? null : s)}
+                  className={cn(
+                    'rounded-lg p-3 text-center transition-colors',
+                    activo
+                      ? 'bg-blue-100 ring-2 ring-blue-400'
+                      : 'bg-gray-50 hover:bg-gray-100',
+                  )}
+                  title={activo ? 'Quitar filtro' : `Ver solo ${SOCIO_LABEL[s]}`}
+                >
                   <p className="mb-1 text-xs text-gray-500">{SOCIO_LABEL[s]}</p>
                   <p className="text-lg font-bold text-gray-900">{formatARS(total)}</p>
-                </div>
+                </button>
               );
             })}
           </div>
@@ -1506,7 +1561,19 @@ export function FlujoCaja({ onNavigateToTab }: { onNavigateToTab?: (tab: string)
             </div>
           )}
 
-          {divsFiltrados.length > 0 && (
+          {filtroSocio && (
+            <p className="mt-3 text-xs text-gray-500">
+              Mostrando solo <span className="font-medium text-gray-700">{SOCIO_LABEL[filtroSocio]}</span> ·{' '}
+              <button
+                onClick={() => setFiltroSocio(null)}
+                className="text-blue-600 underline hover:text-blue-800"
+              >
+                quitar filtro
+              </button>
+            </p>
+          )}
+
+          {filasDividendos.length > 0 && (
             <table className="mt-4 w-full text-xs">
               <thead className="bg-gray-50">
                 <tr>
@@ -1519,33 +1586,51 @@ export function FlujoCaja({ onNavigateToTab }: { onNavigateToTab?: (tab: string)
                 </tr>
               </thead>
               <tbody>
-                {divsFiltrados.map((d) => (
+                {filasDividendos.map((d) => (
                   <tr key={d.id} className="border-t border-gray-100 hover:bg-gray-50">
                     <td className="px-3 py-2 text-gray-600">{formatFecha(d.fecha)}</td>
                     <td className="px-3 py-2 font-medium text-gray-900">
-                      {SOCIO_LABEL[d.socio] ?? d.socio}
+                      <button
+                        onClick={() =>
+                          setFiltroSocio(filtroSocio === d.socio ? null : d.socio)
+                        }
+                        className="hover:text-blue-700 hover:underline"
+                        title={
+                          filtroSocio === d.socio ? 'Quitar filtro' : `Ver solo ${SOCIO_LABEL[d.socio] ?? d.socio}`
+                        }
+                      >
+                        {SOCIO_LABEL[d.socio] ?? d.socio}
+                      </button>
                     </td>
                     <td className="px-3 py-2 text-gray-600">
                       {MEDIOS_PAGO_DIV.find((m) => m.value === d.medio_pago)?.label ?? d.medio_pago}
                     </td>
-                    <td className="px-3 py-2 text-gray-500">{d.concepto || '—'}</td>
+                    <td className="px-3 py-2 text-gray-500">
+                      {d._agg ? (
+                        <span className="italic text-gray-400">{d.concepto}</span>
+                      ) : (
+                        d.concepto || '—'
+                      )}
+                    </td>
                     <td className="px-3 py-2 text-right font-semibold text-red-700">
                       {formatARS(Number(d.monto))}
                     </td>
                     <td className="px-2 py-2 text-center">
-                      <button
-                        onClick={() => {
-                          if (
-                            confirm(
-                              `¿Eliminar retiro de ${SOCIO_LABEL[d.socio]} por ${formatARS(Number(d.monto))}?`,
+                      {!d._agg && (
+                        <button
+                          onClick={() => {
+                            if (
+                              confirm(
+                                `¿Eliminar retiro de ${SOCIO_LABEL[d.socio]} por ${formatARS(Number(d.monto))}?`,
+                              )
                             )
-                          )
-                            eliminarDiv.mutate(d.id);
-                        }}
-                        className="text-xs text-gray-300 hover:text-red-500"
-                      >
-                        ✕
-                      </button>
+                              eliminarDiv.mutate(d.id);
+                          }}
+                          className="text-xs text-gray-300 hover:text-red-500"
+                        >
+                          ✕
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}
