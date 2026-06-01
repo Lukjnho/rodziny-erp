@@ -386,6 +386,45 @@ export function CierreCaja() {
     );
   }
 
+  // ── mutation: verificar TODOS los pendientes del período en lote ───────────
+  // Marca cada cierre pendiente como recibido en caja fuerte usando su monto
+  // sugerido (contado − fondo de cambio), con una nota compartida opcional.
+  const verificarTodosMut = useMutation({
+    mutationFn: async (nota: string | null) => {
+      const pendientes = (cierres ?? []).filter((c) => !c.verificado);
+      const nowIso = new Date().toISOString();
+      for (const c of pendientes) {
+        const monto = Math.max(0, (c.monto_contado ?? 0) - FONDO_CAMBIO_DEFAULT);
+        const { error } = await supabase
+          .from('cierres_caja')
+          .update({
+            verificado: true,
+            verificado_por: 'Admin',
+            verificado_at: nowIso,
+            monto_llevado_caja_fuerte: monto,
+            nota_caja_fuerte: nota,
+          })
+          .eq('id', c.id);
+        if (error) throw error;
+      }
+      return pendientes.length;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['cierres_mes'] }),
+  });
+
+  // Estado del modal de confirmación "recibir todos"
+  const [todosModalOpen, setTodosModalOpen] = useState(false);
+  const [todosNota, setTodosNota] = useState('');
+
+  function confirmarTodos() {
+    verificarTodosMut.mutate(todosNota.trim() || null, {
+      onSuccess: () => {
+        setTodosModalOpen(false);
+        setTodosNota('');
+      },
+    });
+  }
+
   function resetForm() {
     setFFecha(hoy);
     setFTurno(TURNOS[local]?.[0]?.key ?? '');
@@ -1068,6 +1107,23 @@ export function CierreCaja() {
         </div>
       )}
 
+      {/* Barra de acción: recibir todos los pendientes en caja fuerte */}
+      {esAdmin && resumen.pendientes > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50/60 px-4 py-2.5">
+          <span className="text-xs text-amber-800">
+            <strong>{resumen.pendientes}</strong> turno{resumen.pendientes !== 1 ? 's' : ''} pendiente
+            {resumen.pendientes !== 1 ? 's' : ''} de recibir · sugerido a retirar{' '}
+            <strong>{formatARS(resumen.cajaChica)}</strong>
+          </span>
+          <button
+            onClick={() => setTodosModalOpen(true)}
+            className="rounded-md bg-rodziny-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-rodziny-700"
+          >
+            🏦 Recibir todos en caja fuerte
+          </button>
+        </div>
+      )}
+
       {/* Tabla de cierres */}
       <div className="overflow-hidden rounded-lg border border-surface-border bg-white">
         {isLoading ? (
@@ -1354,6 +1410,72 @@ export function CierreCaja() {
                 className="rounded-md bg-rodziny-600 px-4 py-1.5 text-xs font-medium text-white hover:bg-rodziny-700 disabled:opacity-50"
               >
                 {verificarMut.isPending ? 'Guardando…' : 'Confirmar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: confirmar recibir TODOS en caja fuerte */}
+      {todosModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div
+            className="w-full max-w-md rounded-xl bg-white shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-gray-100 px-5 py-3">
+              <h3 className="text-sm font-semibold text-gray-900">🏦 Recibir todos en caja fuerte</h3>
+              <button
+                onClick={() => setTodosModalOpen(false)}
+                className="text-xl text-gray-400 hover:text-gray-600"
+              >
+                &times;
+              </button>
+            </div>
+            <div className="space-y-3 px-5 py-4 text-sm">
+              <div className="rounded bg-gray-50 px-3 py-2 text-xs text-gray-600">
+                <div className="flex justify-between">
+                  <span className="text-gray-400">Turnos pendientes:</span>
+                  <span className="font-semibold text-gray-800">{resumen.pendientes}</span>
+                </div>
+                <div className="mt-1 flex justify-between border-t border-gray-200 pt-1">
+                  <span className="font-semibold text-gray-600">Total sugerido a retirar:</span>
+                  <span className="font-semibold text-gray-800">{formatARS(resumen.cajaChica)}</span>
+                </div>
+              </div>
+              <p className="text-xs text-gray-500">
+                Cada turno se marca como recibido con su monto sugerido (lo contado menos el
+                fondo de cambio de {formatARS(FONDO_CAMBIO_DEFAULT)}). Si alguno no coincide, lo
+                podés desmarcar y recargar individualmente después.
+              </p>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-600">
+                  Nota para todos (opcional)
+                </label>
+                <textarea
+                  value={todosNota}
+                  onChange={(e) => setTodosNota(e.target.value)}
+                  rows={2}
+                  placeholder="Ej: retiro acumulado de la semana"
+                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-rodziny-500"
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 border-t border-gray-100 px-5 py-3">
+              <button
+                onClick={() => setTodosModalOpen(false)}
+                className="rounded-md border border-gray-300 px-4 py-1.5 text-xs hover:bg-gray-50"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={confirmarTodos}
+                disabled={verificarTodosMut.isPending}
+                className="rounded-md bg-rodziny-600 px-4 py-1.5 text-xs font-medium text-white hover:bg-rodziny-700 disabled:opacity-50"
+              >
+                {verificarTodosMut.isPending
+                  ? 'Marcando…'
+                  : `Confirmar (${resumen.pendientes})`}
               </button>
             </div>
           </div>
