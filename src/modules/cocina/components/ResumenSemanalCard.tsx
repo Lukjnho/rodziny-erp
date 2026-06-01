@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
-import { PRODUCTOS_COCINA, normNombre } from '../DashboardTab';
+import { calcularCobertura, type ResultadoCob } from '../lib/cobertura';
 
 // El Resumen semanal estima la COBERTURA de cada producto esta semana:
 //
@@ -50,18 +50,6 @@ interface FudoResp {
 
 type Estado = 'cubre' | 'ajustado' | 'corto' | 'sobra' | 'sin_demanda';
 
-interface ResumenItem {
-  id: string;
-  nombre: string;
-  tipo: string;
-  planificado: number;
-  stock: number; // porciones disponibles hoy (ya neto de pedidos)
-  pedidos: number; // porciones comprometidas en pedidos de almacén
-  disponible: number; // stock libre + planificado
-  demandaSemanal: number;
-  estado: Estado;
-}
-
 // Solo pastas y postres entran al resumen, en ambos locales.
 const TIPOS_POR_LOCAL: Record<LocalCocina, string[]> = {
   saavedra: ['pasta', 'postre'],
@@ -103,26 +91,6 @@ const ESTADO_LABEL: Record<Estado, { texto: string; cls: string }> = {
   corto: { texto: '🔴 falta', cls: 'bg-red-100 text-red-800 ring-red-200' },
   sobra: { texto: '🟣 sobra', cls: 'bg-purple-100 text-purple-800 ring-purple-200' },
   sin_demanda: { texto: '⚪ s/ vta.', cls: 'bg-gray-100 text-gray-600 ring-gray-200' },
-};
-
-// Resolución de nombres Fudo por prioridad: fudo_nombres del producto en DB
-// (configurable) > mapa hardcodeado PRODUCTOS_COCINA (legacy) > nombre literal.
-const PRODUCTO_POR_NOMBRE = new Map(
-  PRODUCTOS_COCINA.map((p) => [normNombre(p.nombre), p] as const),
-);
-
-function nombresFudoDe(prod: ProductoCat): string[] {
-  if (prod.fudo_nombres && prod.fudo_nombres.length > 0) return prod.fudo_nombres;
-  const cfg = PRODUCTO_POR_NOMBRE.get(normNombre(prod.nombre));
-  return cfg?.fudoNombres ?? [prod.nombre];
-}
-
-const ORDEN_ESTADO: Record<Estado, number> = {
-  corto: 0,
-  ajustado: 1,
-  cubre: 2,
-  sobra: 3,
-  sin_demanda: 4,
 };
 
 export function ResumenSemanalCard({
@@ -341,109 +309,17 @@ export function ResumenSemanalCard({
     staleTime: 10 * 60 * 1000,
   });
 
-  const resumen = useMemo<ResumenItem[]>(() => {
+  const resumen = useMemo<ResultadoCob[]>(() => {
     if (!productos) return [];
-
-    function demandaSemanalDe(prod: ProductoCat): number {
-      if (!fudoData || fudoData.dias <= 0) return 0;
-      const objetivos = nombresFudoDe(prod).map((n) => n.toLowerCase().trim());
-      let total = 0;
-      for (const r of fudoData.ranking) {
-        if (objetivos.includes(r.nombre.toLowerCase().trim())) total += r.cantidad;
-      }
-      return (total / fudoData.dias) * 7;
-    }
-
-    // Proyección: items del pizarrón de la semana × rinde de la receta.
-    // - Si el ítem tiene destino_producto_id (el chef eligió a qué vendible
-    //   imputarlo, ej: pure → ñoquis rellenos), cuenta SOLO para ese producto.
-    // - Si no tiene destino, comportamiento legacy: matchea por la receta
-    //   vinculada al producto. Si el producto no tiene receta_id o la receta no
-    //   tiene rinde, queda en 0 (señal de qué falta cargar).
-    function planificadoDe(prod: ProductoCat): number {
-      let total = 0;
-      const nombreProd = normNombre(prod.nombre);
-      for (const it of itemsPlan ?? []) {
-        // Pasta simple: planificada por nombre del producto (sin receta). La
-        // cantidad ya está en porciones, así que suma directo.
-        if (it.tipo === 'pasta_simple') {
-          if (it.texto_libre && normNombre(it.texto_libre) === nombreProd) {
-            total += it.cantidad_recetas;
-          }
-          continue;
-        }
-        // Imputación explícita (destino, ej: pure → ñoquis): 1 unidad de plan =
-        // 1 tanda/bolsa real. Usa el promedio REAL de porciones por lote del
-        // vendible (QR, 60d); si no hay datos, cae al rinde de la receta.
-        if (it.destino_producto_id) {
-          if (it.destino_producto_id === prod.id) {
-            const rindeReal = rindePorLote?.get(prod.id) ?? 0;
-            const rinde = rindeReal > 0 ? rindeReal : Number(it.rendimiento_porciones) || 0;
-            total += it.cantidad_recetas * rinde;
-          }
-          continue;
-        }
-        // Legacy: matchea por la receta vinculada al producto × rinde de receta.
-        const rinde = Number(it.rendimiento_porciones) || 0;
-        if (rinde <= 0) continue;
-        if (prod.receta_id && it.receta_id === prod.receta_id) {
-          total += it.cantidad_recetas * rinde;
-        }
-      }
-      return total;
-    }
-
-    // Stock actual en porciones, igual que el tab Stock. Pastas: directo de la
-    // vista. Postres: suma cruda de lotes activos (ya en porciones, sin convertir).
-    function stockDe(prod: ProductoCat): number {
-      if (prod.tipo === 'pasta') {
-        return stockPastas?.get(prod.id) ?? 0;
-      }
-      if (!prod.receta_id) return 0;
-      return stockPostres?.get(prod.receta_id) ?? 0;
-    }
-
-    // Pedidos comprometidos (en la misma unidad que el stock).
-    function pedidosDe(prod: ProductoCat): number {
-      return pedidosPend?.get(prod.id) ?? 0;
-    }
-
-    const items = productos
-      .filter((p) => tiposLocal.includes(p.tipo))
-      .map<ResumenItem>((p) => {
-        const demandaSemanal = demandaSemanalDe(p);
-        const planificado = planificadoDe(p);
-        const stockBruto = stockDe(p);
-        const pedidos = pedidosDe(p);
-        const stockLibre = Math.max(0, stockBruto - pedidos);
-        const disponible = stockLibre + planificado;
-        let estado: Estado;
-        if (demandaSemanal <= 0) {
-          estado = 'sin_demanda';
-        } else {
-          const ratio = disponible / demandaSemanal;
-          if (ratio < 0.8) estado = 'corto';
-          else if (ratio < 0.95) estado = 'ajustado';
-          else if (ratio <= 1.2) estado = 'cubre';
-          else estado = 'sobra';
-        }
-        return {
-          id: p.id,
-          nombre: p.nombre,
-          tipo: p.tipo,
-          planificado,
-          stock: stockLibre,
-          pedidos,
-          disponible,
-          demandaSemanal,
-          estado,
-        };
-      });
-
-    return items.sort((a, b) => {
-      if (ORDEN_ESTADO[a.estado] !== ORDEN_ESTADO[b.estado])
-        return ORDEN_ESTADO[a.estado] - ORDEN_ESTADO[b.estado];
-      return b.demandaSemanal - a.demandaSemanal;
+    return calcularCobertura({
+      productos,
+      itemsPlan: itemsPlan ?? [],
+      fudoData,
+      stockPorProducto: stockPastas ?? new Map(),
+      stockPorReceta: stockPostres ?? new Map(),
+      pedidosPorProducto: pedidosPend ?? new Map(),
+      rindePorLote: rindePorLote ?? new Map(),
+      tiposIncluidos: tiposLocal,
     });
   }, [
     productos,

@@ -3,6 +3,22 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
 import { PRODUCTOS_COCINA, normNombre } from '../DashboardTab';
+import {
+  calcularCobertura,
+  type ItemPlanCob,
+  type ProductoCob,
+  type ResultadoCob,
+  type EstadoCobertura,
+} from '../lib/cobertura';
+
+// Etiquetas compactas para la cobertura en vivo (al lado de cada receta).
+const COB_LABEL: Record<EstadoCobertura, { t: string; cls: string }> = {
+  cubre: { t: '🟢 cubre', cls: 'bg-green-100 text-green-700' },
+  ajustado: { t: '🟡 justo', cls: 'bg-amber-100 text-amber-700' },
+  corto: { t: '🔴 falta', cls: 'bg-red-100 text-red-700' },
+  sobra: { t: '🟣 sobra', cls: 'bg-purple-100 text-purple-700' },
+  sin_demanda: { t: '⚪ s/vta', cls: 'bg-gray-100 text-gray-500' },
+};
 
 interface Receta {
   id: string;
@@ -11,6 +27,7 @@ interface Receta {
   rol: string | null;
   categoria: string | null;
   local: string | null;
+  rendimiento_porciones: number | null;
 }
 
 // Mapea el TipoItem del pizarrón (relleno/masa/salsa/postre/pasteleria/panaderia)
@@ -170,7 +187,7 @@ export function PlanProduccionEditor({
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cocina_recetas')
-        .select('id, nombre, tipo, rol, categoria, local')
+        .select('id, nombre, tipo, rol, categoria, local, rendimiento_porciones')
         .eq('activo', true)
         .or(`local.eq.${local},local.is.null`)
         .order('nombre');
@@ -340,6 +357,116 @@ export function PlanProduccionEditor({
       });
       if (error || !data?.ok) return null;
       return data.data as FudoResp;
+    },
+    staleTime: 10 * 60 * 1000,
+  });
+
+  // ── Datos para la cobertura semanal EN VIVO (mismo cálculo que el Resumen) ──
+  const hace60 = useMemo(
+    () => new Date(Date.now() - 60 * 86400000).toISOString().split('T')[0],
+    [],
+  );
+  const { data: vendiblesCob } = useQuery({
+    queryKey: ['plan-cob-vendibles', local],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('cocina_productos')
+        .select('id, nombre, tipo, receta_id, fudo_nombres')
+        .eq('local', local)
+        .eq('activo', true)
+        .eq('controla_stock', true);
+      if (error) throw error;
+      return (data ?? []) as ProductoCob[];
+    },
+  });
+  const { data: stockPastasCob } = useQuery({
+    queryKey: ['plan-cob-stock-pastas', local],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('v_cocina_stock_pastas')
+        .select(
+          'producto_id, porciones_camara, porciones_fresco, porciones_traspasadas, porciones_merma',
+        )
+        .eq('local', local);
+      if (error) throw error;
+      const m = new Map<string, number>();
+      for (const r of (data ?? []) as Array<{
+        producto_id: string;
+        porciones_camara: number | null;
+        porciones_fresco: number | null;
+        porciones_traspasadas: number | null;
+        porciones_merma: number | null;
+      }>) {
+        const camara = Number(r.porciones_camara) || 0;
+        const fresco = Number(r.porciones_fresco) || 0;
+        const traspasos = Number(r.porciones_traspasadas) || 0;
+        const merma = Number(r.porciones_merma) || 0;
+        m.set(r.producto_id, Math.max(0, camara - traspasos - merma) + Math.max(0, fresco));
+      }
+      return m;
+    },
+  });
+  const { data: stockPostresCob } = useQuery({
+    queryKey: ['plan-cob-stock-postres', local],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('cocina_lotes_produccion')
+        .select('receta_id, cantidad_producida, merma_cantidad')
+        .eq('local', local)
+        .eq('en_stock', true)
+        .not('receta_id', 'is', null);
+      if (error) throw error;
+      const m = new Map<string, number>();
+      for (const r of (data ?? []) as Array<{
+        receta_id: string;
+        cantidad_producida: number | null;
+        merma_cantidad: number | null;
+      }>) {
+        const neto = Math.max(0, (Number(r.cantidad_producida) || 0) - (Number(r.merma_cantidad) || 0));
+        m.set(r.receta_id, (m.get(r.receta_id) ?? 0) + neto);
+      }
+      return m;
+    },
+  });
+  const { data: pedidosCob } = useQuery({
+    queryKey: ['plan-cob-pedidos', local],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('almacen_pedidos')
+        .select('producto_id, cantidad, estado')
+        .eq('local', local)
+        .not('producto_id', 'is', null)
+        .not('estado', 'in', '(entregado,cancelado)');
+      if (error) throw error;
+      const m = new Map<string, number>();
+      for (const r of (data ?? []) as Array<{ producto_id: string; cantidad: number | null }>) {
+        m.set(r.producto_id, (m.get(r.producto_id) ?? 0) + (Number(r.cantidad) || 0));
+      }
+      return m;
+    },
+  });
+  const { data: rindePorLoteCob } = useQuery({
+    queryKey: ['plan-cob-rinde-lote', local, hace60],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('cocina_lotes_pasta')
+        .select('producto_id, porciones')
+        .eq('local', local)
+        .gte('fecha', hace60)
+        .not('porciones', 'is', null);
+      if (error) throw error;
+      const acc = new Map<string, { suma: number; n: number }>();
+      for (const r of (data ?? []) as Array<{ producto_id: string; porciones: number | null }>) {
+        const p = Number(r.porciones) || 0;
+        if (p <= 0) continue;
+        const a = acc.get(r.producto_id) ?? { suma: 0, n: 0 };
+        a.suma += p;
+        a.n += 1;
+        acc.set(r.producto_id, a);
+      }
+      const m = new Map<string, number>();
+      for (const [id, a] of acc) if (a.n > 0) m.set(id, a.suma / a.n);
+      return m;
     },
     staleTime: 10 * 60 * 1000,
   });
@@ -581,6 +708,78 @@ export function PlanProduccionEditor({
       ...prev,
       [fecha]: (prev[fecha] ?? []).filter((it) => it.id !== itemId),
     }));
+  }
+
+  // ── Cobertura semanal EN VIVO: recalcula con los items que estás editando ──
+  const recetaRindeMap = useMemo(() => {
+    const m = new Map<string, number | null>();
+    for (const r of recetas ?? []) m.set(r.id, r.rendimiento_porciones);
+    return m;
+  }, [recetas]);
+
+  const planItemsLive = useMemo<ItemPlanCob[]>(() => {
+    const out: ItemPlanCob[] = [];
+    for (const fecha of Object.keys(items)) {
+      for (const it of items[fecha] ?? []) {
+        if (it.estado === 'cancelado') continue;
+        out.push({
+          receta_id: it.receta_id,
+          texto_libre: it.texto_libre,
+          tipo: it.tipo,
+          cantidad_recetas: it.cantidad_recetas,
+          rendimiento_porciones: it.receta_id ? (recetaRindeMap.get(it.receta_id) ?? null) : null,
+          destino_producto_id: it.destino_producto_id,
+        });
+      }
+    }
+    return out;
+  }, [items, recetaRindeMap]);
+
+  const coberturaPorProducto = useMemo(() => {
+    const m = new Map<string, ResultadoCob>();
+    if (!vendiblesCob) return m;
+    const res = calcularCobertura({
+      productos: vendiblesCob,
+      itemsPlan: planItemsLive,
+      fudoData,
+      stockPorProducto: stockPastasCob ?? new Map(),
+      stockPorReceta: stockPostresCob ?? new Map(),
+      pedidosPorProducto: pedidosCob ?? new Map(),
+      rindePorLote: rindePorLoteCob ?? new Map(),
+      tiposIncluidos: ['pasta', 'postre'],
+    });
+    for (const r of res) m.set(r.id, r);
+    return m;
+  }, [
+    vendiblesCob,
+    planItemsLive,
+    fudoData,
+    stockPastasCob,
+    stockPostresCob,
+    pedidosCob,
+    rindePorLoteCob,
+  ]);
+
+  // Resolver a qué vendible apunta un ítem (para mostrar su cobertura al lado).
+  const vendiblePorNombre = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const p of vendiblesCob ?? []) m.set(normNombre(p.nombre), p.id);
+    return m;
+  }, [vendiblesCob]);
+  const vendiblePorReceta = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const p of vendiblesCob ?? [])
+      if (p.receta_id && !m.has(p.receta_id)) m.set(p.receta_id, p.id);
+    return m;
+  }, [vendiblesCob]);
+
+  function coberturaDeItem(it: PlanItem): ResultadoCob | null {
+    let vid: string | null = null;
+    if (it.destino_producto_id) vid = it.destino_producto_id;
+    else if (it.tipo === 'pasta_simple' && it.texto_libre)
+      vid = vendiblePorNombre.get(normNombre(it.texto_libre)) ?? null;
+    else if (it.receta_id) vid = vendiblePorReceta.get(it.receta_id) ?? null;
+    return vid ? (coberturaPorProducto.get(vid) ?? null) : null;
   }
 
   // Guardar: para cada fecha del plan, borrar los 'pendiente' existentes y re-insertar
@@ -868,6 +1067,29 @@ export function PlanProduccionEditor({
                                 ))}
                               </select>
                             )}
+                            {(() => {
+                              const cob = coberturaDeItem(it);
+                              if (!cob) return null;
+                              const lbl = COB_LABEL[cob.estado];
+                              const pct =
+                                cob.demandaSemanal > 0
+                                  ? Math.round((cob.disponible / cob.demandaSemanal) * 100)
+                                  : null;
+                              return (
+                                <div
+                                  className="mt-1 flex items-center gap-1 text-[10px]"
+                                  title={`${cob.nombre}: stock ${Math.round(cob.stock)} + plan ${Math.round(cob.planificado)} = ${Math.round(cob.disponible)} · demanda ${Math.round(cob.demandaSemanal)} (7d)`}
+                                >
+                                  <span className={cn('rounded px-1 py-0.5 font-medium', lbl.cls)}>
+                                    {lbl.t}
+                                  </span>
+                                  <span className="truncate text-gray-500">
+                                    {cob.nombre}
+                                    {pct !== null ? ` · ${pct}%` : ''}
+                                  </span>
+                                </div>
+                              );
+                            })()}
                           </div>
 
                           {/* Cantidad: pasta simple va por porciones (paso de 50, mínimo 50);
