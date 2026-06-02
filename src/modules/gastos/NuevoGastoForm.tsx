@@ -21,6 +21,7 @@ import { formatARS, cn } from '../../lib/utils';
 import {
   MEDIO_PAGO_LABEL,
   TIPO_COMPROBANTE_LABEL,
+  medioRequiereComprobante,
   type MedioPago,
   type Proveedor,
   type CategoriaGasto,
@@ -934,7 +935,7 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
     }
     // Validaciones del bloque de pago — solo si "Pagado"
     if (pagado) {
-      if (medioPago !== 'efectivo' && !nOperacion) {
+      if (medioRequiereComprobante(medioPago) && !nOperacion) {
         setError('N° de operación es obligatorio si el medio de pago no es efectivo');
         return;
       }
@@ -945,7 +946,7 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
       // En flujo "físico" el comprobante de pago se carga acá (en digital ya vino
       // del paso de upload del OCR). Si el medio no es efectivo, lo exigimos
       // para mantener la regla uniforme con PagarGastoModal y ChecklistPagos.
-      if (tipoGasto === 'fisico' && medioPago !== 'efectivo' && !pagoComprobanteFile) {
+      if (tipoGasto === 'fisico' && medioRequiereComprobante(medioPago) && !pagoComprobanteFile) {
         setError('Comprobante de pago obligatorio para transferencias, cheques y tarjeta. Subí la captura o PDF.');
         return;
       }

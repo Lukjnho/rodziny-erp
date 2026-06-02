@@ -13,7 +13,7 @@ import type {
   MedioPago,
   EstadoPago,
 } from './types';
-import { TIPO_COMPROBANTE_LABEL, MEDIO_PAGO_LABEL } from './types';
+import { TIPO_COMPROBANTE_LABEL, MEDIO_PAGO_LABEL, medioRequiereComprobante } from './types';
 
 export interface PrefillGasto {
   recepcion_id?: string;
@@ -553,7 +553,7 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
     if (
       !gastoEditando &&
       form.estado_pago === 'pagado' &&
-      form.medio_pago !== 'efectivo' &&
+      medioRequiereComprobante(form.medio_pago) &&
       !form.numero_operacion.trim()
     ) {
       setError(
@@ -568,7 +568,7 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
     if (
       !gastoEditando &&
       form.estado_pago === 'pagado' &&
-      form.medio_pago !== 'efectivo' &&
+      medioRequiereComprobante(form.medio_pago) &&
       !comprobante &&
       !comprobantePath
     ) {

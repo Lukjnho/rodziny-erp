@@ -18,7 +18,7 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth';
 import { cn, formatARS } from '@/lib/utils';
 import { procesarComprobantePago } from '@/lib/ocrComprobantePago';
-import { MEDIO_PAGO_LABEL, type MedioPago, type Gasto, type PagoGasto } from './types';
+import { MEDIO_PAGO_LABEL, medioRequiereComprobante, type MedioPago, type Gasto, type PagoGasto } from './types';
 
 interface Props {
   open: boolean;
@@ -208,7 +208,7 @@ export function PagarGastoModal({ open, gasto, onClose }: Props) {
     }
   }
 
-  const requiereDatosBancarios = medioPago !== 'efectivo';
+  const requiereDatosBancarios = medioRequiereComprobante(medioPago);
   const yaTieneComprobante = !!gasto.comprobante_path;
   const yaTieneFactura = !!gasto.factura_path;
 

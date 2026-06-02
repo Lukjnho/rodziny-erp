@@ -20,7 +20,7 @@ import { CierreInventarioModal } from './components/CierreInventarioModal';
 import { PastasTerminadasPanel } from './components/PastasTerminadasPanel';
 import { ConciliacionTab } from './ConciliacionTab';
 import type { MedioPago, Gasto } from '@/modules/gastos/types';
-import { MEDIO_PAGO_LABEL } from '@/modules/gastos/types';
+import { MEDIO_PAGO_LABEL, medioRequiereComprobante } from '@/modules/gastos/types';
 import { PagarGastoModal } from '@/modules/gastos/PagarGastoModal';
 
 type Tab = 'gastos' | 'stock' | 'movimientos' | 'recepcion' | 'pagos' | 'proveedores' | 'conciliacion';
@@ -852,7 +852,7 @@ export function ComprasPage() {
     setBulkError(null);
     // Mismo criterio que el pago individual: si el medio no es efectivo,
     // exigimos referencia y comprobante para poder conciliar y respaldar.
-    if (bulkMedio !== 'efectivo') {
+    if (medioRequiereComprobante(bulkMedio)) {
       if (!bulkReferencia.trim()) {
         setBulkError(
           'N° de operación requerido para transferencias, cheques y tarjeta. Copialo del comprobante.',

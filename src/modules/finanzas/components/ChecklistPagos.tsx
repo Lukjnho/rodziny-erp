@@ -4,7 +4,7 @@ import { supabase } from '@/lib/supabase';
 import { procesarComprobantePago } from '@/lib/ocrComprobantePago';
 import { formatARS, cn } from '@/lib/utils';
 import { MontoInput } from '@/components/ui/MontoInput';
-import { type MedioPago, MEDIO_PAGO_LABEL } from '@/modules/gastos/types';
+import { type MedioPago, MEDIO_PAGO_LABEL, medioRequiereComprobante } from '@/modules/gastos/types';
 import { urgenciaPago, usePagosAlertas, type UrgenciaPago } from '@/modules/finanzas/hooks/usePagosAlertas';
 
 // ── tipos ────────────────────────────────────────────────────────────────────
@@ -299,6 +299,17 @@ export function ChecklistPagos() {
     archivoComprobante: File | null = null,
     comprobantePathPreSubido: string | null = null,
   ) {
+    // Regla uniforme: pago bancarizado (no efectivo / cta cte) exige N° op + comprobante.
+    if (
+      medioRequiereComprobante(medioPago) &&
+      (!numeroOperacion?.trim() || (!archivoComprobante && !comprobantePathPreSubido))
+    ) {
+      window.alert(
+        'Pago bancarizado: el N° de operación y el comprobante de pago son obligatorios (solo el efectivo está exento). Subí la captura/PDF y cargá el N° de operación.',
+      );
+      return;
+    }
+
     const fechaPago = hoy();
     const local = derivarLocal(pago.concepto);
 

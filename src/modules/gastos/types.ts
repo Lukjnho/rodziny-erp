@@ -34,6 +34,21 @@ export const MEDIO_PAGO_LABEL: Record<MedioPago, string> = {
   otro: 'Otro',
 };
 
+// Regla única de conciliación: TODO egreso bancarizado (transferencia, cheque,
+// tarjeta, dividendo por transferencia, "otro") requiere comprobante de pago +
+// N° de operación obligatorios, porque después se cruza contra el extracto.
+// Exentos: efectivo (no genera comprobante) y cuenta corriente (todavía no es un
+// pago bancario; el comprobante se exige cuando efectivamente se paga).
+// Usar SIEMPRE este helper en vez de comparar contra 'efectivo' suelto, para que
+// la regla sea idéntica en todas las vías de carga (gastos, pagos fijos, dividendos…).
+export function medioRequiereComprobante(medio: string | null | undefined): boolean {
+  if (!medio) return false;
+  const m = medio.trim().toLowerCase();
+  if (m === 'efectivo') return false;
+  if (m.startsWith('cta') || m.includes('corriente')) return false; // cuenta corriente (texto libre)
+  return true;
+}
+
 export type TipoComprobante =
   | 'factura_a'
   | 'factura_c'
