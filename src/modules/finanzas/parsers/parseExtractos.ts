@@ -54,6 +54,28 @@ function periodoFromFecha(fecha: string): string {
   return fecha.substring(0, 7);
 }
 
+// Genera referencias determinísticas por CONTENIDO para movimientos que el banco
+// no identifica con un nº propio (PAGO DE SERVICIOS de Galicia, cargos de ICBC, etc.).
+//
+// Antes la referencia usaba la POSICIÓN de la fila en el archivo (`gal_FECHA_27_...`).
+// Eso rompía la deduplicación al reimportar rangos superpuestos: la misma línea real
+// caía en otra posición en cada export (27 vs 28) → referencia distinta → se cargaba
+// dos veces.
+//
+// Acá usamos un contador de ocurrencia POR CONTENIDO dentro del archivo: si una línea
+// idéntica (misma fecha/desc/débito/crédito) aparece, recibe siempre la misma ref aunque
+// cambie de posición → reimportar la ignora. Si un día tuvo de verdad dos cargos iguales,
+// reciben ocurrencia 1 y 2 → se conservan ambos.
+function crearRefSintetica(prefijo: string) {
+  const ocurrencias = new Map<string, number>();
+  return (fecha: string, descripcion: string, debito: number, credito: number): string => {
+    const clave = `${fecha}|${descripcion}|${debito}|${credito}`;
+    const n = (ocurrencias.get(clave) ?? 0) + 1;
+    ocurrencias.set(clave, n);
+    return `${prefijo}_${fecha}_${descripcion.substring(0, 20)}_${debito}_${credito}_${n}`;
+  };
+}
+
 // ─── MercadoPago ──────────────────────────────────────────────────────────────
 // Formato legacy (separador ;):
 //   DATE;SOURCE_ID;DESCRIPTION;NET_CREDIT_AMOUNT;NET_DEBIT_AMOUNT;...
@@ -214,6 +236,7 @@ function parseMercadoPagoNuevo(lines: string[]): MovimientoRaw[] {
   if (iDate < 0 || iAmount < 0) return [];
 
   const result: MovimientoRaw[] = [];
+  const refSintetica = crearRefSintetica('mp');
 
   for (let i = 1; i < lines.length; i++) {
     const cols = parseCSVLine(lines[i]);
@@ -229,7 +252,7 @@ function parseMercadoPagoNuevo(lines: string[]): MovimientoRaw[] {
     const taxes = parseFloat(cols[iTaxes] ?? '0') || 0;
     const method = cols[iMethod] ?? '';
     const methodT = cols[iMethodT] ?? '';
-    const ref = cols[iRef] ?? `mp_${i}`;
+    const ref = cols[iRef] ?? '';
     const pos = cols[iPOS] ?? '';
     const detail = (cols[iDetail] ?? '').replace(/^"+|"+$/g, '').trim();
     const payer = iPayer >= 0 ? cols[iPayer] ?? '' : '';
@@ -237,6 +260,11 @@ function parseMercadoPagoNuevo(lines: string[]): MovimientoRaw[] {
 
     // Descripción legible
     const desc = detail || `${methodT} · ${method}` + (pos ? ` · ${pos}` : '');
+
+    // EXTERNAL_REFERENCE es el ID de operación de MP (estable). Si falta, generamos
+    // una ref determinística por contenido (no por posición) para no duplicar al
+    // reimportar. Las comisiones/retenciones cuelgan de la misma ref base.
+    const baseRef = ref || refSintetica(fecha, desc, Math.abs(amount), 0);
 
     // SETTLEMENT puede ser cobro (amount >= 0) o egreso/cargo directo (amount < 0)
     // - amount >= 0 → cobro (con comisiones y retenciones como débitos separados)
@@ -256,7 +284,7 @@ function parseMercadoPagoNuevo(lines: string[]): MovimientoRaw[] {
           debito: Math.abs(amount),
           credito: 0,
           saldo: null,
-          referencia: ref || `mp_${i}`,
+          referencia: baseRef,
           periodo: periodoFromFecha(fecha),
         });
         // Retenciones aplicadas sobre el egreso (Ley 25.413, etc.)
@@ -268,7 +296,7 @@ function parseMercadoPagoNuevo(lines: string[]): MovimientoRaw[] {
             debito: Math.abs(taxes),
             credito: 0,
             saldo: null,
-            referencia: `mp_tax_${i}`,
+            referencia: `${baseRef}_tax`,
             periodo: periodoFromFecha(fecha),
           });
         }
@@ -282,7 +310,7 @@ function parseMercadoPagoNuevo(lines: string[]): MovimientoRaw[] {
         debito: 0,
         credito: amount,
         saldo: null,
-        referencia: ref || `mp_${i}`,
+        referencia: baseRef,
         periodo: periodoFromFecha(fecha),
       });
       // Registrar comisiones como débito separado si hay fee
@@ -294,7 +322,7 @@ function parseMercadoPagoNuevo(lines: string[]): MovimientoRaw[] {
           debito: Math.abs(fee),
           credito: 0,
           saldo: null,
-          referencia: `mp_fee_${i}`,
+          referencia: `${baseRef}_fee`,
           periodo: periodoFromFecha(fecha),
         });
       }
@@ -307,7 +335,7 @@ function parseMercadoPagoNuevo(lines: string[]): MovimientoRaw[] {
           debito: Math.abs(taxes),
           credito: 0,
           saldo: null,
-          referencia: `mp_tax_${i}`,
+          referencia: `${baseRef}_tax`,
           periodo: periodoFromFecha(fecha),
         });
       }
@@ -325,7 +353,7 @@ function parseMercadoPagoNuevo(lines: string[]): MovimientoRaw[] {
         debito: Math.abs(amount),
         credito: 0,
         saldo: null,
-        referencia: ref || `mp_${i}`,
+        referencia: baseRef,
         periodo: periodoFromFecha(fecha),
       });
     }
@@ -378,6 +406,7 @@ export function parseICBC(csv: string, filename: string): MovimientoRaw[] {
   if (lines.length < 3) return [];
 
   const result: MovimientoRaw[] = [];
+  const refSintetica = crearRefSintetica('icbc');
 
   // Línea 0 = "Movimientos de CC $ ..." → skip
   // Línea 1 = headers
@@ -406,7 +435,8 @@ export function parseICBC(csv: string, filename: string): MovimientoRaw[] {
       debito,
       credito,
       saldo,
-      referencia: infoComp || `icbc_${i}`,
+      // infoComp suele venir vacío en cargos del banco → ref determinística por contenido
+      referencia: infoComp || refSintetica(fecha, concepto, debito, credito),
       periodo: periodoFromFecha(fecha),
       es_transferencia_interna: detectarTransferenciaInterna(concepto),
     });
@@ -424,6 +454,7 @@ export function parseGalicia(csv: string, filename: string): MovimientoRaw[] {
   if (lines.length < 2) return [];
 
   const result: MovimientoRaw[] = [];
+  const refSintetica = crearRefSintetica('gal');
 
   for (let i = 1; i < lines.length; i++) {
     const cols = lines[i].split(';').map((c) => c.trim().replace(/^"|"$/g, ''));
@@ -445,12 +476,15 @@ export function parseGalicia(csv: string, filename: string): MovimientoRaw[] {
 
     const concepto = cols[6] ?? '';
     const leyenda1 = cols[10] ?? ''; // Leyenda Adicional1: contiene "INVERTIRONLINE S.A.U.", nombre de origen, etc.
-    const refUnica =
-      nroComp && nroComp !== '0' ? nroComp : `gal_${fecha}_${i}_${descripcion.substring(0, 20)}`;
 
     // Descripción enriquecida: descripción + leyenda adicional (origen del movimiento)
     let descFinal = descripcion;
     if (leyenda1 && leyenda1 !== '0') descFinal += ` · ${leyenda1}`;
+
+    // Si el banco no trae nº de comprobante propio (caso "PAGO DE SERVICIOS", viene 0),
+    // generamos una ref determinística por contenido para no duplicar al reimportar.
+    const refUnica =
+      nroComp && nroComp !== '0' ? nroComp : refSintetica(fecha, descFinal, debito, credito);
 
     result.push({
       cuenta: 'galicia',
