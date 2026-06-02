@@ -438,6 +438,9 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
   const qc = useQueryClient();
   const [sincronizando, setSincronizando] = useState(false);
   const [resumenSync, setResumenSync] = useState<string | null>(null);
+  // Rotación por categoría: colapsada por defecto. La fila total funciona como
+  // toggle (▸/▾) para no recargar visualmente el EdR.
+  const [rotacionExpandida, setRotacionExpandida] = useState(false);
 
   // Última sync OK por local (para mostrar "hace X min" en el header).
   const { data: ultimaSync } = useQuery({
@@ -1156,6 +1159,10 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
                     </tr>
                   );
 
+                // Sub-filas de rotación por categoría: ocultas salvo que se expanda
+                // la fila total de rotación (que actúa como toggle).
+                if (fila.key.startsWith('_kpi_rotacion_') && !rotacionExpandida) return null;
+
                 const esSeccion = fila.tipo === 'seccion';
                 const esTotal = fila.tipo === 'calculada' && fila.depth === 0;
                 const esKpi = fila.tipo === 'kpi';
@@ -1189,6 +1196,18 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
                     >
                       {esSeccion ? (
                         fila.label
+                      ) : fila.key === '_kpi_rotacion' ? (
+                        <button
+                          type="button"
+                          onClick={() => setRotacionExpandida((v) => !v)}
+                          className="flex items-center gap-1 text-gray-400 transition-colors hover:text-gray-600"
+                          title="Ver/ocultar rotación por categoría (alimentos, bebidas, indirectos)"
+                        >
+                          <span className="text-[9px] leading-none">
+                            {rotacionExpandida ? '▾' : '▸'}
+                          </span>
+                          {fila.label}
+                        </button>
                       ) : (
                         <span
                           className={cn(
