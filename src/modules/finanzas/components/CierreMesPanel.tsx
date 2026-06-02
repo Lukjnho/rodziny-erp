@@ -2,7 +2,6 @@ import { useState, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
-import { LocalSelector } from '@/components/ui/LocalSelector';
 import { formatARS, formatFecha, cn } from '@/lib/utils';
 
 // ── tipos ────────────────────────────────────────────────────────────────────
@@ -55,7 +54,11 @@ interface Props {
 export function CierreMesPanel({ onNavigateToTab }: Props) {
   const qc = useQueryClient();
   const [periodo, setPeriodo] = useState(() => new Date().toISOString().substring(0, 7));
-  const [local, setLocal] = useState<LocalSel>('ambos');
+  // Checklist unificado a nivel EMPRESA — sin filtro por local (decisión Lucas, 2026-06-02).
+  // Las dos filas de Ventas Fudo (Vedia/Saavedra) se conservan porque son dos Excel
+  // distintos y hay que ver si falta uno; el resto consolida ambos locales.
+  // El cierre/overrides quedan registrados una sola vez con local='ambos'.
+  const local: LocalSel = 'ambos';
   const [showCerrar, setShowCerrar] = useState(false);
   const [notasCierre, setNotasCierre] = useState('');
   const [overrideModal, setOverrideModal] = useState<{ key: string; titulo: string } | null>(null);
@@ -689,13 +692,13 @@ export function CierreMesPanel({ onNavigateToTab }: Props) {
 
   return (
     <div className="space-y-5">
-      {/* Filtros */}
+      {/* Filtros — checklist a nivel empresa, solo selector de período */}
       <div className="flex flex-wrap items-center gap-4">
-        <LocalSelector
-          value={local === 'sas' ? 'ambos' : local}
-          onChange={(v) => setLocal(v as LocalSel)}
-          options={['vedia', 'saavedra', 'ambos']}
-        />
+        <div className="flex items-center gap-2">
+          <span className="rounded-md bg-rodziny-100 px-2.5 py-1 text-xs font-semibold text-rodziny-800">
+            🏢 Empresa (ambos locales)
+          </span>
+        </div>
         <div className="flex items-center gap-2">
           <label className="text-xs font-medium text-gray-500">Período</label>
           <input
