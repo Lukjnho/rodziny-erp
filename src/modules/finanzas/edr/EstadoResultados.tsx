@@ -117,6 +117,20 @@ const FILAS: FilaEdR[] = [
     depth: 0,
     formato: 'moneda',
   },
+  // Rotación de inventario (CMV real / stock promedio). Va justo debajo del CMV
+  // real. Solo se calcula en meses con cierre de inventario aprobado del mes y
+  // del anterior; sin los dos extremos muestra '—'. El total se desglosa por
+  // categoría para ver qué rubro es el que no rota.
+  {
+    key: '_kpi_rotacion',
+    label: '↸ Rotación de inventario',
+    tipo: 'kpi',
+    depth: 1,
+    formato: 'rotacion',
+  },
+  { key: '_kpi_rotacion_alim', label: '↸ Alimentos', tipo: 'kpi', depth: 2, formato: 'rotacion' },
+  { key: '_kpi_rotacion_beb', label: '↸ Bebidas', tipo: 'kpi', depth: 2, formato: 'rotacion' },
+  { key: '_kpi_rotacion_ind', label: '↸ Indirectos', tipo: 'kpi', depth: 2, formato: 'rotacion' },
   { key: '__margen_bruto', label: 'MARGEN BRUTO', tipo: 'calculada', depth: 0, formato: 'moneda' },
   {
     key: '_kpi_food',
@@ -125,13 +139,6 @@ const FILAS: FilaEdR[] = [
     depth: 1,
     formato: 'porcentaje',
     benchmark: '25-32%',
-  },
-  {
-    key: '_kpi_rotacion',
-    label: '↸ Rotación de inventario',
-    tipo: 'kpi',
-    depth: 1,
-    formato: 'rotacion',
   },
   { key: '_esp2', label: '', tipo: 'espacio', depth: 0 },
 
@@ -322,6 +329,28 @@ function computarMes(manual: Map<string, number>, auto: AutoMes): Map<string, nu
   result.set(
     '_kpi_rotacion',
     aplicarDelta && stockPromedio > 0 ? cmvReal / stockPromedio : 0,
+  );
+  // Rotación por categoría = CMV real de la categoría / stock promedio de la
+  // categoría. Mismo criterio (solo con los dos cierres). CMV real categoría =
+  // compras de la categoría − Δ stock de la categoría. Permite ver qué rubro
+  // es el que no rota (ej: bebidas paradas).
+  const rotacionCat = (cmvCat: number, sFin: number, sIni: number): number => {
+    if (!aplicarDelta) return 0;
+    const prom = (sFin + sIni) / 2;
+    if (prom <= 0) return 0;
+    return (cmvCat - (sFin - sIni)) / prom;
+  };
+  result.set(
+    '_kpi_rotacion_alim',
+    rotacionCat(cmvAlimentos, auto.stockFinalAlimentos, auto.stockInicialAlimentos),
+  );
+  result.set(
+    '_kpi_rotacion_beb',
+    rotacionCat(cmvBebidas, auto.stockFinalBebidas, auto.stockInicialBebidas),
+  );
+  result.set(
+    '_kpi_rotacion_ind',
+    rotacionCat(cmvIndirectos, auto.stockFinalIndirectos, auto.stockInicialIndirectos),
   );
   result.set('pers_sueldos', persSueldos);
   result.set('pers_cargas', persCargas);
