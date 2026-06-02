@@ -13,7 +13,7 @@ import {
 import { NuevoGastoModal, type PrefillGasto } from '@/modules/gastos/NuevoGastoModal';
 import NuevoGastoForm from '@/modules/gastos/NuevoGastoForm';
 import { ProveedoresPanel } from '@/modules/gastos/ProveedoresPanel';
-import { ListadoGastos } from '@/modules/gastos/ListadoGastos';
+import { ListadoGastos, type ResumenListadoGastos } from '@/modules/gastos/ListadoGastos';
 import { ExtractosAlerta } from '@/modules/finanzas/components/ExtractosAlerta';
 import { CierreInventarioBanner } from './components/CierreInventarioBanner';
 import { CierreInventarioModal } from './components/CierreInventarioModal';
@@ -210,30 +210,10 @@ export function ComprasPage() {
     };
   }, [gastosPeriodo]);
 
-  // KPIs del listado de gastos: agregados rápidos del período + local seleccionado.
-  // "empresa" = todos los gastos (vedia + saavedra + sas / razón social).
-  const { data: gastosKpis } = useQuery({
-    queryKey: ['gastos_kpis', gastosLocal, gastosDesde, gastosHasta],
-    queryFn: async () => {
-      let q = supabase
-        .from('gastos')
-        .select('id, importe_total, factura_path, categoria_id, estado_pago, local')
-        .gte('fecha', gastosDesde)
-        .lte('fecha', gastosHasta)
-        .neq('cancelado', true);
-      if (gastosLocal !== 'empresa') q = q.eq('local', gastosLocal);
-      const { data } = await q;
-      const rows = data ?? [];
-      const total = rows.length;
-      const totalMonto = rows.reduce((s, r) => s + Number(r.importe_total ?? 0), 0);
-      const conFactura = rows.filter((r) => r.factura_path && (r.factura_path as string).length > 0).length;
-      const sinCategoria = rows.filter((r) => !r.categoria_id).length;
-      const pagados = rows.filter(
-        (r) => (r.estado_pago ?? '').toString().toLowerCase() === 'pagado',
-      ).length;
-      return { total, totalMonto, conFactura, sinCategoria, pagados };
-    },
-  });
+  // KPIs del listado de gastos. Los alimenta ListadoGastos vía onResumen con los
+  // agregados YA filtrados (categoría, proveedor, medio, estado, búsqueda), así las
+  // tarjetas reflejan exactamente lo que se ve en la tabla y no el total del período.
+  const [gastosKpis, setGastosKpis] = useState<ResumenListadoGastos | null>(null);
 
   // Filtro de fechas para historial de movimientos (default: últimos 30 días)
   const [movDesde, setMovDesde] = useState<string>(() => {
@@ -1402,7 +1382,7 @@ export function ComprasPage() {
                 Gastos del mes
               </p>
               <p className="mt-0.5 text-lg font-bold text-gray-900">
-                {gastosKpis?.total ?? '—'}
+                {gastosKpis?.cantidad ?? '—'}
               </p>
             </div>
             <div className="rounded-lg border border-surface-border bg-white p-4">
@@ -1410,7 +1390,7 @@ export function ComprasPage() {
                 Total $
               </p>
               <p className="mt-0.5 text-lg font-bold text-gray-900">
-                {gastosKpis ? formatARS(gastosKpis.totalMonto) : '—'}
+                {gastosKpis ? formatARS(gastosKpis.total) : '—'}
               </p>
             </div>
             <div className="rounded-lg border border-surface-border bg-white p-4">
@@ -1418,7 +1398,7 @@ export function ComprasPage() {
                 Pagados
               </p>
               <p className="mt-0.5 text-lg font-bold text-gray-900">
-                {gastosKpis ? `${gastosKpis.pagados} / ${gastosKpis.total}` : '—'}
+                {gastosKpis ? `${gastosKpis.pagados} / ${gastosKpis.cantidad}` : '—'}
               </p>
             </div>
             <div className="rounded-lg border border-surface-border bg-white p-4">
@@ -1428,13 +1408,13 @@ export function ComprasPage() {
               <p
                 className={cn(
                   'mt-0.5 text-lg font-bold',
-                  gastosKpis && gastosKpis.total > 0 && gastosKpis.conFactura / gastosKpis.total < 0.7
+                  gastosKpis && gastosKpis.cantidad > 0 && gastosKpis.conFactura / gastosKpis.cantidad < 0.7
                     ? 'text-amber-600'
                     : 'text-gray-900',
                 )}
               >
                 {gastosKpis
-                  ? `${gastosKpis.conFactura} / ${gastosKpis.total}`
+                  ? `${gastosKpis.conFactura} / ${gastosKpis.cantidad}`
                   : '—'}
               </p>
             </div>
@@ -1457,6 +1437,7 @@ export function ComprasPage() {
             local={gastosLocal === 'empresa' ? 'ambos' : gastosLocal}
             desde={gastosDesde}
             hasta={gastosHasta}
+            onResumen={setGastosKpis}
           />
         </>
       )}

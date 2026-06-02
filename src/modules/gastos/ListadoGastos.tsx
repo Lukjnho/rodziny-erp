@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { formatARS, formatFecha, cn } from '@/lib/utils';
@@ -29,11 +29,27 @@ function ultimoDiaDelMes() {
   return new Date(d.getFullYear(), d.getMonth() + 1, 0).toISOString().split('T')[0];
 }
 
+// Agregados del listado YA filtrado (categoría, proveedor, medio, estado, búsqueda,
+// sin factura). Se reportan hacia arriba para que los KPIs del contenedor reflejen
+// exactamente lo que se ve en la tabla, no el total del período sin filtrar.
+export interface ResumenListadoGastos {
+  cantidad: number;
+  total: number;
+  neto: number;
+  iva: number;
+  pagados: number;
+  conFactura: number;
+  sinCategoria: number;
+}
+
 interface Props {
   local: 'vedia' | 'saavedra' | 'ambos' | 'sas';
   desde?: string;       // default: primer día del mes
   hasta?: string;       // default: último día del mes
   onEditar?: (g: Gasto) => void; // si no viene, usa modal interno (modo standalone)
+  // Reporta los agregados del listado filtrado al contenedor (para sus KPIs).
+  // Debe ser estable (ej: el setter de un useState) para no disparar loops.
+  onResumen?: (r: ResumenListadoGastos) => void;
 }
 
 export function ListadoGastos({
@@ -41,6 +57,7 @@ export function ListadoGastos({
   desde = primerDiaDelMes(),
   hasta = ultimoDiaDelMes(),
   onEditar,
+  onResumen,
 }: Props) {
   const qc = useQueryClient();
   const [filtroEstado, setFiltroEstado] = useState<'todos' | 'pendiente' | 'pagado'>('todos');
@@ -238,11 +255,29 @@ export function ListadoGastos({
         acc.iva += Number(g.iva ?? 0);
         acc.total += Number(g.importe_total ?? 0);
         acc.cantidad += 1;
+        if (estadoNormalizado(g) === 'pagado') acc.pagados += 1;
+        if (g.factura_path) acc.conFactura += 1;
+        if (!g.categoria_id) acc.sinCategoria += 1;
         return acc;
       },
-      { neto: 0, iva: 0, total: 0, cantidad: 0 },
+      { neto: 0, iva: 0, total: 0, cantidad: 0, pagados: 0, conFactura: 0, sinCategoria: 0 },
     );
   }, [filtrados]);
+
+  // Reportar los agregados ya filtrados al contenedor (para que sus KPIs los usen).
+  // Solo cuando terminó de cargar, para no pisar las tarjetas con ceros en el medio.
+  useEffect(() => {
+    if (isLoading) return;
+    onResumen?.({
+      cantidad: totales.cantidad,
+      total: totales.total,
+      neto: totales.neto,
+      iva: totales.iva,
+      pagados: totales.pagados,
+      conFactura: totales.conFactura,
+      sinCategoria: totales.sinCategoria,
+    });
+  }, [totales, isLoading, onResumen]);
 
   // Lista única de proveedores para el filtro — usando el display canónico, no el texto crudo.
   // Así el dropdown muestra "FRESH Distribuidora" una sola vez en lugar de FRESH / FRESH Dist. / MACLAR SRL.
