@@ -57,7 +57,7 @@ export interface ProyeccionResult {
   meses: ProyeccionMes[];
   cmvPct: number;
   cmvPctAuto: boolean;
-  ingresoBaseMensual: number;
+  ingresoPromMensual: number;
   sueldosMensuales: number;
   config: ProyeccionConfig | null;
   items: ProyeccionItem[];
@@ -193,26 +193,119 @@ export function useProyeccionFlujo(): ProyeccionResult {
     },
   });
 
+  // Historia mensual de ventas (backfill de Fudo + lo que se vaya cargando).
+  // Es la base para calcular la estacionalidad. Las ventas vivas del ERP
+  // (ventas_tickets vía edr_resumen_ventas) pisan al histórico en los meses que
+  // ya están en el ERP, así la curva se reajusta sola al cerrar meses nuevos.
+  const { data: historico, isLoading: loadHist } = useQuery({
+    queryKey: ['proy_historico'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('ventas_mensuales_historico')
+        .select('local, periodo, total_bruto');
+      if (error) {
+        console.error('[proy historico]', error);
+        return [];
+      }
+      return (data ?? []) as { local: string; periodo: string; total_bruto: number }[];
+    },
+  });
+
   const isLoading =
-    loadVentas || loadGastos || loadPF || loadEmp || loadCfg || loadItems;
+    loadVentas || loadGastos || loadPF || loadEmp || loadCfg || loadItems || loadHist;
 
   // ── Cálculo ──────────────────────────────────────────────────────────────────
   const mesesProm = config?.meses_promedio ?? 3;
 
-  // Ingreso base = Σ por local del promedio de sus últimos N meses con ventas.
-  // Robusto a que un local tenga menos meses cargados que el otro.
-  let ingresoBaseMensual = 0;
+  // Serie mensual por local = histórico (Fudo) + ventas vivas del ERP.
+  // Las ventas del ERP pisan al histórico en los meses que ya tiene cargados.
+  const serie: Record<string, Map<string, number>> = {};
+  for (const loc of LOCALES) serie[loc] = new Map();
+  for (const r of historico ?? []) {
+    if (serie[r.local]) serie[r.local].set(r.periodo, Number(r.total_bruto));
+  }
   for (const loc of LOCALES) {
-    const reales = (ventas?.[loc] ?? [])
-      .filter((v) => Number(v.ing_bruto) > 0)
-      .sort((a, b) => a.periodo.localeCompare(b.periodo));
-    const ult = reales.slice(-mesesProm);
-    if (ult.length > 0) {
-      const prom =
-        ult.reduce((s, v) => s + Number(v.ing_bruto), 0) / ult.length;
-      ingresoBaseMensual += prom;
+    for (const v of ventas?.[loc] ?? []) {
+      if (Number(v.ing_bruto) > 0) serie[loc].set(v.periodo, Number(v.ing_bruto));
     }
   }
+
+  // Índice estacional por local (promedio del año = 1). Se calcula relativo a la
+  // media de CADA año y se promedia entre años, así el nivel/inflación se cancela
+  // y solo queda la FORMA. Meses faltantes se interpolan con los vecinos.
+  function indicesEstacionales(s: Map<string, number>): number[] {
+    const porAnio: Record<number, { mes: number; val: number }[]> = {};
+    for (const [periodo, val] of s) {
+      if (val <= 0) continue;
+      const y = Number(periodo.slice(0, 4));
+      const mes = Number(periodo.slice(5, 7));
+      (porAnio[y] ??= []).push({ mes, val });
+    }
+    const ratios: number[][] = Array.from({ length: 13 }, () => []);
+    for (const y of Object.keys(porAnio)) {
+      const arr = porAnio[Number(y)];
+      const media = arr.reduce((a, r) => a + r.val, 0) / arr.length;
+      if (media <= 0) continue;
+      for (const r of arr) ratios[r.mes].push(r.val / media);
+    }
+    const idx: (number | null)[] = Array(13).fill(null);
+    for (let m = 1; m <= 12; m++) {
+      if (ratios[m].length)
+        idx[m] = ratios[m].reduce((a, b) => a + b, 0) / ratios[m].length;
+    }
+    // Interpolar meses sin dato con el vecino más cercano a cada lado (circular).
+    for (let m = 1; m <= 12; m++) {
+      if (idx[m] != null) continue;
+      let prev: number | null = null;
+      let next: number | null = null;
+      for (let d = 1; d <= 11; d++) {
+        const pm = ((m - 1 - d + 12) % 12) + 1;
+        if (idx[pm] != null) { prev = idx[pm]; break; }
+      }
+      for (let d = 1; d <= 11; d++) {
+        const nm = ((m - 1 + d) % 12) + 1;
+        if (idx[nm] != null) { next = idx[nm]; break; }
+      }
+      idx[m] = prev != null && next != null ? (prev + next) / 2 : prev ?? next ?? 1;
+    }
+    // Normalizar a media 1 sobre los 12 meses.
+    const vals = idx.slice(1) as number[];
+    const media = vals.reduce((a, b) => a + b, 0) / 12;
+    return [0, ...vals.map((v) => (media > 0 ? v / media : 1))];
+  }
+
+  // Nivel base = promedio de los últimos N meses reales, DESESTACIONALIZADO
+  // (cada mes dividido por su factor). Capta el nivel actual del negocio (sube
+  // o baja solo si cambia el consumo) sin contaminarse con la estacionalidad.
+  function nivelBase(s: Map<string, number>, idx: number[]): number {
+    const periodos = [...s.keys()].filter((p) => (s.get(p) ?? 0) > 0).sort();
+    const ult = periodos.slice(-mesesProm);
+    if (!ult.length) return 0;
+    let acc = 0;
+    for (const p of ult) {
+      const m = Number(p.slice(5, 7));
+      acc += (s.get(p) ?? 0) / (idx[m] || 1);
+    }
+    return acc / ult.length;
+  }
+
+  const estacional: Record<string, { idx: number[]; nivel: number }> = {};
+  for (const loc of LOCALES) {
+    const idx = indicesEstacionales(serie[loc]);
+    estacional[loc] = { idx, nivel: nivelBase(serie[loc], idx) };
+  }
+
+  // Ingreso proyectado de un mes = Σ por local de nivel base × factor estacional.
+  function ingresoBaseDelMes(periodo: string): number {
+    const m = Number(periodo.slice(5, 7));
+    let total = 0;
+    for (const loc of LOCALES) total += estacional[loc].nivel * (estacional[loc].idx[m] || 1);
+    return total;
+  }
+
+  // Promedio mensual proyectado (KPI): como cada índice promedia 1 y el horizonte
+  // cubre los 12 meses calendario una vez, equivale a Σ de los niveles base.
+  const ingresoPromMensual = LOCALES.reduce((s, loc) => s + estacional[loc].nivel, 0);
 
   // CMV% = Σ compras mercadería ÷ Σ ventas, igual que el EdR. Se calcula POR LOCAL
   // sobre los meses donde ESE local tiene ventas cargadas, y recién después se
@@ -324,19 +417,20 @@ export function useProyeccionFlujo(): ProyeccionResult {
 
   for (const periodo of mesesHorizonte()) {
     const it = itemsDelMes(periodo);
-    const ingreso = ingresoBaseMensual + it.ingresoOperativa;
-    const cmv = ingresoBaseMensual * cmvPct; // CMV sobre el ingreso operativo base
+    const ingresoBase = ingresoBaseDelMes(periodo); // ya estacionalizado
+    const ingreso = ingresoBase + it.ingresoOperativa;
+    const cmv = ingresoBase * cmvPct; // CMV escala con el ingreso del mes
     const pfCargado = pagosFijos?.get(periodo);
     const pagosFijosMes = pfCargado ?? pfPromedio;
     const pagosFijosEstimado = pfCargado == null;
     const sueldos = sueldosMensuales;
     const aguinaldo = aguinaldoDelMes(periodo);
 
-    // Neto operativo = ventas base − costos + neto de items manuales de operativa.
-    // Usamos ingresoBaseMensual (no `ingreso`) porque it.operativa ya incluye los
+    // Neto operativo = ventas del mes − costos + neto de items manuales de operativa.
+    // Usamos ingresoBase (no `ingreso`) porque it.operativa ya incluye los
     // ingresos manuales; así no se cuentan dos veces.
     const netoOperativo =
-      ingresoBaseMensual - cmv - pagosFijosMes - sueldos - aguinaldo + it.operativa;
+      ingresoBase - cmv - pagosFijosMes - sueldos - aguinaldo + it.operativa;
     const netoReserva = it.reserva;
 
     saldoOperativa += netoOperativo;
@@ -363,7 +457,7 @@ export function useProyeccionFlujo(): ProyeccionResult {
     meses,
     cmvPct,
     cmvPctAuto,
-    ingresoBaseMensual,
+    ingresoPromMensual,
     sueldosMensuales,
     config: config ?? null,
     items: items ?? [],

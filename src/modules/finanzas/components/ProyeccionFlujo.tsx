@@ -5,6 +5,7 @@ import { formatARS, cn } from '@/lib/utils';
 import {
   useProyeccionFlujo,
   type ProyeccionItem,
+  type ProyeccionMes,
 } from '../hooks/useProyeccionFlujo';
 
 // Nombre legible del período 'YYYY-MM' → 'jun 2026'.
@@ -21,9 +22,25 @@ function pct(n: number): string {
   return `${(n * 100).toLocaleString('es-AR', { maximumFractionDigits: 1 })}%`;
 }
 
+// Mes corto para encabezados de columna: 'jun 26'.
+function labelMesCorto(periodo: string): string {
+  const [y, m] = periodo.split('-');
+  return `${MESES_ABBR[Number(m) - 1]} ${y.slice(2)}`;
+}
+
+// Número compacto en millones para la grilla: 106,0 · −12,5.
+function fmtM(n: number): string {
+  const v = n / 1e6;
+  const s = Math.abs(v).toLocaleString('es-AR', {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+  });
+  return `${v < 0 ? '−' : ''}${s}`;
+}
+
 export function ProyeccionFlujo() {
   const qc = useQueryClient();
-  const { meses, cmvPct, cmvPctAuto, ingresoBaseMensual, sueldosMensuales, config, items, isLoading } =
+  const { meses, cmvPct, cmvPctAuto, ingresoPromMensual, sueldosMensuales, config, items, isLoading } =
     useProyeccionFlujo();
 
   const invalidar = () => {
@@ -88,7 +105,7 @@ export function ProyeccionFlujo() {
 
       {/* KPIs base (todos dinámicos) */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <Kpi label="Ingreso base / mes" value={formatARS(ingresoBaseMensual)} sub="promedio ventas reales" />
+        <Kpi label="Ingreso prom. / mes" value={formatARS(ingresoPromMensual)} sub="varía por estacionalidad" />
         <Kpi
           label="CMV %"
           value={pct(cmvPct)}
@@ -105,63 +122,13 @@ export function ProyeccionFlujo() {
 
       <ConfigEditor config={config} onSave={(patch) => guardarConfig.mutate(patch)} saving={guardarConfig.isPending} />
 
-      {/* Tabla de proyección */}
-      <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
-        <table className="min-w-full text-sm">
-          <thead>
-            <tr className="border-b border-gray-200 bg-gray-50 text-xs uppercase tracking-wide text-gray-500">
-              <th className="px-3 py-2 text-left">Mes</th>
-              <th className="px-3 py-2 text-right">Ingreso</th>
-              <th className="px-3 py-2 text-right">CMV</th>
-              <th className="px-3 py-2 text-right">Pagos fijos</th>
-              <th className="px-3 py-2 text-right">Sueldos</th>
-              <th className="px-3 py-2 text-right">Aguinaldo</th>
-              <th className="px-3 py-2 text-right">Items</th>
-              <th className="px-3 py-2 text-right">Neto oper.</th>
-              <th className="px-3 py-2 text-right font-semibold text-rodziny-800">Saldo operativa</th>
-              <th className="px-3 py-2 text-right font-semibold text-blue-800">Saldo reserva</th>
-            </tr>
-          </thead>
-          <tbody>
-            {meses.map((m) => (
-              <tr key={m.periodo} className="border-b border-gray-100 last:border-0 hover:bg-gray-50">
-                <td className="whitespace-nowrap px-3 py-2 font-medium text-gray-700">
-                  {labelPeriodo(m.periodo)}
-                </td>
-                <td className="px-3 py-2 text-right text-gray-700">{formatARS(m.ingreso)}</td>
-                <td className="px-3 py-2 text-right text-gray-500">−{formatARS(m.cmv)}</td>
-                <td
-                  className="px-3 py-2 text-right text-gray-500"
-                  title={m.pagosFijosEstimado ? 'Estimado (no hay pagos fijos cargados este mes): promedio de los últimos 3 cargados' : undefined}
-                >
-                  −{formatARS(m.pagosFijos)}
-                  {m.pagosFijosEstimado && <span className="ml-0.5 text-amber-500">*</span>}
-                </td>
-                <td className="px-3 py-2 text-right text-gray-500">−{formatARS(m.sueldos)}</td>
-                <td className={cn('px-3 py-2 text-right', m.aguinaldo > 0 ? 'font-medium text-orange-600' : 'text-gray-300')}>
-                  {m.aguinaldo > 0 ? `−${formatARS(m.aguinaldo)}` : '—'}
-                </td>
-                <td className={cn('px-3 py-2 text-right', m.itemsOperativa !== 0 || m.itemsReserva !== 0 ? 'text-gray-700' : 'text-gray-300')}>
-                  {m.itemsOperativa === 0 && m.itemsReserva === 0
-                    ? '—'
-                    : formatARS(m.itemsOperativa + m.itemsReserva)}
-                </td>
-                <td className={cn('px-3 py-2 text-right font-medium', m.netoOperativo < 0 ? 'text-red-600' : 'text-green-700')}>
-                  {m.netoOperativo < 0 ? '−' : '+'}{formatARS(Math.abs(m.netoOperativo))}
-                </td>
-                <td className={cn('px-3 py-2 text-right font-semibold', m.saldoOperativa < 0 ? 'bg-red-50 text-red-700' : 'text-rodziny-800')}>
-                  {formatARS(m.saldoOperativa)}
-                </td>
-                <td className="px-3 py-2 text-right font-semibold text-blue-800">{formatARS(m.saldoReserva)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      {/* Tabla de proyección — formato planilla: meses en columnas, saldos abajo */}
+      <MatrizProyeccion meses={meses} />
       <p className="text-xs text-gray-400">
-        Los KPIs (ingreso, CMV %, sueldos, pagos fijos, aguinaldo) se recalculan solos desde el ERP.
-        <span className="text-amber-500"> *</span> = pagos fijos estimados (mes sin cargar). Saldo operativa
-        en <span className="rounded bg-red-50 px-1 text-red-700">rojo</span> = ese mes no se autofinancia.
+        Cifras en millones de $ (pasá el mouse por una celda para ver el valor exacto). Los KPIs se
+        recalculan solos desde el ERP. <span className="text-amber-500">*</span> = pagos fijos estimados
+        (mes sin cargar). Saldo operativa en{' '}
+        <span className="rounded bg-red-50 px-1 text-red-700">rojo</span> = ese mes no se autofinancia.
       </p>
 
       <ItemsManuales
@@ -171,6 +138,153 @@ export function ProyeccionFlujo() {
         onBorrar={(id) => borrarItem.mutate(id)}
         creando={crearItem.isPending}
       />
+    </div>
+  );
+}
+
+// ── Matriz estilo planilla (meses en columnas, saldos abajo) ────────────────────
+function MatrizProyeccion({ meses }: { meses: ProyeccionMes[] }) {
+  // Celda numérica genérica de la grilla.
+  const Celda = ({
+    valor,
+    clase,
+    title,
+    estrella,
+    placeholder,
+  }: {
+    valor: number;
+    clase?: string;
+    title?: string;
+    estrella?: boolean;
+    placeholder?: boolean;
+  }) => (
+    <td
+      className={cn('px-3 py-1.5 text-right tabular-nums', clase)}
+      title={title ?? formatARS(valor)}
+    >
+      {placeholder ? <span className="text-gray-300">—</span> : fmtM(valor)}
+      {estrella && <span className="ml-0.5 text-amber-500">*</span>}
+    </td>
+  );
+
+  const labelCls =
+    'sticky left-0 z-10 whitespace-nowrap bg-white px-3 py-1.5 text-left';
+
+  return (
+    <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
+      <table className="min-w-full border-collapse text-sm">
+        <thead>
+          <tr className="border-b border-gray-200 bg-gray-50 text-xs uppercase tracking-wide text-gray-500">
+            <th className={cn(labelCls, 'bg-gray-50 font-medium')}>Concepto</th>
+            {meses.map((m) => (
+              <th key={m.periodo} className="min-w-[68px] px-3 py-2 text-right font-medium">
+                {labelMesCorto(m.periodo)}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {/* Ingresos */}
+          <tr className="border-b border-gray-100 hover:bg-gray-50/60">
+            <td className={cn(labelCls, 'font-medium text-gray-700')}>Ingreso</td>
+            {meses.map((m) => (
+              <Celda key={m.periodo} valor={m.ingreso} clase="text-gray-700" />
+            ))}
+          </tr>
+
+          {/* Egresos */}
+          <tr className="border-b border-gray-100 hover:bg-gray-50/60">
+            <td className={cn(labelCls, 'text-gray-600')}>CMV</td>
+            {meses.map((m) => (
+              <Celda key={m.periodo} valor={-m.cmv} clase="text-gray-500" />
+            ))}
+          </tr>
+          <tr className="border-b border-gray-100 hover:bg-gray-50/60">
+            <td className={cn(labelCls, 'text-gray-600')}>Pagos fijos</td>
+            {meses.map((m) => (
+              <Celda
+                key={m.periodo}
+                valor={-m.pagosFijos}
+                clase="text-gray-500"
+                estrella={m.pagosFijosEstimado}
+                title={
+                  m.pagosFijosEstimado
+                    ? `${formatARS(m.pagosFijos)} — estimado (mes sin cargar): promedio de los últimos 3 cargados`
+                    : formatARS(m.pagosFijos)
+                }
+              />
+            ))}
+          </tr>
+          <tr className="border-b border-gray-100 hover:bg-gray-50/60">
+            <td className={cn(labelCls, 'text-gray-600')}>Sueldos</td>
+            {meses.map((m) => (
+              <Celda key={m.periodo} valor={-m.sueldos} clase="text-gray-500" />
+            ))}
+          </tr>
+          <tr className="border-b border-gray-100 hover:bg-gray-50/60">
+            <td className={cn(labelCls, 'text-gray-600')}>Aguinaldo</td>
+            {meses.map((m) => (
+              <Celda
+                key={m.periodo}
+                valor={-m.aguinaldo}
+                clase="font-medium text-orange-600"
+                placeholder={m.aguinaldo === 0}
+              />
+            ))}
+          </tr>
+          <tr className="border-b border-gray-100 hover:bg-gray-50/60">
+            <td className={cn(labelCls, 'text-gray-600')}>Items</td>
+            {meses.map((m) => {
+              const val = m.itemsOperativa + m.itemsReserva;
+              return (
+                <Celda
+                  key={m.periodo}
+                  valor={val}
+                  clase={val < 0 ? 'text-red-500' : 'text-green-700'}
+                  placeholder={val === 0}
+                />
+              );
+            })}
+          </tr>
+
+          {/* Neto operativo */}
+          <tr className="border-b-2 border-gray-300 bg-gray-50/60">
+            <td className={cn(labelCls, 'bg-gray-50 font-semibold text-gray-700')}>Neto operativo</td>
+            {meses.map((m) => (
+              <Celda
+                key={m.periodo}
+                valor={m.netoOperativo}
+                clase={cn('font-semibold', m.netoOperativo < 0 ? 'text-red-600' : 'text-green-700')}
+              />
+            ))}
+          </tr>
+
+          {/* Saldos — abajo de todo, destacados */}
+          <tr className="bg-rodziny-50/40">
+            <td className={cn(labelCls, 'bg-rodziny-50/40 font-semibold text-rodziny-800')}>
+              Saldo operativa
+            </td>
+            {meses.map((m) => (
+              <Celda
+                key={m.periodo}
+                valor={m.saldoOperativa}
+                clase={cn(
+                  'font-semibold',
+                  m.saldoOperativa < 0 ? 'bg-red-100 text-red-700' : 'text-rodziny-800',
+                )}
+              />
+            ))}
+          </tr>
+          <tr className="bg-blue-50/40">
+            <td className={cn(labelCls, 'bg-blue-50/40 font-semibold text-blue-800')}>
+              Saldo reserva
+            </td>
+            {meses.map((m) => (
+              <Celda key={m.periodo} valor={m.saldoReserva} clase="font-semibold text-blue-800" />
+            ))}
+          </tr>
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -236,7 +350,7 @@ function ConfigEditor({
       {abierto && (
         <div className="space-y-4 border-t border-gray-100 px-4 py-4">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Campo label="Saldo operativa hoy (MP)">
+            <Campo label="Caja operativa hoy (MP + efectivo + bancos)">
               <input type="number" value={oper} onChange={(e) => setOper(e.target.value)} className={inputCls} />
             </Campo>
             <Campo label="Reserva hoy (comitente)">
