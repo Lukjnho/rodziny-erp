@@ -38,16 +38,30 @@ export function DepositoForm({ local }: { local: 'vedia' | 'saavedra' }) {
   // ── filtrar por búsqueda ───────────────────────────────────────────────────
   const filtrados = useMemo(() => {
     if (!busqueda.trim()) return productos ?? [];
-    const b = busqueda
-      .toLowerCase()
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '');
-    return (productos ?? []).filter((p) => {
-      const n = p.nombre
+    const normalizar = (s: string) =>
+      s
         .toLowerCase()
         .normalize('NFD')
         .replace(/[\u0300-\u036f]/g, '');
-      return n.includes(b) || p.categoria.toLowerCase().includes(b);
+
+    // Tokeniza la b\u00fasqueda y descarta los pedazos de cantidad/unidad
+    // (ej: "1kg", "500g", "x12", "2", "kg") para que "Cebolla 1kg" matchee "Cebolla".
+    const esCantidadOUnidad = (t: string) =>
+      /^\d+([.,]\d+)?(kg|kgs|g|gr|grs|l|lt|ml|cc|u|un|unid|unidad|unidades)?$/.test(t) ||
+      /^x\d+$/.test(t) ||
+      /^(kg|kgs|g|gr|grs|l|lt|ml|cc|u|un|unid|unidad|unidades)$/.test(t);
+
+    const tokens = normalizar(busqueda)
+      .split(/\s+/)
+      .filter((t) => t && !esCantidadOUnidad(t));
+
+    // Si solo escribi\u00f3 cantidades/unidades, no filtra nada (muestra todo)
+    if (tokens.length === 0) return productos ?? [];
+
+    return (productos ?? []).filter((p) => {
+      const texto = normalizar(`${p.nombre} ${p.categoria}`);
+      // Cada palabra real de la b\u00fasqueda debe estar presente
+      return tokens.every((t) => texto.includes(t));
     });
   }, [productos, busqueda]);
 
