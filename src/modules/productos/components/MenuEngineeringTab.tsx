@@ -114,6 +114,17 @@ export function MenuEngineeringTab() {
     return productos.filter((p) => p.cuadrante === cuadranteFiltro);
   }, [productos, cuadranteFiltro]);
 
+  // Productos que se vendieron en Fudo pero no tienen costo válido (sin receta
+  // vendible costeada, o el match cae en una subreceta). El control de costeos
+  // tiene que crear/vincular su receta en el tab Costeo. No entran en la matriz.
+  const productosSinCosto = useMemo(
+    () =>
+      productos
+        .filter((p) => p.costoUnitario == null && p.unidadesVendidas > 0)
+        .sort((a, b) => b.unidadesVendidas - a.unidadesVendidas),
+    [productos],
+  );
+
   return (
     <div className="space-y-4">
       <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs text-blue-800">
@@ -217,6 +228,32 @@ export function MenuEngineeringTab() {
           );
         })}
       </div>
+
+      {/* Advertencia: vendidos en Fudo sin costo válido → el control de costeos
+          tiene que crear/vincular su receta en el tab Costeo. */}
+      {!isLoading && productosSinCosto.length > 0 && (
+        <div className="rounded-lg border-2 border-amber-300 bg-amber-50 p-3">
+          <div className="text-sm font-semibold text-amber-900">
+            ⚠ {productosSinCosto.length} producto{productosSinCosto.length === 1 ? '' : 's'}{' '}
+            vendido{productosSinCosto.length === 1 ? '' : 's'} sin costo válido
+          </div>
+          <div className="mb-2 text-[11px] text-amber-700">
+            Se venden en Fudo pero no tienen receta vendible costeada (falta crearla o vincularla
+            en el tab <strong>Costeo</strong>). No entran en la matriz hasta que tengan costo.
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {productosSinCosto.map((p) => (
+              <span
+                key={`${p.local}|${p.codigo || `n:${p.nombre}`}`}
+                className="rounded border border-amber-200 bg-white px-2 py-0.5 text-[11px] text-amber-900"
+              >
+                {p.nombre}{' '}
+                <span className="tabular-nums text-amber-600">· {p.unidadesVendidas} uds</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
 
       {isLoading ? (
         <div className="rounded-lg border border-gray-200 bg-gray-50 p-8 text-center text-sm text-gray-400">

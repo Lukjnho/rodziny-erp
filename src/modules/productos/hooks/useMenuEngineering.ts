@@ -203,6 +203,8 @@ export function useMenuEngineering(opts: MenuEngineeringOptions) {
         recetaByFudoProducto.set(`${r.local}|${normalizarNombre(fp)}`, r);
       }
     }
+    // Set de ids de recetas VENDIBLES (platos), para el guard de costeo de abajo.
+    const vendibleIds = new Set(recetasVendibles.map((r) => r.id));
 
     // ─── Construir productos ME ─────────────────────────────────────────────
     const ivaPct = configGen?.iva_pct ?? 0.21;
@@ -227,7 +229,14 @@ export function useMenuEngineering(opts: MenuEngineeringOptions) {
         : null;
 
       const cocinaProductoId = prod?.id ?? null;
-      const recetaIdMatch = receta?.id ?? prod?.receta_id ?? null;
+      // Costo: la receta vendible matcheada directo SIEMPRE vale. Si el match vino
+      // del camino legacy (cocina_producto.fudo_nombres) y su receta_id NO es una
+      // receta vendible (típicamente apunta a una subreceta/relleno), NO costeamos:
+      // el costo del relleno no es el del plato. Queda "sin costo" y se muestra en
+      // la advertencia del tab para que el control de costeos lo vincule/cree.
+      const recetaIdMatch =
+        receta?.id ??
+        (prod?.receta_id && vendibleIds.has(prod.receta_id) ? prod.receta_id : null);
       // tipo grueso (pasta/salsa/bebida/etc): prioriza categoría de la receta
       // vendible, cae a cocina_producto.tipo, último recurso categoría Fudo.
       const tipo =
