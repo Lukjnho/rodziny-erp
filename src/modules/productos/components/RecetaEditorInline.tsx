@@ -45,6 +45,18 @@ const TIPO_LABEL_INLINE: Record<RecetaTipo, string> = {
   subreceta: 'Subreceta',
 };
 
+// Cuando se crea la receta de un producto huérfano (Costeo > "Faltan enlazar"),
+// pre-seleccionamos la categoría según el tipo del producto. 'milanesa' no tiene
+// categoría propia → se deja vacía para que el usuario elija.
+const TIPO_PRODUCTO_A_CATEGORIA: Record<string, RecetaCategoria | ''> = {
+  pasta: 'pasta',
+  salsa: 'salsa',
+  postre: 'postre',
+  panificado: 'panificado',
+  bebida: 'bebida',
+  milanesa: '',
+};
+
 // Editor inline de la receta (apartado ancho, NO modal). Misma lista que
 // FichaTecnica pero editable, con el costo recalculando EN VIVO. Sirve para
 // EDITAR (receta existente) y CREAR (receta = null → muestra nombre/tipo/local).
@@ -56,6 +68,7 @@ export function RecetaEditorInline({
   ctx,
   onCancel,
   onSaved,
+  vincularProducto,
 }: {
   receta: Receta | null;
   ingredientes: Ingrediente[];
@@ -64,19 +77,27 @@ export function RecetaEditorInline({
   ctx: CosteoContext | null;
   onCancel: () => void;
   onSaved: () => void;
+  // Si se pasa, se está creando la receta de un producto vendible existente
+  // (Costeo > "Faltan enlazar"): la receta nueva queda enganchada a ese producto
+  // y pre-rellenamos nombre/tipo/categoría/local desde él.
+  vincularProducto?: { id: string; nombre: string; tipo: string; local: string };
 }) {
   const qc = useQueryClient();
   const creando = !receta;
   // Id estable para previsualizar el costo de una receta nueva sin guardar.
   const [recetaIdLocal] = useState<string>(() => receta?.id ?? crypto.randomUUID());
 
-  const [nombre, setNombre] = useState<string>(receta?.nombre ?? '');
-  const [tipo, setTipo] = useState<RecetaTipo>(receta?.tipo ?? 'subreceta');
-  const [categoria, setCategoria] = useState<RecetaCategoria | ''>(receta?.categoria ?? '');
+  const [nombre, setNombre] = useState<string>(receta?.nombre ?? vincularProducto?.nombre ?? '');
+  const [tipo, setTipo] = useState<RecetaTipo>(
+    receta?.tipo ?? (vincularProducto ? 'receta' : 'subreceta'),
+  );
+  const [categoria, setCategoria] = useState<RecetaCategoria | ''>(
+    receta?.categoria ?? (vincularProducto ? TIPO_PRODUCTO_A_CATEGORIA[vincularProducto.tipo] ?? '' : ''),
+  );
   const [subcategoria, setSubcategoria] = useState<string>(receta?.subcategoria ?? '');
   const [rol, setRol] = useState<SubrecetaRol | ''>(receta?.rol ?? '');
   const [localState, setLocalState] = useState<string>(
-    receta?.local ?? localRestringido ?? 'vedia',
+    receta?.local ?? vincularProducto?.local ?? localRestringido ?? 'vedia',
   );
 
   const [ings, setIngs] = useState<IngredienteForm[]>(() =>
@@ -99,9 +120,10 @@ export function RecetaEditorInline({
   );
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState('');
-  // Solo al CREAR una receta tipo Pasta: producto (pasta) al que se le vincula
-  // la receta recién creada, en un solo paso (evita ir al ABM aparte).
-  const [productoDestino, setProductoDestino] = useState('');
+  // Producto al que se engancha la receta recién creada, en un solo paso (evita
+  // ir al ABM aparte). Se setea desde el dropdown de pastas O desde
+  // `vincularProducto` (flujo "Faltan enlazar", cualquier tipo).
+  const [productoDestino, setProductoDestino] = useState(vincularProducto?.id ?? '');
   // Nombres con los que esta receta vendible aparece en ventas_items (Fudo).
   // Solo aplica si tipo === 'receta'. Subrecetas no se venden directamente.
   const [fudoProductos, setFudoProductos] = useState<string[]>(receta?.fudo_productos ?? []);
@@ -364,7 +386,8 @@ export function RecetaEditorInline({
         qc.invalidateQueries({ queryKey: ['fudo-huerfanos-recetas'] });
       }
 
-      // Vincular la receta nueva al producto pasta elegido (un solo paso).
+      // Vincular la receta nueva al producto elegido (un solo paso): pasta del
+      // dropdown o cualquier producto huérfano del flujo "Faltan enlazar".
       if (creando && productoDestino) {
         const { error: errLink } = await supabase
           .from('cocina_productos')
@@ -372,8 +395,9 @@ export function RecetaEditorInline({
           .eq('id', productoDestino);
         if (errLink) throw errLink;
         // Refrescar consumidores de cocina_productos.receta_id (grid Costeo,
-        // resumen semanal, dashboard, ABM).
+        // huérfanos, resumen semanal, dashboard, ABM).
         qc.invalidateQueries({ queryKey: ['pastas-sin-receta'] });
+        qc.invalidateQueries({ queryKey: ['costeo-huerfanos'] });
         qc.invalidateQueries({ queryKey: ['cocina-productos-sugerencias-plan'] });
         qc.invalidateQueries({ queryKey: ['cocina_productos_dashboard'] });
         qc.invalidateQueries({ queryKey: ['producto-form'] });
@@ -394,6 +418,13 @@ export function RecetaEditorInline({
     <div className="space-y-4">
       {creando && (
         <div className="grid gap-4 rounded-lg border border-rodziny-200 bg-white p-3 sm:grid-cols-3">
+          {vincularProducto && (
+            <div className="sm:col-span-3 rounded border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+              Estás creando la receta de{' '}
+              <strong>{vincularProducto.nombre}</strong> ({vincularProducto.local}). Al guardar,
+              su costo queda enganchado a ese producto y desaparece de "Faltan enlazar".
+            </div>
+          )}
           <div className="sm:col-span-3">
             <label className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-gray-500">
               Nombre de la receta
@@ -495,7 +526,7 @@ export function RecetaEditorInline({
             <select
               value={localState}
               onChange={(e) => setLocalState(e.target.value)}
-              disabled={!!localRestringido}
+              disabled={!!localRestringido || !!vincularProducto}
               className="w-full rounded border border-gray-300 px-2 py-2 text-sm capitalize disabled:bg-gray-100"
             >
               <option value="vedia">Vedia</option>
@@ -516,7 +547,7 @@ export function RecetaEditorInline({
               para obtener el costo por porción.
             </p>
           )}
-          {categoria === 'pasta' && (
+          {categoria === 'pasta' && !vincularProducto && (
             <div className="sm:col-span-3">
               <label className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-gray-500">
                 Vincular a producto (opcional)

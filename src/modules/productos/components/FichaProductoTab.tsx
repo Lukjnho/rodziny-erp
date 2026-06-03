@@ -140,8 +140,11 @@ export function FichaProductoTab() {
   const [editando, setEditando] = useState(false);
   const [nuevaReceta, setNuevaReceta] = useState(false);
   const [duplicandoReceta, setDuplicandoReceta] = useState<RecetaFull | null>(null);
-  // Producto huérfano que se está enlazando (abre ProductoFormPanel).
+  // Producto huérfano que se está enlazando a una receta EXISTENTE (ProductoFormPanel).
   const [enlazandoId, setEnlazandoId] = useState<string | null>(null);
+  // Producto huérfano para el que se está CREANDO su receta en la grilla (flujo
+  // principal: mismo editor de ingredientes que cualquier receta).
+  const [costeandoHuerfano, setCosteandoHuerfano] = useState<HuerfanoProducto | null>(null);
 
   // Trae TODAS las recetas (activas + inactivas). El filtro por activo lo aplica
   // el grid según el toggle "Mostrar inactivas". Sin esto no se podría reactivar
@@ -481,7 +484,54 @@ export function FichaProductoTab() {
     );
   }
 
-  // ─── Enlazar producto huérfano (ABM completo: vincular receta/insumo) ──────
+  // ─── Costear huérfano: crear su receta en la grilla (flujo principal) ──────
+  if (costeandoHuerfano) {
+    const h = costeandoHuerfano;
+    return (
+      <div className="space-y-4">
+        <div className="flex items-center justify-between gap-2">
+          <button
+            onClick={() => setCosteandoHuerfano(null)}
+            className="text-sm text-rodziny-700 hover:text-rodziny-900"
+          >
+            ← Volver a recetas
+          </button>
+          <button
+            onClick={() => {
+              setEnlazandoId(h.id);
+              setCosteandoHuerfano(null);
+            }}
+            className="text-xs text-gray-500 underline hover:text-gray-700"
+          >
+            ¿La receta ya existe? Vinculala en vez de crearla
+          </button>
+        </div>
+        <section className="rounded-lg border border-gray-200 bg-white p-4">
+          <RecetaEditorInline
+            receta={null}
+            ingredientes={[]}
+            todasLasRecetas={recetas ?? []}
+            localRestringido={localRestringido}
+            ctx={ctx}
+            vincularProducto={{
+              id: h.id,
+              nombre: h.nombre,
+              tipo: h.tipo,
+              local: h.local ?? filtroLocal,
+            }}
+            onCancel={() => setCosteandoHuerfano(null)}
+            onSaved={() => {
+              setCosteandoHuerfano(null);
+              invalidarTodo();
+              qc.invalidateQueries({ queryKey: ['costeo-huerfanos'] });
+            }}
+          />
+        </section>
+      </div>
+    );
+  }
+
+  // ─── Enlazar producto huérfano a una receta EXISTENTE (ABM completo) ───────
   if (enlazandoId) {
     return (
       <ProductoFormPanel
@@ -683,14 +733,15 @@ export function FichaProductoTab() {
                 {huerfanosVisibles.length}
               </span>
               <span className="text-xs text-amber-700">
-                · productos sin costo todavía — tocá cada uno para vincular receta o insumo
+                · productos sin costo todavía — tocá cada uno para armar su receta (insumos +
+                subrecetas)
               </span>
             </div>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
               {huerfanosVisibles.map((p) => (
                 <button
                   key={`huerfano:${p.id}`}
-                  onClick={() => setEnlazandoId(p.id)}
+                  onClick={() => setCosteandoHuerfano(p)}
                   className="flex flex-col gap-1 rounded-lg border border-amber-300 bg-white p-3 text-left transition-colors hover:border-amber-400 hover:bg-amber-50"
                 >
                   <span className="text-sm font-medium leading-tight text-gray-800">
@@ -710,7 +761,7 @@ export function FichaProductoTab() {
                     </span>
                   </div>
                   <div className="mt-0.5 text-xs font-medium text-amber-700">
-                    Tocá para enlazar →
+                    Tocá para armar su receta →
                   </div>
                 </button>
               ))}
