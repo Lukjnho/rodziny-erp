@@ -120,8 +120,9 @@ interface GastoConciliado {
   importe_total: number;
   comentario: string | null;
   nro_comprobante: string | null;
-  movs: MovBancario[];
-  movs_total_debito: number;
+  movs: MovBancario[]; // detalle (puede ser parcial si el gasto tiene miles de movs)
+  movs_total_debito: number; // total REAL (del servidor), no del detalle parcial
+  n_movs: number; // cantidad REAL de movimientos vinculados
   // true si el movimiento vinculado paga VARIOS gastos (transferencia consolidada).
   // En ese caso el importe del gasto NO tiene por qué igualar el débito del mov.
   consolidado: boolean;
@@ -348,6 +349,21 @@ export function ConciliacionTab() {
         }
       }
 
+      // Totales/cantidades REALES por gasto (link 1:1) calculados en el servidor,
+      // sin el límite de 2000 del fetch de detalle. Imprescindible para los cargos
+      // consolidados (retenciones/comisiones MP) que tienen miles de movimientos.
+      const resumenMap = new Map<string, { n: number; total: number }>();
+      const { data: resumen } = await supabase.rpc('conciliados_resumen_por_gasto', {
+        p_desde: desde,
+        p_hasta: hasta,
+        p_cuenta: bancoFiltro,
+      });
+      for (const r of (resumen ?? []) as { gasto_id: string; n_movs: number; total_debito: number }[]) {
+        resumenMap.set(r.gasto_id, { n: Number(r.n_movs), total: Number(r.total_debito) });
+        // Garantizar que el gasto aparezca aunque sus movs hayan quedado fuera del fetch
+        if (!movsByGasto.has(r.gasto_id)) movsByGasto.set(r.gasto_id, []);
+      }
+
       // Traer datos de los gastos referenciados
       const gastoIds = Array.from(movsByGasto.keys());
       const gastosById = new Map<string, { proveedor: string | null; fecha: string; importe_total: number; nro_comprobante: string | null; comentario: string | null }>();
@@ -381,7 +397,11 @@ export function ConciliacionTab() {
       const result: GastoConciliado[] = [];
       for (const [gastoId, movsDelGasto] of movsByGasto.entries()) {
         const g = gastosById.get(gastoId);
-        const totalDebito = movsDelGasto.reduce((s, m) => s + m.debito, 0);
+        const resumenG = resumenMap.get(gastoId);
+        // Total y cantidad reales: del servidor si es link 1:1; si es 1:N (transf.
+        // compartida, sin gasto_id propio) usamos el mov compartido del detalle.
+        const totalDebito = resumenG ? resumenG.total : movsDelGasto.reduce((s, m) => s + m.debito, 0);
+        const nMovs = resumenG ? resumenG.n : movsDelGasto.length;
         const consolidado = movsDelGasto.some((m) => (gastosPorMov.get(m.id) ?? 0) > 1);
         result.push({
           gasto_id: gastoId,
@@ -392,12 +412,13 @@ export function ConciliacionTab() {
           nro_comprobante: g?.nro_comprobante ?? null,
           movs: movsDelGasto,
           movs_total_debito: totalDebito,
+          n_movs: nMovs,
           consolidado,
         });
       }
       result.sort((a, b) => {
-        const aLast = a.movs[0]?.fecha ?? '';
-        const bLast = b.movs[0]?.fecha ?? '';
+        const aLast = a.movs[0]?.fecha ?? a.fecha ?? '';
+        const bLast = b.movs[0]?.fecha ?? b.fecha ?? '';
         return bLast.localeCompare(aLast);
       });
       return result;
@@ -863,7 +884,7 @@ export function ConciliacionTab() {
                             {formatARS(g.importe_total)}
                           </td>
                           <td className="px-2 py-1.5 text-center text-gray-700 tabular-nums">
-                            {g.movs.length}
+                            {g.n_movs}
                           </td>
                           <td
                             className={cn(
