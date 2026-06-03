@@ -186,6 +186,8 @@ export function MenuTab() {
   );
   const [busqueda, setBusqueda] = useState('');
   const [colapsadas, setColapsadas] = useState<Set<string>>(new Set());
+  // Orden de la lista dentro de cada categoría. Default: mayor margen primero.
+  const [orden, setOrden] = useState<'margen_desc' | 'margen_asc' | 'nombre'>('margen_desc');
 
   // ─── Recetas marcadas vendible en Costeo ───────────────────────────────────
   const { data: recetas } = useQuery({
@@ -303,6 +305,22 @@ export function MenuTab() {
   const desgloseConvenio = (p: number | null | undefined, c: number | null) =>
     desgloseMargen(`▸ Margen Convenio −${Math.round(descConvenio * 100)}%`, p, c, descConvenio, comisionMax);
 
+  // Ordena las filas dentro de cada (sub)grupo según `orden`. Usa el margen
+  // Lista; las filas sin margen (sin precio o sin costo) van al final.
+  const sortRows = (rows: ItemMenu[]): ItemMenu[] => {
+    if (orden === 'nombre') return rows; // ya vienen alfabéticas del agrupador
+    const dir = orden === 'margen_desc' ? -1 : 1;
+    const m = (p: ItemMenu) => margenLista(precios.get(p.key)?.plato, p.costo);
+    return [...rows].sort((a, b) => {
+      const ma = m(a);
+      const mb = m(b);
+      if (ma == null && mb == null) return 0;
+      if (ma == null) return 1;
+      if (mb == null) return -1;
+      return (ma - mb) * dir;
+    });
+  };
+
   const setPrecio = useMutation({
     mutationFn: async (v: { refId: string; canal: CanalPrecio; precio: number }) => {
       const { error } = await supabase
@@ -418,6 +436,18 @@ export function MenuTab() {
           onChange={(e) => setBusqueda(e.target.value)}
           className="w-64 rounded border border-gray-300 px-3 py-1.5 text-sm"
         />
+        <label className="flex items-center gap-1 text-xs text-gray-500">
+          Ordenar:
+          <select
+            value={orden}
+            onChange={(e) => setOrden(e.target.value as typeof orden)}
+            className="rounded border border-gray-300 px-2 py-1.5 text-sm"
+          >
+            <option value="margen_desc">Margen ↓ (mayor primero)</option>
+            <option value="margen_asc">Margen ↑ (menor primero)</option>
+            <option value="nombre">Nombre (A-Z)</option>
+          </select>
+        </label>
         <div className="ml-auto text-xs text-gray-400">
           {filtrados.length} ítem{filtrados.length === 1 ? '' : 's'}
         </div>
@@ -559,7 +589,7 @@ export function MenuTab() {
                               </td>
                             </tr>
                           )}
-                          {rows.map(fila)}
+                          {sortRows(rows).map(fila)}
                         </Fragment>
                       ),
                     )}
