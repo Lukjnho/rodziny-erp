@@ -6,6 +6,7 @@ import { useAuth } from '@/lib/auth';
 import { DialogDuplicar, FichaTecnica, type Receta, type Ingrediente } from '@/modules/cocina/RecetasTab';
 import { useCostosRecetas } from '@/modules/cocina/hooks/useCostosRecetas';
 import { RecetaEditorInline } from './RecetaEditorInline';
+import { ProductoFormPanel } from './ProductoFormPanel';
 import { calcularCostoBebidaReventa } from '@/modules/productos/lib/bebidaReventaCosto';
 
 // Costeo = recetas y subrecetas (Crema Pastelera, Masa Facturas, salsas base,
@@ -52,10 +53,22 @@ interface InsumoBebida {
 
 const CATEGORIAS_INSUMO_BEBIDA = ['Bebidas para venta', 'Bebidas para la venta'];
 
+// Productos vendibles (cocina_productos) que todavía no tienen ni receta ni
+// insumo de reventa vinculado → no se pueden costear y no figuran en el grid
+// de recetas. Los mostramos aparte con "falta enlazar" para vincularlos acá
+// (abre ProductoFormPanel: receta existente / insumo / nombres Fudo).
+interface HuerfanoProducto {
+  id: string;
+  nombre: string;
+  tipo: string;
+  local: string | null;
+}
+
 // Union de lo que se muestra en el grid de Costeo.
 type ItemCosteo =
   | { kind: 'receta'; receta: RecetaFull; costoUnit: number | null; unidadCosto: string }
-  | { kind: 'reventa'; bebida: BebidaReventa; costoUnit: number | null };
+  | { kind: 'reventa'; bebida: BebidaReventa; costoUnit: number | null }
+  | { kind: 'huerfano'; prod: HuerfanoProducto };
 
 type FiltroLocal = 'vedia' | 'saavedra';
 
@@ -64,6 +77,7 @@ const TIPO_COLOR: Record<string, string> = {
   masa: 'bg-indigo-100 text-indigo-700',
   salsa: 'bg-orange-100 text-orange-700',
   pasta: 'bg-red-100 text-red-700',
+  milanesa: 'bg-red-50 text-red-600',
   postre: 'bg-pink-100 text-pink-700',
   pasteleria: 'bg-rose-100 text-rose-700',
   panificado: 'bg-amber-100 text-amber-700',
@@ -80,6 +94,7 @@ const ORDEN_TIPOS = [
   'relleno',
   'salsa',
   'pasta',
+  'milanesa',
   'postre',
   'pasteleria',
   'panificado',
@@ -95,6 +110,7 @@ const TIPO_LABEL: Record<string, string> = {
   relleno: 'Rellenos',
   salsa: 'Salsas',
   pasta: 'Pastas',
+  milanesa: 'Milanesas',
   postre: 'Postres',
   pasteleria: 'Pastelería',
   panificado: 'Panificados',
@@ -124,6 +140,8 @@ export function FichaProductoTab() {
   const [editando, setEditando] = useState(false);
   const [nuevaReceta, setNuevaReceta] = useState(false);
   const [duplicandoReceta, setDuplicandoReceta] = useState<RecetaFull | null>(null);
+  // Producto huérfano que se está enlazando (abre ProductoFormPanel).
+  const [enlazandoId, setEnlazandoId] = useState<string | null>(null);
 
   // Trae TODAS las recetas (activas + inactivas). El filtro por activo lo aplica
   // el grid según el toggle "Mostrar inactivas". Sin esto no se podría reactivar
@@ -164,6 +182,22 @@ export function FichaProductoTab() {
         .order('nombre');
       if (error) throw error;
       return (data ?? []) as BebidaReventa[];
+    },
+  });
+
+  // Productos vendibles sin receta ni insumo: no se pueden costear todavía.
+  const { data: huerfanos } = useQuery({
+    queryKey: ['costeo-huerfanos'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('cocina_productos')
+        .select('id, nombre, tipo, local')
+        .eq('activo', true)
+        .is('receta_id', null)
+        .is('insumo_reventa_id', null)
+        .order('nombre');
+      if (error) throw error;
+      return (data ?? []) as HuerfanoProducto[];
     },
   });
 
@@ -248,10 +282,21 @@ export function FichaProductoTab() {
         });
       }
     }
+    // Huérfanos: solo cuando no se está auditando calidad de recetas (los
+    // filtros sin_match/con_adv son específicos de recetas con ingredientes).
+    if (!soloSub && filtroCalidad === 'todos') {
+      for (const p of huerfanos ?? []) {
+        if (p.local !== filtroLocal) continue;
+        if (filtroTipo !== 'todos' && p.tipo !== filtroTipo) continue;
+        if (q && !p.nombre.toLowerCase().includes(q)) continue;
+        out.push({ kind: 'huerfano', prod: p });
+      }
+    }
     return out;
   }, [
     recetas,
     bebidasReventa,
+    huerfanos,
     costos,
     insumoById,
     ingredientes,
@@ -289,7 +334,12 @@ export function FichaProductoTab() {
   const grupos = useMemo(() => {
     const map = new Map<string, ItemCosteo[]>();
     for (const it of items) {
-      const k = it.kind === 'receta' ? tipoEfectivo(it.receta) : 'bebida';
+      const k =
+        it.kind === 'receta'
+          ? tipoEfectivo(it.receta)
+          : it.kind === 'reventa'
+            ? 'bebida'
+            : it.prod.tipo;
       (map.get(k) ?? map.set(k, []).get(k)!).push(it);
     }
     return Array.from(map.entries()).sort(([a], [b]) => {
@@ -432,6 +482,22 @@ export function FichaProductoTab() {
     );
   }
 
+  // ─── Enlazar producto huérfano (ABM completo: vincular receta/insumo) ──────
+  if (enlazandoId) {
+    return (
+      <ProductoFormPanel
+        productoId={enlazandoId}
+        onVolver={() => setEnlazandoId(null)}
+        onSaved={() => {
+          setEnlazandoId(null);
+          invalidarTodo();
+          invalidarBebidaRev();
+          qc.invalidateQueries({ queryKey: ['costeo-huerfanos'] });
+        }}
+      />
+    );
+  }
+
   // ─── Nueva receta (apartado ancho inline, NO modal) ────────────────────────
   if (nuevaReceta) {
     return (
@@ -554,6 +620,8 @@ export function FichaProductoTab() {
                   ? ''
                   : 's'
               } reventa`}
+            {(huerfanos ?? []).filter((p) => p.local === filtroLocal).length > 0 &&
+              ` · ${(huerfanos ?? []).filter((p) => p.local === filtroLocal).length} falta enlazar`}
           </div>
         </div>
 
@@ -666,6 +734,39 @@ export function FichaProductoTab() {
                         ) : (
                           <span className="text-gray-300">sin costo</span>
                         )}
+                      </div>
+                    </button>
+                  );
+                }
+                if (it.kind === 'huerfano') {
+                  const p = it.prod;
+                  return (
+                    <button
+                      key={`huerfano:${p.id}`}
+                      onClick={() => setEnlazandoId(p.id)}
+                      className="flex flex-col gap-1 rounded-lg border border-amber-300 bg-amber-50/40 p-3 text-left transition-colors hover:border-amber-400 hover:bg-amber-50"
+                    >
+                      <span className="text-sm font-medium leading-tight text-gray-800">
+                        {p.nombre}
+                      </span>
+                      <div className="flex flex-wrap items-center gap-1">
+                        <span
+                          className={cn(
+                            'rounded px-1.5 py-0.5 text-[9px] font-medium capitalize',
+                            TIPO_COLOR[p.tipo] ?? 'bg-gray-100 text-gray-600',
+                          )}
+                        >
+                          {TIPO_LABEL[p.tipo] ?? p.tipo}
+                        </span>
+                        <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[9px] capitalize text-gray-600">
+                          {p.local ?? '—'}
+                        </span>
+                        <span className="rounded bg-amber-200 px-1.5 py-0.5 text-[9px] font-medium text-amber-800">
+                          ⚠ falta enlazar
+                        </span>
+                      </div>
+                      <div className="mt-0.5 text-xs text-amber-700">
+                        Tocá para vincular receta o insumo
                       </div>
                     </button>
                   );

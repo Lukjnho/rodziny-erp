@@ -9,7 +9,7 @@ import { VinculacionFudoSelector } from './VinculacionFudoSelector';
 // de la definición del producto + vincular receta existente + activo + eliminar.
 // Self-contained: trae el producto (si edita) y las recetas por su cuenta.
 
-const TIPOS = ['pasta', 'salsa', 'postre', 'relleno', 'masa', 'panificado', 'bebida'] as const;
+const TIPOS = ['pasta', 'salsa', 'postre', 'relleno', 'masa', 'panificado', 'milanesa', 'bebida'] as const;
 const TIPO_LABEL: Record<string, string> = {
   pasta: 'Pasta',
   salsa: 'Salsa',
@@ -17,26 +17,47 @@ const TIPO_LABEL: Record<string, string> = {
   relleno: 'Relleno',
   masa: 'Masa',
   panificado: 'Panificado',
+  milanesa: 'Milanesa',
   bebida: 'Bebida',
 };
-// producto.tipo → tipos de receta candidatas (igual que el QR de cocina).
-const TIPOS_RECETA_POR_PRODUCTO: Record<string, string[]> = {
-  pasta: ['relleno', 'masa'],
-  salsa: ['salsa'],
-  postre: ['postre'],
+// producto.tipo → categorías/roles de receta RECOMENDADAS bajo el modelo nuevo
+// (cocina_recetas.tipo es 'receta'/'subreceta'; la categoría real está en
+// `categoria` para recetas y en `rol` para subrecetas). Las no recomendadas
+// igual se pueden elegir desde el grupo "Otras recetas del local".
+const RECETA_RECOMENDADAS: Record<string, string[]> = {
+  pasta: ['pasta', 'relleno', 'masa'],
+  salsa: ['salsa', 'salsa_base'],
+  postre: ['postre', 'postre_base'],
   relleno: ['relleno'],
   masa: ['masa'],
-  panificado: ['pasteleria', 'panaderia'],
-  bebida: ['otro'], // jarras de limonada/naranja (elaboradas)
+  panificado: ['panificado', 'pasteleria', 'pasteleria_base'],
+  bebida: ['bebida', 'cafeteria', 'bebida_base'],
+  milanesa: ['pasta'],
 };
-const LABEL_GRUPO_RECETA: Record<string, string> = {
+
+// Categoría efectiva de una receta: para recetas vendibles es `categoria`,
+// para subrecetas (insumos internos) es `rol`. Sirve para agrupar/recomendar.
+function catEfectivaReceta(r: RecetaOpcion): string {
+  return (r.tipo === 'subreceta' ? r.rol : r.categoria) ?? 'otros';
+}
+
+const CAT_RECETA_LABEL: Record<string, string> = {
+  pasta: 'Pastas',
+  salsa: 'Salsas',
+  salsa_base: 'Salsas base',
+  postre: 'Postres',
+  postre_base: 'Postres base',
+  pasteleria: 'Pastelería',
+  pasteleria_base: 'Pastelería base',
+  panificado: 'Panificados',
+  cafeteria: 'Cafetería',
+  bebida: 'Bebidas',
+  bebida_base: 'Bebidas base',
   relleno: 'Rellenos',
   masa: 'Masas',
-  salsa: 'Salsas',
-  postre: 'Postres',
-  pasteleria: 'Pastelería',
-  panaderia: 'Panadería',
-  otro: 'Otras recetas',
+  adicional: 'Adicionales',
+  packaging: 'Packaging',
+  otros: 'Otras',
 };
 
 // Código de lote auto: slug de la 1ª palabra del nombre (sin tildes/ñ, alfanum,
@@ -63,6 +84,8 @@ interface RecetaOpcion {
   id: string;
   nombre: string;
   tipo: string | null;
+  categoria: string | null;
+  rol: string | null;
   local: string | null;
 }
 
@@ -133,7 +156,7 @@ export function ProductoFormPanel({
     queryFn: async (): Promise<RecetaOpcion[]> => {
       const { data, error } = await supabase
         .from('cocina_recetas')
-        .select('id, nombre, tipo, local')
+        .select('id, nombre, tipo, categoria, rol, local')
         .eq('activo', true)
         .order('nombre');
       if (error) throw error;
@@ -208,17 +231,15 @@ function FormInterno({
     },
   });
 
-  const recetasFiltradas = useMemo(() => {
-    const tiposPermitidos = TIPOS_RECETA_POR_PRODUCTO[tipo] ?? [];
-    const filtradas = recetas.filter(
-      (r) => r.local === local && tiposPermitidos.includes(r.tipo ?? ''),
-    );
-    if (recetaId && !filtradas.some((r) => r.id === recetaId)) {
-      const actual = recetas.find((r) => r.id === recetaId);
-      if (actual) return [actual, ...filtradas];
-    }
-    return filtradas;
-  }, [recetas, local, tipo, recetaId]);
+  // Recetas del local divididas en "recomendadas" para este tipo de producto y
+  // "otras" (todo el resto del local), para que ninguna quede inalcanzable.
+  const { recomendadas, otras } = useMemo(() => {
+    const reco = RECETA_RECOMENDADAS[tipo] ?? [];
+    const delLocal = recetas.filter((r) => r.local === local);
+    const recomendadas = delLocal.filter((r) => reco.includes(catEfectivaReceta(r)));
+    const otras = delLocal.filter((r) => !reco.includes(catEfectivaReceta(r)));
+    return { recomendadas, otras };
+  }, [recetas, local, tipo]);
 
   const costoPreview = useMemo(() => {
     if (!recetaId) return null;
@@ -368,30 +389,26 @@ function FormInterno({
             className={`${inputCls} max-w-md`}
           >
             <option value="">— Sin receta —</option>
-            {(TIPOS_RECETA_POR_PRODUCTO[tipo] ?? []).map((tipoReceta) => {
-              const recetasGrupo = recetasFiltradas.filter((r) => r.tipo === tipoReceta);
-              if (recetasGrupo.length === 0) return null;
-              return (
-                <optgroup key={tipoReceta} label={LABEL_GRUPO_RECETA[tipoReceta] ?? tipoReceta}>
-                  {recetasGrupo.map((r) => (
-                    <option key={r.id} value={r.id}>
-                      {r.nombre}
-                    </option>
-                  ))}
-                </optgroup>
-              );
-            })}
-            {recetasFiltradas
-              .filter((r) => !(TIPOS_RECETA_POR_PRODUCTO[tipo] ?? []).includes(r.tipo ?? ''))
-              .map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.nombre} (vínculo previo)
-                </option>
-              ))}
-            {recetasFiltradas.length === 0 && (
-              <option disabled>
-                (No hay recetas {TIPO_LABEL[tipo]?.toLowerCase()} cargadas en {local})
-              </option>
+            {recomendadas.length > 0 && (
+              <optgroup label={`Recomendadas para ${TIPO_LABEL[tipo] ?? tipo}`}>
+                {recomendadas.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.nombre} · {CAT_RECETA_LABEL[catEfectivaReceta(r)] ?? catEfectivaReceta(r)}
+                  </option>
+                ))}
+              </optgroup>
+            )}
+            {otras.length > 0 && (
+              <optgroup label={`Otras recetas de ${local}`}>
+                {otras.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.nombre} · {CAT_RECETA_LABEL[catEfectivaReceta(r)] ?? catEfectivaReceta(r)}
+                  </option>
+                ))}
+              </optgroup>
+            )}
+            {recomendadas.length === 0 && otras.length === 0 && (
+              <option disabled>(No hay recetas cargadas en {local})</option>
             )}
           </select>
           {costoPreview && (
