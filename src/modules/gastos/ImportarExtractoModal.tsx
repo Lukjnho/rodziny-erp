@@ -131,6 +131,13 @@ export function ImportarExtractoModal({ open, onClose, onSuccess }: Props) {
           p_fecha_hasta: fechaMax,
         });
         if (error) throw error;
+        // Transferencias consolidadas (1 transferencia paga N gastos): vincula los
+        // N pagos al movimiento cuando la suma del grupo = monto del retiro.
+        const { error: errCons } = await supabase.rpc('conciliar_pagos_consolidados', {
+          p_fecha_desde: fechaMin,
+          p_fecha_hasta: fechaMax,
+        });
+        if (errCons) throw errCons;
       } catch (e) {
         errores.push(`auto-match: ${(e as Error).message}`);
       }

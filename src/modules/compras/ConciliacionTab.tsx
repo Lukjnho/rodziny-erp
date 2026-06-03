@@ -187,6 +187,7 @@ export function ConciliacionTab() {
         .not('numero_operacion', 'is', null)
         .neq('numero_operacion', '')
         .neq('medio_pago', 'efectivo')
+        .is('conciliado_movimiento_id', null) // ya conciliados 1:N (transf. consolidada) salen de pendientes
         .gte('fecha_pago', desde)
         .lte('fecha_pago', hasta);
       if (bancoFiltro === 'mercadopago') q = q.in('medio_pago', ['mercadopago', 'mp', 'transferencia_mp']);
@@ -461,7 +462,16 @@ export function ConciliacionTab() {
       });
       if (error) throw error;
       const res = data as { conciliados: number; por_pagos: number; por_gasto: number };
-      const total = res?.conciliados ?? 0;
+      // Segundo paso: transferencias consolidadas (1 transferencia paga N gastos).
+      // Vincula los N pagos al movimiento cuando la suma del grupo = monto del retiro.
+      let porConsolidado = 0;
+      const { data: cons, error: errCons } = await supabase.rpc('conciliar_pagos_consolidados', {
+        p_fecha_desde: desde,
+        p_fecha_hasta: hasta,
+      });
+      if (errCons) throw errCons;
+      porConsolidado = (cons as { pagos: number })?.pagos ?? 0;
+      const total = (res?.conciliados ?? 0) + porConsolidado;
       qc.invalidateQueries({ queryKey: ['conciliacion'] });
       qc.invalidateQueries({ queryKey: ['gastos_conciliados_ids'] });
       qc.invalidateQueries({ queryKey: ['gastos_listado'] });
@@ -469,6 +479,7 @@ export function ConciliacionTab() {
         const detalles: string[] = [];
         if ((res?.por_pagos ?? 0) > 0) detalles.push(`${res.por_pagos} por N° de op de pago`);
         if ((res?.por_gasto ?? 0) > 0) detalles.push(`${res.por_gasto} por N° de comprobante`);
+        if (porConsolidado > 0) detalles.push(`${porConsolidado} en transferencias consolidadas`);
         setMensaje({
           tipo: 'ok',
           texto: `${total} gasto(s) vinculado(s) con su movimiento bancario${

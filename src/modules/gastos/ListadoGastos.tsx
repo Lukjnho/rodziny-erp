@@ -151,7 +151,10 @@ export function ListadoGastos({
     return partes.join(' | ');
   };
 
-  // IDs de gastos que ya tienen un movimiento bancario vinculado (= conciliados con extracto)
+  // IDs de gastos conciliados con el extracto. Dos formas válidas:
+  //  1) movimientos_bancarios.gasto_id (link 1:1 directo), o
+  //  2) pagos_gastos.conciliado_movimiento_id (link 1:N: una transferencia paga
+  //     varios gastos; cada pago apunta al mismo movimiento).
   const { data: gastosConciliadosSet } = useQuery({
     queryKey: ['gastos_conciliados_ids', local, desde, hasta, gastos?.length ?? 0],
     enabled: !!gastos && gastos.length > 0,
@@ -167,6 +170,15 @@ export function ListadoGastos({
           .in('gasto_id', batch);
         for (const m of data ?? []) {
           if (m.gasto_id) set.add(m.gasto_id as string);
+        }
+        // Pagos conciliados vía link 1:N (transferencia consolidada)
+        const { data: pagosConc } = await supabase
+          .from('pagos_gastos')
+          .select('gasto_id')
+          .in('gasto_id', batch)
+          .not('conciliado_movimiento_id', 'is', null);
+        for (const p of pagosConc ?? []) {
+          if (p.gasto_id) set.add(p.gasto_id as string);
         }
       }
       return set;
