@@ -1,9 +1,31 @@
-import { defineConfig } from 'vite'
+import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
 
+// Versión del build: hash del commit en Vercel, o 'dev' en local.
+// Se hornea en el bundle (__APP_VERSION__) y se publica en /version.json
+// para que la app detecte cuando salió un deploy nuevo y avise al usuario.
+const APP_VERSION = process.env.VERCEL_GIT_COMMIT_SHA || 'dev'
+
+// Emite version.json en la raíz de dist con la versión del build actual.
+function versionJsonPlugin(): Plugin {
+  return {
+    name: 'emit-version-json',
+    generateBundle() {
+      this.emitFile({
+        type: 'asset',
+        fileName: 'version.json',
+        source: JSON.stringify({ version: APP_VERSION }),
+      })
+    },
+  }
+}
+
 export default defineConfig({
-  plugins: [react()],
+  define: {
+    __APP_VERSION__: JSON.stringify(APP_VERSION),
+  },
+  plugins: [react(), versionJsonPlugin()],
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),

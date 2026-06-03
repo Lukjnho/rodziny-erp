@@ -4,6 +4,7 @@ import { Sidebar } from '@/components/layout/Sidebar';
 import { LoginPage } from '@/modules/auth/LoginPage';
 import { PageContainer } from '@/components/layout/PageContainer';
 import { AuthProvider, useAuth, type Modulo } from '@/lib/auth';
+import { ActualizacionBanner } from '@/components/ActualizacionBanner';
 import { lazy, Suspense, type ReactNode } from 'react';
 
 // Lazy chunks por módulo: evitan que el bundle inicial cargue todo el ERP
@@ -244,6 +245,7 @@ export default function App() {
     <QueryClientProvider client={qc}>
       <AuthProvider>
         <BrowserRouter>
+          <ActualizacionBanner />
           <Suspense fallback={<PantallaCargando />}>
             <Routes>
               {/* Rutas públicas sin auth (mobile PWAs) */}
