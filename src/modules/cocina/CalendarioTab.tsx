@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { mensajeErrorAmigable } from '@/lib/erroresSupabase';
 import { KPICard } from '@/components/ui/KPICard';
 import { cn } from '@/lib/utils';
 import {
@@ -345,7 +346,7 @@ function ModalEfemeride({
       : await supabase.from('efemerides_gastronomicas').insert({ ...payload, activo: true });
 
     if (err) {
-      setError(err.message);
+      setError(mensajeErrorAmigable(err, 'No se pudo guardar la efeméride'));
       setGuardando(false);
       return;
     }

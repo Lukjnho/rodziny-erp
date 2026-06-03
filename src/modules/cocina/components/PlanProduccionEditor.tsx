@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { mensajeErrorAmigable } from '@/lib/erroresSupabase';
 import { cn } from '@/lib/utils';
 import { PRODUCTOS_COCINA, normNombre } from '../DashboardTab';
 import {
@@ -1234,7 +1235,7 @@ export function PlanProduccionEditor({
         <div className="flex items-center justify-end gap-2 border-t border-gray-200 bg-gray-50 px-6 py-3">
           {guardar.isError && (
             <span className="mr-auto text-xs text-red-600">
-              Error: {(guardar.error as Error)?.message ?? 'desconocido'}
+              {mensajeErrorAmigable(guardar.error, 'No se pudo guardar el plan')}
             </span>
           )}
           <button

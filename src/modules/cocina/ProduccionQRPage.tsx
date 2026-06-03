@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabaseAnon as supabase } from '@/lib/supabaseAnon';
 import { cn } from '@/lib/utils';
+import { mensajeErrorAmigable } from '@/lib/erroresSupabase';
 import { IngredientesGrilla, type IngredienteReal } from './components/IngredientesGrilla';
 import { ResponsableSelect } from './components/ResponsableSelect';
 import {
@@ -1026,7 +1027,7 @@ function FormRelleno({
     });
 
     if (err) {
-      setError(err.message);
+      setError(mensajeErrorAmigable(err, 'No se pudo guardar el relleno'));
       setGuardando(false);
       return;
     }
@@ -1422,7 +1423,7 @@ function FormPasta({
       .single();
 
     if (err) {
-      setError(err.message);
+      setError(mensajeErrorAmigable(err, 'No se pudo guardar la pasta'));
       setGuardando(false);
       return;
     }
@@ -1437,7 +1438,9 @@ function FormPasta({
         })),
       );
       if (errMasas) {
-        setError(`Pasta guardada, pero falló el detalle de masas: ${errMasas.message}`);
+        setError(
+          mensajeErrorAmigable(errMasas, 'La pasta se guardó, pero falló el detalle de masas'),
+        );
         setGuardando(false);
         return;
       }
@@ -2016,7 +2019,7 @@ function FormPorcionar({
     });
 
     if (err) {
-      setError(err.message);
+      setError(mensajeErrorAmigable(err, 'No se pudo porcionar el lote'));
       setGuardando(false);
       return;
     }
@@ -2267,7 +2270,7 @@ function FormMasa({
     });
 
     if (err) {
-      setError(err.message);
+      setError(mensajeErrorAmigable(err, 'No se pudo guardar la masa'));
       setGuardando(false);
       return;
     }
@@ -2414,7 +2417,7 @@ function FormCerrarMasa({
       .eq('id', selectedId);
 
     if (err) {
-      setError(err.message);
+      setError(mensajeErrorAmigable(err, 'No se pudo cerrar la masa'));
       setGuardando(false);
       return;
     }
@@ -2760,7 +2763,7 @@ function FormGenerico({
       }
       const { error: errOff } = await qOff;
       if (errOff) {
-        setError(errOff.message);
+        setError(mensajeErrorAmigable(errOff, 'No se pudo actualizar el stock anterior'));
         setGuardando(false);
         return;
       }
@@ -2783,7 +2786,7 @@ function FormGenerico({
     });
 
     if (err) {
-      setError(err.message);
+      setError(mensajeErrorAmigable(err, 'No se pudo guardar la producción'));
       setGuardando(false);
       return;
     }
@@ -3213,7 +3216,7 @@ function FormMerma({
     };
     const { error: errIns } = await supabase.from('cocina_merma').insert(payload);
     if (errIns) {
-      setError(errIns.message);
+      setError(mensajeErrorAmigable(errIns, 'No se pudo registrar la merma'));
       setGuardando(false);
       return;
     }

@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { mensajeErrorAmigable } from '@/lib/erroresSupabase';
 import { KPICard } from '@/components/ui/KPICard';
 import { StockProduccionSection } from './components/StockProduccionSection';
 import { PlanProduccionEditor } from './components/PlanProduccionEditor';
@@ -1443,7 +1444,7 @@ function ModalPorcionar({
       p_notas: notas.trim() || null,
     });
     if (err) {
-      setError(err.message);
+      setError(mensajeErrorAmigable(err, 'No se pudo porcionar el lote'));
       setGuardando(false);
       return;
     }
@@ -1578,7 +1579,7 @@ function ModalCerrarMasa({
       })
       .eq('id', lote.id);
     if (err) {
-      setError(err.message);
+      setError(mensajeErrorAmigable(err, 'No se pudo cerrar la masa'));
       setGuardando(false);
       return;
     }

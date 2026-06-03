@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
+import { mensajeErrorAmigable } from '@/lib/erroresSupabase';
 import { normalizarDecimal, parseDecimal, equivalenteKgGramos } from '@/lib/numero';
 import { PRODUCTOS_COCINA, normNombre } from './DashboardTab';
 
@@ -403,7 +404,7 @@ function CierrePastas({ local }: { local: Local }) {
       setTimeout(() => setMensaje(null), 2500);
     },
     onError: (e) => {
-      setMensaje(`❌ ${(e as Error).message}`);
+      setMensaje(`❌ ${mensajeErrorAmigable(e, 'No se pudo guardar el cierre')}`);
       setTimeout(() => setMensaje(null), 4000);
     },
   });
@@ -765,7 +766,7 @@ function CierreSimple({
       setTimeout(() => setMensaje(null), 2500);
     },
     onError: (e) => {
-      setMensaje(`❌ ${(e as Error).message}`);
+      setMensaje(`❌ ${mensajeErrorAmigable(e, 'No se pudo guardar el cierre')}`);
       setTimeout(() => setMensaje(null), 4000);
     },
   });

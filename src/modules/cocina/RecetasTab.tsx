@@ -1,6 +1,7 @@
 import { useState, useMemo, useRef, useEffect, Fragment } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { mensajeErrorAmigable } from '@/lib/erroresSupabase';
 import { KPICard } from '@/components/ui/KPICard';
 import { cn, formatARS } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
@@ -734,7 +735,7 @@ export function RecetasTab() {
             duplicar.mutate({ origen: duplicando, nuevoLocal, nuevoNombre })
           }
           guardando={duplicar.isPending}
-          error={duplicar.error ? String(duplicar.error) : null}
+          error={duplicar.error ? mensajeErrorAmigable(duplicar.error, 'No se pudo duplicar la receta') : null}
         />
       )}
     </div>
@@ -1258,11 +1259,7 @@ export function ModalReceta({
 
       onSaved();
     } catch (err: unknown) {
-      const msg =
-        err instanceof Error
-          ? err.message
-          : ((err as { message?: string })?.message ?? 'Error desconocido');
-      setError(msg);
+      setError(mensajeErrorAmigable(err, 'No se pudo guardar la receta'));
       setGuardando(false);
     }
   };

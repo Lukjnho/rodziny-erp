@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { mensajeErrorAmigable } from '@/lib/erroresSupabase';
 import { KPICard } from '@/components/ui/KPICard';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
@@ -444,7 +445,7 @@ export function StockTab() {
       // El Dashboard usa la vista v_cocina_stock_pastas que ya incluye los ajustes
       qc.invalidateQueries({ queryKey: ['cocina_stock_pastas'] });
     },
-    onError: (e: Error) => window.alert(`Error al guardar ajuste: ${e.message}`),
+    onError: (e: Error) => window.alert(mensajeErrorAmigable(e, 'No se pudo guardar el ajuste')),
   });
 
   // Locales en alcance según el filtro. Ambos locales tienen API de Fudo

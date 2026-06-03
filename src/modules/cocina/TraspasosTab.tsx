@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { mensajeErrorAmigable } from '@/lib/erroresSupabase';
 import { KPICard } from '@/components/ui/KPICard';
 import { useAuth } from '@/lib/auth';
 
@@ -532,7 +533,7 @@ function ModalTraspaso({
       notas: notas.trim() || null,
     });
     if (err) {
-      setError(err.message);
+      setError(mensajeErrorAmigable(err, 'No se pudo guardar el traspaso'));
       setGuardando(false);
       return;
     }
@@ -688,7 +689,7 @@ function ModalMerma({
       notas: notas.trim() || null,
     });
     if (err) {
-      setError(err.message);
+      setError(mensajeErrorAmigable(err, 'No se pudo registrar la merma'));
       setGuardando(false);
       return;
     }
