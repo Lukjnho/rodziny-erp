@@ -7,7 +7,6 @@ import { DialogDuplicar, FichaTecnica, type Receta, type Ingrediente } from '@/m
 import { useCostosRecetas } from '@/modules/cocina/hooks/useCostosRecetas';
 import { RecetaEditorInline } from './RecetaEditorInline';
 import { ProductoFormPanel } from './ProductoFormPanel';
-import { calcularCostoBebidaReventa } from '@/modules/productos/lib/bebidaReventaCosto';
 
 // Costeo = recetas y subrecetas (Crema Pastelera, Masa Facturas, salsas base,
 // rellenos, etc.). Solo ingredientes + costo. El producto vendible (precio por
@@ -28,31 +27,6 @@ function tipoEfectivo(r: Receta): string {
   return r.categoria ?? 'otros';
 }
 
-// Bebidas de reventa (latas, agua, vino sin transformar): no son recetas, son
-// cocina_productos con insumo_reventa_id. Se gestionan acá en Costeo (alta/
-// edición/eliminación) y van automáticamente al Menú mientras estén activas.
-interface BebidaReventa {
-  id: string;
-  nombre: string;
-  local: 'vedia' | 'saavedra';
-  insumo_reventa_id: string;
-  // NULL = vende la unidad entera (Pepsi lata). > 0 = formato copa/shot que
-  // descuenta una fracción de la botella (ej: 150 ml para "Copa Malbec").
-  ml_por_venta: number | null;
-}
-
-interface InsumoBebida {
-  id: string;
-  nombre: string;
-  costo_unitario: number | null;
-  unidad: string;
-  local: string | null;
-  // ml por unidad (botella 750, lata 354). Permite costear copas/shots.
-  contenido_ml: number | null;
-}
-
-const CATEGORIAS_INSUMO_BEBIDA = ['Bebidas para venta', 'Bebidas para la venta'];
-
 // Productos vendibles (cocina_productos) que todavía no tienen ni receta ni
 // insumo de reventa vinculado → no se pueden costear y no figuran en el grid
 // de recetas. Los mostramos aparte con "falta enlazar" para vincularlos acá
@@ -64,11 +38,10 @@ interface HuerfanoProducto {
   local: string | null;
 }
 
-// Union de lo que se muestra en el grid de Costeo (recetas + bebidas reventa).
-// Los huérfanos NO van acá: tienen su propia sección destacada arriba del grid.
-type ItemCosteo =
-  | { kind: 'receta'; receta: RecetaFull; costoUnit: number | null; unidadCosto: string }
-  | { kind: 'reventa'; bebida: BebidaReventa; costoUnit: number | null };
+// Union de lo que se muestra en el grid de Costeo. Hoy solo recetas (las bebidas
+// de reventa se modelan como recetas de 1 insumo). Los huérfanos NO van acá:
+// tienen su propia sección destacada arriba del grid.
+type ItemCosteo = { kind: 'receta'; receta: RecetaFull; costoUnit: number | null; unidadCosto: string };
 
 type FiltroLocal = 'vedia' | 'saavedra';
 
@@ -127,8 +100,6 @@ export function FichaProductoTab() {
   const localRestringido = (perfil?.local_restringido ?? null) as 'vedia' | 'saavedra' | null;
 
   const [recetaId, setRecetaId] = useState<string | null>(null);
-  const [bebidaRevId, setBebidaRevId] = useState<string | null>(null);
-  const [nuevaBebidaRev, setNuevaBebidaRev] = useState(false);
   const [busqueda, setBusqueda] = useState('');
   const [filtroTipo, setFiltroTipo] = useState('todos');
   const [filtroLocal, setFiltroLocal] = useState<FiltroLocal>(
@@ -173,21 +144,6 @@ export function FichaProductoTab() {
     },
   });
 
-  const { data: bebidasReventa } = useQuery({
-    queryKey: ['costeo-bebidas-reventa'],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('cocina_productos')
-        .select('id, nombre, local, insumo_reventa_id, ml_por_venta')
-        .eq('tipo', 'bebida')
-        .eq('activo', true)
-        .not('insumo_reventa_id', 'is', null)
-        .order('nombre');
-      if (error) throw error;
-      return (data ?? []) as BebidaReventa[];
-    },
-  });
-
   // Productos vendibles sin receta ni insumo: no se pueden costear todavía.
   const { data: huerfanos } = useQuery({
     queryKey: ['costeo-huerfanos'],
@@ -203,31 +159,6 @@ export function FichaProductoTab() {
       return (data ?? []) as HuerfanoProducto[];
     },
   });
-
-  const { data: insumosBebida } = useQuery({
-    queryKey: ['costeo-insumos-bebida'],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('productos')
-        .select('id, nombre, costo_unitario, unidad, local, contenido_ml')
-        .in('categoria', CATEGORIAS_INSUMO_BEBIDA)
-        .order('nombre');
-      if (error) throw error;
-      return (data ?? []) as InsumoBebida[];
-    },
-  });
-
-  // Mapa de insumos por id para resolver costo + contenido_ml.
-  const insumoById = useMemo(() => {
-    const m = new Map<string, InsumoBebida>();
-    for (const i of insumosBebida ?? []) m.set(i.id, i);
-    return m;
-  }, [insumosBebida]);
-
-  // Costo de una bebida reventa (delegado al helper compartido).
-  function costoReventa(b: BebidaReventa): number | null {
-    return calcularCostoBebidaReventa(b, insumoById.get(b.insumo_reventa_id) ?? null);
-  }
 
   const { costos, ctx } = useCostosRecetas();
 
@@ -249,8 +180,7 @@ export function FichaProductoTab() {
     });
   }, [recetas]);
 
-  // Items del grid: recetas + bebidas de reventa (en el grupo 'bebida').
-  // Bebidas reventa no son recetas, así que el filtro "Solo subrecetas" las oculta.
+  // Items del grid: recetas (las bebidas de reventa ya son recetas de 1 insumo).
   const items = useMemo<ItemCosteo[]>(() => {
     const q = busqueda.trim().toLowerCase();
     const out: ItemCosteo[] = [];
@@ -274,23 +204,10 @@ export function FichaProductoTab() {
         c?.costoPorPorcion != null ? '/porción' : c?.costoPorKg != null ? '/kg' : '';
       out.push({ kind: 'receta', receta: r, costoUnit, unidadCosto });
     }
-    if (!soloSub && (filtroTipo === 'todos' || filtroTipo === 'bebida')) {
-      for (const b of bebidasReventa ?? []) {
-        if (b.local !== filtroLocal) continue;
-        if (q && !b.nombre.toLowerCase().includes(q)) continue;
-        out.push({
-          kind: 'reventa',
-          bebida: b,
-          costoUnit: costoReventa(b),
-        });
-      }
-    }
     return out;
   }, [
     recetas,
-    bebidasReventa,
     costos,
-    insumoById,
     ingredientes,
     filtroLocal,
     filtroTipo,
@@ -317,10 +234,7 @@ export function FichaProductoTab() {
     return { conCosto, sinMatch, conAdv };
   }, [recetas, costos, ingredientes, filtroLocal, mostrarInactivas]);
 
-  const filtradas = useMemo(
-    () => items.filter((i): i is Extract<ItemCosteo, { kind: 'receta' }> => i.kind === 'receta'),
-    [items],
-  );
+  const filtradas = items;
 
   // Huérfanos visibles: productos vendibles sin receta ni insumo, del local
   // activo. Respetan búsqueda y filtro de tipo, pero se muestran en su propia
@@ -341,7 +255,7 @@ export function FichaProductoTab() {
   const grupos = useMemo(() => {
     const map = new Map<string, ItemCosteo[]>();
     for (const it of items) {
-      const k = it.kind === 'receta' ? tipoEfectivo(it.receta) : 'bebida';
+      const k = tipoEfectivo(it.receta);
       (map.get(k) ?? map.set(k, []).get(k)!).push(it);
     }
     return Array.from(map.entries()).sort(([a], [b]) => {
@@ -454,36 +368,6 @@ export function FichaProductoTab() {
     qc.invalidateQueries({ queryKey: ['productos-costeo'] });
   };
 
-  const invalidarBebidaRev = () => {
-    qc.invalidateQueries({ queryKey: ['costeo-bebidas-reventa'] });
-    qc.invalidateQueries({ queryKey: ['menu-bebidas-reventa'] });
-  };
-
-  const bebidaRev = useMemo(
-    () => bebidasReventa?.find((b) => b.id === bebidaRevId) ?? null,
-    [bebidasReventa, bebidaRevId],
-  );
-
-  // ─── Nueva / editar bebida de reventa ──────────────────────────────────────
-  if (nuevaBebidaRev || bebidaRev) {
-    return (
-      <BebidaReventaPanel
-        bebida={bebidaRev}
-        insumos={insumosBebida ?? []}
-        localRestringido={localRestringido}
-        onCancel={() => {
-          setNuevaBebidaRev(false);
-          setBebidaRevId(null);
-        }}
-        onSaved={() => {
-          setNuevaBebidaRev(false);
-          setBebidaRevId(null);
-          invalidarBebidaRev();
-        }}
-      />
-    );
-  }
-
   // ─── Costear huérfano: crear su receta en la grilla (flujo principal) ──────
   if (costeandoHuerfano) {
     const h = costeandoHuerfano;
@@ -540,7 +424,6 @@ export function FichaProductoTab() {
         onSaved={() => {
           setEnlazandoId(null);
           invalidarTodo();
-          invalidarBebidaRev();
           qc.invalidateQueries({ queryKey: ['costeo-huerfanos'] });
         }}
       />
@@ -650,25 +533,13 @@ export function FichaProductoTab() {
             Mostrar inactivas
           </label>
           <button
-            onClick={() => setNuevaBebidaRev(true)}
-            className="ml-auto rounded border border-sky-300 bg-white px-3 py-1.5 text-sm font-medium text-sky-700 hover:bg-sky-50"
-          >
-            + Nueva bebida reventa
-          </button>
-          <button
             onClick={() => setNuevaReceta(true)}
-            className="rounded bg-rodziny-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-rodziny-800"
+            className="ml-auto rounded bg-rodziny-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-rodziny-800"
           >
             + Nueva receta
           </button>
           <div className="text-xs text-gray-400">
             {filtradas.length} receta{filtradas.length === 1 ? '' : 's'}
-            {(bebidasReventa ?? []).filter((b) => b.local === filtroLocal).length > 0 &&
-              ` + ${(bebidasReventa ?? []).filter((b) => b.local === filtroLocal).length} bebida${
-                (bebidasReventa ?? []).filter((b) => b.local === filtroLocal).length === 1
-                  ? ''
-                  : 's'
-              } reventa`}
             {(huerfanos ?? []).filter((p) => p.local === filtroLocal).length > 0 &&
               ` · ${(huerfanos ?? []).filter((p) => p.local === filtroLocal).length} falta enlazar`}
           </div>
@@ -791,50 +662,6 @@ export function FichaProductoTab() {
             </div>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
               {grupoItems.map((it) => {
-                if (it.kind === 'reventa') {
-                  return (
-                    <button
-                      key={`reventa:${it.bebida.id}`}
-                      onClick={() => setBebidaRevId(it.bebida.id)}
-                      className="flex flex-col gap-1 rounded-lg border border-gray-200 bg-white p-3 text-left transition-colors hover:border-sky-400 hover:bg-sky-50"
-                    >
-                      <span className="text-sm font-medium leading-tight text-gray-800">
-                        {it.bebida.nombre}
-                      </span>
-                      <div className="flex flex-wrap items-center gap-1">
-                        <span
-                          className={cn(
-                            'rounded px-1.5 py-0.5 text-[9px] font-medium capitalize',
-                            TIPO_COLOR.bebida,
-                          )}
-                        >
-                          bebida
-                        </span>
-                        <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[9px] capitalize text-gray-600">
-                          {it.bebida.local}
-                        </span>
-                        <span className="rounded bg-sky-100 px-1.5 py-0.5 text-[9px] text-sky-700">
-                          {it.bebida.ml_por_venta && it.bebida.ml_por_venta > 0
-                            ? `${Number(it.bebida.ml_por_venta)} ml`
-                            : 'reventa'}
-                        </span>
-                        <span className="rounded bg-green-100 px-1.5 py-0.5 text-[9px] font-medium text-green-700">
-                          Menú
-                        </span>
-                      </div>
-                      <div className="mt-0.5 text-xs tabular-nums text-gray-500">
-                        {it.costoUnit != null ? (
-                          <>
-                            {formatARS(it.costoUnit)}
-                            <span className="ml-0.5 text-[10px] text-gray-400">/u</span>
-                          </>
-                        ) : (
-                          <span className="text-gray-300">sin costo</span>
-                        )}
-                      </div>
-                    </button>
-                  );
-                }
                 const r = it.receta;
                 return (
                   <button
@@ -1049,312 +876,6 @@ export function FichaProductoTab() {
           error={duplicarReceta.error ? String(duplicarReceta.error) : null}
         />
       )}
-    </div>
-  );
-}
-
-// ─── Panel alta/edición/eliminación de bebida de reventa ───────────────────
-function BebidaReventaPanel({
-  bebida,
-  insumos,
-  localRestringido,
-  onCancel,
-  onSaved,
-}: {
-  bebida: BebidaReventa | null;
-  insumos: InsumoBebida[];
-  localRestringido: 'vedia' | 'saavedra' | null;
-  onCancel: () => void;
-  onSaved: () => void;
-}) {
-  const creando = !bebida;
-  const [nombre, setNombre] = useState(bebida?.nombre ?? '');
-  const [insumoId, setInsumoId] = useState(bebida?.insumo_reventa_id ?? '');
-  const [local, setLocal] = useState<'vedia' | 'saavedra'>(
-    bebida?.local ?? (localRestringido ?? 'vedia'),
-  );
-  // ml_por_venta: vacío = unidad entera (Pepsi lata). Con valor = copa/shot.
-  const [mlPorVenta, setMlPorVenta] = useState<string>(
-    bebida?.ml_por_venta != null ? String(bebida.ml_por_venta) : '',
-  );
-  const [busca, setBusca] = useState('');
-  const [guardando, setGuardando] = useState(false);
-  const [error, setError] = useState('');
-
-  // Sugerir nombre desde el insumo elegido si todavía no escribieron uno.
-  const insumoSel = insumos.find((i) => i.id === insumoId) ?? null;
-  useMemo(() => {
-    if (creando && !nombre.trim() && insumoSel) setNombre(insumoSel.nombre);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [insumoSel?.id]);
-
-  const insumosFiltrados = useMemo(() => {
-    let lista = insumos.filter((i) => !i.local || i.local === local);
-    if (busca.trim()) {
-      const q = busca.toLowerCase();
-      lista = lista.filter((i) => i.nombre.toLowerCase().includes(q));
-    }
-    return lista.slice(0, 50);
-  }, [insumos, local, busca]);
-
-  const guardar = async () => {
-    if (!nombre.trim()) {
-      setError('Cargá un nombre');
-      return;
-    }
-    if (!insumoId) {
-      setError('Elegí el insumo de compra');
-      return;
-    }
-    const mlRaw = mlPorVenta.trim().replace(',', '.');
-    const mlNum = mlRaw === '' ? null : Number(mlRaw);
-    if (mlNum != null && (!isFinite(mlNum) || mlNum <= 0)) {
-      setError('El tamaño servido tiene que ser un número positivo (o vacío)');
-      return;
-    }
-    if (mlNum != null && (!insumoSel?.contenido_ml || Number(insumoSel.contenido_ml) <= 0)) {
-      setError(
-        'Para vender por copa/shot el insumo tiene que tener "Contenido (ml)" cargado. Cargalo en Compras > insumo.',
-      );
-      return;
-    }
-    setError('');
-    setGuardando(true);
-    try {
-      if (creando) {
-        // cocina_productos.codigo es UNIQUE NOT NULL sin default. Generamos un
-        // slug del nombre + random corto para minimizar colisiones (UNIQUE
-        // garantiza fallo si por casualidad chocara).
-        const slug = nombre
-          .trim()
-          .toLowerCase()
-          .normalize('NFD')
-          .replace(/[̀-ͯ]/g, '')
-          .replace(/[^a-z0-9]+/g, '')
-          .slice(0, 12) || 'beb';
-        const codigo = `${slug}_${Math.random().toString(36).slice(2, 6)}`;
-        const { error: errIns } = await supabase.from('cocina_productos').insert({
-          nombre: nombre.trim(),
-          codigo,
-          tipo: 'bebida',
-          unidad: 'unid',
-          local,
-          activo: true,
-          insumo_reventa_id: insumoId,
-          ml_por_venta: mlNum,
-        });
-        if (errIns) throw errIns;
-      } else {
-        const { error: errUpd } = await supabase
-          .from('cocina_productos')
-          .update({
-            nombre: nombre.trim(),
-            insumo_reventa_id: insumoId,
-            ml_por_venta: mlNum,
-          })
-          .eq('id', bebida!.id);
-        if (errUpd) throw errUpd;
-      }
-      onSaved();
-    } catch (err: unknown) {
-      const msg =
-        err instanceof Error
-          ? err.message
-          : ((err as { message?: string })?.message ?? 'Error desconocido');
-      setError(msg);
-      setGuardando(false);
-    }
-  };
-
-  const eliminar = async () => {
-    if (!bebida) return;
-    if (!confirm(`¿Eliminar "${bebida.nombre}" del Menú y del Costeo?`)) return;
-    setError('');
-    setGuardando(true);
-    try {
-      const { error: errDel } = await supabase
-        .from('cocina_productos')
-        .update({ activo: false })
-        .eq('id', bebida.id);
-      if (errDel) throw errDel;
-      onSaved();
-    } catch (err: unknown) {
-      const msg =
-        err instanceof Error
-          ? err.message
-          : ((err as { message?: string })?.message ?? 'Error desconocido');
-      setError(msg);
-      setGuardando(false);
-    }
-  };
-
-  return (
-    <div className="space-y-4">
-      <button
-        onClick={onCancel}
-        className="text-sm text-rodziny-700 hover:text-rodziny-900"
-      >
-        ← Volver a recetas
-      </button>
-      <section className="rounded-lg border border-sky-200 bg-white p-4">
-        <h2 className="text-lg font-semibold text-gray-900">
-          {creando ? 'Nueva bebida de reventa' : `Editar "${bebida!.nombre}"`}
-        </h2>
-        <p className="mt-0.5 text-xs text-gray-500">
-          Bebida que se compra terminada y se vende sin transformar. El costo sale del{' '}
-          <strong>insumo de compra</strong>; va automáticamente al <strong>Menú</strong> para
-          que le pongas precio.
-        </p>
-      </section>
-
-      <section className="space-y-3 rounded-lg border border-gray-200 bg-white p-4">
-        <div className="grid gap-3 sm:grid-cols-3">
-          <div className="sm:col-span-2">
-            <label className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-gray-500">
-              Nombre (como va a aparecer en el Menú)
-            </label>
-            <input
-              value={nombre}
-              onChange={(e) => setNombre(e.target.value)}
-              placeholder="Ej: Pepsi"
-              className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
-              autoFocus={creando}
-            />
-          </div>
-          <div>
-            <label className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-gray-500">
-              Local
-            </label>
-            <select
-              value={local}
-              onChange={(e) => setLocal(e.target.value as 'vedia' | 'saavedra')}
-              disabled={!!localRestringido || !creando}
-              className="w-full rounded border border-gray-300 px-2 py-2 text-sm capitalize disabled:bg-gray-100"
-            >
-              <option value="vedia">Vedia</option>
-              <option value="saavedra">Saavedra</option>
-            </select>
-          </div>
-        </div>
-
-        <div>
-          <label className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-gray-500">
-            Insumo de compra
-          </label>
-          <input
-            value={busca}
-            onChange={(e) => setBusca(e.target.value)}
-            placeholder="Buscar insumo…"
-            className="mb-1 w-full rounded border border-gray-300 px-3 py-1.5 text-sm"
-          />
-          <select
-            value={insumoId}
-            onChange={(e) => setInsumoId(e.target.value)}
-            size={8}
-            className="w-full rounded border border-gray-300 px-2 py-1 text-sm"
-          >
-            <option value="">— elegí un insumo —</option>
-            {insumosFiltrados.map((i) => (
-              <option key={i.id} value={i.id}>
-                {i.nombre}
-                {i.costo_unitario != null
-                  ? ` — ${formatARS(Number(i.costo_unitario))}/${i.unidad}`
-                  : ''}
-                {i.local ? ` · ${i.local}` : ''}
-              </option>
-            ))}
-          </select>
-          {insumosFiltrados.length === 50 && (
-            <p className="mt-1 text-[10px] text-gray-400">
-              Mostrando 50 — afiná la búsqueda para ver más.
-            </p>
-          )}
-          {insumoSel && (
-            <p className="mt-1 text-[11px] text-gray-600">
-              Costo: <strong>{formatARS(Number(insumoSel.costo_unitario ?? 0))}</strong> por{' '}
-              {insumoSel.unidad}
-              {insumoSel.contenido_ml ? (
-                <> · contenido <strong>{Number(insumoSel.contenido_ml)} ml</strong></>
-              ) : null}
-            </p>
-          )}
-        </div>
-
-        <div>
-          <label className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-gray-500">
-            Tamaño servido (ml) — opcional
-          </label>
-          <input
-            value={mlPorVenta}
-            onChange={(e) => setMlPorVenta(e.target.value)}
-            placeholder="Vacío = vende la unidad entera (Pepsi lata). 150 = Copa de vino."
-            inputMode="decimal"
-            className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
-          />
-          {(() => {
-            const mlNum = Number(mlPorVenta.replace(',', '.'));
-            const valido =
-              mlPorVenta.trim() !== '' && isFinite(mlNum) && mlNum > 0;
-            if (!valido) {
-              return (
-                <p className="mt-1 text-[10px] text-gray-400">
-                  Dejar vacío si la unidad de venta es la misma que la de compra.
-                </p>
-              );
-            }
-            if (!insumoSel?.contenido_ml || Number(insumoSel.contenido_ml) <= 0) {
-              return (
-                <p className="mt-1 text-[11px] text-amber-700">
-                  ⚠ Para usar tamaño servido, primero cargá <strong>"Contenido (ml)"</strong>{' '}
-                  en el insumo desde Compras.
-                </p>
-              );
-            }
-            const costoCopa =
-              (Number(insumoSel.costo_unitario ?? 0) / Number(insumoSel.contenido_ml)) * mlNum;
-            const copasPorUnidad = Number(insumoSel.contenido_ml) / mlNum;
-            return (
-              <p className="mt-1 text-[11px] text-gray-600">
-                Costo por servida: <strong>{formatARS(costoCopa)}</strong>
-                {' '}· rinde <strong>{copasPorUnidad.toFixed(2)}</strong> por{' '}
-                {insumoSel.unidad}
-              </p>
-            );
-          })()}
-        </div>
-
-        {error && (
-          <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-            {error}
-          </div>
-        )}
-
-        <div className="flex items-center gap-2">
-          <button
-            onClick={guardar}
-            disabled={guardando}
-            className="rounded bg-rodziny-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-rodziny-800 disabled:opacity-50"
-          >
-            {creando ? 'Crear bebida' : 'Guardar cambios'}
-          </button>
-          <button
-            onClick={onCancel}
-            disabled={guardando}
-            className="rounded border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-          >
-            Cancelar
-          </button>
-          {!creando && (
-            <button
-              onClick={eliminar}
-              disabled={guardando}
-              className="ml-auto rounded border border-red-300 bg-white px-3 py-1.5 text-sm text-red-700 hover:bg-red-50 disabled:opacity-50"
-            >
-              Eliminar
-            </button>
-          )}
-        </div>
-      </section>
     </div>
   );
 }

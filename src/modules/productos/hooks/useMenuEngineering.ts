@@ -4,7 +4,6 @@ import { supabase } from '@/lib/supabase';
 import { useCostosRecetas } from '@/modules/cocina/hooks/useCostosRecetas';
 import { useConfigCosteo } from '@/modules/cocina/hooks/useConfigCosteo';
 import { useProductosCosteoConfig } from './useProductosCosteoConfig';
-import { calcularCostoBebidaReventa } from '@/modules/productos/lib/bebidaReventaCosto';
 
 export type CuadranteME = 'estrella' | 'vaca' | 'puzzle' | 'perro';
 
@@ -135,24 +134,6 @@ export function useMenuEngineering(opts: MenuEngineeringOptions) {
     },
   });
 
-  // Insumos para costear bebidas reventa (productos del menú sin receta pero
-  // con insumo_reventa_id, como Pepsi lata o Copa Malbec). Sin esto, los
-  // productos de reventa aparecen en la matriz con costo NULL → margen mal.
-  const insumosReventaQ = useQuery({
-    queryKey: ['menu-engineering-insumos-reventa'],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('productos')
-        .select('id, costo_unitario, contenido_ml');
-      if (error) throw error;
-      return data as Array<{
-        id: string;
-        costo_unitario: number;
-        contenido_ml: number | null;
-      }>;
-    },
-  });
-
   const { costos: costosRecetas } = useCostosRecetas();
   const { config: configGen } = useConfigCosteo();
   const { getConfig } = useProductosCosteoConfig();
@@ -164,15 +145,10 @@ export function useMenuEngineering(opts: MenuEngineeringOptions) {
     // caemos a [] y el matching usa solo cocina_productos. NO incluir en el gate
     // de !ventas o !cocinaProds porque si la query queda undefined bloquea todo.
     const recetasVendibles: RecetaVendibleRow[] = recetasQ.data ?? [];
-    const isLoading =
-      ventasQ.isLoading || productosQ.isLoading || insumosReventaQ.isLoading;
+    const isLoading = ventasQ.isLoading || productosQ.isLoading;
     if (!ventas || !cocinaProds) {
       return { productos: [], isLoading, periodos: opts.periodos };
     }
-
-    const insumoById = new Map<string, { costo_unitario: number; contenido_ml: number | null }>();
-    for (const i of insumosReventaQ.data ?? [])
-      insumoById.set(i.id, { costo_unitario: i.costo_unitario, contenido_ml: i.contenido_ml });
 
     // ─── Agrupar ventas por (local, codigo) o (local, nombre) cuando codigo vacío ──
     // Muchos productos de Fudo no tienen `code` (Saavedra: todos; Vedia: ~30%).
@@ -258,8 +234,7 @@ export function useMenuEngineering(opts: MenuEngineeringOptions) {
 
       // Costo estimado: usar costoPorPorcion de la receta (matcheada directa o
       // via cocina_producto.receta_id) + costo_empaque cuando hay cocina_producto.
-      // Para bebidas reventa (sin receta) usamos el helper que prorratea por
-      // ml_por_venta cuando es copa/shot.
+      // Las bebidas también son recetas (de 1 insumo), así que entran por acá.
       let costoUnitario: number | null = null;
       if (recetaIdMatch) {
         const c = costosRecetas.get(recetaIdMatch);
@@ -267,12 +242,6 @@ export function useMenuEngineering(opts: MenuEngineeringOptions) {
           const base = c.costoPorPorcion ?? c.costoPorKg ?? null;
           if (base != null) costoUnitario = base + (prod?.costo_empaque ?? 0);
         }
-      } else if (prod?.insumo_reventa_id) {
-        const ins = insumoById.get(prod.insumo_reventa_id);
-        costoUnitario = calcularCostoBebidaReventa(
-          { ml_por_venta: prod.ml_por_venta },
-          ins ?? null,
-        );
       }
 
       const precioPromedio = a.uds > 0 ? a.total / a.uds : 0;
@@ -345,8 +314,6 @@ export function useMenuEngineering(opts: MenuEngineeringOptions) {
     productosQ.isLoading,
     recetasQ.data,
     recetasQ.isLoading,
-    insumosReventaQ.data,
-    insumosReventaQ.isLoading,
     costosRecetas,
     configGen,
     opts.periodos,

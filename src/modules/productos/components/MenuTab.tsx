@@ -8,7 +8,6 @@ import { useConfigCosteo } from '@/modules/cocina/hooks/useConfigCosteo';
 import { useComisionMpConfig } from '../hooks/useComisionMpConfig';
 import { CANALES_PRECIO, type CanalPrecio } from '../hooks/usePreciosCanal';
 import { SUBCATEGORIA_LABEL } from '@/modules/cocina/RecetasTab';
-import { calcularCostoBebidaReventa } from '@/modules/productos/lib/bebidaReventaCosto';
 import { useFudoHuerfanos } from '@/modules/productos/hooks/useFudoHuerfanos';
 
 // El Menú es una PROYECCIÓN de Costeo: lista las recetas marcadas "vendible"
@@ -132,13 +131,12 @@ const CANAL_LABEL: Record<CanalPrecio, string> = {
 };
 
 type FiltroLocal = 'vedia' | 'saavedra';
-type Origen = 'receta' | 'reventa';
 
-// Ítem unificado del Menú. `refId` es el receta_id (origen receta) o el
-// cocina_producto_id (origen reventa). `key` = clave única para React/precios.
+// Ítem unificado del Menú. `refId` = receta_id. `key` = clave única para
+// React/precios. Todo lo vendible es una receta (las bebidas de reventa también
+// son recetas de 1 insumo).
 interface ItemMenu {
   key: string;
-  origen: Origen;
   refId: string;
   nombre: string;
   tipo: string;
@@ -178,15 +176,6 @@ function rolToCategoria(rol: string | null): string {
   }
 }
 
-interface BebidaReventa {
-  id: string;
-  nombre: string;
-  local: FiltroLocal;
-  insumo_reventa_id: string | null;
-  // NULL = vende la unidad entera. >0 = formato copa/shot, prorratea costo.
-  ml_por_venta: number | null;
-}
-
 export function MenuTab() {
   const qc = useQueryClient();
   const { perfil } = useAuth();
@@ -213,38 +202,7 @@ export function MenuTab() {
     },
   });
 
-  // ─── Bebidas de reventa (sin receta: latas, agua, vino) ────────────────────
-  const { data: bebidas } = useQuery({
-    queryKey: ['menu-bebidas-reventa'],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('cocina_productos')
-        .select('id, nombre, local, insumo_reventa_id, ml_por_venta')
-        .eq('activo', true)
-        .eq('tipo', 'bebida')
-        .not('insumo_reventa_id', 'is', null)
-        .order('nombre');
-      if (error) throw error;
-      return (data ?? []) as BebidaReventa[];
-    },
-  });
-
-  const { data: insumosReventa } = useQuery({
-    queryKey: ['menu-insumos-reventa'],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('productos')
-        .select('id, costo_unitario, contenido_ml');
-      if (error) throw error;
-      return data as Array<{
-        id: string;
-        costo_unitario: number;
-        contenido_ml: number | null;
-      }>;
-    },
-  });
-
-  // Precios por receta (modelo nuevo) y por producto de reventa (legacy).
+  // Precios por receta (incluye bebidas, que ahora son recetas de 1 insumo).
   const { data: preciosReceta } = useQuery({
     queryKey: ['menu-precios-receta'],
     queryFn: async () => {
@@ -256,31 +214,11 @@ export function MenuTab() {
     },
   });
 
-  const { data: preciosReventa } = useQuery({
-    queryKey: ['menu-precios-reventa'],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('cocina_productos_precios_canal')
-        .select('cocina_producto_id, canal, precio');
-      if (error) throw error;
-      return data as Array<{ cocina_producto_id: string; canal: CanalPrecio; precio: number }>;
-    },
-  });
-
   const { costos } = useCostosRecetas();
   const { config: configGen } = useConfigCosteo();
   const { getComision } = useComisionMpConfig();
 
-  // Mapa insumo_id -> {costo_unitario, contenido_ml}. Necesitamos contenido_ml
-  // para prorratear el costo en formato copa/shot (ml_por_venta > 0).
-  const insumoInfo = useMemo(() => {
-    const m = new Map<string, { costo: number; contenido_ml: number | null }>();
-    for (const i of insumosReventa ?? [])
-      m.set(i.id, { costo: Number(i.costo_unitario), contenido_ml: i.contenido_ml });
-    return m;
-  }, [insumosReventa]);
-
-  // precios[`${origen}:${refId}`][canal] = precio
+  // precios[`receta:${refId}`][canal] = precio
   const precios = useMemo(() => {
     const m = new Map<string, Partial<Record<CanalPrecio, number>>>();
     for (const r of preciosReceta ?? []) {
@@ -288,13 +226,8 @@ export function MenuTab() {
       if (!m.has(k)) m.set(k, {});
       m.get(k)![r.canal] = Number(r.precio);
     }
-    for (const r of preciosReventa ?? []) {
-      const k = `reventa:${r.cocina_producto_id}`;
-      if (!m.has(k)) m.set(k, {});
-      m.get(k)![r.canal] = Number(r.precio);
-    }
     return m;
-  }, [preciosReceta, preciosReventa]);
+  }, [preciosReceta]);
 
   const ivaPct = configGen?.iva_pct ?? 0.21;
   const comisionPct = getComision('qr');
@@ -312,28 +245,17 @@ export function MenuTab() {
   };
 
   const setPrecio = useMutation({
-    mutationFn: async (v: { origen: Origen; refId: string; canal: CanalPrecio; precio: number }) => {
-      if (v.origen === 'receta') {
-        const { error } = await supabase
-          .from('cocina_recetas_precios_canal')
-          .upsert(
-            { receta_id: v.refId, canal: v.canal, precio: v.precio },
-            { onConflict: 'receta_id,canal' },
-          );
-        if (error) throw error;
-      } else {
-        const { error } = await supabase
-          .from('cocina_productos_precios_canal')
-          .upsert(
-            { cocina_producto_id: v.refId, canal: v.canal, precio: v.precio },
-            { onConflict: 'cocina_producto_id,canal' },
-          );
-        if (error) throw error;
-      }
+    mutationFn: async (v: { refId: string; canal: CanalPrecio; precio: number }) => {
+      const { error } = await supabase
+        .from('cocina_recetas_precios_canal')
+        .upsert(
+          { receta_id: v.refId, canal: v.canal, precio: v.precio },
+          { onConflict: 'receta_id,canal' },
+        );
+      if (error) throw error;
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['menu-precios-receta'] });
-      qc.invalidateQueries({ queryKey: ['menu-precios-reventa'] });
     },
   });
 
@@ -350,7 +272,6 @@ export function MenuTab() {
           : (r.categoria ?? 'otros');
       out.push({
         key: `receta:${r.id}`,
-        origen: 'receta',
         refId: r.id,
         nombre: r.nombre,
         tipo: tipoCat,
@@ -360,25 +281,8 @@ export function MenuTab() {
         esSubreceta: r.tipo === 'subreceta',
       });
     }
-    for (const b of bebidas ?? []) {
-      const ins = b.insumo_reventa_id ? insumoInfo.get(b.insumo_reventa_id) : null;
-      const costo = calcularCostoBebidaReventa(b, ins
-        ? { costo_unitario: ins.costo, contenido_ml: ins.contenido_ml }
-        : null);
-      out.push({
-        key: `reventa:${b.id}`,
-        origen: 'reventa',
-        refId: b.id,
-        nombre: b.nombre,
-        tipo: 'bebida',
-        subcategoria: null,
-        local: b.local,
-        costo,
-        esSubreceta: false,
-      });
-    }
     return out;
-  }, [recetas, bebidas, costos, insumoInfo]);
+  }, [recetas, costos]);
 
   const filtrados = useMemo(() => {
     let lista = items.filter((p) => p.local === filtroLocal);
@@ -487,13 +391,9 @@ export function MenuTab() {
                 <span className="font-medium text-gray-800">{p.nombre}</span>
                 <div className="font-mono text-[10px] text-gray-400">
                   <span className="capitalize">{p.local}</span>
-                  {p.origen === 'reventa' ? (
-                    <span className="ml-1 rounded bg-sky-100 px-1 text-sky-700">reventa</span>
-                  ) : (
-                    <span className="ml-1 rounded bg-green-100 px-1 capitalize text-green-700">
-                      {p.tipo}
-                    </span>
-                  )}
+                  <span className="ml-1 rounded bg-green-100 px-1 capitalize text-green-700">
+                    {p.tipo}
+                  </span>
                   {p.costo == null && (
                     <span className="ml-1 rounded bg-amber-100 px-1 text-amber-700">
                       sin costo
@@ -511,7 +411,6 @@ export function MenuTab() {
                     placeholder={c === 'vianda' && pp.plato != null ? pp.plato : undefined}
                     onGuardar={(precio) =>
                       setPrecio.mutate({
-                        origen: p.origen,
                         refId: p.refId,
                         canal: c,
                         precio,

@@ -8,7 +8,6 @@ import { useComisionMpConfig } from './useComisionMpConfig';
 import { usePackagingProducto } from './usePackagingProducto';
 import { useAdicionalesProducto } from './useAdicionalesProducto';
 import { useManoObra } from './useManoObra';
-import { calcularCostoBebidaReventa } from '@/modules/productos/lib/bebidaReventaCosto';
 
 export type Canal = 'plato' | 'vianda' | 'congelado';
 
@@ -97,28 +96,6 @@ export function useCostoCompleto(
     },
   });
 
-  // Reventa: si el producto no tiene receta pero sí un insumo vinculado, su
-  // costo base = costo_unitario de ese insumo (bebidas de lata, agua, vino).
-  const insumoReventaId = productoQ.data?.insumo_reventa_id ?? null;
-  const insumoReventaQ = useQuery({
-    queryKey: ['costo-insumo-reventa', insumoReventaId],
-    enabled: !!insumoReventaId,
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('productos')
-        .select('id, nombre, costo_unitario, contenido_ml')
-        .eq('id', insumoReventaId)
-        .maybeSingle();
-      if (error) throw error;
-      return data as {
-        id: string;
-        nombre: string;
-        costo_unitario: number;
-        contenido_ml: number | null;
-      } | null;
-    },
-  });
-
   const { costos: costosRecetas, isLoading: costosLoading } = useCostosRecetas();
   const { config: configGen } = useConfigCosteo();
   const { getConfig } = useProductosCosteoConfig();
@@ -182,39 +159,8 @@ export function useCostoCompleto(
         warnings.push('No se encontró costeo de la receta vinculada');
       }
       capaBaseDetalle = 'Aplica merma_pct de insumos y costos de subrecetas';
-    } else if (producto.insumo_reventa_id) {
-      const ins = insumoReventaQ.data;
-      // Si la bebida se vende en formato copa/shot (ml_por_venta > 0) se
-      // prorratea sobre contenido_ml del insumo. Si no, costo = botella entera.
-      const costoProrr = calcularCostoBebidaReventa(
-        { ml_por_venta: producto.ml_por_venta },
-        ins ? { costo_unitario: ins.costo_unitario, contenido_ml: ins.contenido_ml } : null,
-      );
-      costoReceta = costoProrr ?? 0;
-      capaBaseLabel = 'Costo de compra (reventa)';
-      if (ins) {
-        const mlVenta = producto.ml_por_venta ?? null;
-        if (mlVenta && mlVenta > 0) {
-          if (ins.contenido_ml && Number(ins.contenido_ml) > 0) {
-            capaBaseDetalle = `Insumo: ${ins.nombre} — ${mlVenta} ml de ${Number(ins.contenido_ml)} ml`;
-          } else {
-            capaBaseDetalle = `Insumo: ${ins.nombre}`;
-            warnings.push(
-              `Vende por ml (${mlVenta}) pero el insumo no tiene "Contenido (ml)" cargado — no se puede prorratear`,
-            );
-          }
-        } else {
-          capaBaseDetalle = `Insumo: ${ins.nombre}`;
-        }
-        if (!ins.costo_unitario || ins.costo_unitario <= 0) {
-          warnings.push('El insumo de reventa no tiene costo_unitario cargado (cargalo en Insumos)');
-        }
-      } else {
-        capaBaseDetalle = 'Insumo de reventa no encontrado';
-        warnings.push('No se encontró el insumo de reventa vinculado');
-      }
     } else {
-      warnings.push('Producto sin receta ni insumo de reventa (costo base = $0)');
+      warnings.push('Producto sin receta vinculada (costo base = $0)');
     }
     capas.push({
       id: 'receta',
@@ -448,7 +394,6 @@ export function useCostoCompleto(
         costosLoading ||
         packagingQ.isLoading ||
         adicionalesQ.isLoading ||
-        insumoReventaQ.isLoading ||
         manoObra.isLoading,
       warnings,
     };
@@ -456,8 +401,6 @@ export function useCostoCompleto(
     productoId,
     productoQ.data,
     productoQ.isLoading,
-    insumoReventaQ.data,
-    insumoReventaQ.isLoading,
     costosRecetas,
     costosLoading,
     configGen,
