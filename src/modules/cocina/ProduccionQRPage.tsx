@@ -116,6 +116,8 @@ interface LoteRelleno {
   peso_total_kg: number;
   local: string;
   fecha: string;
+  created_at?: string | null;
+  responsable?: string | null;
   excluido_analisis?: boolean;
   receta?: {
     nombre: string;
@@ -133,6 +135,8 @@ interface LoteMasa {
   kg_sobrante: number | null;
   destino_sobrante: string | null;
   fecha: string;
+  created_at?: string | null;
+  responsable?: string | null;
   excluido_analisis?: boolean;
   receta?: { nombre: string } | null;
   consumido_kg?: number;
@@ -198,6 +202,53 @@ function fechaHaceDias(dias: number) {
 function formatDDMM(fecha: string) {
   const [, m, d] = fecha.split('-');
   return `${d}${m}`;
+}
+
+// Hora HH:mm a partir de un timestamp ISO. Vacío si no hay dato.
+function horaDe(ts?: string | null): string {
+  if (!ts) return '';
+  return new Date(ts).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+}
+
+// ── Historial "Ya cargado hoy" ───────────────────────────────────────────────
+// Panel que va arriba de cada formulario para que el cocinero vea de un vistazo
+// qué cargó hoy de ese tipo (ej: si ya cargó el peso del relleno de vacío) y no
+// lo cargue dos veces ni se olvide.
+
+interface CargaHoyItem {
+  nombre: string;
+  detalle: string; // cantidad + unidad ya formateada, ej "12,5 kg" / "40 bandejas"
+  hora?: string;
+  responsable?: string | null;
+}
+
+function CargasHoyResumen({ items }: { items: CargaHoyItem[] }) {
+  if (items.length === 0) {
+    return (
+      <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-[11px] text-gray-500">
+        Todavía no cargaste nada de esto hoy.
+      </div>
+    );
+  }
+  return (
+    <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
+      <p className="text-[11px] font-semibold text-emerald-800">
+        ✓ Ya cargaste hoy ({items.length})
+      </p>
+      <ul className="mt-1 space-y-0.5">
+        {items.map((it, i) => (
+          <li key={i} className="flex items-baseline justify-between gap-2 text-[11px] text-emerald-900">
+            <span className="font-medium">{it.nombre}</span>
+            <span className="whitespace-nowrap text-emerald-700">
+              {it.detalle}
+              {it.hora ? ` · ${it.hora}` : ''}
+              {it.responsable ? ` · ${it.responsable}` : ''}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
 }
 
 // ── Layout base ────────────────────────────────────────────────────────────────
@@ -304,7 +355,7 @@ export function ProduccionQRPage() {
       const { data, error } = await supabase
         .from('cocina_lotes_relleno')
         .select(
-          'id, receta_id, peso_total_kg, fecha, local, excluido_analisis, receta:cocina_recetas(nombre, g_semolin_por_kg, g_huevo_por_kg)',
+          'id, receta_id, peso_total_kg, fecha, local, created_at, responsable, excluido_analisis, receta:cocina_recetas(nombre, g_semolin_por_kg, g_huevo_por_kg)',
         )
         .gte('fecha', desdeLotes)
         .eq('local', local)
@@ -320,7 +371,7 @@ export function ProduccionQRPage() {
       const { data, error } = await supabase
         .from('cocina_lotes_masa')
         .select(
-          'id, receta_id, kg_producidos, kg_sobrante, destino_sobrante, fecha, excluido_analisis, receta:cocina_recetas(nombre)',
+          'id, receta_id, kg_producidos, kg_sobrante, destino_sobrante, fecha, created_at, responsable, excluido_analisis, receta:cocina_recetas(nombre)',
         )
         .gte('fecha', desdeLotes)
         .eq('local', local)
@@ -500,6 +551,74 @@ export function ProduccionQRPage() {
 
   const frescosPendientes = lotesFrescos?.length ?? 0;
 
+  // Pastas armadas HOY (para el historial "ya cargaste hoy" del form Armar Pasta).
+  const { data: lotesPastaHoy } = useQuery({
+    queryKey: ['cocina-lotes-pasta-hoy-qr', local, hoy()],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('cocina_lotes_pasta')
+        .select(
+          'id, codigo_lote, porciones, cantidad_cajones, created_at, responsable, producto:cocina_productos(nombre)',
+        )
+        .eq('local', local)
+        .eq('fecha', hoy())
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      return (data ?? []) as unknown as {
+        id: string;
+        codigo_lote: string;
+        porciones: number | null;
+        cantidad_cajones: number | null;
+        created_at: string | null;
+        responsable: string | null;
+        producto?: { nombre: string } | null;
+      }[];
+    },
+  });
+
+  // Listas "ya cargado hoy" por tipo, para mostrar arriba de cada formulario.
+  const cargasHoyRelleno = useMemo<CargaHoyItem[]>(
+    () =>
+      (lotesRellenoHoy ?? [])
+        .filter((l) => l.fecha === hoy())
+        .map((l) => ({
+          nombre: l.receta?.nombre ?? 'Relleno',
+          detalle: `${formatNum(l.peso_total_kg)} kg`,
+          hora: horaDe(l.created_at),
+          responsable: l.responsable,
+        })),
+    [lotesRellenoHoy],
+  );
+
+  const cargasHoyMasa = useMemo<CargaHoyItem[]>(
+    () =>
+      (lotesMasaHoy ?? [])
+        .filter((l) => l.fecha === hoy())
+        .map((l) => ({
+          nombre: l.receta?.nombre ?? 'Masa',
+          detalle: `${formatNum(l.kg_producidos)} kg`,
+          hora: horaDe(l.created_at),
+          responsable: l.responsable,
+        })),
+    [lotesMasaHoy],
+  );
+
+  const cargasHoyPasta = useMemo<CargaHoyItem[]>(
+    () =>
+      (lotesPastaHoy ?? []).map((l) => ({
+        nombre: l.producto?.nombre ?? 'Pasta',
+        detalle:
+          l.cantidad_cajones != null
+            ? `${formatNum(l.cantidad_cajones)} bandejas`
+            : l.porciones != null
+              ? `${formatNum(l.porciones)} porciones`
+              : l.codigo_lote,
+        hora: horaDe(l.created_at),
+        responsable: l.responsable,
+      })),
+    [lotesPastaHoy],
+  );
+
   // Filtro estricto por local: solo muestra lo asignado explícitamente a este local.
   // Inlineamos el chequeo en cada useMemo para que no haya un closure intermedio
   // que oculte la dependencia real (local) del linter de hooks.
@@ -617,6 +736,7 @@ export function ProduccionQRPage() {
           local={local}
           recetas={recetasRelleno}
           recetaIdsPlan={planPorTipo.relleno}
+          cargasHoy={cargasHoyRelleno}
           onGuardado={(msg) => onGuardado(msg)}
           onVolver={() => setVista('inicio')}
         />
@@ -629,6 +749,7 @@ export function ProduccionQRPage() {
           lotesRelleno={rellenosDisponibles}
           lotesMasa={masasDisponibles.filter((m) => m.kg_sobrante === null)}
           pastaRecetas={pastaRecetas ?? []}
+          cargasHoy={cargasHoyPasta}
           onGuardado={(msg) => onGuardado(msg)}
           onVolver={() => setVista('inicio')}
         />
@@ -648,6 +769,7 @@ export function ProduccionQRPage() {
         <FormMasa
           local={local}
           recetas={recetasMasa}
+          cargasHoy={cargasHoyMasa}
           onGuardado={(msg) => onGuardado(msg)}
           onVolver={() => setVista('inicio')}
         />
@@ -928,12 +1050,14 @@ function FormRelleno({
   local,
   recetas,
   recetaIdsPlan,
+  cargasHoy = [],
   onGuardado,
   onVolver,
 }: {
   local: string;
   recetas: Receta[];
   recetaIdsPlan?: Map<string, number>;
+  cargasHoy?: CargaHoyItem[];
   onGuardado: (msg: string) => void;
   onVolver: () => void;
 }) {
@@ -1042,6 +1166,8 @@ function FormRelleno({
           Volver
         </button>
       </div>
+
+      <CargasHoyResumen items={cargasHoy} />
 
       <div className="space-y-3 rounded-lg border border-gray-200 bg-white p-4">
         <ResponsableSelect
@@ -1164,6 +1290,7 @@ function FormPasta({
   lotesRelleno,
   lotesMasa,
   pastaRecetas,
+  cargasHoy = [],
   onGuardado,
   onVolver,
 }: {
@@ -1176,6 +1303,7 @@ function FormPasta({
     receta_id: string;
     receta: { tipo: string; rol: string | null } | { tipo: string; rol: string | null }[] | null;
   }[];
+  cargasHoy?: CargaHoyItem[];
   onGuardado: (msg: string) => void;
   onVolver: () => void;
 }) {
@@ -1460,6 +1588,8 @@ function FormPasta({
           Volver
         </button>
       </div>
+
+      <CargasHoyResumen items={cargasHoy} />
 
       <div className="rounded border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">
         {esPastaSinRelleno
@@ -2200,11 +2330,13 @@ function FormPorcionar({
 function FormMasa({
   local,
   recetas,
+  cargasHoy = [],
   onGuardado,
   onVolver,
 }: {
   local: string;
   recetas: Receta[];
+  cargasHoy?: CargaHoyItem[];
   onGuardado: (msg: string) => void;
   onVolver: () => void;
 }) {
@@ -2285,6 +2417,8 @@ function FormMasa({
           Volver
         </button>
       </div>
+
+      <CargasHoyResumen items={cargasHoy} />
 
       <div className="space-y-3 rounded-lg border border-gray-200 bg-white p-4">
         <ResponsableSelect
@@ -2634,29 +2768,45 @@ function FormGenerico({
   const esAditivo =
     categoria === 'postre' || categoria === 'pasteleria' || categoria === 'salsa';
 
-  // Para salsas: avisar al cocinero si ya cargó esa receta hoy, así sabe que la
-  // próxima carga se suma al total (no reemplaza).
+  // Lo cargado hoy de esta categoría: sirve para (a) el historial "ya cargaste
+  // hoy" arriba del form, y (b) avisar en salsas que la próxima carga se suma al
+  // total (no reemplaza).
   const { data: cargasHoy } = useQuery({
     queryKey: ['cocina-lotes-produccion-qr', local, categoria, hoy()],
     queryFn: async () => {
       const { data, error: qerr } = await supabase
         .from('cocina_lotes_produccion')
-        .select('receta_id, cantidad_producida, unidad, created_at')
+        .select('receta_id, nombre_libre, cantidad_producida, unidad, responsable, created_at')
         .eq('fecha', hoy())
         .eq('local', local)
         .eq('categoria', categoria)
-        .not('receta_id', 'is', null)
-        .order('created_at', { ascending: true });
+        .order('created_at', { ascending: false });
       if (qerr) throw qerr;
       return (data ?? []) as {
-        receta_id: string;
+        receta_id: string | null;
+        nombre_libre: string | null;
         cantidad_producida: number;
         unidad: string;
+        responsable: string | null;
         created_at: string;
       }[];
     },
-    enabled: categoria === 'salsa',
   });
+
+  // Items para el panel "ya cargaste hoy" (cronológico, más reciente arriba).
+  const cargasHoyItems = useMemo<CargaHoyItem[]>(
+    () =>
+      (cargasHoy ?? []).map((c) => ({
+        nombre:
+          (c.receta_id ? recetas.find((r) => r.id === c.receta_id)?.nombre : null) ??
+          c.nombre_libre ??
+          CATEGORIA_LABEL[categoria],
+        detalle: `${formatNum(Number(c.cantidad_producida))} ${c.unidad}`,
+        hora: horaDe(c.created_at),
+        responsable: c.responsable,
+      })),
+    [cargasHoy, recetas, categoria],
+  );
 
   const cargasPorReceta = useMemo(() => {
     const m = new Map<
@@ -2802,6 +2952,8 @@ function FormGenerico({
           Volver
         </button>
       </div>
+
+      <CargasHoyResumen items={cargasHoyItems} />
 
       <div className="space-y-3 rounded-lg border border-gray-200 bg-white p-4">
         <ResponsableSelect
