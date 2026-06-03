@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { mensajeErrorAmigable } from '@/lib/erroresSupabase';
+import { invalidarStockCocina } from './lib/invalidarStock';
 import { cn } from '@/lib/utils';
 import { LocalSelector } from '@/components/ui/LocalSelector';
 import { useAuth } from '@/lib/auth';
@@ -1329,8 +1330,7 @@ export function DashboardTab() {
       if (errIns) throw errIns;
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['cocina_stock_salsas_postres'] });
-      qc.invalidateQueries({ queryKey: ['stock-produccion-lotes'] });
+      invalidarStockCocina(qc);
     },
     onError: (e: Error) => window.alert(mensajeErrorAmigable(e, 'No se pudo guardar el stock')),
   });

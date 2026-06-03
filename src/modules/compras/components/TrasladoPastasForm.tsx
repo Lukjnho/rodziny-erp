@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
+import { invalidarStockCocina } from '@/modules/cocina/lib/invalidarStock';
 
 interface PastaRow {
   id: string;
@@ -181,13 +182,9 @@ export function TrasladoPastasForm({
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['qr-traslado-traspasos'] });
       qc.invalidateQueries({ queryKey: ['compras-pastas-traspasos'] });
-      qc.invalidateQueries({ queryKey: ['cocina_stock_pastas'] });
       qc.invalidateQueries({ queryKey: ['cocina-traspasos-hoy-qr'] });
-      // Tab Cocina > Stock lee con estas keys; sin invalidarlas no refresca
-      // hasta el próximo focus de ventana (ver feedback con Lucas 2026-05-26).
-      qc.invalidateQueries({ queryKey: ['cocina-stock-traspasos'] });
-      qc.invalidateQueries({ queryKey: ['cocina-stock-traspasos-hoy'] });
-      qc.invalidateQueries({ queryKey: ['cocina-stock-lotes'] });
+      // Tab Cocina > Stock, Dashboard, Resumen, etc. — todo el stock derivado.
+      invalidarStockCocina(qc);
       if (onGuardado && seleccionado) {
         onGuardado(`Traslado registrado · ${porciones} porc. de ${seleccionado.nombre}`);
         return;

@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
 import { mensajeErrorAmigable } from '@/lib/erroresSupabase';
+import { invalidarStockCocina } from './lib/invalidarStock';
 import { normalizarDecimal, parseDecimal, equivalenteKgGramos } from '@/lib/numero';
 import { PRODUCTOS_COCINA, normNombre } from './DashboardTab';
 
@@ -396,11 +397,8 @@ function CierrePastas({ local }: { local: Local }) {
       qc.invalidateQueries({ queryKey: ['mostrador-cierre-actual'] });
       qc.invalidateQueries({ queryKey: ['cocina-cierre-dia'] });
       qc.invalidateQueries({ queryKey: ['cocina-cierre-faltantes'] });
-      // El cierre define el stock inicial del próximo turno → refrescar stock en
-      // tab Stock (cocina-cierres-pastas) y Dashboard (dashboard-cierres-pastas).
-      qc.invalidateQueries({ queryKey: ['cocina-cierres-pastas'] });
-      qc.invalidateQueries({ queryKey: ['dashboard-cierres-pastas'] });
-      qc.invalidateQueries({ queryKey: ['cocina_stock_pastas'] });
+      // El cierre define el stock inicial del próximo turno → refrescar todo el stock.
+      invalidarStockCocina(qc);
       setTimeout(() => setMensaje(null), 2500);
     },
     onError: (e) => {
@@ -758,11 +756,8 @@ function CierreSimple({
       qc.invalidateQueries({ queryKey: ['mostrador-simple-cierre'] });
       qc.invalidateQueries({ queryKey: ['cocina-cierre-dia'] });
       qc.invalidateQueries({ queryKey: ['cocina-cierre-faltantes'] });
-      // El cierre también define el stock actual del tab Stock (CatalogoStock
-      // lee de cocina_lotes_produccion con queryKey 'cocina-catalogo-lotes').
-      qc.invalidateQueries({ queryKey: ['cocina-catalogo-lotes'] });
-      qc.invalidateQueries({ queryKey: ['stock-produccion-lotes'] });
-      qc.invalidateQueries({ queryKey: ['cocina_stock_salsas_postres'] });
+      // El cierre también define el stock actual del tab Stock y catálogo.
+      invalidarStockCocina(qc);
       setTimeout(() => setMensaje(null), 2500);
     },
     onError: (e) => {

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { mensajeErrorAmigable } from '@/lib/erroresSupabase';
+import { invalidarStockCocina } from '../lib/invalidarStock';
 
 type Tabla =
   | 'cocina_lotes_relleno'
@@ -148,8 +149,7 @@ export function EditarLoteModal({ id, tabla, nombre, onClose }: Props) {
       qc.invalidateQueries({ queryKey: ['cocina-lotes-masa'] });
       qc.invalidateQueries({ queryKey: ['cocina-lotes-produccion'] });
       qc.invalidateQueries({ queryKey: ['cocina-lotes-pasta'] });
-      qc.invalidateQueries({ queryKey: ['cocina_stock_pastas'] });
-      qc.invalidateQueries({ queryKey: ['cocina-stock-produccion'] });
+      invalidarStockCocina(qc);
       onClose();
     },
     onError: (e) => setError(mensajeErrorAmigable(e, 'No se pudo guardar el lote')),

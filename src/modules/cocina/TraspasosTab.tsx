@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { mensajeErrorAmigable } from '@/lib/erroresSupabase';
+import { invalidarStockCocina } from './lib/invalidarStock';
 import { KPICard } from '@/components/ui/KPICard';
 import { useAuth } from '@/lib/auth';
 
@@ -172,10 +173,7 @@ export function TraspasosTab() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['cocina-traspasos', fecha] });
-      qc.invalidateQueries({ queryKey: ['cocina-stock'] });
-      qc.invalidateQueries({ queryKey: ['cocina-stock-traspasos'] });
-      qc.invalidateQueries({ queryKey: ['cocina-stock-traspasos-hoy'] });
-      qc.invalidateQueries({ queryKey: ['cocina_stock_pastas'] });
+      invalidarStockCocina(qc);
     },
   });
 
@@ -186,10 +184,7 @@ export function TraspasosTab() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['cocina-merma', fecha] });
-      qc.invalidateQueries({ queryKey: ['cocina-stock'] });
-      qc.invalidateQueries({ queryKey: ['cocina-stock-merma'] });
-      qc.invalidateQueries({ queryKey: ['cocina-stock-merma-hoy'] });
-      qc.invalidateQueries({ queryKey: ['cocina_stock_pastas'] });
+      invalidarStockCocina(qc);
     },
   });
 
@@ -432,10 +427,7 @@ export function TraspasosTab() {
           onClose={() => setModalTraspaso(false)}
           onSaved={() => {
             qc.invalidateQueries({ queryKey: ['cocina-traspasos', fecha] });
-            qc.invalidateQueries({ queryKey: ['cocina-stock'] });
-            qc.invalidateQueries({ queryKey: ['cocina-stock-lotes', 'camara'] });
-            qc.invalidateQueries({ queryKey: ['cocina-stock-traspasos'] });
-            qc.invalidateQueries({ queryKey: ['cocina-stock-traspasos-hoy'] });
+            invalidarStockCocina(qc);
             setModalTraspaso(false);
           }}
         />
@@ -448,9 +440,7 @@ export function TraspasosTab() {
           onClose={() => setModalMerma(false)}
           onSaved={() => {
             qc.invalidateQueries({ queryKey: ['cocina-merma', fecha] });
-            qc.invalidateQueries({ queryKey: ['cocina-stock'] });
-            qc.invalidateQueries({ queryKey: ['cocina-stock-merma'] });
-            qc.invalidateQueries({ queryKey: ['cocina-stock-merma-hoy'] });
+            invalidarStockCocina(qc);
             setModalMerma(false);
           }}
         />

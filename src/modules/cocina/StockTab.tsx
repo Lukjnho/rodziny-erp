@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { mensajeErrorAmigable } from '@/lib/erroresSupabase';
+import { invalidarStockCocina } from './lib/invalidarStock';
 import { KPICard } from '@/components/ui/KPICard';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
@@ -276,8 +277,10 @@ export function StockTab() {
       if (error) throw error;
     },
     onSuccess: () => {
+      // Refresca las 3 keys del catálogo (stock/prod/traspasos) por prefijo +
+      // el catálogo de salsas/postres que depende de controla_stock.
       qc.invalidateQueries({ queryKey: ['cocina-productos'] });
-      qc.invalidateQueries({ queryKey: ['cocina-catalogo-saavedra-lotes'] });
+      qc.invalidateQueries({ queryKey: ['cocina-catalogo-lotes'] });
     },
   });
   const [filtroLocal, setFiltroLocal] = useState<FiltroLocal>(
@@ -443,9 +446,7 @@ export function StockTab() {
       if (error) throw error;
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['cocina-ajustes-stock'] });
-      // El Dashboard usa la vista v_cocina_stock_pastas que ya incluye los ajustes
-      qc.invalidateQueries({ queryKey: ['cocina_stock_pastas'] });
+      invalidarStockCocina(qc);
     },
     onError: (e: Error) => window.alert(mensajeErrorAmigable(e, 'No se pudo guardar el ajuste')),
   });

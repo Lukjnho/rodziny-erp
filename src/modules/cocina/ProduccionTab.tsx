@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { mensajeErrorAmigable } from '@/lib/erroresSupabase';
+import { invalidarStockCocina } from './lib/invalidarStock';
 import { KPICard } from '@/components/ui/KPICard';
 import { PlanProduccionEditor } from './components/PlanProduccionEditor';
 import { PlanSemanal } from './components/PlanSemanal';
@@ -1068,7 +1069,7 @@ export function ProduccionTab() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['cocina-lotes-pasta', fecha] });
       qc.invalidateQueries({ queryKey: ['cocina-lotes-pasta-frescos'] });
-      qc.invalidateQueries({ queryKey: ['cocina-stock'] });
+      invalidarStockCocina(qc);
     },
     onError: onErrorEliminar,
   });
@@ -1078,7 +1079,10 @@ export function ProduccionTab() {
       const { error } = await supabase.from('cocina_lotes_produccion').delete().eq('id', id);
       if (error) throw error;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['cocina-lotes-produccion', fecha] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['cocina-lotes-produccion', fecha] });
+      invalidarStockCocina(qc);
+    },
     onError: onErrorEliminar,
   });
 
@@ -1468,7 +1472,7 @@ export function ProduccionTab() {
           onSaved={() => {
             qc.invalidateQueries({ queryKey: ['cocina-lotes-pasta', fecha] });
             qc.invalidateQueries({ queryKey: ['cocina-lotes-pasta-frescos'] });
-            qc.invalidateQueries({ queryKey: ['cocina-stock'] });
+            invalidarStockCocina(qc);
             setModalPorcionar(null);
           }}
         />

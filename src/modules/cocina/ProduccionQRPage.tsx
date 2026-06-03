@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabaseAnon as supabase } from '@/lib/supabaseAnon';
 import { cn } from '@/lib/utils';
 import { mensajeErrorAmigable } from '@/lib/erroresSupabase';
+import { invalidarStockCocina } from './lib/invalidarStock';
 import { IngredientesGrilla, type IngredienteReal } from './components/IngredientesGrilla';
 import { ResponsableSelect } from './components/ResponsableSelect';
 import {
@@ -714,9 +715,9 @@ export function ProduccionQRPage() {
     qc.invalidateQueries({ queryKey: ['cocina-lotes-produccion-qr'] });
     qc.invalidateQueries({ queryKey: ['cocina-lotes-pasta-frescos-qr'] });
     qc.invalidateQueries({ queryKey: ['cocina-pastas-consumo-qr'] });
-    // Invalidar el stock derivado del Dashboard del chef para que se actualice
-    // sin esperar al refetch periódico cuando QR y Dashboard están en la misma pestaña.
-    qc.invalidateQueries({ queryKey: ['cocina_stock_pastas'] });
+    // Refrescar todo el stock derivado (StockTab, Dashboard, Resumen, catálogo)
+    // para que cualquier carga del QR se vea al instante en las pantallas abiertas.
+    invalidarStockCocina(qc);
   }
 
   return (
