@@ -186,16 +186,6 @@ interface LoteProduccion {
 
 type TipoLote = 'relleno' | 'masa' | 'salsa' | 'postre' | 'pasteleria' | 'panaderia' | 'prueba';
 
-const TIPO_LOTE_ORDEN: TipoLote[] = [
-  'relleno',
-  'masa',
-  'salsa',
-  'postre',
-  'pasteleria',
-  'panaderia',
-  'prueba',
-];
-
 const TIPO_LOTE_LABEL: Record<TipoLote, string> = {
   relleno: 'Rellenos',
   masa: 'Masas',
@@ -215,21 +205,6 @@ const TIPO_LOTE_COLOR: Record<TipoLote, string> = {
   panaderia: 'bg-yellow-100 text-yellow-700',
   prueba: 'bg-purple-100 text-purple-700',
 };
-
-interface LoteUnificado {
-  id: string;
-  tipo: TipoLote;
-  tabla: 'cocina_lotes_relleno' | 'cocina_lotes_masa' | 'cocina_lotes_produccion';
-  nombre: string;
-  cantidadStr: string;
-  detalleExtra: string | null;
-  local: string;
-  responsable: string | null;
-  hora: string;
-  notas: string | null;
-  ingredientes: IngredienteRealRow[] | null;
-  masaRow?: LoteMasa;
-}
 
 // ── Tipos para vista semanal ───────────────────────────────────────────────────
 
@@ -287,7 +262,9 @@ type FiltroLocal = 'todos' | 'vedia' | 'saavedra';
 type VistaLotes = 'semana' | 'mes';
 
 function matchLocal(itemLocal: string | null, filtro: string): boolean {
-  if (filtro === 'todos' || !itemLocal) return true;
+  // Filtro local estricto: un lote solo cuenta en su local. Los de local nulo
+  // (datos viejos) aparecen únicamente bajo "Todos", no se duplican en ambos.
+  if (filtro === 'todos') return true;
   return itemLocal === filtro;
 }
 
@@ -362,7 +339,6 @@ export function ProduccionTab() {
   const [filtroPastaEstado, setFiltroPastaEstado] = useState<'todos' | 'fresco' | 'camara'>(
     'todos',
   );
-  const [filtroTipoLote, setFiltroTipoLote] = useState<'todos' | TipoLote>('todos');
   const [filtroTipoSemanal, setFiltroTipoSemanal] = useState<'todos' | TipoLoteSemanal>('todos');
   const [vistaLotes, setVistaLotes] = useState<VistaLotes>(() => {
     if (typeof window === 'undefined') return 'semana';
@@ -426,33 +402,7 @@ export function ProduccionTab() {
     },
   });
 
-  // Lotes del día
-  const { data: lotesRelleno, isLoading: cargandoR } = useQuery({
-    queryKey: ['cocina-lotes-relleno', fecha],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('cocina_lotes_relleno')
-        .select('*, receta:cocina_recetas(nombre)')
-        .eq('fecha', fecha)
-        .order('created_at', { ascending: false });
-      if (error) throw error;
-      return data as LoteRelleno[];
-    },
-  });
-
-  const { data: lotesMasa, isLoading: cargandoM } = useQuery({
-    queryKey: ['cocina-lotes-masa', fecha],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('cocina_lotes_masa')
-        .select('*, receta:cocina_recetas(nombre)')
-        .eq('fecha', fecha)
-        .order('created_at', { ascending: false });
-      if (error) throw error;
-      return data as unknown as LoteMasa[];
-    },
-  });
-
+  // Lotes de pasta del día (para "Pastas del día" y el consumo de masa)
   const { data: lotesPasta, isLoading: cargandoP } = useQuery({
     queryKey: ['cocina-lotes-pasta', fecha],
     queryFn: async () => {
@@ -481,19 +431,6 @@ export function ProduccionTab() {
         .order('fecha', { ascending: true });
       if (error) throw error;
       return data as LotePasta[];
-    },
-  });
-
-  const { data: lotesProduccion, isLoading: cargandoProd } = useQuery({
-    queryKey: ['cocina-lotes-produccion', fecha],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('cocina_lotes_produccion')
-        .select('*, receta:cocina_recetas(nombre)')
-        .eq('fecha', fecha)
-        .order('created_at', { ascending: false });
-      if (error) throw error;
-      return data as unknown as LoteProduccion[];
     },
   });
 
@@ -614,120 +551,6 @@ export function ProduccionTab() {
     }),
     [pastasFiltradas],
   );
-
-  // Vista unificada de lotes (relleno + masa + producción adicional). La pasta queda
-  // aparte porque tiene ciclo propio (armado→porcionado→cámara). Mantiene datos
-  // específicos por tipo en `detalleExtra` y deja la masa pendiente de cerrar
-  // accesible para abrir el modal correspondiente.
-  const lotesUnificados = useMemo<LoteUnificado[]>(() => {
-    const fmtHora = (iso: string | null | undefined) => {
-      if (!iso) return '—';
-      const d = new Date(iso);
-      return d.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
-    };
-    const fmtUnidad = (u: string | null | undefined) =>
-      u === 'l' || u === 'lt' ? 'L' : u === 'unidad' || u === 'unid' ? 'unid' : 'kg';
-
-    const out: LoteUnificado[] = [];
-
-    for (const l of lotesRelleno ?? []) {
-      const detalle = l.cantidad_recetas > 1 ? `${l.cantidad_recetas} recetas` : null;
-      out.push({
-        id: l.id,
-        tipo: 'relleno',
-        tabla: 'cocina_lotes_relleno',
-        nombre: l.receta?.nombre ?? '—',
-        cantidadStr: `${fmtCantidad(l.peso_total_kg)} kg`,
-        detalleExtra: detalle,
-        local: l.local,
-        responsable: l.responsable,
-        hora: fmtHora(l.created_at),
-        notas: l.notas,
-        ingredientes: l.ingredientes_reales,
-      });
-    }
-
-    for (const l of lotesMasa ?? []) {
-      const usado = consumoPorMasaAdm.get(l.id) ?? 0;
-      const disp = Math.max(0, +(l.kg_producidos - usado).toFixed(3));
-      const partes: string[] = [];
-      if (l.kg_sobrante == null) {
-        partes.push(`${fmtCantidad(disp)} kg disp · ${fmtCantidad(usado)} kg usados`);
-      } else {
-        const destino =
-          l.destino_sobrante === 'fideos'
-            ? 'fideos (reutilizar)'
-            : l.destino_sobrante === 'merma'
-              ? 'merma (descartar)'
-              : 'próxima masa';
-        partes.push(`Sobrante ${fmtCantidad(l.kg_sobrante)} kg → ${destino}`);
-      }
-      out.push({
-        id: l.id,
-        tipo: 'masa',
-        tabla: 'cocina_lotes_masa',
-        nombre: l.receta?.nombre ?? '—',
-        cantidadStr: `${fmtCantidad(l.kg_producidos)} kg`,
-        detalleExtra: partes.join(' · '),
-        local: l.local,
-        responsable: l.responsable,
-        hora: fmtHora(l.created_at),
-        notas: l.notas,
-        ingredientes: l.ingredientes_reales,
-        masaRow: l,
-      });
-    }
-
-    for (const l of lotesProduccion ?? []) {
-      const u = fmtUnidad(l.unidad);
-      const esEntero = l.unidad === 'unid';
-      const merma =
-        l.merma_cantidad && l.merma_cantidad > 0
-          ? `Merma ${fmtCantidad(l.merma_cantidad, esEntero ? 0 : 2)} ${u}${l.merma_motivo ? ` · ${l.merma_motivo}` : ''}`
-          : null;
-      out.push({
-        id: l.id,
-        tipo: l.categoria,
-        tabla: 'cocina_lotes_produccion',
-        nombre: l.receta?.nombre ?? l.nombre_libre ?? '—',
-        cantidadStr: `${fmtCantidad(l.cantidad_producida, esEntero ? 0 : 2)} ${u}`,
-        detalleExtra: merma,
-        local: l.local,
-        responsable: l.responsable,
-        hora: fmtHora(l.created_at),
-        notas: l.notas,
-        ingredientes: l.ingredientes_reales,
-      });
-    }
-
-    out.sort((a, b) => (a.hora < b.hora ? 1 : a.hora > b.hora ? -1 : 0));
-    return out;
-  }, [lotesRelleno, lotesMasa, lotesProduccion, consumoPorMasaAdm]);
-
-  const lotesUnificadosFiltrados = useMemo(() => {
-    return lotesUnificados.filter((l) => {
-      if (filtroLocal !== 'todos' && l.local !== filtroLocal) return false;
-      if (filtroTipoLote !== 'todos' && l.tipo !== filtroTipoLote) return false;
-      return true;
-    });
-  }, [lotesUnificados, filtroLocal, filtroTipoLote]);
-
-  const conteoPorTipo = useMemo(() => {
-    const base = lotesUnificados.filter(
-      (l) => filtroLocal === 'todos' || l.local === filtroLocal,
-    );
-    const m: Record<TipoLote, number> = {
-      relleno: 0,
-      masa: 0,
-      salsa: 0,
-      postre: 0,
-      pasteleria: 0,
-      panaderia: 0,
-      prueba: 0,
-    };
-    for (const l of base) m[l.tipo]++;
-    return { total: base.length, porTipo: m };
-  }, [lotesUnificados, filtroLocal]);
 
   // ── Agrupamiento semanal: una fila por (tipo, nombre) ───────────────────────
   // Suma kg/recetas/lotes desde lotes_relleno/masa/produccion/pasta de la semana.
@@ -1736,181 +1559,6 @@ function ModalCerrarMasa({
   );
 }
 
-// ── Sección de Lotes registrados ──────────────────────────────────────────────
-// Agrupada por tipo, solo muestra secciones con lotes (sin cards de 0). Filtro
-// por pills compactas en lugar de KPI grid. Cada fila tiene jerarquía visual
-// (receta+cantidad grandes, responsable/detalle gris chico) y muestra
-// tiempo relativo si la fecha activa es hoy.
-
-interface LotesRegistradosSectionProps {
-  lotes: LoteUnificado[];
-  conteo: { total: number; porTipo: Record<TipoLote, number> };
-  fechaLabel: string;
-  fecha: string;
-  filtroLocal: FiltroLocal;
-  filtroTipoLote: 'todos' | TipoLote;
-  setFiltroTipoLote: (t: 'todos' | TipoLote) => void;
-  cargando: boolean;
-  onCerrarMasa: (m: LoteMasa) => void;
-  onEditar: (l: LoteUnificado) => void;
-  onEliminar: (l: LoteUnificado) => void;
-}
-
-function LotesRegistradosSection({
-  lotes,
-  conteo,
-  fechaLabel,
-  fecha,
-  filtroLocal,
-  filtroTipoLote,
-  setFiltroTipoLote,
-  cargando,
-  onCerrarMasa,
-  onEditar,
-  onEliminar,
-}: LotesRegistradosSectionProps) {
-  const tiposConDatos = TIPO_LOTE_ORDEN.filter((t) => conteo.porTipo[t] > 0);
-  const esHoy = fecha === hoy();
-
-  // Tiempo relativo solo para hoy (no rota para fechas pasadas).
-  function tiempoRelativo(hora: string): string | null {
-    if (!esHoy || hora === '—') return null;
-    const [h, m] = hora.split(':').map(Number);
-    const ahora = new Date();
-    const minutosLote = h * 60 + m;
-    const minutosAhora = ahora.getHours() * 60 + ahora.getMinutes();
-    const diff = minutosAhora - minutosLote;
-    if (diff < 1) return 'recién';
-    if (diff < 60) return `hace ${diff} min`;
-    const horas = Math.floor(diff / 60);
-    return `hace ${horas}h`;
-  }
-
-  const localLabel =
-    filtroLocal === 'todos' ? 'ambos locales' : filtroLocal === 'vedia' ? 'Vedia' : 'Saavedra';
-
-  return (
-    <div>
-      <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h3 className="text-base font-semibold text-gray-800">Lotes registrados</h3>
-          <p className="mt-0.5 text-xs text-gray-500">
-            <span className="capitalize">{fechaLabel}</span> · {localLabel} · {conteo.total}{' '}
-            {conteo.total === 1 ? 'lote' : 'lotes'}
-          </p>
-        </div>
-        {tiposConDatos.length > 0 && (
-          <div className="flex flex-wrap gap-1">
-            <PillBtn
-              active={filtroTipoLote === 'todos'}
-              onClick={() => setFiltroTipoLote('todos')}
-            >
-              Todos · {conteo.total}
-            </PillBtn>
-            {tiposConDatos.map((t) => (
-              <PillBtn
-                key={t}
-                active={filtroTipoLote === t}
-                onClick={() => setFiltroTipoLote(filtroTipoLote === t ? 'todos' : t)}
-              >
-                {TIPO_LOTE_LABEL[t]} · {conteo.porTipo[t]}
-              </PillBtn>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {lotes.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-gray-200 px-4 py-8 text-center text-sm text-gray-400">
-          {cargando ? 'Cargando...' : 'No hay lotes registrados este día'}
-        </div>
-      ) : (
-        <div className="space-y-4">
-          {tiposConDatos
-            .filter((t) => filtroTipoLote === 'todos' || filtroTipoLote === t)
-            .map((tipo) => {
-              const lotesDelTipo = lotes.filter((l) => l.tipo === tipo);
-              if (lotesDelTipo.length === 0) return null;
-              return (
-                <section key={tipo}>
-                  <h4
-                    className={cn(
-                      'mb-2 inline-flex items-center gap-2 rounded-md px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide',
-                      TIPO_LOTE_COLOR[tipo],
-                    )}
-                  >
-                    {TIPO_LOTE_LABEL[tipo]}
-                    <span className="font-normal opacity-70">· {lotesDelTipo.length}</span>
-                  </h4>
-                  <div className="divide-y divide-surface-border overflow-hidden rounded-lg border border-surface-border bg-white">
-                    {lotesDelTipo.map((l) => {
-                      const rel = tiempoRelativo(l.hora);
-                      const masaPendiente = l.tipo === 'masa' && l.masaRow?.kg_sobrante == null;
-                      return (
-                        <div
-                          key={`${l.tabla}-${l.id}`}
-                          className="flex flex-wrap items-start gap-3 px-4 py-3 hover:bg-gray-50"
-                        >
-                          <div className="min-w-[64px] tabular-nums">
-                            <p className="text-sm font-medium text-gray-700">{l.hora}</p>
-                            {rel && <p className="text-[10px] text-gray-400">{rel}</p>}
-                          </div>
-                          <div className="min-w-[200px] flex-1">
-                            <p className="text-sm font-semibold text-gray-900">
-                              {l.nombre}
-                              <span className="ml-2 font-medium tabular-nums text-gray-700">
-                                {l.cantidadStr}
-                              </span>
-                            </p>
-                            <p className="mt-0.5 text-[11px] text-gray-500">
-                              {l.responsable || 'Sin responsable'}
-                              {filtroLocal === 'todos' && (
-                                <>
-                                  {' · '}
-                                  <span className="capitalize">{l.local}</span>
-                                </>
-                              )}
-                              {l.detalleExtra && <> · {l.detalleExtra}</>}
-                            </p>
-                            {l.notas && (
-                              <p className="mt-0.5 text-[11px] italic text-gray-400">"{l.notas}"</p>
-                            )}
-                          </div>
-                          <div className="flex items-center gap-3 self-center">
-                            <IngredientesRealesBadge ingredientes={l.ingredientes} />
-                            {masaPendiente && l.masaRow && (
-                              <button
-                                onClick={() => onCerrarMasa(l.masaRow!)}
-                                className="text-xs font-medium text-blue-600 hover:text-blue-800"
-                              >
-                                Cerrar
-                              </button>
-                            )}
-                            <button
-                              onClick={() => onEditar(l)}
-                              className="text-xs text-rodziny-600 hover:text-rodziny-800"
-                            >
-                              Editar
-                            </button>
-                            <button
-                              onClick={() => onEliminar(l)}
-                              className="text-xs text-red-500 hover:text-red-700"
-                            >
-                              Eliminar
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </section>
-              );
-            })}
-        </div>
-      )}
-    </div>
-  );
-}
 
 // ── Vista semanal: agrupada por nombre de receta ──────────────────────────────
 
