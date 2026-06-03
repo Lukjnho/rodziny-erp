@@ -216,7 +216,7 @@ export function MenuTab() {
 
   const { costos } = useCostosRecetas();
   const { config: configGen } = useConfigCosteo();
-  const { getComision } = useComisionMpConfig();
+  const { data: comisiones, getComision } = useComisionMpConfig();
 
   // precios[`receta:${refId}`][canal] = precio
   const precios = useMemo(() => {
@@ -230,19 +230,37 @@ export function MenuTab() {
   }, [preciosReceta]);
 
   const ivaPct = configGen?.iva_pct ?? 0.21;
-  const comisionPct = getComision('qr');
+  // Comisión más alta configurada (criterio conservador, pedido de Lucas): se
+  // usa para los escenarios Lista y Convenio (que se pagan con tarjeta). El
+  // escenario Efectivo usa la comisión de 'efectivo' (0%).
+  const comisionMax = Math.max(0, ...(comisiones ?? []).map((c) => Number(c.pct)));
+  const comisionEfectivo = getComision('efectivo');
+  const descEfectivo = configGen?.descuento_efectivo_pct ?? 0.25;
+  const descConvenio = configGen?.descuento_convenio_pct ?? 0.15;
 
-  // Margen sobre precio (despeje idéntico a useCostoCompleto, medio QR por
-  // defecto). Costo = costo de receta; el desglose fino (packaging, servicio,
-  // mano de obra) vive en el tab Costeo.
-  const margenPctDe = (precio: number | null | undefined, costo: number | null): number | null => {
-    if (!precio || precio <= 0 || costo == null) return null;
-    const neto = precio / (1 + ivaPct);
-    const comision = neto * comisionPct;
-    const recibido = neto - comision;
+  // Margen real sobre el precio cobrado, contemplando: descuento del escenario,
+  // IVA y comisión bancaria. precioBruto = precio de lista (IVA incluido).
+  // margen = (recibido − costo) / recibido.
+  const margenEscenario = (
+    precioBruto: number | null | undefined,
+    costo: number | null,
+    descuentoPct: number,
+    comisionPct: number,
+  ): number | null => {
+    if (!precioBruto || precioBruto <= 0 || costo == null) return null;
+    const precioCobrado = precioBruto * (1 - descuentoPct);
+    const neto = precioCobrado / (1 + ivaPct);
+    const recibido = neto - neto * comisionPct;
     if (recibido <= 0) return null;
     return (recibido - costo) / recibido;
   };
+  // Atajos por escenario (no acumulables entre sí).
+  const margenLista = (p: number | null | undefined, c: number | null) =>
+    margenEscenario(p, c, 0, comisionMax);
+  const margenEfectivo = (p: number | null | undefined, c: number | null) =>
+    margenEscenario(p, c, descEfectivo, comisionEfectivo);
+  const margenConvenio = (p: number | null | undefined, c: number | null) =>
+    margenEscenario(p, c, descConvenio, comisionMax);
 
   const setPrecio = useMutation({
     mutationFn: async (v: { refId: string; canal: CanalPrecio; precio: number }) => {
@@ -324,11 +342,15 @@ export function MenuTab() {
   return (
     <div className="space-y-4">
       <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs text-blue-800">
-        Acá fijás <strong>precios de venta por canal</strong> de lo que se vende. El Menú{' '}
+        Acá fijás <strong>precios de venta</strong> de lo que se vende. El Menú{' '}
         <strong>proyecta automáticamente</strong> las recetas marcadas{' '}
-        <strong>Vendible</strong> en el tab <strong>Costeo</strong> (más las bebidas de
-        reventa) — el costo viene de Costeo, no se duplica. El plato = pasta + salsa (cada
-        uno con su precio). El margen es sobre el <strong>costo de receta</strong>.
+        <strong>Vendible</strong> en el tab <strong>Costeo</strong> — el costo viene de Costeo,
+        no se duplica. Las <strong>3 columnas de margen</strong> ya descuentan IVA y comisión
+        bancaria (la más alta): <strong>Lista</strong> = precio pleno;{' '}
+        <strong>Efvo −{Math.round(descEfectivo * 100)}%</strong> = pago en efectivo (sin
+        comisión); <strong>Conv −{Math.round(descConvenio * 100)}%</strong> = convenio con
+        empresas. No son acumulables. Los % se editan en{' '}
+        <strong>Configuración</strong>.
       </div>
 
       <div className="flex flex-wrap items-center gap-2 rounded-lg border border-gray-200 bg-white p-3">
@@ -364,7 +386,7 @@ export function MenuTab() {
         items={items}
         filtroLocal={filtroLocal}
         precios={precios}
-        margenPctDe={margenPctDe}
+        margenPctDe={margenLista}
       />
 
       {recetasVendiblesLocal === 0 && (
@@ -384,7 +406,6 @@ export function MenuTab() {
         const canales: CanalPrecio[] = ['plato'];
         const fila = (p: ItemMenu) => {
           const pp = precios.get(p.key) ?? {};
-          const margen = margenPctDe(pp.plato, p.costo);
           return (
             <tr key={p.key} className="hover:bg-rodziny-50/40">
               <td className="px-3 py-1.5">
@@ -420,7 +441,13 @@ export function MenuTab() {
                 </td>
               ))}
               <td className="px-3 py-1.5 text-right">
-                <MargenBadge pct={margen} />
+                <MargenBadge pct={margenLista(pp.plato, p.costo)} />
+              </td>
+              <td className="px-3 py-1.5 text-right">
+                <MargenBadge pct={margenEfectivo(pp.plato, p.costo)} />
+              </td>
+              <td className="px-3 py-1.5 text-right">
+                <MargenBadge pct={margenConvenio(pp.plato, p.costo)} />
               </td>
             </tr>
           );
@@ -455,7 +482,13 @@ export function MenuTab() {
                           Precio
                         </th>
                       ))}
-                      <th className="px-3 py-1.5 text-right font-medium">Margen</th>
+                      <th className="px-3 py-1.5 text-right font-medium">M. Lista</th>
+                      <th className="px-3 py-1.5 text-right font-medium">
+                        M. Efvo −{Math.round(descEfectivo * 100)}%
+                      </th>
+                      <th className="px-3 py-1.5 text-right font-medium">
+                        M. Conv −{Math.round(descConvenio * 100)}%
+                      </th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
@@ -465,7 +498,7 @@ export function MenuTab() {
                           {sub && (
                             <tr className="bg-gray-50/70">
                               <td
-                                colSpan={3 + canales.length}
+                                colSpan={5 + canales.length}
                                 className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-gray-500"
                               >
                                 {sub}{' '}

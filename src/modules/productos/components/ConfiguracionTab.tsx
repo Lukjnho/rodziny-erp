@@ -89,6 +89,16 @@ function SeccionGenerales() {
       hint: 'Colchón sobre el costo base (merma extra, variación de precios)',
     },
     { key: 'iva_pct', label: 'IVA', hint: 'Para despejar precio neto del precio final' },
+    {
+      key: 'descuento_efectivo_pct',
+      label: 'Descuento efectivo',
+      hint: 'Descuento por pago en efectivo. Columna "Efectivo" del Menú',
+    },
+    {
+      key: 'descuento_convenio_pct',
+      label: 'Tope convenio',
+      hint: 'Descuento máximo por convenio con empresas. Columna "Convenio" del Menú',
+    },
   ];
 
   function display(c: ConfigCosteo | undefined, k: keyof ConfigCosteo): string {

@@ -1,7 +1,14 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 
-const CLAVES = ['margen_seguridad_pct', 'iva_pct', 'comision_pago_pct'] as const;
+const CLAVES = [
+  'margen_seguridad_pct',
+  'iva_pct',
+  'comision_pago_pct',
+  // Descuentos comerciales (no acumulables) para el margen real en el Menú.
+  'descuento_efectivo_pct',
+  'descuento_convenio_pct',
+] as const;
 
 type Clave = (typeof CLAVES)[number];
 
@@ -9,6 +16,10 @@ export interface ConfigCosteo {
   margen_seguridad_pct: number;
   iva_pct: number;
   comision_pago_pct: number;
+  // % de descuento por pago en efectivo (ej. 0.25 = 25%).
+  descuento_efectivo_pct: number;
+  // Tope de descuento por convenio con empresas (ej. 0.15 = 15%).
+  descuento_convenio_pct: number;
 }
 
 function toNumber(v: unknown): number {
@@ -37,6 +48,8 @@ export function useConfigCosteo() {
         margen_seguridad_pct: toNumber(map.margen_seguridad_pct),
         iva_pct: toNumber(map.iva_pct),
         comision_pago_pct: toNumber(map.comision_pago_pct),
+        descuento_efectivo_pct: toNumber(map.descuento_efectivo_pct),
+        descuento_convenio_pct: toNumber(map.descuento_convenio_pct),
       };
     },
   });
