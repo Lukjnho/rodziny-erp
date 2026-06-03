@@ -73,7 +73,9 @@ export function TraspasosTab() {
   const [seccionMerma, setSeccionMerma] = useState(false);
 
   const { data: productos } = useQuery({
-    queryKey: ['cocina-productos'],
+    // Key propia: la invalidación amplia ['cocina-productos'] la refresca igual
+    // (match por prefijo) junto con las de Stock y Producción.
+    queryKey: ['cocina-productos', 'traspasos'],
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cocina_productos')

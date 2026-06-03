@@ -314,7 +314,10 @@ export function StockTab() {
     isError: productosError,
     refetch: refetchProductos,
   } = useQuery({
-    queryKey: ['cocina-productos'],
+    // Key propia (con el select completo que necesita StockTab). La invalidación
+    // amplia ['cocina-productos'] matchea por prefijo a esta y a las de Producción
+    // y Traspasos, así que las tres se refrescan juntas al tocar un producto.
+    queryKey: ['cocina-productos', 'stock'],
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cocina_productos')
@@ -324,7 +327,6 @@ export function StockTab() {
       if (error) throw error;
       return data as Producto[];
     },
-    refetchOnMount: 'always',
   });
 
   const { data: lotesPasta } = useQuery({
@@ -550,10 +552,8 @@ export function StockTab() {
 
     for (const prod of productos) {
       // Esta tabla es SOLO de pastas (flujo cámara/mostrador/porcionado).
-      // Postres, panificados y salsas tienen su stock por conteo registrado
-      // en StockProduccionSection (abajo) — no se duplican acá.
-      // Filtro defensivo en JS: la query ['cocina-productos'] la comparte
-      // TraspasosTab y necesita todos los tipos.
+      // Postres, panificados y salsas llevan su stock por conteo aparte —
+      // no se duplican acá.
       if (prod.tipo !== 'pasta') continue;
       for (const loc of locales) {
         if (prod.local !== loc) continue;
