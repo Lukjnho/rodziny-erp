@@ -262,6 +262,47 @@ export function MenuTab() {
   const margenConvenio = (p: number | null | undefined, c: number | null) =>
     margenEscenario(p, c, descConvenio, comisionMax);
 
+  // Desglose paso a paso (texto para el tooltip nativo de cada margen). Muestra
+  // cómo se llega del precio de lista a la ganancia real: −descuento, −IVA,
+  // −comisión, vs costo.
+  const desgloseMargen = (
+    label: string,
+    precioBruto: number | null | undefined,
+    costo: number | null,
+    descuentoPct: number,
+    comisionPct: number,
+  ): string => {
+    if (!precioBruto || precioBruto <= 0 || costo == null) {
+      return `${label}\nFalta cargar precio y/o costo.`;
+    }
+    const descMonto = precioBruto * descuentoPct;
+    const precioCobrado = precioBruto - descMonto;
+    const neto = precioCobrado / (1 + ivaPct);
+    const ivaMonto = precioCobrado - neto;
+    const comisionMonto = neto * comisionPct;
+    const recibido = neto - comisionMonto;
+    const ganancia = recibido - costo;
+    const margen = recibido > 0 ? (ganancia / recibido) * 100 : 0;
+    const l: string[] = [label, `Precio lista: ${formatARS(precioBruto)}`];
+    if (descuentoPct > 0)
+      l.push(
+        `− Descuento ${Math.round(descuentoPct * 100)}%: −${formatARS(descMonto)} → ${formatARS(precioCobrado)}`,
+      );
+    l.push(`− IVA ${Math.round(ivaPct * 100)}%: −${formatARS(ivaMonto)} → neto ${formatARS(neto)}`);
+    if (comisionPct > 0)
+      l.push(`− Comisión ${(comisionPct * 100).toFixed(1)}%: −${formatARS(comisionMonto)}`);
+    l.push(`= Te queda: ${formatARS(recibido)}`);
+    l.push(`− Costo: −${formatARS(costo)}`);
+    l.push(`= Ganancia: ${formatARS(ganancia)} (margen ${margen.toFixed(0)}%)`);
+    return l.join('\n');
+  };
+  const desgloseLista = (p: number | null | undefined, c: number | null) =>
+    desgloseMargen('▸ Margen Lista', p, c, 0, comisionMax);
+  const desgloseEfectivo = (p: number | null | undefined, c: number | null) =>
+    desgloseMargen(`▸ Margen Efectivo −${Math.round(descEfectivo * 100)}%`, p, c, descEfectivo, comisionEfectivo);
+  const desgloseConvenio = (p: number | null | undefined, c: number | null) =>
+    desgloseMargen(`▸ Margen Convenio −${Math.round(descConvenio * 100)}%`, p, c, descConvenio, comisionMax);
+
   const setPrecio = useMutation({
     mutationFn: async (v: { refId: string; canal: CanalPrecio; precio: number }) => {
       const { error } = await supabase
@@ -387,6 +428,7 @@ export function MenuTab() {
         filtroLocal={filtroLocal}
         precios={precios}
         margenPctDe={margenLista}
+        desglose={desgloseLista}
       />
 
       {recetasVendiblesLocal === 0 && (
@@ -441,13 +483,22 @@ export function MenuTab() {
                 </td>
               ))}
               <td className="px-3 py-1.5 text-right">
-                <MargenBadge pct={margenLista(pp.plato, p.costo)} />
+                <MargenBadge
+                  pct={margenLista(pp.plato, p.costo)}
+                  title={desgloseLista(pp.plato, p.costo)}
+                />
               </td>
               <td className="px-3 py-1.5 text-right">
-                <MargenBadge pct={margenEfectivo(pp.plato, p.costo)} />
+                <MargenBadge
+                  pct={margenEfectivo(pp.plato, p.costo)}
+                  title={desgloseEfectivo(pp.plato, p.costo)}
+                />
               </td>
               <td className="px-3 py-1.5 text-right">
-                <MargenBadge pct={margenConvenio(pp.plato, p.costo)} />
+                <MargenBadge
+                  pct={margenConvenio(pp.plato, p.costo)}
+                  title={desgloseConvenio(pp.plato, p.costo)}
+                />
               </td>
             </tr>
           );
@@ -576,11 +627,13 @@ function ArmarPlato({
   filtroLocal,
   precios,
   margenPctDe,
+  desglose,
 }: {
   items: ItemMenu[];
   filtroLocal: FiltroLocal;
   precios: Map<string, Partial<Record<CanalPrecio, number>>>;
   margenPctDe: (precio: number | null | undefined, costo: number | null) => number | null;
+  desglose: (precio: number | null | undefined, costo: number | null) => string;
 }) {
   const [pastaKey, setPastaKey] = useState('');
   const [salsaKey, setSalsaKey] = useState('');
@@ -649,7 +702,7 @@ function ArmarPlato({
         </div>
         {margenPlato != null && (
           <div className="text-xs text-gray-600">
-            margen plato <MargenBadge pct={margenPlato} />
+            margen plato <MargenBadge pct={margenPlato} title={desglose(total, costoPlato)} />
           </div>
         )}
       </div>
@@ -707,8 +760,14 @@ function PrecioInput({
 }
 
 // ─── Badge de margen con semáforo ────────────────────────────────────────────
-function MargenBadge({ pct }: { pct: number | null }) {
-  if (pct == null) return <span className="text-xs text-gray-300">—</span>;
+// `title` = desglose paso a paso (tooltip nativo al pasar el mouse).
+function MargenBadge({ pct, title }: { pct: number | null; title?: string }) {
+  if (pct == null)
+    return (
+      <span title={title} className={cn('text-xs text-gray-300', title && 'cursor-help')}>
+        —
+      </span>
+    );
   const color =
     pct < 0.5
       ? 'bg-red-100 text-red-700'
@@ -716,7 +775,14 @@ function MargenBadge({ pct }: { pct: number | null }) {
         ? 'bg-amber-100 text-amber-700'
         : 'bg-emerald-100 text-emerald-700';
   return (
-    <span className={cn('rounded px-1.5 py-0.5 text-xs font-semibold tabular-nums', color)}>
+    <span
+      title={title}
+      className={cn(
+        'rounded px-1.5 py-0.5 text-xs font-semibold tabular-nums',
+        color,
+        title && 'cursor-help',
+      )}
+    >
       {(pct * 100).toFixed(0)}%
     </span>
   );
