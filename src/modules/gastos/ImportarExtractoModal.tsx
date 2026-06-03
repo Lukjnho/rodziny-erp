@@ -144,6 +144,12 @@ export function ImportarExtractoModal({ open, onClose, onSuccess }: Props) {
           p_fecha_hasta: fechaMax,
         });
         if (errSuel) throw errSuel;
+        // Dividendos por transferencia (por N° op o monto+fecha)
+        const { error: errDiv } = await supabase.rpc('conciliar_dividendos', {
+          p_desde: fechaMin,
+          p_hasta: fechaMax,
+        });
+        if (errDiv) throw errDiv;
       } catch (e) {
         errores.push(`auto-match: ${(e as Error).message}`);
       }
