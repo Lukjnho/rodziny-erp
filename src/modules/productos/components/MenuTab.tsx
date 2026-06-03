@@ -188,6 +188,9 @@ export function MenuTab() {
   const [colapsadas, setColapsadas] = useState<Set<string>>(new Set());
   // Orden de la lista dentro de cada categoría. Default: mayor margen primero.
   const [orden, setOrden] = useState<'margen_desc' | 'margen_asc' | 'nombre'>('margen_desc');
+  // Modo de tabla: 'precios' (poner precios + 3 márgenes) o 'desglose' (radiografía
+  // de rentabilidad: PVP → sin IVA → comisión → costo → margen).
+  const [vista, setVista] = useState<'precios' | 'desglose'>('precios');
 
   // ─── Recetas marcadas vendible en Costeo ───────────────────────────────────
   const { data: recetas } = useQuery({
@@ -448,6 +451,20 @@ export function MenuTab() {
             <option value="nombre">Nombre (A-Z)</option>
           </select>
         </label>
+        <div className="flex overflow-hidden rounded border border-gray-300">
+          {(['precios', 'desglose'] as const).map((v) => (
+            <button
+              key={v}
+              onClick={() => setVista(v)}
+              className={cn(
+                'px-3 py-1.5 text-sm font-medium capitalize transition-colors',
+                vista === v ? 'bg-rodziny-700 text-white' : 'bg-white text-gray-600 hover:bg-gray-50',
+              )}
+            >
+              {v === 'precios' ? '💲 Precios' : '📊 Desglose'}
+            </button>
+          ))}
+        </div>
         <div className="ml-auto text-xs text-gray-400">
           {filtrados.length} ítem{filtrados.length === 1 ? '' : 's'}
         </div>
@@ -476,24 +493,62 @@ export function MenuTab() {
         // como recetas separadas con su sufijo en el nombre — cada una con
         // su propio precio y costo.
         const canales: CanalPrecio[] = ['plato'];
+        const colSpanSub = vista === 'desglose' ? 7 : 5 + canales.length;
+        const nombreTd = (p: ItemMenu) => (
+          <td className="px-3 py-1.5">
+            <span className="font-medium text-gray-800">{p.nombre}</span>
+            <div className="font-mono text-[10px] text-gray-400">
+              <span className="capitalize">{p.local}</span>
+              <span className="ml-1 rounded bg-green-100 px-1 capitalize text-green-700">
+                {p.tipo}
+              </span>
+              {p.costo == null && (
+                <span className="ml-1 rounded bg-amber-100 px-1 text-amber-700">sin costo</span>
+              )}
+            </div>
+          </td>
+        );
         const fila = (p: ItemMenu) => {
           const pp = precios.get(p.key) ?? {};
+          // ─── Modo Desglose: radiografía de rentabilidad (escenario Lista) ──
+          if (vista === 'desglose') {
+            const precio = pp.plato ?? null;
+            const sinIva = precio != null ? precio / (1 + ivaPct) : null;
+            const comision = sinIva != null ? sinIva * comisionMax : null;
+            const recibido = sinIva != null && comision != null ? sinIva - comision : null;
+            const margenDinero =
+              recibido != null && p.costo != null ? recibido - p.costo : null;
+            return (
+              <tr key={p.key} className="hover:bg-rodziny-50/40 tabular-nums">
+                {nombreTd(p)}
+                <td className="px-3 py-1.5 text-right font-medium text-gray-800">
+                  {precio != null ? formatARS(precio) : '—'}
+                </td>
+                <td className="px-3 py-1.5 text-right text-gray-500">
+                  {sinIva != null ? formatARS(sinIva) : '—'}
+                </td>
+                <td className="px-3 py-1.5 text-right text-red-600">
+                  {comision != null ? `−${formatARS(comision)}` : '—'}
+                </td>
+                <td className="px-3 py-1.5 text-right text-gray-600">
+                  {p.costo != null ? formatARS(p.costo) : '—'}
+                </td>
+                <td className="px-3 py-1.5 text-right font-semibold text-gray-800">
+                  {margenDinero != null ? formatARS(margenDinero) : '—'}
+                </td>
+                <td className="px-3 py-1.5 text-right">
+                  <MargenBadge
+                    pct={margenLista(precio, p.costo)}
+                    title={desgloseLista(precio, p.costo)}
+                  />
+                </td>
+              </tr>
+            );
+          }
+          // ─── Modo Precios: poner precio + 3 escenarios de margen ───────────
           return (
             <tr key={p.key} className="hover:bg-rodziny-50/40">
-              <td className="px-3 py-1.5">
-                <span className="font-medium text-gray-800">{p.nombre}</span>
-                <div className="font-mono text-[10px] text-gray-400">
-                  <span className="capitalize">{p.local}</span>
-                  <span className="ml-1 rounded bg-green-100 px-1 capitalize text-green-700">
-                    {p.tipo}
-                  </span>
-                  {p.costo == null && (
-                    <span className="ml-1 rounded bg-amber-100 px-1 text-amber-700">
-                      sin costo
-                    </span>
-                  )}
-                </div>
-              </td>
+              {nombreTd(p)}
               <td className="px-3 py-1.5 text-right tabular-nums text-gray-600">
                 {p.costo != null ? formatARS(p.costo) : '—'}
               </td>
@@ -555,22 +610,36 @@ export function MenuTab() {
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead className="border-b border-gray-200 bg-white text-[10px] uppercase tracking-wide text-gray-500">
-                    <tr>
-                      <th className="px-3 py-1.5 text-left font-medium">Producto</th>
-                      <th className="px-3 py-1.5 text-right font-medium">Costo receta</th>
-                      {canales.map((c) => (
-                        <th key={c} className="px-3 py-1.5 text-right font-medium">
-                          Precio
+                    {vista === 'desglose' ? (
+                      <tr>
+                        <th className="px-3 py-1.5 text-left font-medium">Producto</th>
+                        <th className="px-3 py-1.5 text-right font-medium">PVP</th>
+                        <th className="px-3 py-1.5 text-right font-medium">Sin IVA</th>
+                        <th className="px-3 py-1.5 text-right font-medium">
+                          Comisión {(comisionMax * 100).toFixed(1)}%
                         </th>
-                      ))}
-                      <th className="px-3 py-1.5 text-right font-medium">M. Lista</th>
-                      <th className="px-3 py-1.5 text-right font-medium">
-                        M. Efvo −{Math.round(descEfectivo * 100)}%
-                      </th>
-                      <th className="px-3 py-1.5 text-right font-medium">
-                        M. Conv −{Math.round(descConvenio * 100)}%
-                      </th>
-                    </tr>
+                        <th className="px-3 py-1.5 text-right font-medium">Costo</th>
+                        <th className="px-3 py-1.5 text-right font-medium">Margen $</th>
+                        <th className="px-3 py-1.5 text-right font-medium">Margen %</th>
+                      </tr>
+                    ) : (
+                      <tr>
+                        <th className="px-3 py-1.5 text-left font-medium">Producto</th>
+                        <th className="px-3 py-1.5 text-right font-medium">Costo receta</th>
+                        {canales.map((c) => (
+                          <th key={c} className="px-3 py-1.5 text-right font-medium">
+                            Precio
+                          </th>
+                        ))}
+                        <th className="px-3 py-1.5 text-right font-medium">M. Lista</th>
+                        <th className="px-3 py-1.5 text-right font-medium">
+                          M. Efvo −{Math.round(descEfectivo * 100)}%
+                        </th>
+                        <th className="px-3 py-1.5 text-right font-medium">
+                          M. Conv −{Math.round(descConvenio * 100)}%
+                        </th>
+                      </tr>
+                    )}
                   </thead>
                   <tbody className="divide-y divide-gray-100">
                     {(tipo === 'bebida' ? agruparBebidas(gItems) : agruparPorSub(gItems)).map(
@@ -579,7 +648,7 @@ export function MenuTab() {
                           {sub && (
                             <tr className="bg-gray-50/70">
                               <td
-                                colSpan={5 + canales.length}
+                                colSpan={colSpanSub}
                                 className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-gray-500"
                               >
                                 {sub}{' '}
