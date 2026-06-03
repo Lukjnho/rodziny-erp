@@ -3,7 +3,6 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { mensajeErrorAmigable } from '@/lib/erroresSupabase';
 import { KPICard } from '@/components/ui/KPICard';
-import { StockProduccionSection } from './components/StockProduccionSection';
 import { PlanProduccionEditor } from './components/PlanProduccionEditor';
 import { PlanSemanal } from './components/PlanSemanal';
 import { ResumenSemanalCard } from './components/ResumenSemanalCard';
@@ -284,7 +283,7 @@ const TIPO_LOTE_SEMANAL_COLOR: Record<TipoLoteSemanal, string> = {
 };
 
 type FiltroLocal = 'todos' | 'vedia' | 'saavedra';
-type VistaLotes = 'dia' | 'semana';
+type VistaLotes = 'semana' | 'mes';
 
 function matchLocal(itemLocal: string | null, filtro: string): boolean {
   if (filtro === 'todos' || !itemLocal) return true;
@@ -328,11 +327,31 @@ function diaCorto(fecha: string): string {
   return DIA_CORTO[d.getDay()];
 }
 
+// Mes calendario (día 1 al último) de la fecha activa.
+function rangoMes(fechaIso: string): { desde: string; hasta: string } {
+  const d = new Date(fechaIso + 'T12:00:00');
+  const desde = new Date(d.getFullYear(), d.getMonth(), 1, 12);
+  const hasta = new Date(d.getFullYear(), d.getMonth() + 1, 0, 12);
+  return {
+    desde: desde.toISOString().slice(0, 10),
+    hasta: hasta.toISOString().slice(0, 10),
+  };
+}
+
+function labelMes(fechaIso: string): string {
+  const d = new Date(fechaIso + 'T12:00:00');
+  const s = d.toLocaleDateString('es-AR', { month: 'long', year: 'numeric' });
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
 // ── Componente principal ──────────────────────────────────────────────────────
 
 export function ProduccionTab() {
   const { perfil } = useAuth();
   const localRestringido = perfil?.local_restringido ?? null;
+  // Solo los admins (Lucas) pueden eliminar lotes. El líder y demás usuarios
+  // pueden ver/editar/corregir, pero no borrar.
+  const esAdmin = !!perfil?.es_admin;
   const qc = useQueryClient();
   const [fecha, setFecha] = useState(hoy());
   const [filtroLocal, setFiltroLocal] = useState<FiltroLocal>(localRestringido ?? 'todos');
@@ -345,14 +364,20 @@ export function ProduccionTab() {
   const [filtroTipoLote, setFiltroTipoLote] = useState<'todos' | TipoLote>('todos');
   const [filtroTipoSemanal, setFiltroTipoSemanal] = useState<'todos' | TipoLoteSemanal>('todos');
   const [vistaLotes, setVistaLotes] = useState<VistaLotes>(() => {
-    if (typeof window === 'undefined') return 'dia';
+    if (typeof window === 'undefined') return 'semana';
     const guardado = localStorage.getItem('cocina-vista-lotes');
-    return guardado === 'semana' ? 'semana' : 'dia';
+    return guardado === 'mes' ? 'mes' : 'semana';
   });
   useEffect(() => {
     if (typeof window !== 'undefined') localStorage.setItem('cocina-vista-lotes', vistaLotes);
   }, [vistaLotes]);
-  const semana = useMemo(() => rangoSemana(fecha), [fecha]);
+  // Rango activo: semana (lun–dom) o mes completo de la fecha seleccionada. Todas
+  // las queries y agregaciones "semanales" usan este rango; el nombre `semana` se
+  // mantiene por compatibilidad pero representa el período activo.
+  const semana = useMemo(
+    () => (vistaLotes === 'mes' ? rangoMes(fecha) : rangoSemana(fecha)),
+    [vistaLotes, fecha],
+  );
 
   // Modales
   const [modalCerrarMasa, setModalCerrarMasa] = useState<LoteMasa | null>(null);
@@ -469,8 +494,8 @@ export function ProduccionTab() {
     },
   });
 
-  // ── Queries semanales (solo se ejecutan cuando la vista es 'semana') ────────
-  const semanaEnabled = vistaLotes === 'semana';
+  // ── Queries del período activo (semana o mes) ──────────────────────────────
+  const semanaEnabled = true;
 
   const { data: lotesRellenoSemana, isLoading: cargandoRSemana } = useQuery({
     queryKey: ['cocina-lotes-relleno-semana', semana.desde, semana.hasta],
@@ -706,8 +731,6 @@ export function ProduccionTab() {
   // Las porciones del relleno SOLO se cuentan desde lotes_pasta porcionados en la
   // semana (única fuente de verdad), agrupadas por nombre de receta de relleno.
   const lotesSemanalesAgrupados = useMemo<LoteSemanalGrupo[]>(() => {
-    if (vistaLotes !== 'semana') return [];
-
     const fmtHora = (iso: string | null | undefined) => {
       if (!iso) return '—';
       const d = new Date(iso);
@@ -919,6 +942,78 @@ export function ProduccionTab() {
     cargandoPSemana ||
     cargandoPPSemana;
 
+  // Desglose del período para la tarjeta de capacidad: por día (vista semana) o
+  // por semana (vista mes). Cada bucket trae porciones de pasta producidas
+  // (capacidad real) y el total de lotes registrados (todos los tipos).
+  const desglosePeriodo = useMemo<
+    { label: string; porciones: number; lotes: number }[]
+  >(() => {
+    // Enumerar fechas del rango activo
+    const dias: string[] = [];
+    const dStart = new Date(semana.desde + 'T12:00:00');
+    const dEnd = new Date(semana.hasta + 'T12:00:00');
+    for (let dt = new Date(dStart); dt <= dEnd; dt.setDate(dt.getDate() + 1)) {
+      dias.push(dt.toISOString().slice(0, 10));
+    }
+    const keyDe = (f: string) => (vistaLotes === 'mes' ? rangoSemana(f).desde : f);
+
+    const orden: string[] = [];
+    const labelByKey = new Map<string, string>();
+    const idxByKey = new Map<string, number>();
+    for (const f of dias) {
+      const k = keyDe(f);
+      if (!idxByKey.has(k)) {
+        idxByKey.set(k, orden.length);
+        orden.push(k);
+        labelByKey.set(k, vistaLotes === 'mes' ? `Sem ${orden.length}` : diaCorto(f));
+      }
+    }
+
+    const porc = new Map<string, number>();
+    const lotes = new Map<string, number>();
+    const addP = (f: string, n: number) => {
+      const k = keyDe(f);
+      if (idxByKey.has(k)) porc.set(k, (porc.get(k) ?? 0) + n);
+    };
+    const addL = (f: string) => {
+      const k = keyDe(f);
+      if (idxByKey.has(k)) lotes.set(k, (lotes.get(k) ?? 0) + 1);
+    };
+
+    // Porciones de pasta: por fecha de PORCIONADO (única fuente de "porciones").
+    for (const l of lotesPastaPorcionadosSemana ?? []) {
+      if (!matchLocal(l.local, filtroLocal)) continue;
+      if (!l.fecha_porcionado || l.porciones == null) continue;
+      addP(l.fecha_porcionado, l.porciones);
+    }
+    // Lotes totales: cada lote por su fecha de registro.
+    for (const l of lotesRellenoSemana ?? []) if (matchLocal(l.local, filtroLocal)) addL(l.fecha);
+    for (const l of lotesMasaSemana ?? []) if (matchLocal(l.local, filtroLocal)) addL(l.fecha);
+    for (const l of lotesProduccionSemana ?? []) if (matchLocal(l.local, filtroLocal)) addL(l.fecha);
+    for (const l of lotesPastaSemana ?? []) if (matchLocal(l.local, filtroLocal)) addL(l.fecha);
+
+    return orden.map((k) => ({
+      label: labelByKey.get(k)!,
+      porciones: porc.get(k) ?? 0,
+      lotes: lotes.get(k) ?? 0,
+    }));
+  }, [
+    vistaLotes,
+    semana,
+    filtroLocal,
+    lotesPastaPorcionadosSemana,
+    lotesRellenoSemana,
+    lotesMasaSemana,
+    lotesProduccionSemana,
+    lotesPastaSemana,
+  ]);
+
+  // Total de porciones de pasta del período (capacidad de producción).
+  const porcionesPastaPeriodo = useMemo(
+    () => desglosePeriodo.reduce((s, b) => s + b.porciones, 0),
+    [desglosePeriodo],
+  );
+
   // Frescos pendientes de OTRAS fechas (las del día seleccionado ya aparecen en la tabla principal).
   // Solo se muestran acá para no perder de vista bandejas armadas días anteriores que siguen en freezer.
   const frescosFiltrados = useMemo(() => {
@@ -942,12 +1037,16 @@ export function ProduccionTab() {
   };
 
   // Eliminar
+  const onErrorEliminar = (e: unknown) =>
+    window.alert(mensajeErrorAmigable(e, 'No se pudo eliminar el lote'));
+
   const eliminarRelleno = useMutation({
     mutationFn: async (id: string) => {
       const { error } = await supabase.from('cocina_lotes_relleno').delete().eq('id', id);
       if (error) throw error;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['cocina-lotes-relleno', fecha] }),
+    onError: onErrorEliminar,
   });
 
   const eliminarMasa = useMutation({
@@ -956,6 +1055,7 @@ export function ProduccionTab() {
       if (error) throw error;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['cocina-lotes-masa', fecha] }),
+    onError: onErrorEliminar,
   });
 
   const eliminarPasta = useMutation({
@@ -968,6 +1068,7 @@ export function ProduccionTab() {
       qc.invalidateQueries({ queryKey: ['cocina-lotes-pasta-frescos'] });
       qc.invalidateQueries({ queryKey: ['cocina-stock'] });
     },
+    onError: onErrorEliminar,
   });
 
   const eliminarProduccion = useMutation({
@@ -976,6 +1077,7 @@ export function ProduccionTab() {
       if (error) throw error;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['cocina-lotes-produccion', fecha] }),
+    onError: onErrorEliminar,
   });
 
   const fechaLabel = new Date(fecha + 'T12:00:00').toLocaleDateString('es-AR', {
@@ -1055,25 +1157,14 @@ export function ProduccionTab() {
         )}
       </div>
 
-      {/* ── Sección: Lotes registrados (toggle Día / Semana) ──────────────────── */}
+      {/* ── Sección: Lotes registrados (toggle Semana / Mes) ──────────────────── */}
       <div>
         <div className="mb-3 flex justify-end">
           <div className="inline-flex overflow-hidden rounded-md border border-gray-200">
             <button
-              onClick={() => setVistaLotes('dia')}
-              className={cn(
-                'px-3 py-1 text-xs font-medium transition-colors',
-                vistaLotes === 'dia'
-                  ? 'bg-rodziny-600 text-white'
-                  : 'bg-white text-gray-600 hover:bg-gray-50',
-              )}
-            >
-              Día
-            </button>
-            <button
               onClick={() => setVistaLotes('semana')}
               className={cn(
-                'border-l border-gray-200 px-3 py-1 text-xs font-medium transition-colors',
+                'px-3 py-1 text-xs font-medium transition-colors',
                 vistaLotes === 'semana'
                   ? 'bg-rodziny-600 text-white'
                   : 'bg-white text-gray-600 hover:bg-gray-50',
@@ -1081,52 +1172,45 @@ export function ProduccionTab() {
             >
               Semana
             </button>
+            <button
+              onClick={() => setVistaLotes('mes')}
+              className={cn(
+                'border-l border-gray-200 px-3 py-1 text-xs font-medium transition-colors',
+                vistaLotes === 'mes'
+                  ? 'bg-rodziny-600 text-white'
+                  : 'bg-white text-gray-600 hover:bg-gray-50',
+              )}
+            >
+              Mes
+            </button>
           </div>
         </div>
-        {vistaLotes === 'dia' ? (
-          <LotesRegistradosSection
-            lotes={lotesUnificadosFiltrados}
-            conteo={conteoPorTipo}
-            fechaLabel={fechaLabel}
-            fecha={fecha}
-            filtroLocal={filtroLocal}
-            filtroTipoLote={filtroTipoLote}
-            setFiltroTipoLote={setFiltroTipoLote}
-            cargando={cargandoR || cargandoM || cargandoProd}
-            onCerrarMasa={(m) => setModalCerrarMasa(m)}
-            onEditar={(l) =>
-              setModalEditarLote({ id: l.id, tabla: l.tabla, nombre: l.nombre })
-            }
-            onEliminar={(l) => {
-              if (!window.confirm('¿Eliminar este lote?')) return;
-              if (l.tabla === 'cocina_lotes_relleno') eliminarRelleno.mutate(l.id);
-              else if (l.tabla === 'cocina_lotes_masa') eliminarMasa.mutate(l.id);
-              else eliminarProduccion.mutate(l.id);
-            }}
-          />
-        ) : (
-          <LotesSemanalesSection
-            grupos={lotesSemanalesAgrupados}
-            conteo={conteoSemanalPorTipo}
-            semana={semana}
-            filtroLocal={filtroLocal}
-            filtroTipoSemanal={filtroTipoSemanal}
-            setFiltroTipoSemanal={setFiltroTipoSemanal}
-            cargando={cargandoSemana}
-            onCerrarMasa={(m) => setModalCerrarMasa(m)}
-            onPorcionarPasta={(p) => setModalPorcionar(p)}
-            onEditar={(l, nombre) =>
-              setModalEditarLote({ id: l.id, tabla: l.tabla, nombre })
-            }
-            onEliminar={(l) => {
-              if (!window.confirm('¿Eliminar este lote?')) return;
-              if (l.tabla === 'cocina_lotes_relleno') eliminarRelleno.mutate(l.id);
-              else if (l.tabla === 'cocina_lotes_masa') eliminarMasa.mutate(l.id);
-              else if (l.tabla === 'cocina_lotes_pasta') eliminarPasta.mutate(l.id);
-              else eliminarProduccion.mutate(l.id);
-            }}
-          />
-        )}
+        <LotesSemanalesSection
+          grupos={lotesSemanalesAgrupados}
+          conteo={conteoSemanalPorTipo}
+          semana={semana}
+          vistaLotes={vistaLotes}
+          fecha={fecha}
+          desglose={desglosePeriodo}
+          porcionesPastaTotal={porcionesPastaPeriodo}
+          puedeEliminar={esAdmin}
+          filtroLocal={filtroLocal}
+          filtroTipoSemanal={filtroTipoSemanal}
+          setFiltroTipoSemanal={setFiltroTipoSemanal}
+          cargando={cargandoSemana}
+          onCerrarMasa={(m) => setModalCerrarMasa(m)}
+          onPorcionarPasta={(p) => setModalPorcionar(p)}
+          onEditar={(l, nombre) =>
+            setModalEditarLote({ id: l.id, tabla: l.tabla, nombre })
+          }
+          onEliminar={(l) => {
+            if (!window.confirm('¿Eliminar este lote?')) return;
+            if (l.tabla === 'cocina_lotes_relleno') eliminarRelleno.mutate(l.id);
+            else if (l.tabla === 'cocina_lotes_masa') eliminarMasa.mutate(l.id);
+            else if (l.tabla === 'cocina_lotes_pasta') eliminarPasta.mutate(l.id);
+            else eliminarProduccion.mutate(l.id);
+          }}
+        />
       </div>
 
 
@@ -1337,15 +1421,17 @@ export function ProduccionTab() {
                       >
                         Editar
                       </button>
-                      <button
-                        onClick={() => {
-                          if (window.confirm('¿Eliminar este lote de pasta?'))
-                            eliminarPasta.mutate(l.id);
-                        }}
-                        className="text-xs text-red-500 hover:text-red-700"
-                      >
-                        Eliminar
-                      </button>
+                      {esAdmin && (
+                        <button
+                          onClick={() => {
+                            if (window.confirm('¿Eliminar este lote de pasta?'))
+                              eliminarPasta.mutate(l.id);
+                          }}
+                          className="text-xs text-red-500 hover:text-red-700"
+                        >
+                          Eliminar
+                        </button>
+                      )}
                     </td>
                   </tr>
                 );
@@ -1361,9 +1447,6 @@ export function ProduccionTab() {
           </table>
         </div>
       </div>
-
-      {/* ── Sección: Proyección de producción (salsas/postres en stock con FIFO + Fudo) ─── */}
-      <StockProduccionSection filtroLocal={filtroLocal} />
 
       {/* Modales */}
       {modalCerrarMasa && (
@@ -1829,6 +1912,11 @@ interface LotesSemanalesSectionProps {
   grupos: LoteSemanalGrupo[];
   conteo: { total: number; porTipo: Record<TipoLoteSemanal, number> };
   semana: { desde: string; hasta: string };
+  vistaLotes: VistaLotes;
+  fecha: string;
+  desglose: { label: string; porciones: number; lotes: number }[];
+  porcionesPastaTotal: number;
+  puedeEliminar: boolean;
   filtroLocal: FiltroLocal;
   filtroTipoSemanal: 'todos' | TipoLoteSemanal;
   setFiltroTipoSemanal: (t: 'todos' | TipoLoteSemanal) => void;
@@ -1837,6 +1925,52 @@ interface LotesSemanalesSectionProps {
   onPorcionarPasta: (p: LotePasta) => void;
   onEditar: (l: LoteDetalleSemana, nombre: string) => void;
   onEliminar: (l: LoteDetalleSemana) => void;
+}
+
+// Tarjeta de capacidad de producción: total de porciones de pasta del período
+// + desglose por día (semana) o por semana (mes), con mini-barras comparativas.
+function CapacidadProduccionCard({
+  total,
+  desglose,
+  periodoLabel,
+}: {
+  total: number;
+  desglose: { label: string; porciones: number; lotes: number }[];
+  periodoLabel: string;
+}) {
+  const maxPorc = Math.max(1, ...desglose.map((d) => d.porciones));
+  return (
+    <div className="mb-4 rounded-lg border border-blue-200 bg-blue-50/60 p-4">
+      <div className="flex items-baseline justify-between gap-2">
+        <h4 className="text-[11px] font-semibold uppercase tracking-wide text-blue-700">
+          📊 Capacidad de producción — pastas
+        </h4>
+        <span className="text-[11px] text-blue-600">{periodoLabel}</span>
+      </div>
+      <p className="mt-1 text-2xl font-bold tabular-nums text-blue-900">
+        {total.toLocaleString('es-AR')}{' '}
+        <span className="text-sm font-medium text-blue-700">
+          porcion{total === 1 ? '' : 'es'}
+        </span>
+      </p>
+      <div className="mt-3 space-y-1.5">
+        {desglose.map((d, i) => (
+          <div key={i} className="flex items-center gap-2 text-[11px]">
+            <span className="w-12 shrink-0 font-medium text-gray-600">{d.label}</span>
+            <div className="h-3 flex-1 overflow-hidden rounded bg-blue-100">
+              <div
+                className="h-full rounded bg-blue-500"
+                style={{ width: `${Math.round((d.porciones / maxPorc) * 100)}%` }}
+              />
+            </div>
+            <span className="w-24 shrink-0 text-right tabular-nums text-gray-600">
+              {d.porciones} porc · {d.lotes} lote{d.lotes === 1 ? '' : 's'}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 function metricasGrupo(g: LoteSemanalGrupo): string[] {
@@ -1867,6 +2001,11 @@ function LotesSemanalesSection({
   grupos,
   conteo,
   semana,
+  vistaLotes,
+  fecha,
+  desglose,
+  porcionesPastaTotal,
+  puedeEliminar,
   filtroLocal,
   filtroTipoSemanal,
   setFiltroTipoSemanal,
@@ -1896,8 +2035,10 @@ function LotesSemanalesSection({
         <div>
           <h3 className="text-base font-semibold text-gray-800">Lotes registrados</h3>
           <p className="mt-0.5 text-xs text-gray-500">
-            Semana del {formatRangoLabel(semana.desde, semana.hasta)} · {localLabel} · {conteo.total}{' '}
-            {conteo.total === 1 ? 'lote' : 'lotes'}
+            {vistaLotes === 'mes'
+              ? labelMes(fecha)
+              : `Semana del ${formatRangoLabel(semana.desde, semana.hasta)}`}{' '}
+            · {localLabel} · {conteo.total} {conteo.total === 1 ? 'lote' : 'lotes'}
           </p>
         </div>
         {tiposConDatos.length > 0 && (
@@ -1921,9 +2062,23 @@ function LotesSemanalesSection({
         )}
       </div>
 
+      <CapacidadProduccionCard
+        total={porcionesPastaTotal}
+        desglose={desglose}
+        periodoLabel={
+          vistaLotes === 'mes'
+            ? labelMes(fecha)
+            : `Semana del ${formatRangoLabel(semana.desde, semana.hasta)}`
+        }
+      />
+
       {grupos.length === 0 ? (
         <div className="rounded-lg border border-dashed border-gray-200 px-4 py-8 text-center text-sm text-gray-400">
-          {cargando ? 'Cargando...' : 'No hay lotes registrados esta semana'}
+          {cargando
+            ? 'Cargando...'
+            : vistaLotes === 'mes'
+              ? 'No hay lotes registrados este mes'
+              : 'No hay lotes registrados esta semana'}
         </div>
       ) : (
         <div className="space-y-4">
@@ -2041,12 +2196,14 @@ function LotesSemanalesSection({
                                       >
                                         Editar
                                       </button>
-                                      <button
-                                        onClick={() => onEliminar(l)}
-                                        className="text-xs text-red-500 hover:text-red-700"
-                                      >
-                                        Eliminar
-                                      </button>
+                                      {puedeEliminar && (
+                                        <button
+                                          onClick={() => onEliminar(l)}
+                                          className="text-xs text-red-500 hover:text-red-700"
+                                        >
+                                          Eliminar
+                                        </button>
+                                      )}
                                     </div>
                                   </div>
                                 );
