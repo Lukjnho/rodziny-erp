@@ -122,6 +122,9 @@ interface GastoConciliado {
   nro_comprobante: string | null;
   movs: MovBancario[];
   movs_total_debito: number;
+  // true si el movimiento vinculado paga VARIOS gastos (transferencia consolidada).
+  // En ese caso el importe del gasto NO tiene por qué igualar el débito del mov.
+  consolidado: boolean;
 }
 
 export function ConciliacionTab() {
@@ -366,11 +369,20 @@ export function ConciliacionTab() {
         }
       }
 
+      // Cuántos gastos comparte cada movimiento → si >1, es transferencia consolidada.
+      const gastosPorMov = new Map<string, number>();
+      for (const movsDelGasto of movsByGasto.values()) {
+        for (const m of movsDelGasto) {
+          gastosPorMov.set(m.id, (gastosPorMov.get(m.id) ?? 0) + 1);
+        }
+      }
+
       // Armar lista final ordenada por fecha del último mov (más reciente primero)
       const result: GastoConciliado[] = [];
       for (const [gastoId, movsDelGasto] of movsByGasto.entries()) {
         const g = gastosById.get(gastoId);
         const totalDebito = movsDelGasto.reduce((s, m) => s + m.debito, 0);
+        const consolidado = movsDelGasto.some((m) => (gastosPorMov.get(m.id) ?? 0) > 1);
         result.push({
           gasto_id: gastoId,
           proveedor: g?.proveedor ?? null,
@@ -380,6 +392,7 @@ export function ConciliacionTab() {
           nro_comprobante: g?.nro_comprobante ?? null,
           movs: movsDelGasto,
           movs_total_debito: totalDebito,
+          consolidado,
         });
       }
       result.sort((a, b) => {
@@ -816,7 +829,9 @@ export function ConciliacionTab() {
                   {(conciliados ?? []).map((g) => {
                     const isExpanded = expandido.has(g.gasto_id);
                     const desfase = Math.abs(g.importe_total - g.movs_total_debito);
-                    const cuadra = desfase < 1;
+                    // En consolidados (1 transferencia paga varios gastos) el importe del
+                    // gasto NO iguala el débito del mov a propósito → no es desfase.
+                    const cuadra = g.consolidado || desfase < 1;
                     return (
                       <Fragment key={g.gasto_id}>
                         <tr
@@ -827,7 +842,14 @@ export function ConciliacionTab() {
                             {isExpanded ? '▼' : '▶'}
                           </td>
                           <td className="px-2 py-1.5 text-gray-800">
-                            <div className="font-medium">{g.proveedor ?? '(sin proveedor)'}</div>
+                            <div className="font-medium">
+                              {g.proveedor ?? '(sin proveedor)'}
+                              {g.consolidado && (
+                                <span className="ml-1.5 rounded bg-blue-100 px-1.5 py-0.5 text-[9px] font-medium text-blue-700">
+                                  transf. compartida
+                                </span>
+                              )}
+                            </div>
                             {g.comentario && (
                               <div className="text-[10px] text-gray-500">
                                 {g.comentario.length > 80
@@ -849,13 +871,19 @@ export function ConciliacionTab() {
                               cuadra ? 'text-gray-500' : 'font-semibold text-amber-700',
                             )}
                             title={
-                              cuadra
-                                ? 'Importe del gasto cuadra con la suma de movimientos'
-                                : `Desfase de ${formatARS(desfase)} entre el importe del gasto y los movimientos vinculados`
+                              g.consolidado
+                                ? `Transferencia consolidada de ${formatARS(g.movs_total_debito)} que paga varios gastos (este es uno de ellos)`
+                                : cuadra
+                                  ? 'Importe del gasto cuadra con la suma de movimientos'
+                                  : `Desfase de ${formatARS(desfase)} entre el importe del gasto y los movimientos vinculados`
                             }
                           >
                             {formatARS(g.movs_total_debito)}
-                            {!cuadra && ' ⚠'}
+                            {g.consolidado ? (
+                              <span className="ml-1 text-[9px] text-blue-600">compartida</span>
+                            ) : (
+                              !cuadra && ' ⚠'
+                            )}
                           </td>
                         </tr>
                         {isExpanded && (
