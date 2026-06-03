@@ -117,10 +117,12 @@ export function MenuEngineeringTab() {
   return (
     <div className="space-y-4">
       <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs text-blue-800">
-        Matriz Menu Engineering (Cortijo): cruza popularidad × rentabilidad para identificar{' '}
-        <strong>estrellas, vacas, puzzles y perros</strong>. Las medianas de cada eje definen los
-        umbrales. Los productos <strong>ancla</strong> tienen badge y reciben sugerencias más
-        conservadoras.
+        Matriz Menu Engineering: cruza <strong>popularidad</strong> (unidades vendidas) ×{' '}
+        <strong>rentabilidad</strong> (margen <strong>$ por unidad</strong>) para identificar{' '}
+        <strong>estrellas, vacas, puzzles y perros</strong>. El margen es la ganancia real por
+        plato: precio neto de IVA, menos la comisión bancaria más alta, menos el costo. Las
+        medianas de cada eje definen los umbrales. Los productos <strong>ancla</strong> tienen
+        badge y reciben sugerencias más conservadoras.
       </div>
 
       {/* Filtros */}
@@ -264,7 +266,9 @@ function TablaProductosME({ productos }: { productos: ProductoME[] }) {
             <th className="px-3 py-2 text-right">Uds.</th>
             <th className="px-3 py-2 text-right">Precio prom.</th>
             <th className="px-3 py-2 text-right">Costo estim.</th>
-            <th className="px-3 py-2 text-right">Margen unit.</th>
+            <th className="px-3 py-2 text-right" title="Ganancia $ por unidad (neto de IVA + comisión − costo). Es el eje que define el cuadrante.">
+              Margen $/u <span className="text-rodziny-500">◄</span>
+            </th>
             <th className="px-3 py-2 text-right">Margen %</th>
             <th className="px-3 py-2 text-right">Contribución $</th>
             <th className="px-3 py-2 text-center">Clase</th>

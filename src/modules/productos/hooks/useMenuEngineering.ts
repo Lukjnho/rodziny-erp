@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { useCostosRecetas } from '@/modules/cocina/hooks/useCostosRecetas';
 import { useConfigCosteo } from '@/modules/cocina/hooks/useConfigCosteo';
+import { useComisionMpConfig } from './useComisionMpConfig';
 import { useProductosCosteoConfig } from './useProductosCosteoConfig';
 
 export type CuadranteME = 'estrella' | 'vaca' | 'puzzle' | 'perro';
@@ -25,8 +26,8 @@ export interface ProductoME {
   costoUnitario: number | null;
 
   // Métricas derivadas
-  margenUnitario: number | null;       // precio_promedio − costo
-  margenPctSobrePrecio: number | null; // margen / precio
+  margenUnitario: number | null;       // recibido (neto − comisión) − costo = ganancia $/unidad
+  margenPctSobrePrecio: number | null; // margen / recibido
   contribucionAbsoluta: number | null; // margen × unidades = $/período
 
   // Clasificación
@@ -136,6 +137,7 @@ export function useMenuEngineering(opts: MenuEngineeringOptions) {
 
   const { costos: costosRecetas } = useCostosRecetas();
   const { config: configGen } = useConfigCosteo();
+  const { data: comisiones } = useComisionMpConfig();
   const { getConfig } = useProductosCosteoConfig();
 
   return useMemo<{ productos: ProductoME[]; isLoading: boolean; periodos: string[] }>(() => {
@@ -204,6 +206,12 @@ export function useMenuEngineering(opts: MenuEngineeringOptions) {
 
     // ─── Construir productos ME ─────────────────────────────────────────────
     const ivaPct = configGen?.iva_pct ?? 0.21;
+    // Comisión bancaria MÁS ALTA (criterio conservador, igual que el tab Menú).
+    // Acá NO aplicamos descuentos comerciales (efectivo/convenio): el precio
+    // promedio sale de las ventas reales de Fudo, que ya incluyen los descuentos
+    // que efectivamente se dieron. Sí restamos comisión para que el margen sea
+    // consistente con el tab Menú.
+    const comisionMax = Math.max(0, ...(comisiones ?? []).map((c) => Number(c.pct)));
     const productosME: ProductoME[] = [];
 
     for (const [, a] of agg) {
@@ -245,14 +253,16 @@ export function useMenuEngineering(opts: MenuEngineeringOptions) {
       }
 
       const precioPromedio = a.uds > 0 ? a.total / a.uds : 0;
-      // El precio_promedio está en bruto (con IVA). Lo netamos para calcular margen real
-      // sin comisión MP (porque la matriz mira todo el período, no un medio puntual).
+      // El precio_promedio está en bruto (con IVA). Lo netamos y le restamos la
+      // comisión bancaria más alta para llegar a lo que realmente se recibe por
+      // unidad (mismo modelo que el tab Menú).
       const precioNeto = precioPromedio / (1 + ivaPct);
+      const recibido = precioNeto - precioNeto * comisionMax;
 
       const margenUnitario =
-        costoUnitario != null ? precioNeto - costoUnitario : null;
+        costoUnitario != null ? recibido - costoUnitario : null;
       const margenPctSobrePrecio =
-        margenUnitario != null && precioNeto > 0 ? margenUnitario / precioNeto : null;
+        margenUnitario != null && recibido > 0 ? margenUnitario / recibido : null;
       const contribucionAbsoluta =
         margenUnitario != null ? margenUnitario * a.uds : null;
 
@@ -279,18 +289,21 @@ export function useMenuEngineering(opts: MenuEngineeringOptions) {
 
     // ─── Clasificación: matriz 2x2 por mediana de cada eje ──────────────────
     // Eje X (popularidad) = unidadesVendidas
-    // Eje Y (rentabilidad) = margenPctSobrePrecio (si null, queda sin clasificar)
-    const conMargen = productosME.filter((p) => p.margenPctSobrePrecio != null);
+    // Eje Y (rentabilidad) = margenUnitario en PESOS (método clásico de
+    // ingeniería de menú: lo que importa es la ganancia $ por plato, no el %.
+    // Un % alto sobre un producto barato deja menos plata que un % menor sobre
+    // un plato fuerte). Si el margen $ es null, queda sin clasificar.
+    const conMargen = productosME.filter((p) => p.margenUnitario != null);
     const medianaUds = mediana(conMargen.map((p) => p.unidadesVendidas));
-    const medianaMargen = mediana(conMargen.map((p) => p.margenPctSobrePrecio!));
+    const medianaMargen = mediana(conMargen.map((p) => p.margenUnitario!));
 
     for (const p of productosME) {
-      if (p.margenPctSobrePrecio == null) {
+      if (p.margenUnitario == null) {
         p.cuadrante = null;
         continue;
       }
       const popOk = p.unidadesVendidas >= medianaUds;
-      const rentOk = p.margenPctSobrePrecio >= medianaMargen;
+      const rentOk = p.margenUnitario >= medianaMargen;
       if (popOk && rentOk) p.cuadrante = 'estrella';
       else if (popOk && !rentOk) p.cuadrante = 'vaca';
       else if (!popOk && rentOk) p.cuadrante = 'puzzle';
@@ -298,7 +311,7 @@ export function useMenuEngineering(opts: MenuEngineeringOptions) {
 
       p.popularidadRelativa = medianaUds > 0 ? p.unidadesVendidas / medianaUds : 0;
       p.rentabilidadRelativa =
-        medianaMargen > 0 ? p.margenPctSobrePrecio / medianaMargen : 0;
+        medianaMargen !== 0 ? p.margenUnitario / medianaMargen : 0;
     }
 
     // Ordenar por contribución absoluta desc (los que más mueven el EBITDA arriba)
@@ -316,6 +329,7 @@ export function useMenuEngineering(opts: MenuEngineeringOptions) {
     recetasQ.isLoading,
     costosRecetas,
     configGen,
+    comisiones,
     opts.periodos,
     opts.categoria,
     getConfig,
