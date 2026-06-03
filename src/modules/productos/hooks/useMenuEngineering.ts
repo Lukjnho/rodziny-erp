@@ -85,6 +85,18 @@ function normalizarNombre(n: string): string {
   return (n ?? '').toLowerCase().trim().replace(/\s+/g, ' ');
 }
 
+// Ruido de Fudo: NO son productos vendibles, son adicionales/modificadores
+// ("+ Queso", "+ Aceite"), líneas de ajuste ("ADICIONAL POR SERVICIO/DESC.") o
+// renglones con venta/precio en 0. Se excluyen de la matriz para no ensuciar las
+// medianas ni la advertencia de "sin costo".
+function esRuidoAdicional(nombre: string, venta: number, precio: number): boolean {
+  const n = normalizarNombre(nombre);
+  if (venta <= 0 || precio <= 0) return true;
+  if (n.startsWith('+')) return true;
+  if (n.includes('adicional')) return true;
+  return false;
+}
+
 export interface MenuEngineeringOptions {
   periodos: string[]; // formato YYYY-MM, ej ['2026-04','2026-05']
   local?: 'vedia' | 'saavedra';
@@ -217,6 +229,11 @@ export function useMenuEngineering(opts: MenuEngineeringOptions) {
     const productosME: ProductoME[] = [];
 
     for (const [, a] of agg) {
+      // Excluir adicionales/ruido de Fudo (+ Queso, + Aceite, ADICIONAL POR…,
+      // o renglones con venta/precio 0): no son productos del menú.
+      const precioProm0 = a.uds > 0 ? a.total / a.uds : 0;
+      if (esRuidoAdicional(a.nombre, a.total, precioProm0)) continue;
+
       // Matching SOLO explícito (sin fallback por nombre):
       //  1. Receta vendible por fudo_productos[]
       //  2. cocina_productos por fudo_nombres[] (bebidas reventa, legacy)
