@@ -471,7 +471,14 @@ export function ConciliacionTab() {
       });
       if (errCons) throw errCons;
       porConsolidado = (cons as { pagos: number })?.pagos ?? 0;
-      const total = (res?.conciliados ?? 0) + porConsolidado;
+      // Sueldos pagados por transferencia (consolidados: 1 transferencia paga varios empleados)
+      const { data: csuel, error: errSuel } = await supabase.rpc('conciliar_sueldos_consolidados', {
+        p_fecha_desde: desde,
+        p_fecha_hasta: hasta,
+      });
+      if (errSuel) throw errSuel;
+      const porSueldos = (csuel as { pagos: number })?.pagos ?? 0;
+      const total = (res?.conciliados ?? 0) + porConsolidado + porSueldos;
       qc.invalidateQueries({ queryKey: ['conciliacion'] });
       qc.invalidateQueries({ queryKey: ['gastos_conciliados_ids'] });
       qc.invalidateQueries({ queryKey: ['gastos_listado'] });
@@ -480,6 +487,7 @@ export function ConciliacionTab() {
         if ((res?.por_pagos ?? 0) > 0) detalles.push(`${res.por_pagos} por N° de op de pago`);
         if ((res?.por_gasto ?? 0) > 0) detalles.push(`${res.por_gasto} por N° de comprobante`);
         if (porConsolidado > 0) detalles.push(`${porConsolidado} en transferencias consolidadas`);
+        if (porSueldos > 0) detalles.push(`${porSueldos} sueldos por transferencia`);
         setMensaje({
           tipo: 'ok',
           texto: `${total} gasto(s) vinculado(s) con su movimiento bancario${

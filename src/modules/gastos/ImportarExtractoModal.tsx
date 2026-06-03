@@ -138,6 +138,12 @@ export function ImportarExtractoModal({ open, onClose, onSuccess }: Props) {
           p_fecha_hasta: fechaMax,
         });
         if (errCons) throw errCons;
+        // Sueldos pagados por transferencia (consolidados)
+        const { error: errSuel } = await supabase.rpc('conciliar_sueldos_consolidados', {
+          p_fecha_desde: fechaMin,
+          p_fecha_hasta: fechaMax,
+        });
+        if (errSuel) throw errSuel;
       } catch (e) {
         errores.push(`auto-match: ${(e as Error).message}`);
       }

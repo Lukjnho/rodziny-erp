@@ -1,7 +1,9 @@
 import { useState, useMemo, useEffect, useRef, Fragment } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/lib/auth';
 import { cn, formatARS } from '@/lib/utils';
+import { procesarComprobantePago } from '@/lib/ocrComprobantePago';
 import type { Empleado } from './RRHHPage';
 import { MESES, diasDeQuincena, ultimoDiaDelMes, normalizarTexto, type Quincena } from './utils';
 import type {
@@ -127,6 +129,14 @@ export function SueldosTab() {
     total: number;
     montoEf: string; // input string (formato "250000")
     montoTr: string;
+  } | null>(null);
+
+  // Modal de pago por transferencia: exige banco + N° op + comprobante (para conciliar)
+  const [transferModal, setTransferModal] = useState<{
+    empleadoId: string;
+    empleadoNombre: string;
+    local: string;
+    total: number;
   } | null>(null);
 
   const periodoActual = useMemo(
@@ -322,6 +332,10 @@ export function SueldosTab() {
       montoTransferencia?: number; // solo si medio = 'mixto'
       local: string;
       empleado_nombre: string;
+      // Datos bancarios de la parte transferencia (obligatorios si hay transferencia):
+      cuenta?: string | null; // 'mercadopago' | 'galicia'
+      numeroOperacion?: string | null;
+      comprobantePath?: string | null;
     }) => {
       // 1) Actualizar liquidación
       const { error: errLiq } = await supabase.from('liquidaciones_quincenales').upsert(
@@ -355,16 +369,36 @@ export function SueldosTab() {
         updated_at: new Date().toISOString(),
       };
 
-      let rows: Array<typeof baseRow & { monto: number; medio_pago: 'efectivo' | 'transferencia' }>;
+      // Fila efectivo: sin datos bancarios. Fila transferencia: lleva banco + N° op + comprobante.
+      const rowEfectivo = (monto: number) => ({
+        ...baseRow,
+        monto,
+        medio_pago: 'efectivo' as const,
+        cuenta: null as string | null,
+        numero_operacion: null as string | null,
+        comprobante_pago_path: null as string | null,
+      });
+      const rowTransfer = (monto: number) => ({
+        ...baseRow,
+        monto,
+        medio_pago: 'transferencia' as const,
+        cuenta: payload.cuenta ?? null,
+        numero_operacion: payload.numeroOperacion ?? null,
+        comprobante_pago_path: payload.comprobantePath ?? null,
+      });
+
+      let rows: Array<ReturnType<typeof rowEfectivo> | ReturnType<typeof rowTransfer>>;
       if (payload.medio === 'mixto') {
         const ef = payload.montoEfectivo ?? 0;
         const tr = payload.montoTransferencia ?? 0;
         if (ef <= 0 && tr <= 0) throw new Error('Mixto requiere al menos un monto > 0');
         rows = [];
-        if (ef > 0) rows.push({ ...baseRow, monto: ef, medio_pago: 'efectivo' });
-        if (tr > 0) rows.push({ ...baseRow, monto: tr, medio_pago: 'transferencia' });
+        if (ef > 0) rows.push(rowEfectivo(ef));
+        if (tr > 0) rows.push(rowTransfer(tr));
+      } else if (payload.medio === 'transferencia') {
+        rows = [rowTransfer(payload.monto)];
       } else {
-        rows = [{ ...baseRow, monto: payload.monto, medio_pago: payload.medio }];
+        rows = [rowEfectivo(payload.monto)];
       }
 
       const { error: errIns } = await supabase.from('pagos_sueldos').insert(rows);
@@ -930,6 +964,16 @@ export function SueldosTab() {
                         });
                         return;
                       }
+                      if (medio === 'transferencia') {
+                        // Transferencia bancarizada: exige banco + N° op + comprobante.
+                        setTransferModal({
+                          empleadoId: fila.empleado.id,
+                          empleadoNombre: `${fila.empleado.apellido}, ${fila.empleado.nombre}`,
+                          local: fila.empleado.local,
+                          total: fila.total,
+                        });
+                        return;
+                      }
                       cambiarPago.mutate({
                         empleado_id: fila.empleado.id,
                         periodo: periodoActual,
@@ -1038,7 +1082,7 @@ export function SueldosTab() {
           guardando={cambiarPago.isPending}
           onChange={(patch) => setMixtoModal((s) => (s ? { ...s, ...patch } : s))}
           onCancel={() => setMixtoModal(null)}
-          onConfirmar={async () => {
+          onConfirmar={async (bank) => {
             const ef = parseInt(mixtoModal.montoEf, 10) || 0;
             const tr = parseInt(mixtoModal.montoTr, 10) || 0;
             const suma = ef + tr;
@@ -1066,11 +1110,207 @@ export function SueldosTab() {
               montoTransferencia: tr,
               local: mixtoModal.local,
               empleado_nombre: mixtoModal.empleadoNombre,
+              cuenta: bank?.cuenta ?? null,
+              numeroOperacion: bank?.numeroOperacion ?? null,
+              comprobantePath: bank?.comprobantePath ?? null,
             });
             setMixtoModal(null);
           }}
         />
       )}
+
+      {/* ── Modal de pago por transferencia (banco + N° op + comprobante) ──── */}
+      {transferModal && (
+        <ModalPagoTransferenciaSueldo
+          empleadoNombre={transferModal.empleadoNombre}
+          total={transferModal.total}
+          local={transferModal.local}
+          guardando={cambiarPago.isPending}
+          onCancel={() => setTransferModal(null)}
+          onConfirmar={async ({ cuenta, numeroOperacion, comprobantePath }) => {
+            await cambiarPago.mutateAsync({
+              empleado_id: transferModal.empleadoId,
+              periodo: periodoActual,
+              medio: 'transferencia',
+              monto: transferModal.total,
+              local: transferModal.local,
+              empleado_nombre: transferModal.empleadoNombre,
+              cuenta,
+              numeroOperacion,
+              comprobantePath,
+            });
+            setTransferModal(null);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── Modal de pago por transferencia de sueldo ──────────────────────────────
+// Egreso bancarizado: exige banco (MP/Galicia), N° de operación y comprobante,
+// para poder conciliar contra el extracto (igual que cualquier gasto bancarizado).
+function ModalPagoTransferenciaSueldo({
+  empleadoNombre,
+  total,
+  local,
+  guardando,
+  onCancel,
+  onConfirmar,
+}: {
+  empleadoNombre: string;
+  total: number;
+  local: string;
+  guardando: boolean;
+  onConfirmar: (v: {
+    cuenta: string;
+    numeroOperacion: string;
+    comprobantePath: string;
+  }) => void | Promise<void>;
+  onCancel: () => void;
+}) {
+  const { user } = useAuth();
+  const [cuenta, setCuenta] = useState<'mercadopago' | 'galicia' | ''>('');
+  const [nOperacion, setNOperacion] = useState('');
+  const [comprobantePath, setComprobantePath] = useState<string | null>(null);
+  const [ocrEjecutando, setOcrEjecutando] = useState(false);
+  const [ocrInfo, setOcrInfo] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  async function manejarArchivo(file: File) {
+    setError(null);
+    setOcrEjecutando(true);
+    try {
+      const res = await procesarComprobantePago({
+        archivo: file,
+        subfolder: `sueldos/${local}`,
+        userId: user?.id ?? null,
+      });
+      if (!res.ok && res.error) {
+        setError(res.error);
+        return;
+      }
+      setComprobantePath(res.file_path);
+      if (res.n_operacion) {
+        if (!nOperacion.trim()) setNOperacion(res.n_operacion);
+        setOcrInfo(`✓ N° detectado: ${res.n_operacion}`);
+      } else {
+        setOcrInfo('Comprobante subido. Completá el N° de operación.');
+      }
+    } finally {
+      setOcrEjecutando(false);
+    }
+  }
+
+  function confirmar() {
+    if (!cuenta) return setError('Elegí el banco desde el que se transfirió.');
+    if (!nOperacion.trim()) return setError('N° de operación obligatorio. Copialo del comprobante.');
+    if (!comprobantePath) return setError('Comprobante de pago obligatorio. Subí la captura o PDF.');
+    if (ocrEjecutando) return setError('Esperá a que termine el análisis del comprobante.');
+    onConfirmar({ cuenta, numeroOperacion: nOperacion.trim(), comprobantePath });
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      onClick={onCancel}
+    >
+      <div
+        className="w-full max-w-md rounded-lg bg-white p-5 shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-4">
+          <h3 className="text-base font-semibold text-gray-900">Pago por transferencia</h3>
+          <p className="mt-0.5 text-xs text-gray-500">
+            {empleadoNombre} · Total:{' '}
+            <span className="font-medium text-gray-900">{formatARS(total)}</span>
+          </p>
+        </div>
+
+        <div className="space-y-3">
+          <div>
+            <label className="mb-1 block text-xs font-medium text-gray-700">Banco *</label>
+            <div className="flex gap-2">
+              {(['mercadopago', 'galicia'] as const).map((b) => (
+                <button
+                  key={b}
+                  type="button"
+                  onClick={() => setCuenta(b)}
+                  className={cn(
+                    'flex-1 rounded border px-3 py-1.5 text-xs font-medium',
+                    cuenta === b
+                      ? 'border-blue-400 bg-blue-50 text-blue-800'
+                      : 'border-gray-300 bg-white text-gray-600 hover:bg-gray-50',
+                  )}
+                >
+                  {b === 'mercadopago' ? 'MercadoPago' : 'Galicia'}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-xs font-medium text-gray-700">
+              Comprobante de pago *
+            </label>
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/*,application/pdf"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) manejarArchivo(f);
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => fileRef.current?.click()}
+              disabled={ocrEjecutando}
+              className="w-full rounded border border-dashed border-gray-300 px-3 py-2 text-xs text-gray-600 hover:border-blue-400 disabled:opacity-50"
+            >
+              {ocrEjecutando
+                ? '⏳ Analizando comprobante…'
+                : comprobantePath
+                  ? '✓ Comprobante cargado — cambiar'
+                  : '📎 Subir captura o PDF'}
+            </button>
+            {ocrInfo && <p className="mt-1 text-[11px] text-green-700">{ocrInfo}</p>}
+          </div>
+
+          <div>
+            <label className="mb-1 block text-xs font-medium text-gray-700">
+              N° de operación *
+            </label>
+            <input
+              type="text"
+              value={nOperacion}
+              onChange={(e) => setNOperacion(e.target.value)}
+              placeholder="Del comprobante de la transferencia"
+              className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
+            />
+          </div>
+
+          {error && <p className="text-xs text-red-600">{error}</p>}
+        </div>
+
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            onClick={onCancel}
+            className="rounded border border-gray-300 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50"
+          >
+            Cancelar
+          </button>
+          <button
+            onClick={confirmar}
+            disabled={guardando || ocrEjecutando}
+            className="rounded bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+          >
+            {guardando ? 'Guardando…' : 'Registrar pago'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1088,17 +1328,55 @@ function ModalPagoMixto({
     total: number;
     montoEf: string;
     montoTr: string;
+    local: string;
   };
   guardando: boolean;
   onChange: (patch: Partial<{ montoEf: string; montoTr: string }>) => void;
   onCancel: () => void;
-  onConfirmar: () => void;
+  onConfirmar: (
+    bank: { cuenta: string; numeroOperacion: string; comprobantePath: string } | null,
+  ) => void;
 }) {
+  const { user } = useAuth();
   const ef = parseInt(state.montoEf, 10) || 0;
   const tr = parseInt(state.montoTr, 10) || 0;
   const suma = ef + tr;
   const diferencia = suma - state.total;
   const okSuma = Math.abs(diferencia) <= 1;
+
+  // Datos bancarios de la parte transferencia (obligatorios si tr > 0)
+  const [cuenta, setCuenta] = useState<'mercadopago' | 'galicia' | ''>('');
+  const [nOperacion, setNOperacion] = useState('');
+  const [comprobantePath, setComprobantePath] = useState<string | null>(null);
+  const [ocrEjecutando, setOcrEjecutando] = useState(false);
+  const [ocrInfo, setOcrInfo] = useState<string | null>(null);
+  const [bankError, setBankError] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  async function manejarArchivo(file: File) {
+    setBankError(null);
+    setOcrEjecutando(true);
+    try {
+      const res = await procesarComprobantePago({
+        archivo: file,
+        subfolder: `sueldos/${state.local}`,
+        userId: user?.id ?? null,
+      });
+      if (!res.ok && res.error) {
+        setBankError(res.error);
+        return;
+      }
+      setComprobantePath(res.file_path);
+      if (res.n_operacion) {
+        if (!nOperacion.trim()) setNOperacion(res.n_operacion);
+        setOcrInfo(`✓ N° detectado: ${res.n_operacion}`);
+      } else {
+        setOcrInfo('Comprobante subido. Completá el N° de operación.');
+      }
+    } finally {
+      setOcrEjecutando(false);
+    }
+  }
 
   // Auto-completar el otro lado: si el user escribe efectivo, transferencia = total - efectivo
   function setEfectivo(v: string) {
@@ -1110,6 +1388,18 @@ function ModalPagoMixto({
     const limpio = v.replace(/\D/g, '');
     const n = parseInt(limpio, 10) || 0;
     onChange({ montoTr: limpio, montoEf: String(Math.max(0, state.total - n)) });
+  }
+
+  function confirmar() {
+    if (tr > 0) {
+      if (!cuenta) return setBankError('Elegí el banco de la transferencia.');
+      if (!nOperacion.trim()) return setBankError('N° de operación obligatorio para la parte transferencia.');
+      if (!comprobantePath) return setBankError('Comprobante obligatorio para la parte transferencia.');
+      if (ocrEjecutando) return setBankError('Esperá a que termine el análisis del comprobante.');
+      onConfirmar({ cuenta, numeroOperacion: nOperacion.trim(), comprobantePath });
+    } else {
+      onConfirmar(null);
+    }
   }
 
   return (
@@ -1183,6 +1473,63 @@ function ModalPagoMixto({
               </span>
             </div>
           </div>
+
+          {/* Datos bancarios de la parte transferencia (obligatorios si tr > 0) */}
+          {tr > 0 && (
+            <div className="space-y-2 rounded border border-blue-200 bg-blue-50/40 p-2">
+              <p className="text-[11px] font-medium text-blue-800">
+                Datos de la transferencia ({formatARS(tr)})
+              </p>
+              <div className="flex gap-2">
+                {(['mercadopago', 'galicia'] as const).map((b) => (
+                  <button
+                    key={b}
+                    type="button"
+                    onClick={() => setCuenta(b)}
+                    className={cn(
+                      'flex-1 rounded border px-2 py-1 text-[11px] font-medium',
+                      cuenta === b
+                        ? 'border-blue-400 bg-blue-100 text-blue-800'
+                        : 'border-gray-300 bg-white text-gray-600 hover:bg-gray-50',
+                    )}
+                  >
+                    {b === 'mercadopago' ? 'MercadoPago' : 'Galicia'}
+                  </button>
+                ))}
+              </div>
+              <input
+                ref={fileRef}
+                type="file"
+                accept="image/*,application/pdf"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) manejarArchivo(f);
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => fileRef.current?.click()}
+                disabled={ocrEjecutando}
+                className="w-full rounded border border-dashed border-gray-300 px-2 py-1.5 text-[11px] text-gray-600 hover:border-blue-400 disabled:opacity-50"
+              >
+                {ocrEjecutando
+                  ? '⏳ Analizando…'
+                  : comprobantePath
+                    ? '✓ Comprobante cargado — cambiar'
+                    : '📎 Subir comprobante'}
+              </button>
+              {ocrInfo && <p className="text-[10px] text-green-700">{ocrInfo}</p>}
+              <input
+                type="text"
+                value={nOperacion}
+                onChange={(e) => setNOperacion(e.target.value)}
+                placeholder="N° de operación"
+                className="w-full rounded border border-gray-300 px-2 py-1 text-xs"
+              />
+              {bankError && <p className="text-[11px] text-red-600">{bankError}</p>}
+            </div>
+          )}
         </div>
 
         <div className="mt-5 flex justify-end gap-2">
@@ -1194,8 +1541,8 @@ function ModalPagoMixto({
             Cancelar
           </button>
           <button
-            onClick={onConfirmar}
-            disabled={!okSuma || guardando || (ef === 0 && tr === 0)}
+            onClick={confirmar}
+            disabled={!okSuma || guardando || ocrEjecutando || (ef === 0 && tr === 0)}
             className="rounded bg-rodziny-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-rodziny-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {guardando ? 'Guardando...' : 'Confirmar pago'}
