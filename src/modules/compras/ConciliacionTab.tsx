@@ -314,6 +314,37 @@ export function ConciliacionTab() {
         });
       }
 
+      // Sumar gastos conciliados vía link 1:N (transferencias consolidadas): sus pagos
+      // apuntan con conciliado_movimiento_id a un movimiento que ya está en `lista`.
+      // Esos gastos NO tienen movimiento.gasto_id propio, así que sin esto no se verían.
+      const movById = new Map(lista.map((m) => [m.id as string, m]));
+      const movIds = Array.from(movById.keys());
+      const LOTE_MOV = 300;
+      for (let i = 0; i < movIds.length; i += LOTE_MOV) {
+        const batch = movIds.slice(i, i + LOTE_MOV);
+        const { data: pcons } = await supabase
+          .from('pagos_gastos')
+          .select('gasto_id, conciliado_movimiento_id')
+          .in('conciliado_movimiento_id', batch);
+        for (const p of pcons ?? []) {
+          const gid = p.gasto_id as string | null;
+          const mid = p.conciliado_movimiento_id as string | null;
+          if (!gid || !mid || movsByGasto.has(gid)) continue; // ya está por link 1:1
+          const m = movById.get(mid);
+          if (!m) continue;
+          movsByGasto.set(gid, [
+            {
+              id: m.id as string,
+              fecha: m.fecha as string,
+              descripcion: (m.descripcion as string | null) ?? null,
+              debito: Number(m.debito ?? 0),
+              cuenta: m.cuenta as string,
+              referencia: (m.referencia as string | null) ?? null,
+            },
+          ]);
+        }
+      }
+
       // Traer datos de los gastos referenciados
       const gastoIds = Array.from(movsByGasto.keys());
       const gastosById = new Map<string, { proveedor: string | null; fecha: string; importe_total: number; nro_comprobante: string | null; comentario: string | null }>();
