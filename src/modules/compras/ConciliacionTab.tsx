@@ -910,54 +910,10 @@ export function ConciliacionTab() {
                         {isExpanded && (
                           <tr className="bg-gray-50/50">
                             <td colSpan={6} className="px-2 py-2">
-                              <div className="rounded border border-gray-200 bg-white">
-                                <table className="w-full text-[11px]">
-                                  <thead className="border-b border-gray-200 bg-gray-50 text-gray-500">
-                                    <tr>
-                                      <th className="px-2 py-1 text-left font-medium">Fecha</th>
-                                      <th className="px-2 py-1 text-left font-medium">Cuenta</th>
-                                      <th className="px-2 py-1 text-left font-medium">Descripción</th>
-                                      <th className="px-2 py-1 text-left font-medium">Ref.</th>
-                                      <th className="px-2 py-1 text-right font-medium">Débito</th>
-                                      <th className="px-2 py-1 text-right font-medium"></th>
-                                    </tr>
-                                  </thead>
-                                  <tbody className="divide-y divide-gray-100">
-                                    {g.movs.map((m) => (
-                                      <tr key={m.id} className="hover:bg-gray-50">
-                                        <td className="px-2 py-1 text-gray-600 tabular-nums">
-                                          {m.fecha}
-                                        </td>
-                                        <td className="px-2 py-1 uppercase text-gray-500">
-                                          {m.cuenta}
-                                        </td>
-                                        <td className="px-2 py-1 text-gray-700">
-                                          {m.descripcion}
-                                        </td>
-                                        <td className="px-2 py-1 font-mono text-[10px] text-gray-400">
-                                          {m.referencia ?? ''}
-                                        </td>
-                                        <td className="px-2 py-1 text-right font-semibold tabular-nums text-red-700">
-                                          {formatARS(m.debito)}
-                                        </td>
-                                        <td className="px-2 py-1 text-right">
-                                          <button
-                                            type="button"
-                                            onClick={(e) => {
-                                              e.stopPropagation();
-                                              handleDesvincular(m.id);
-                                            }}
-                                            className="rounded border border-gray-300 px-2 py-0.5 text-[10px] text-gray-500 hover:border-red-300 hover:bg-red-50 hover:text-red-700"
-                                            title="Desvincular este movimiento del gasto"
-                                          >
-                                            ✕ Desvincular
-                                          </button>
-                                        </td>
-                                      </tr>
-                                    ))}
-                                  </tbody>
-                                </table>
-                              </div>
+                              <DetalleMovsGasto
+                                gastoId={g.gasto_id}
+                                onDesvincular={handleDesvincular}
+                              />
                             </td>
                           </tr>
                         )}
@@ -1144,6 +1100,114 @@ export function ConciliacionTab() {
           }}
         />
       )}
+    </div>
+  );
+}
+
+// ─── Detalle de movimientos de un gasto conciliado (carga al expandir) ───────
+// Se carga por gasto (sin el límite global del listado, que se llenaba con los
+// miles de movs de retenciones/comisiones y dejaba sin detalle a los demás).
+// Resuelve los dos modelos: link 1:1 (movimientos.gasto_id) y 1:N (transferencia
+// compartida: los pagos del gasto apuntan al movimiento vía conciliado_movimiento_id).
+function DetalleMovsGasto({
+  gastoId,
+  onDesvincular,
+}: {
+  gastoId: string;
+  onDesvincular: (movId: string) => void;
+}) {
+  const { data: movs, isLoading } = useQuery<MovBancario[]>({
+    queryKey: ['conciliacion', 'detalle_movs', gastoId],
+    queryFn: async () => {
+      // 1:1 — movimientos vinculados directamente
+      const { data: directos } = await supabase
+        .from('movimientos_bancarios')
+        .select('id, fecha, cuenta, descripcion, referencia, debito')
+        .eq('gasto_id', gastoId)
+        .order('fecha', { ascending: false })
+        .limit(500);
+      if (directos && directos.length > 0) {
+        return directos.map((m) => ({
+          id: m.id as string,
+          fecha: m.fecha as string,
+          descripcion: (m.descripcion as string | null) ?? null,
+          debito: Number(m.debito ?? 0),
+          cuenta: m.cuenta as string,
+          referencia: (m.referencia as string | null) ?? null,
+        }));
+      }
+      // 1:N — transferencia compartida: el mov lo referencian los pagos del gasto
+      const { data: pagos } = await supabase
+        .from('pagos_gastos')
+        .select('conciliado_movimiento_id')
+        .eq('gasto_id', gastoId)
+        .not('conciliado_movimiento_id', 'is', null);
+      const movIds = (pagos ?? [])
+        .map((p) => p.conciliado_movimiento_id as string | null)
+        .filter((x): x is string => !!x);
+      if (movIds.length === 0) return [];
+      const { data: compartidos } = await supabase
+        .from('movimientos_bancarios')
+        .select('id, fecha, cuenta, descripcion, referencia, debito')
+        .in('id', movIds);
+      return (compartidos ?? []).map((m) => ({
+        id: m.id as string,
+        fecha: m.fecha as string,
+        descripcion: (m.descripcion as string | null) ?? null,
+        debito: Number(m.debito ?? 0),
+        cuenta: m.cuenta as string,
+        referencia: (m.referencia as string | null) ?? null,
+      }));
+    },
+  });
+
+  if (isLoading) {
+    return <div className="px-2 py-2 text-[11px] text-gray-400">Cargando detalle…</div>;
+  }
+  if (!movs || movs.length === 0) {
+    return <div className="px-2 py-2 text-[11px] text-gray-400">Sin detalle de movimientos.</div>;
+  }
+
+  return (
+    <div className="rounded border border-gray-200 bg-white">
+      <table className="w-full text-[11px]">
+        <thead className="border-b border-gray-200 bg-gray-50 text-gray-500">
+          <tr>
+            <th className="px-2 py-1 text-left font-medium">Fecha</th>
+            <th className="px-2 py-1 text-left font-medium">Cuenta</th>
+            <th className="px-2 py-1 text-left font-medium">Descripción</th>
+            <th className="px-2 py-1 text-left font-medium">Ref.</th>
+            <th className="px-2 py-1 text-right font-medium">Débito</th>
+            <th className="px-2 py-1 text-right font-medium"></th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-100">
+          {movs.map((m) => (
+            <tr key={m.id} className="hover:bg-gray-50">
+              <td className="px-2 py-1 text-gray-600 tabular-nums">{m.fecha}</td>
+              <td className="px-2 py-1 uppercase text-gray-500">{m.cuenta}</td>
+              <td className="px-2 py-1 text-gray-700">{m.descripcion}</td>
+              <td className="px-2 py-1 font-mono text-[10px] text-gray-400">{m.referencia ?? ''}</td>
+              <td className="px-2 py-1 text-right font-semibold tabular-nums text-red-700">
+                {formatARS(m.debito)}
+              </td>
+              <td className="px-2 py-1 text-right">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDesvincular(m.id);
+                  }}
+                  className="rounded border border-gray-300 px-2 py-0.5 text-[10px] text-gray-500 hover:border-red-300 hover:bg-red-50 hover:text-red-700"
+                  title="Desvincular este movimiento del gasto"
+                >
+                  ✕ Desvincular
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
