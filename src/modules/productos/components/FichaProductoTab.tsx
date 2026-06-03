@@ -64,11 +64,11 @@ interface HuerfanoProducto {
   local: string | null;
 }
 
-// Union de lo que se muestra en el grid de Costeo.
+// Union de lo que se muestra en el grid de Costeo (recetas + bebidas reventa).
+// Los huérfanos NO van acá: tienen su propia sección destacada arriba del grid.
 type ItemCosteo =
   | { kind: 'receta'; receta: RecetaFull; costoUnit: number | null; unidadCosto: string }
-  | { kind: 'reventa'; bebida: BebidaReventa; costoUnit: number | null }
-  | { kind: 'huerfano'; prod: HuerfanoProducto };
+  | { kind: 'reventa'; bebida: BebidaReventa; costoUnit: number | null };
 
 type FiltroLocal = 'vedia' | 'saavedra';
 
@@ -282,21 +282,10 @@ export function FichaProductoTab() {
         });
       }
     }
-    // Huérfanos: solo cuando no se está auditando calidad de recetas (los
-    // filtros sin_match/con_adv son específicos de recetas con ingredientes).
-    if (!soloSub && filtroCalidad === 'todos') {
-      for (const p of huerfanos ?? []) {
-        if (p.local !== filtroLocal) continue;
-        if (filtroTipo !== 'todos' && p.tipo !== filtroTipo) continue;
-        if (q && !p.nombre.toLowerCase().includes(q)) continue;
-        out.push({ kind: 'huerfano', prod: p });
-      }
-    }
     return out;
   }, [
     recetas,
     bebidasReventa,
-    huerfanos,
     costos,
     insumoById,
     ingredientes,
@@ -330,16 +319,26 @@ export function FichaProductoTab() {
     [items],
   );
 
+  // Huérfanos visibles: productos vendibles sin receta ni insumo, del local
+  // activo. Respetan búsqueda y filtro de tipo, pero se muestran en su propia
+  // sección destacada (no mezclados con las recetas). El filtro "Solo
+  // subrecetas" los oculta (no son recetas).
+  const huerfanosVisibles = useMemo(() => {
+    if (soloSub) return [] as HuerfanoProducto[];
+    const q = busqueda.trim().toLowerCase();
+    return (huerfanos ?? []).filter((p) => {
+      if (p.local !== filtroLocal) return false;
+      if (filtroTipo !== 'todos' && p.tipo !== filtroTipo) return false;
+      if (q && !p.nombre.toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }, [huerfanos, filtroLocal, filtroTipo, soloSub, busqueda]);
+
   // Agrupado por categoría (tipo), respetando ORDEN_TIPOS y luego alfabético.
   const grupos = useMemo(() => {
     const map = new Map<string, ItemCosteo[]>();
     for (const it of items) {
-      const k =
-        it.kind === 'receta'
-          ? tipoEfectivo(it.receta)
-          : it.kind === 'reventa'
-            ? 'bebida'
-            : it.prod.tipo;
+      const k = it.kind === 'receta' ? tipoEfectivo(it.receta) : 'bebida';
       (map.get(k) ?? map.set(k, []).get(k)!).push(it);
     }
     return Array.from(map.entries()).sort(([a], [b]) => {
@@ -672,7 +671,54 @@ export function FichaProductoTab() {
           </div>
         )}
 
-        {grupos.length === 0 && (
+        {/* Sección destacada: productos vendibles sin receta ni insumo. Imposible
+            de pasar por alto — todos juntos arriba del grid de recetas. */}
+        {huerfanosVisibles.length > 0 && (
+          <section className="space-y-2 rounded-lg border border-amber-300 bg-amber-50/60 p-3">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-semibold text-amber-900">
+                ⚠ Faltan enlazar
+              </span>
+              <span className="rounded-full bg-amber-200 px-2 py-0.5 text-[11px] font-medium text-amber-900">
+                {huerfanosVisibles.length}
+              </span>
+              <span className="text-xs text-amber-700">
+                · productos sin costo todavía — tocá cada uno para vincular receta o insumo
+              </span>
+            </div>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+              {huerfanosVisibles.map((p) => (
+                <button
+                  key={`huerfano:${p.id}`}
+                  onClick={() => setEnlazandoId(p.id)}
+                  className="flex flex-col gap-1 rounded-lg border border-amber-300 bg-white p-3 text-left transition-colors hover:border-amber-400 hover:bg-amber-50"
+                >
+                  <span className="text-sm font-medium leading-tight text-gray-800">
+                    {p.nombre}
+                  </span>
+                  <div className="flex flex-wrap items-center gap-1">
+                    <span
+                      className={cn(
+                        'rounded px-1.5 py-0.5 text-[9px] font-medium capitalize',
+                        TIPO_COLOR[p.tipo] ?? 'bg-gray-100 text-gray-600',
+                      )}
+                    >
+                      {TIPO_LABEL[p.tipo] ?? p.tipo}
+                    </span>
+                    <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[9px] capitalize text-gray-600">
+                      {p.local ?? '—'}
+                    </span>
+                  </div>
+                  <div className="mt-0.5 text-xs font-medium text-amber-700">
+                    Tocá para enlazar →
+                  </div>
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {grupos.length === 0 && huerfanosVisibles.length === 0 && (
           <div className="rounded-lg border border-gray-200 bg-gray-50 p-8 text-center text-sm text-gray-400">
             Sin recetas para este filtro
           </div>
@@ -734,39 +780,6 @@ export function FichaProductoTab() {
                         ) : (
                           <span className="text-gray-300">sin costo</span>
                         )}
-                      </div>
-                    </button>
-                  );
-                }
-                if (it.kind === 'huerfano') {
-                  const p = it.prod;
-                  return (
-                    <button
-                      key={`huerfano:${p.id}`}
-                      onClick={() => setEnlazandoId(p.id)}
-                      className="flex flex-col gap-1 rounded-lg border border-amber-300 bg-amber-50/40 p-3 text-left transition-colors hover:border-amber-400 hover:bg-amber-50"
-                    >
-                      <span className="text-sm font-medium leading-tight text-gray-800">
-                        {p.nombre}
-                      </span>
-                      <div className="flex flex-wrap items-center gap-1">
-                        <span
-                          className={cn(
-                            'rounded px-1.5 py-0.5 text-[9px] font-medium capitalize',
-                            TIPO_COLOR[p.tipo] ?? 'bg-gray-100 text-gray-600',
-                          )}
-                        >
-                          {TIPO_LABEL[p.tipo] ?? p.tipo}
-                        </span>
-                        <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[9px] capitalize text-gray-600">
-                          {p.local ?? '—'}
-                        </span>
-                        <span className="rounded bg-amber-200 px-1.5 py-0.5 text-[9px] font-medium text-amber-800">
-                          ⚠ falta enlazar
-                        </span>
-                      </div>
-                      <div className="mt-0.5 text-xs text-amber-700">
-                        Tocá para vincular receta o insumo
                       </div>
                     </button>
                   );
