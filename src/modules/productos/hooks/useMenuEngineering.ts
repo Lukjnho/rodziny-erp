@@ -89,8 +89,17 @@ function normalizarNombre(n: string): string {
 // ("+ Queso", "+ Aceite"), líneas de ajuste ("ADICIONAL POR SERVICIO/DESC.") o
 // renglones con venta/precio en 0. Se excluyen de la matriz para no ensuciar las
 // medianas ni la advertencia de "sin costo".
+// Línea de Menú Ejecutivo: en Vedia son los postres a $0 ("Flan M.E"), en
+// Saavedra los principales a precio de menú ("M.E. Ñoquis"). NO son ruido: su
+// demanda se suma al producto suelto (la etiqueta M.E sólo marca qué postre/
+// plato va con el menú ejecutivo). El precio se toma del producto suelto.
+function esLineaME(nombre: string): boolean {
+  return normalizarNombre(nombre).includes('m.e');
+}
+
 function esRuidoAdicional(nombre: string, venta: number, precio: number): boolean {
   const n = normalizarNombre(nombre);
+  if (esLineaME(nombre)) return false; // las M.E son demanda, no ruido
   if (venta <= 0 || precio <= 0) return true;
   if (n.startsWith('+')) return true;
   if (n.includes('adicional')) return true;
@@ -226,19 +235,35 @@ export function useMenuEngineering(opts: MenuEngineeringOptions) {
     // que efectivamente se dieron. Sí restamos comisión para que el margen sea
     // consistente con el tab Menú.
     const comisionMax = Math.max(0, ...(comisiones ?? []).map((c) => Number(c.pct)));
-    const productosME: ProductoME[] = [];
+    // Acumulador de consolidación: distintas líneas de Fudo del mismo producto
+    // vendible (ej. "Flan" + "Flan M.E", o "Ñoquis de papa" + "M.E. Ñoquis")
+    // matchean la misma receta y se fusionan en UNA fila. Las líneas M.E suman
+    // DEMANDA pero no aportan precio (el del menú ejecutivo no es el del producto
+    // suelto); el margen se calcula con el precio del producto suelto.
+    interface AcumME {
+      cocinaProductoId: string | null;
+      codigo: string;
+      nombre: string;
+      tipo: string;
+      categoriaFudo: string | null;
+      local: string;
+      esAncla: boolean;
+      costoUnitario: number | null;
+      udsTotal: number; // demanda total (incluye líneas M.E)
+      baseUds: number; // unidades de líneas NO-M.E (con precio real)
+      baseTotal: number; // venta bruta de líneas NO-M.E
+    }
+    const acum = new Map<string, AcumME>();
 
     for (const [, a] of agg) {
       // Excluir adicionales/ruido de Fudo (+ Queso, + Aceite, ADICIONAL POR…,
-      // o renglones con venta/precio 0): no son productos del menú.
+      // o renglones con venta/precio 0). Las líneas M.E NO son ruido: son demanda.
       const precioProm0 = a.uds > 0 ? a.total / a.uds : 0;
       if (esRuidoAdicional(a.nombre, a.total, precioProm0)) continue;
 
       // Matching SOLO explícito (sin fallback por nombre):
       //  1. Receta vendible por fudo_productos[]
       //  2. cocina_productos por fudo_nombres[] (bebidas reventa, legacy)
-      // Si nada matchea, el ítem queda sin costear (huérfano) y se ve en la
-      // sección informativa del Menú para que Lucas lo vincule manualmente.
       const nombreNorm = normalizarNombre(a.nombre);
       const receta = recetaByFudoProducto.get(`${a.local}|${nombreNorm}`) ?? null;
       const prod = !receta
@@ -249,61 +274,96 @@ export function useMenuEngineering(opts: MenuEngineeringOptions) {
       // Costo: la receta vendible matcheada directo SIEMPRE vale. Si el match vino
       // del camino legacy (cocina_producto.fudo_nombres) y su receta_id NO es una
       // receta vendible (típicamente apunta a una subreceta/relleno), NO costeamos:
-      // el costo del relleno no es el del plato. Queda "sin costo" y se muestra en
-      // la advertencia del tab para que el control de costeos lo vincule/cree.
+      // el costo del relleno no es el del plato. Queda "sin costo".
       const recetaIdMatch =
         receta?.id ??
         (prod?.receta_id && vendibleIds.has(prod.receta_id) ? prod.receta_id : null);
-      // tipo grueso (pasta/salsa/bebida/etc): prioriza categoría de la receta
-      // vendible, cae a cocina_producto.tipo, último recurso categoría Fudo.
       const tipo =
         receta?.categoria ?? prod?.tipo ?? (a.categoria ?? '').toLowerCase();
       const categoriaFudo = a.categoria ?? null;
       const esAncla = prod?.es_ancla ?? false;
 
-      // Aplicar filtro de categoría Fudo (la fina, viene de ventas_items.categoria).
-      // Comparamos sobre categoriaFudo para que las medianas se calculen únicamente
-      // sobre productos comparables (no mezclar Pastas Salón con Bebidas).
+      // Filtro de categoría Fudo (la fina, viene de ventas_items.categoria): las
+      // medianas se calculan sólo sobre productos comparables.
       if (opts.categoria && opts.categoria !== 'todas' && categoriaFudo !== opts.categoria) continue;
 
-      // Costo estimado: usar costoPorPorcion de la receta (matcheada directa o
-      // via cocina_producto.receta_id) + costo_empaque cuando hay cocina_producto.
-      // Las bebidas también son recetas (de 1 insumo), así que entran por acá.
+      // Costo estimado: costoPorPorcion de la receta + costo_empaque del cocina_producto.
       let costoUnitario: number | null = null;
       if (recetaIdMatch) {
         const c = costosRecetas.get(recetaIdMatch);
         if (c) {
-          const base = c.costoPorPorcion ?? c.costoPorKg ?? null;
-          if (base != null) costoUnitario = base + (prod?.costo_empaque ?? 0);
+          const baseCosto = c.costoPorPorcion ?? c.costoPorKg ?? null;
+          if (baseCosto != null) costoUnitario = baseCosto + (prod?.costo_empaque ?? 0);
         }
       }
 
-      const precioPromedio = a.uds > 0 ? a.total / a.uds : 0;
-      // El precio_promedio está en bruto (con IVA). Lo netamos y le restamos la
-      // comisión bancaria más alta para llegar a lo que realmente se recibe por
-      // unidad (mismo modelo que el tab Menú).
+      const esME = esLineaME(a.nombre);
+      // Clave de consolidación: misma receta/cocina_producto = misma fila. Los
+      // canales (plato/vianda/congelado) son recetas distintas → no se fusionan.
+      const key = recetaIdMatch ?? cocinaProductoId ?? `n:${a.local}:${nombreNorm}`;
+
+      const prev = acum.get(key);
+      if (prev) {
+        prev.udsTotal += a.uds;
+        if (!esME) {
+          prev.baseUds += a.uds;
+          prev.baseTotal += a.total;
+          // Preferir la metadata de la línea base (nombre canónico, categoría).
+          prev.nombre = receta?.nombre ?? prod?.nombre ?? prev.nombre;
+          prev.categoriaFudo = categoriaFudo ?? prev.categoriaFudo;
+          if (!prev.codigo && a.codigo) prev.codigo = a.codigo;
+        }
+        if (prev.costoUnitario == null && costoUnitario != null) prev.costoUnitario = costoUnitario;
+        if (!prev.esAncla && esAncla) prev.esAncla = esAncla;
+        if (!prev.cocinaProductoId && cocinaProductoId) prev.cocinaProductoId = cocinaProductoId;
+      } else {
+        acum.set(key, {
+          cocinaProductoId,
+          codigo: a.codigo,
+          nombre: receta?.nombre ?? prod?.nombre ?? a.nombre,
+          tipo,
+          categoriaFudo,
+          local: a.local,
+          esAncla,
+          costoUnitario,
+          udsTotal: a.uds,
+          baseUds: esME ? 0 : a.uds,
+          baseTotal: esME ? 0 : a.total,
+        });
+      }
+    }
+
+    // ─── Materializar productos ME desde el acumulador ──────────────────────
+    const productosME: ProductoME[] = [];
+    for (const it of acum.values()) {
+      // Precio promedio SOLO de líneas con precio real (no M.E). Las unidades M.E
+      // se valúan a ese precio del producto suelto. El precio está en bruto (con
+      // IVA): lo netamos y le restamos la comisión más alta (modelo del tab Menú).
+      const precioPromedio = it.baseUds > 0 ? it.baseTotal / it.baseUds : 0;
       const precioNeto = precioPromedio / (1 + ivaPct);
       const recibido = precioNeto - precioNeto * comisionMax;
+      const tienePrecio = recibido > 0;
 
       const margenUnitario =
-        costoUnitario != null ? recibido - costoUnitario : null;
+        tienePrecio && it.costoUnitario != null ? recibido - it.costoUnitario : null;
       const margenPctSobrePrecio =
-        margenUnitario != null && recibido > 0 ? margenUnitario / recibido : null;
+        margenUnitario != null ? margenUnitario / recibido : null;
+      // Contribución sobre la demanda TOTAL (incluye unidades M.E al margen base).
       const contribucionAbsoluta =
-        margenUnitario != null ? margenUnitario * a.uds : null;
+        margenUnitario != null ? margenUnitario * it.udsTotal : null;
 
       productosME.push({
-        cocinaProductoId,
-        codigo: a.codigo,
-        nombre: receta?.nombre ?? prod?.nombre ?? a.nombre,
-        tipo,
-        categoriaFudo,
-        local: a.local,
-        esAncla,
-        unidadesVendidas: a.uds,
-        ventaBruta: a.total,
+        cocinaProductoId: it.cocinaProductoId,
+        codigo: it.codigo,
+        nombre: it.nombre,
+        tipo: it.tipo,
+        categoriaFudo: it.categoriaFudo,
+        local: it.local,
+        esAncla: it.esAncla,
+        unidadesVendidas: it.udsTotal,
+        ventaBruta: it.baseTotal,
         precioPromedio,
-        costoUnitario,
+        costoUnitario: it.costoUnitario,
         margenUnitario,
         margenPctSobrePrecio,
         contribucionAbsoluta,

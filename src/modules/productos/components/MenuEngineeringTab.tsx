@@ -114,13 +114,14 @@ export function MenuEngineeringTab() {
     return productos.filter((p) => p.cuadrante === cuadranteFiltro);
   }, [productos, cuadranteFiltro]);
 
-  // Productos que se vendieron en Fudo pero no tienen costo válido (sin receta
-  // vendible costeada, o el match cae en una subreceta). El control de costeos
-  // tiene que crear/vincular su receta en el tab Costeo. No entran en la matriz.
+  // Productos que se vendieron en Fudo pero no se pudieron clasificar: falta el
+  // costo (sin receta costeada / match en subreceta) o el precio del producto
+  // suelto (ej. sólo se vendió como M.E). El control de costeos tiene que crear/
+  // vincular su receta o el producto suelto en el tab Costeo. No entran en la matriz.
   const productosSinCosto = useMemo(
     () =>
       productos
-        .filter((p) => p.costoUnitario == null && p.unidadesVendidas > 0)
+        .filter((p) => p.cuadrante == null && p.unidadesVendidas > 0)
         .sort((a, b) => b.unidadesVendidas - a.unidadesVendidas),
     [productos],
   );
