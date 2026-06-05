@@ -1,8 +1,10 @@
 import { useState } from 'react';
 import { PageContainer } from '@/components/layout/PageContainer';
 import { cn } from '@/lib/utils';
+import { useAuth } from '@/lib/auth';
 import { ListaTab } from './ListaTab';
 import { CalendarioTab } from './CalendarioTab';
+import { usePerfilesAgenda } from './useAgenda';
 
 type Tab = 'lista' | 'calendario';
 
@@ -29,14 +31,28 @@ const ayuda: Record<Tab, { titulo: string; pasos: string[] }> = {
 };
 
 export function AgendaPage() {
+  const { user, perfil } = useAuth();
   const [tab, setTab] = useState<Tab>('lista');
   const [ayudaAbierta, setAyudaAbierta] = useState(false);
+  // undefined = mi propia agenda. Solo los admins pueden cambiarlo.
+  const [usuarioId, setUsuarioId] = useState<string | undefined>(undefined);
+
+  const esAdmin = !!perfil?.es_admin;
+  const verPropia = !usuarioId || usuarioId === user?.id;
+  const subtitle = verPropia
+    ? 'Tareas, eventos y recordatorios personales'
+    : 'Mirando la agenda de otro usuario';
 
   return (
-    <PageContainer
-      title="Agenda"
-      subtitle="Tareas, eventos y recordatorios personales"
-    >
+    <PageContainer title="Agenda" subtitle={subtitle}>
+      {esAdmin && (
+        <SelectorUsuario
+          valor={usuarioId ?? ''}
+          propioId={user?.id}
+          onChange={(v) => setUsuarioId(v || undefined)}
+        />
+      )}
+
       <div className="mb-6 flex items-center gap-1 border-b border-surface-border">
         <TabButton activo={tab === 'lista'} onClick={() => setTab('lista')}>
           Lista
@@ -53,11 +69,42 @@ export function AgendaPage() {
         </button>
       </div>
 
-      {tab === 'lista' && <ListaTab />}
-      {tab === 'calendario' && <CalendarioTab />}
+      {tab === 'lista' && <ListaTab usuarioId={usuarioId} />}
+      {tab === 'calendario' && <CalendarioTab usuarioId={usuarioId} />}
 
       {ayudaAbierta && <AyudaPanel tab={tab} onClose={() => setAyudaAbierta(false)} />}
     </PageContainer>
+  );
+}
+
+function SelectorUsuario({
+  valor,
+  propioId,
+  onChange,
+}: {
+  valor: string;
+  propioId?: string;
+  onChange: (v: string) => void;
+}) {
+  const { data: perfiles } = usePerfilesAgenda();
+  const otros = (perfiles ?? []).filter((p) => p.user_id !== propioId);
+
+  return (
+    <div className="mb-4 flex items-center gap-2">
+      <label className="text-sm font-medium text-gray-600">Ver agenda de:</label>
+      <select
+        value={valor}
+        onChange={(e) => onChange(e.target.value)}
+        className="rounded border border-gray-300 px-3 py-1.5 text-sm focus:border-rodziny-500 focus:outline-none focus:ring-1 focus:ring-rodziny-500"
+      >
+        <option value="">Mi agenda</option>
+        {otros.map((p) => (
+          <option key={p.user_id} value={p.user_id}>
+            {p.nombre}
+          </option>
+        ))}
+      </select>
+    </div>
   );
 }
 

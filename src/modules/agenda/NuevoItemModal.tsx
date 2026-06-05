@@ -13,6 +13,7 @@ import { TIPO_LABEL } from './types';
 interface Props {
   editando: AgendaItem | null;
   fechaInicial?: string; // YYYY-MM-DD opcional para pre-llenar
+  usuarioId?: string; // a quién se le crea el item (admin asignando a otro)
   onClose: () => void;
 }
 
@@ -41,8 +42,8 @@ function partsToIso(fecha: string, hora: string | null, allDay: boolean): string
   return new Date(`${fecha}T${hora || '12:00'}:00`).toISOString();
 }
 
-export function NuevoItemModal({ editando, fechaInicial, onClose }: Props) {
-  const crear = useCrearItem();
+export function NuevoItemModal({ editando, fechaInicial, usuarioId, onClose }: Props) {
+  const crear = useCrearItem(usuarioId);
   const actualizar = useActualizarItem();
 
   const [tipo, setTipo] = useState<TipoItem>(editando?.tipo ?? 'tarea');

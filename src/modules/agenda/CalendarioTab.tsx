@@ -43,8 +43,8 @@ function getGrillaMes(anio: number, mes: number): Date[] {
   });
 }
 
-export function CalendarioTab() {
-  const { data: items } = useAgendaItems();
+export function CalendarioTab({ usuarioId }: { usuarioId?: string }) {
+  const { data: items } = useAgendaItems(usuarioId);
   const toggle = useToggleCompletado();
   const [mesActual, setMesActual] = useState(() => {
     const h = new Date();
@@ -263,6 +263,7 @@ export function CalendarioTab() {
         <NuevoItemModal
           editando={editando}
           fechaInicial={fechaPrellenada}
+          usuarioId={usuarioId}
           onClose={() => {
             setModalAbierto(false);
             setEditando(null);

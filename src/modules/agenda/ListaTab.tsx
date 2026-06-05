@@ -54,8 +54,8 @@ function formatFechaHora(iso: string, allDay: boolean) {
   return `${dia} · ${hora}`;
 }
 
-export function ListaTab() {
-  const { data: items, isLoading } = useAgendaItems();
+export function ListaTab({ usuarioId }: { usuarioId?: string }) {
+  const { data: items, isLoading } = useAgendaItems(usuarioId);
   const toggle = useToggleCompletado();
   const eliminar = useEliminarItem();
   const [modalAbierto, setModalAbierto] = useState(false);
@@ -184,6 +184,7 @@ export function ListaTab() {
       {modalAbierto && (
         <NuevoItemModal
           editando={editando}
+          usuarioId={usuarioId}
           onClose={() => {
             setModalAbierto(false);
             setEditando(null);
