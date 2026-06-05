@@ -17,6 +17,7 @@ import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../lib/auth';
 import { sha256File } from '../../lib/hashFile';
 import { procesarFactura } from '../../lib/ocrFactura';
+import { procesarComprobantePago } from '../../lib/ocrComprobantePago';
 import { formatARS, cn } from '../../lib/utils';
 import {
   MEDIO_PAGO_LABEL,
@@ -26,6 +27,7 @@ import {
   type Proveedor,
   type CategoriaGasto,
   type ItemGastoStock,
+  type CondicionIVA,
 } from './types';
 
 // ----- Props -----
@@ -115,12 +117,26 @@ interface LineaPagoUI {
   montoTexto: string; // monto en formato AR (editable)
   fecha: string; // YYYY-MM-DD — fecha en que sale/saldrá la plata (débito del echeq)
   numero: string; // N° de operación (transferencia) o N° de echeq
+  comprobantePath: string | null; // path en Storage del comprobante ya subido (OCR)
+  comprobanteNombre: string | null; // nombre del archivo para mostrar
+  ocrEjecutando: boolean; // OCR en curso
+  ocrInfo: string | null; // mensaje del OCR (✓ N° detectado…)
 }
 
 let _lineaSeq = 0;
 function nuevaLineaPago(medio: MedioPago = 'transferencia_mp', fecha = ''): LineaPagoUI {
   _lineaSeq += 1;
-  return { key: `lp_${_lineaSeq}`, medio, montoTexto: '', fecha, numero: '' };
+  return {
+    key: `lp_${_lineaSeq}`,
+    medio,
+    montoTexto: '',
+    fecha,
+    numero: '',
+    comprobantePath: null,
+    comprobanteNombre: null,
+    ocrEjecutando: false,
+    ocrInfo: null,
+  };
 }
 
 // ----- Helpers de error -----
@@ -208,6 +224,13 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
   // Proveedor recien creado por el OCR (puede no estar todavia en la query cache)
   const [proveedorRecienCreado, setProveedorRecienCreado] = useState<Proveedor | null>(null);
   const [mensajeProveedor, setMensajeProveedor] = useState<string | null>(null);
+  // Alta manual de proveedor desde el mismo form (cuando no está cargado y no hay OCR)
+  const [nuevoProvOpen, setNuevoProvOpen] = useState(false);
+  const [nuevoProvRazon, setNuevoProvRazon] = useState('');
+  const [nuevoProvCuit, setNuevoProvCuit] = useState('');
+  const [nuevoProvCondicion, setNuevoProvCondicion] = useState<CondicionIVA | ''>('');
+  const [nuevoProvGuardando, setNuevoProvGuardando] = useState(false);
+  const [nuevoProvError, setNuevoProvError] = useState<string | null>(null);
   const [categoriaId, setCategoriaId] = useState<string | null>(null);
   const [fecha, setFecha] = useState<string>('');
   const [nOperacion, setNOperacion] = useState<string>('');
@@ -271,6 +294,12 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
       setProveedorId(null);
       setProveedorRecienCreado(null);
       setMensajeProveedor(null);
+      setNuevoProvOpen(false);
+      setNuevoProvRazon('');
+      setNuevoProvCuit('');
+      setNuevoProvCondicion('');
+      setNuevoProvGuardando(false);
+      setNuevoProvError(null);
       setCategoriaId(null);
       setImporteTexto('');
       setFecha('');
@@ -808,6 +837,103 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
     setMensajeProveedor(mensaje);
   }
 
+  // Alta manual de proveedor desde el mismo form (botón "+ Nuevo proveedor").
+  // Crea el registro en la tabla `proveedores` (la misma del tab Proveedores) y lo
+  // deja seleccionado. Si el CUIT ya existe, reusa el existente en vez de duplicar.
+  async function crearProveedorManual() {
+    const razon = nuevoProvRazon.trim();
+    if (!razon) {
+      setNuevoProvError('La razón social es obligatoria');
+      return;
+    }
+    setNuevoProvError(null);
+    setNuevoProvGuardando(true);
+    try {
+      const cuitLimpio = nuevoProvCuit.replace(/\D/g, '') || null;
+      const { data: nuevo, error: errNuevo } = await supabase
+        .from('proveedores')
+        .insert({
+          razon_social: razon,
+          cuit: cuitLimpio,
+          condicion_iva: nuevoProvCondicion || null,
+          activo: true,
+        })
+        .select('*')
+        .single();
+      if (errNuevo) {
+        // Posible choque por CUIT único → reusar el existente
+        if (cuitLimpio) {
+          const { data: existente } = await supabase
+            .from('proveedores')
+            .select('*')
+            .eq('cuit', cuitLimpio)
+            .maybeSingle();
+          if (existente) {
+            const prov = existente as Proveedor;
+            setProveedorRecienCreado(prov);
+            aplicarProveedorMatch(prov, `Ya existía: ${prov.razon_social} — seleccionado`);
+            qc.invalidateQueries({ queryKey: ['proveedores-activos'] });
+            setNuevoProvOpen(false);
+            setNuevoProvRazon('');
+            setNuevoProvCuit('');
+            setNuevoProvCondicion('');
+            return;
+          }
+        }
+        setNuevoProvError(`No se pudo crear: ${errNuevo.message}`);
+        return;
+      }
+      const prov = nuevo as Proveedor;
+      setProveedorRecienCreado(prov);
+      aplicarProveedorMatch(prov, `✅ Proveedor creado: ${prov.razon_social}`);
+      qc.invalidateQueries({ queryKey: ['proveedores-activos'] });
+      setNuevoProvOpen(false);
+      setNuevoProvRazon('');
+      setNuevoProvCuit('');
+      setNuevoProvCondicion('');
+    } finally {
+      setNuevoProvGuardando(false);
+    }
+  }
+
+  // OCR de comprobante de pago para una cuota del plan de pagos. Sube el archivo,
+  // extrae el N° de operación con Claude Haiku y lo carga en esa línea.
+  async function subirComprobanteLinea(key: string, file: File | null) {
+    if (!file) return;
+    setLineasPago((prev) =>
+      prev.map((l) =>
+        l.key === key
+          ? { ...l, comprobanteNombre: file.name, ocrEjecutando: true, ocrInfo: null }
+          : l,
+      ),
+    );
+    const carpeta = `${local}/${(fecha || new Date().toISOString().slice(0, 10)).substring(0, 7)}`;
+    const res = await procesarComprobantePago({
+      archivo: file,
+      subfolder: carpeta,
+      userId: user?.id ?? null,
+    });
+    setLineasPago((prev) =>
+      prev.map((l) => {
+        if (l.key !== key) return l;
+        if (!res.ok && res.error) {
+          return { ...l, ocrEjecutando: false, ocrInfo: `⚠ ${res.error}` };
+        }
+        const pct = Math.round((res.confianza ?? 0) * 100);
+        return {
+          ...l,
+          ocrEjecutando: false,
+          comprobantePath: res.file_path ?? l.comprobantePath,
+          // Solo autocompletamos el N° si el usuario no lo había tipeado
+          numero: l.numero.trim() || res.n_operacion || '',
+          ocrInfo: res.n_operacion
+            ? `✓ N° detectado: ${res.n_operacion}${pct ? ` (${pct}%)` : ''}`
+            : 'Archivo subido. Completá el N° manualmente.',
+        };
+      }),
+    );
+  }
+
   // OCR de la factura: corre cuando el usuario selecciona el archivo.
   // Auto-completa los campos que vinieron en la factura, sin pisar lo que el
   // usuario ya hubiera editado (regla "no sobreescribir si NO está vacío").
@@ -980,6 +1106,10 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
         setError('Agregá al menos un pago al plan');
         return;
       }
+      if (lineasPago.some((l) => l.ocrEjecutando)) {
+        setError('Esperá a que termine el análisis del comprobante de alguna cuota');
+        return;
+      }
       for (const [i, l] of lineasPago.entries()) {
         const monto = parseNumeroAR(l.montoTexto) ?? 0;
         if (monto <= 0) {
@@ -1072,6 +1202,7 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
             fecha: l.fecha,
             numero: l.numero.trim() || null,
             programado: !!l.fecha && l.fecha > hoyStr,
+            comprobantePath: l.comprobantePath,
           }))
         : [];
       const pagadoRealPlan = lineasParsed
@@ -1190,9 +1321,8 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
           medio_pago: l.medio,
           numero_operacion: l.numero,
           programado: l.programado,
-          // Adjuntamos el comprobante manual (si lo cargó) a la primera cuota ejecutada.
-          comprobante_pago_path:
-            !l.programado && pagoComprobantePath ? pagoComprobantePath : null,
+          // Comprobante de pago propio de la cuota (subido con OCR en el editor).
+          comprobante_pago_path: l.comprobantePath ?? null,
           creado_por: user?.id ?? null,
         }));
         await supabase.from('pagos_gastos').insert(filasPlan);
@@ -1630,6 +1760,75 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
                       : 'bg-blue-50 text-blue-800',
                   )}>
                     {proveedorRecienCreado ? '✓ ' : 'ℹ '}{mensajeProveedor}
+                  </div>
+                )}
+
+                {/* Alta manual de proveedor nuevo (sin salir del form) */}
+                {!nuevoProvOpen ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNuevoProvOpen(true);
+                      setNuevoProvError(null);
+                    }}
+                    className="mt-1.5 text-xs font-medium text-rodziny-700 hover:underline"
+                  >
+                    ➕ Nuevo proveedor
+                  </button>
+                ) : (
+                  <div className="mt-1.5 space-y-2 rounded border border-rodziny-200 bg-rodziny-50/50 p-2.5">
+                    <div className="text-xs font-semibold text-rodziny-900">Crear proveedor nuevo</div>
+                    <input
+                      type="text"
+                      value={nuevoProvRazon}
+                      onChange={(e) => setNuevoProvRazon(e.target.value)}
+                      placeholder="Razón social *"
+                      className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
+                    />
+                    <div className="grid grid-cols-2 gap-2">
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={nuevoProvCuit}
+                        onChange={(e) => setNuevoProvCuit(e.target.value)}
+                        placeholder="CUIT (opcional)"
+                        className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm font-mono"
+                      />
+                      <select
+                        value={nuevoProvCondicion}
+                        onChange={(e) => setNuevoProvCondicion(e.target.value as CondicionIVA | '')}
+                        className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
+                      >
+                        <option value="">Cond. IVA (opcional)</option>
+                        <option value="responsable_inscripto">Responsable Inscripto</option>
+                        <option value="monotributo">Monotributo</option>
+                        <option value="exento">Exento</option>
+                        <option value="consumidor_final">Consumidor Final</option>
+                      </select>
+                    </div>
+                    {nuevoProvError && (
+                      <div className="rounded bg-red-50 px-2 py-1 text-xs text-red-700">{nuevoProvError}</div>
+                    )}
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={crearProveedorManual}
+                        disabled={nuevoProvGuardando}
+                        className="rounded bg-rodziny-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-rodziny-700 disabled:opacity-50"
+                      >
+                        {nuevoProvGuardando ? 'Creando…' : 'Crear y seleccionar'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setNuevoProvOpen(false);
+                          setNuevoProvError(null);
+                        }}
+                        className="rounded border border-gray-300 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50"
+                      >
+                        Cancelar
+                      </button>
+                    </div>
                   </div>
                 )}
               </Field>
@@ -2236,6 +2435,7 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
                   faltaAsignar={faltaAsignar}
                   planCuadra={planCuadra}
                   nuevaLinea={nuevaLineaPago}
+                  onSubirComprobante={subirComprobanteLinea}
                 />
               )}
 
@@ -2352,7 +2552,8 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
                   className="w-full rounded border border-gray-300 px-3 py-2 text-sm font-mono"
                 />
                 <p className="mt-1 text-[11px] text-gray-500">
-                  Es el N° impreso en la factura del proveedor. Diferente del N° de operación del pago.
+                  N° impreso en la factura del proveedor (no es el N° de operación del pago). Se
+                  completa solo si adjuntás la factura abajo — no hace falta tipearlo.
                 </p>
               </Field>
 
@@ -2547,6 +2748,7 @@ function PlanPagosEditor({
   faltaAsignar,
   planCuadra,
   nuevaLinea,
+  onSubirComprobante,
 }: {
   lineas: LineaPagoUI[];
   setLineas: React.Dispatch<React.SetStateAction<LineaPagoUI[]>>;
@@ -2555,6 +2757,7 @@ function PlanPagosEditor({
   faltaAsignar: number;
   planCuadra: boolean;
   nuevaLinea: (medio?: MedioPago, fecha?: string) => LineaPagoUI;
+  onSubirComprobante: (key: string, file: File | null) => void;
 }) {
   const hoy = new Date().toISOString().slice(0, 10);
 
@@ -2655,6 +2858,35 @@ function PlanPagosEditor({
                   />
                 </label>
               </div>
+
+              {/* Comprobante de pago de la cuota — con OCR (saca el N° automático) */}
+              {requiereNumero && (
+                <div className="mt-2">
+                  <label className="flex cursor-pointer items-center gap-2 text-[11px] text-rodziny-700 hover:underline">
+                    📎 {l.comprobanteNombre ? 'Reemplazar comprobante' : 'Adjuntar comprobante (lee el N° solo)'}
+                    <input
+                      type="file"
+                      accept="image/*,application/pdf"
+                      className="hidden"
+                      disabled={l.ocrEjecutando}
+                      onChange={(e) => onSubirComprobante(l.key, e.target.files?.[0] ?? null)}
+                    />
+                  </label>
+                  {l.comprobanteNombre && (
+                    <div className="mt-0.5 truncate text-[11px] text-green-700">📎 {l.comprobanteNombre}</div>
+                  )}
+                  {l.ocrEjecutando && (
+                    <div className="mt-0.5 flex items-center gap-1 text-[11px] text-blue-700">
+                      <span className="inline-block h-2.5 w-2.5 animate-spin rounded-full border-2 border-blue-300 border-t-blue-700" />
+                      Leyendo comprobante…
+                    </div>
+                  )}
+                  {l.ocrInfo && !l.ocrEjecutando && (
+                    <div className="mt-0.5 text-[11px] text-green-700">{l.ocrInfo}</div>
+                  )}
+                </div>
+              )}
+
               {montoNum > 0 && (
                 <div className="mt-1 text-right text-[11px] text-gray-500 tabular-nums">
                   {formatARS(montoNum)}
