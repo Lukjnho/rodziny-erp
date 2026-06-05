@@ -19,6 +19,7 @@ import { useAuth } from '@/lib/auth';
 import { cn, formatARS } from '@/lib/utils';
 import { procesarComprobantePago } from '@/lib/ocrComprobantePago';
 import { MEDIO_PAGO_LABEL, medioRequiereComprobante, type MedioPago, type Gasto, type PagoGasto } from './types';
+import { recomputarEstadoGasto } from './recomputarEstadoGasto';
 
 interface Props {
   open: boolean;
@@ -136,6 +137,12 @@ export function PagarGastoModal({ open, gasto, onClose }: Props) {
   const importeTotal = gasto ? Number(gasto.importe_total) : 0;
   const saldoPendiente = Math.max(0, importeTotal - yaPagado - yaDescuento);
 
+  // Echeq programados (cuotas a futuro sin debitar). Se confirman cuando sale la plata.
+  const pagosProgramados = useMemo(
+    () => pagosPrevios.filter((p) => (p as { programado?: boolean }).programado),
+    [pagosPrevios],
+  );
+
   const importeNum = useMemo(() => parseNumeroAR(importeTexto) ?? 0, [importeTexto]);
   const descuentoNum = useMemo(() => parseNumeroAR(descuentoTexto) ?? 0, [descuentoTexto]);
   const totalDespuesDelPago = yaPagado + importeNum + yaDescuento + descuentoNum;
@@ -211,6 +218,37 @@ export function PagarGastoModal({ open, gasto, onClose }: Props) {
   const requiereDatosBancarios = medioRequiereComprobante(medioPago);
   const yaTieneComprobante = !!gasto.comprobante_path;
   const yaTieneFactura = !!gasto.factura_path;
+
+  // Confirmar que un echeq programado ya se debitó: deja de ser "a futuro" y el gasto
+  // recalcula su estado (puede pasar de Parcial → Pagado).
+  async function confirmarDebitoEcheq(pago: PagoGasto) {
+    if (!gasto) return;
+    if (
+      !window.confirm(
+        `¿Confirmar que se debitó el echeq de ${formatARS(Number(pago.monto))}?\n\nLa cuota pasa a pagada y el gasto se recalcula.`,
+      )
+    )
+      return;
+    setGuardando(true);
+    try {
+      const { error: errUpd } = await supabase
+        .from('pagos_gastos')
+        .update({ programado: false })
+        .eq('id', pago.id);
+      if (errUpd) throw errUpd;
+      await recomputarEstadoGasto(gasto.id);
+      qc.invalidateQueries({ queryKey: ['pagos_gastos'] });
+      qc.invalidateQueries({ queryKey: ['gastos_listado'] });
+      qc.invalidateQueries({ queryKey: ['gastos_pagos_pendientes'] });
+      qc.invalidateQueries({ queryKey: ['gastos_pagos_rango'] });
+      qc.invalidateQueries({ queryKey: ['gastos_resumen_kpis'] });
+      onClose();
+    } catch (e) {
+      setError(formatError(e));
+    } finally {
+      setGuardando(false);
+    }
+  }
 
   async function handleConfirmar() {
     if (!gasto) return;
@@ -435,6 +473,45 @@ export function PagarGastoModal({ open, gasto, onClose }: Props) {
               </span>
             </div>
           </div>
+
+          {/* Echeq programados (plan de pagos): cuotas a futuro sin debitar. */}
+          {pagosProgramados.length > 0 && (
+            <div className="rounded border border-blue-200 bg-blue-50/60 p-3 text-sm">
+              <div className="mb-1 font-medium text-blue-900">
+                🗓 Echeq programados ({pagosProgramados.length})
+              </div>
+              <p className="mb-2 text-xs text-blue-700">
+                Cuotas agendadas a futuro. Confirmá cada una cuando el banco la debite.
+              </p>
+              <div className="space-y-1.5">
+                {pagosProgramados.map((p) => (
+                  <div
+                    key={p.id}
+                    className="flex items-center justify-between rounded border border-blue-100 bg-white px-2 py-1.5"
+                  >
+                    <div className="text-xs">
+                      <div className="font-medium tabular-nums text-gray-900">
+                        {formatARS(Number(p.monto))}
+                      </div>
+                      <div className="text-gray-500">
+                        {MEDIO_PAGO_LABEL[p.medio_pago as MedioPago] ?? p.medio_pago} ·{' '}
+                        {p.fecha_pago}
+                        {p.numero_operacion ? ` · N° ${p.numero_operacion}` : ''}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => confirmarDebitoEcheq(p)}
+                      disabled={guardando}
+                      className="rounded bg-blue-600 px-2 py-1 text-[11px] font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                    >
+                      ✓ Confirmar débito
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Fecha + Medio */}
           <div className="grid grid-cols-2 gap-3">

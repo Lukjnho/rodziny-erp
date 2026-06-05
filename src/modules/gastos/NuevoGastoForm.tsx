@@ -106,6 +106,23 @@ function parseNumeroAR(text: string): number | null {
   return isFinite(num) ? num : null;
 }
 
+// ----- Plan de pagos (varias cuotas sobre una misma factura) -----
+
+/** Una línea del editor de plan de pagos (transferencia + echeq, etc.) */
+interface LineaPagoUI {
+  key: string; // id local para el render
+  medio: MedioPago;
+  montoTexto: string; // monto en formato AR (editable)
+  fecha: string; // YYYY-MM-DD — fecha en que sale/saldrá la plata (débito del echeq)
+  numero: string; // N° de operación (transferencia) o N° de echeq
+}
+
+let _lineaSeq = 0;
+function nuevaLineaPago(medio: MedioPago = 'transferencia_mp', fecha = ''): LineaPagoUI {
+  _lineaSeq += 1;
+  return { key: `lp_${_lineaSeq}`, medio, montoTexto: '', fecha, numero: '' };
+}
+
 // ----- Helpers de error -----
 
 function formatError(e: unknown): string {
@@ -212,6 +229,12 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
   //  - fisico: default pagado=true (ya lo pagué a mano)
   //  - cuenta_corriente: pagado=false fijo, no se puede tildar
   const [pagado, setPagado] = useState<boolean>(true);
+  // Plan de pagos: una factura saldada con varias cuotas (ej: transferencia hoy + 2 echeq
+  // a 30/60 días). Cuando está activo, reemplaza el bloque de pago simple por un editor de
+  // N líneas cuya suma debe dar el total. Las cuotas con fecha futura se guardan como
+  // programado=true (echeq sin debitar). Solo disponible en el flujo "físico".
+  const [planPagos, setPlanPagos] = useState<boolean>(false);
+  const [lineasPago, setLineasPago] = useState<LineaPagoUI[]>([]);
   // Fecha del pago efectivo (puede diferir de fecha del comprobante). Solo se usa cuando pagado=true.
   const [fechaPago, setFechaPago] = useState<string>('');
   // Fecha en que vence el pago (solo cuando es cuenta corriente y aún no pagaste)
@@ -257,6 +280,8 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
       setTipoComprobante('recibo');
       setNroComprobante('');
       setPagado(true);
+      setPlanPagos(false);
+      setLineasPago([]);
       setFechaPago('');
       setFechaVencimiento('');
       setVincularStock(false);
@@ -313,6 +338,17 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
   // Derivado: el importe como numero, parseado del input texto
   const importeTotal = useMemo(() => parseNumeroAR(importeTexto) ?? 0, [importeTexto]);
   const requiereAprobacion = importeTotal >= umbralAprobacion;
+
+  // Plan de pagos: suma de las cuotas y cuánto falta asignar contra el total.
+  const totalPlan = useMemo(
+    () => lineasPago.reduce((s, l) => s + (parseNumeroAR(l.montoTexto) ?? 0), 0),
+    [lineasPago],
+  );
+  const faltaAsignar = useMemo(
+    () => Math.round((importeTotal - totalPlan) * 100) / 100,
+    [importeTotal, totalPlan],
+  );
+  const planCuadra = Math.abs(faltaAsignar) < 0.01 && lineasPago.length > 0;
 
   // Neto/IVA derivados del Total + alícuota cuando está activa la discriminación.
   // Neto = Total / (1 + alícuota/100); IVA = Total - Neto.
@@ -933,8 +969,43 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
       setError('Seleccioná una categoría');
       return;
     }
-    // Validaciones del bloque de pago — solo si "Pagado"
-    if (pagado) {
+    // Validaciones del PLAN DE PAGOS (varias cuotas)
+    if (planPagos) {
+      // No combinamos plan de pagos con split por subcategoría (un solo gasto).
+      if (usarSplit && splitPorSubcat.length > 1) {
+        setError('El plan de pagos no se puede combinar con división por subcategoría. Cargá un solo rubro.');
+        return;
+      }
+      if (lineasPago.length === 0) {
+        setError('Agregá al menos un pago al plan');
+        return;
+      }
+      for (const [i, l] of lineasPago.entries()) {
+        const monto = parseNumeroAR(l.montoTexto) ?? 0;
+        if (monto <= 0) {
+          setError(`El pago ${i + 1} necesita un monto mayor a 0`);
+          return;
+        }
+        if (!l.fecha) {
+          setError(`El pago ${i + 1} necesita una fecha`);
+          return;
+        }
+        if (medioRequiereComprobante(l.medio) && !l.numero.trim()) {
+          setError(`El pago ${i + 1} (${MEDIO_PAGO_LABEL[l.medio]}) necesita N° de operación / echeq`);
+          return;
+        }
+      }
+      if (!planCuadra) {
+        setError(
+          faltaAsignar > 0
+            ? `La suma de los pagos no llega al total. Falta asignar ${formatARS(faltaAsignar)}`
+            : `La suma de los pagos supera el total por ${formatARS(Math.abs(faltaAsignar))}`,
+        );
+        return;
+      }
+    }
+    // Validaciones del bloque de pago simple — solo si "Pagado" y NO plan de pagos
+    if (pagado && !planPagos) {
       if (medioRequiereComprobante(medioPago) && !nOperacion) {
         setError('N° de operación es obligatorio si el medio de pago no es efectivo');
         return;
@@ -952,7 +1023,7 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
       }
     }
     // Si es cuenta corriente (no pagado), la fecha de vencimiento es obligatoria
-    if (tipoGasto === 'cuenta_corriente' && !fechaVencimiento) {
+    if (tipoGasto === 'cuenta_corriente' && !planPagos && !fechaVencimiento) {
       setError('Falta la fecha de vencimiento (cuándo hay que pagar)');
       return;
     }
@@ -990,6 +1061,44 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
         if (errPago) throw errPago;
       }
 
+      // Plan de pagos: parseamos las cuotas y derivamos estado/vencimiento del gasto.
+      //  - ejecutadas (fecha <= hoy): plata que ya salió → cuentan para el "pagado real"
+      //  - programadas (fecha > hoy): echeq sin debitar → programado=true, no cuentan aún
+      const hoyStr = new Date().toISOString().slice(0, 10);
+      const lineasParsed = planPagos
+        ? lineasPago.map((l) => ({
+            monto: parseNumeroAR(l.montoTexto) ?? 0,
+            medio: l.medio,
+            fecha: l.fecha,
+            numero: l.numero.trim() || null,
+            programado: !!l.fecha && l.fecha > hoyStr,
+          }))
+        : [];
+      const pagadoRealPlan = lineasParsed
+        .filter((l) => !l.programado)
+        .reduce((s, l) => s + l.monto, 0);
+      const primeraProgramada = lineasParsed
+        .filter((l) => l.programado)
+        .map((l) => l.fecha)
+        .sort()[0];
+
+      // Estado / vencimiento / medio a guardar en el gasto según el modo de pago.
+      const estadoPagoGasto = planPagos
+        ? pagadoRealPlan >= importeTotal - 0.01
+          ? 'Pagado'
+          : pagadoRealPlan > 0
+            ? 'Parcial'
+            : 'Pendiente'
+        : pagado
+          ? 'Pagado'
+          : 'Pendiente';
+      const fechaVencGasto = planPagos
+        ? primeraProgramada ?? null
+        : !pagado
+          ? fechaVencimiento || null
+          : null;
+      const medioPagoGasto = planPagos ? null : pagado ? medioPago : null;
+
       // Builder de payload para 1 fila de gasto. Total se prorratea cuando hay split.
       const buildPayload = (
         catId: string,
@@ -1018,14 +1127,14 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
             ? Math.round((ivaCalc * (total / importeTotal)) * 100) / 100
             : null,
           iibb: null,
-          medio_pago: pagado ? medioPago : null,
+          medio_pago: medioPagoGasto,
           tipo_comprobante: tipoComprobante,
           // N° de la factura/remito (independiente del estado de pago).
           // Si no se cargó, fallback a nOperacion del pago (cuando hay) para compatibilidad
           // con flujos viejos donde no se diferenciaba.
-          nro_comprobante: nroComprobante || (pagado ? nOperacion : null) || null,
-          estado_pago: pagado ? 'Pagado' : 'Pendiente',
-          fecha_vencimiento: !pagado ? (fechaVencimiento || null) : null,
+          nro_comprobante: nroComprobante || (pagado && !planPagos ? nOperacion : null) || null,
+          estado_pago: estadoPagoGasto,
+          fecha_vencimiento: fechaVencGasto,
           comprobante_path: pagoComprobantePath, // OCR en digital, manual en físico
           comprobante_id: comprobanteId, // null en flujo fisico
           factura_path: facturaPath,
@@ -1071,10 +1180,28 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
         gastosCreados.push(ins!.id as string);
       }
 
+      // 2.0) Plan de pagos: insertamos 1 fila por cuota. Las futuras van programado=true
+      //      (echeq sin debitar). El flujo de caja igual las imputa por fecha_pago en su mes.
+      if (planPagos && gastosCreados.length === 1) {
+        const filasPlan = lineasParsed.map((l) => ({
+          gasto_id: gastosCreados[0],
+          fecha_pago: l.fecha,
+          monto: l.monto,
+          medio_pago: l.medio,
+          numero_operacion: l.numero,
+          programado: l.programado,
+          // Adjuntamos el comprobante manual (si lo cargó) a la primera cuota ejecutada.
+          comprobante_pago_path:
+            !l.programado && pagoComprobantePath ? pagoComprobantePath : null,
+          creado_por: user?.id ?? null,
+        }));
+        await supabase.from('pagos_gastos').insert(filasPlan);
+      }
+
       // 2) Si el gasto se cargó como Pagado, registrar el pago en pagos_gastos.
       //    Esto es lo que después matchea con el extracto bancario en Conciliación.
       //    Si hubo split por subcategoría, prorrateamos el pago entre las N filas.
-      if (pagado && gastosCreados.length > 0) {
+      if (pagado && !planPagos && gastosCreados.length > 0) {
         const fechaDelPago = tipoGasto !== 'digital' ? fechaPago : fecha;
         if (gastosCreados.length === 1) {
           await supabase.from('pagos_gastos').insert({
@@ -2024,16 +2151,20 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
                 )}
               </Field>
 
-              {/* Toggle Pagado / Pendiente — solo en flujo "fisico" (en cuenta_corriente es siempre Pendiente) */}
+              {/* Toggle Pagado / Pendiente / Plan de pagos — solo en flujo "fisico"
+                  (en cuenta_corriente es siempre Pendiente) */}
               {tipoGasto === 'fisico' && (
                 <Field label="Estado del pago *">
                   <div className="flex gap-2">
                     <button
                       type="button"
-                      onClick={() => setPagado(true)}
+                      onClick={() => {
+                        setPagado(true);
+                        setPlanPagos(false);
+                      }}
                       className={cn(
                         'flex-1 rounded border px-3 py-2 text-sm font-medium',
-                        pagado
+                        pagado && !planPagos
                           ? 'border-green-600 bg-green-50 text-green-900'
                           : 'border-gray-300 text-gray-700',
                       )}
@@ -2042,22 +2173,46 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
                     </button>
                     <button
                       type="button"
-                      onClick={() => setPagado(false)}
+                      onClick={() => {
+                        setPagado(false);
+                        setPlanPagos(false);
+                      }}
                       className={cn(
                         'flex-1 rounded border px-3 py-2 text-sm font-medium',
-                        !pagado
+                        !pagado && !planPagos
                           ? 'border-amber-500 bg-amber-50 text-amber-900'
                           : 'border-gray-300 text-gray-700',
                       )}
                     >
                       📋 Aún no pagué
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPlanPagos(true);
+                        // Sembramos 2 cuotas: la 1ª hoy (transferencia), la 2ª a definir.
+                        if (lineasPago.length === 0) {
+                          setLineasPago([
+                            nuevaLineaPago('transferencia_mp', fecha || new Date().toISOString().slice(0, 10)),
+                            nuevaLineaPago('cheque_galicia', ''),
+                          ]);
+                        }
+                      }}
+                      className={cn(
+                        'flex-1 rounded border px-3 py-2 text-sm font-medium',
+                        planPagos
+                          ? 'border-rodziny-600 bg-rodziny-50 text-rodziny-900'
+                          : 'border-gray-300 text-gray-700',
+                      )}
+                    >
+                      🧾 Plan de pagos
+                    </button>
                   </div>
                 </Field>
               )}
 
               {/* Fecha de vencimiento — visible cuando NO está pagado (cuenta corriente o físico-pendiente) */}
-              {!pagado && (
+              {!pagado && !planPagos && (
                 <Field label={tipoGasto === 'cuenta_corriente' ? 'Fecha de vencimiento *' : 'Fecha de vencimiento (opcional)'}>
                   <input
                     type="date"
@@ -2071,8 +2226,21 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
                 </Field>
               )}
 
+              {/* Plan de pagos — editor de N cuotas (transferencia + echeq, etc.) */}
+              {planPagos && (
+                <PlanPagosEditor
+                  lineas={lineasPago}
+                  setLineas={setLineasPago}
+                  importeTotal={importeTotal}
+                  totalPlan={totalPlan}
+                  faltaAsignar={faltaAsignar}
+                  planCuadra={planCuadra}
+                  nuevaLinea={nuevaLineaPago}
+                />
+              )}
+
               {/* Bloque de pago — visible solo si está pagado (siempre en flujo digital) */}
-              {pagado && (
+              {pagado && !planPagos && (
                 <>
                   <div className="grid grid-cols-2 gap-3">
                     {tipoGasto !== 'digital' && (
@@ -2367,6 +2535,169 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
 }
 
 // ----- Subcomponentes -----
+
+// Editor del plan de pagos: N cuotas (transferencia + echeq, etc.) cuya suma debe
+// dar el total de la factura. Las cuotas con fecha futura se marcan como "echeq a
+// vencer" (se guardarán con programado=true).
+function PlanPagosEditor({
+  lineas,
+  setLineas,
+  importeTotal,
+  totalPlan,
+  faltaAsignar,
+  planCuadra,
+  nuevaLinea,
+}: {
+  lineas: LineaPagoUI[];
+  setLineas: React.Dispatch<React.SetStateAction<LineaPagoUI[]>>;
+  importeTotal: number;
+  totalPlan: number;
+  faltaAsignar: number;
+  planCuadra: boolean;
+  nuevaLinea: (medio?: MedioPago, fecha?: string) => LineaPagoUI;
+}) {
+  const hoy = new Date().toISOString().slice(0, 10);
+
+  const actualizar = (key: string, campo: keyof LineaPagoUI, valor: string) => {
+    setLineas((prev) => prev.map((l) => (l.key === key ? { ...l, [campo]: valor } : l)));
+  };
+  const quitar = (key: string) => setLineas((prev) => prev.filter((l) => l.key !== key));
+  const agregar = () => setLineas((prev) => [...prev, nuevaLinea('cheque_galicia', '')]);
+
+  return (
+    <div className="rounded-lg border border-rodziny-200 bg-rodziny-50/40 p-3">
+      <div className="mb-2 text-xs text-gray-600">
+        Cargá cada pago (transferencia, echeq, etc.). La suma debe dar el total de la factura.
+        Las cuotas con <strong>fecha futura</strong> quedan agendadas como echeq a vencer e impactan
+        el flujo en su mes.
+      </div>
+
+      <div className="space-y-2">
+        {lineas.map((l, i) => {
+          const montoNum = parseNumeroAR(l.montoTexto) ?? 0;
+          const programado = !!l.fecha && l.fecha > hoy;
+          const requiereNumero = medioRequiereComprobante(l.medio);
+          return (
+            <div key={l.key} className="rounded border border-gray-200 bg-white p-2">
+              <div className="mb-1 flex items-center justify-between">
+                <span className="text-xs font-semibold text-gray-700">Pago {i + 1}</span>
+                <div className="flex items-center gap-2">
+                  {programado && (
+                    <span className="rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-medium text-blue-700">
+                      🗓 echeq a vencer
+                    </span>
+                  )}
+                  {lineas.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => quitar(l.key)}
+                      className="text-[11px] text-red-600 hover:underline"
+                    >
+                      Quitar
+                    </button>
+                  )}
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <label className="block">
+                  <span className="mb-0.5 block text-[11px] text-gray-500">Medio</span>
+                  <select
+                    value={l.medio}
+                    onChange={(e) => actualizar(l.key, 'medio', e.target.value)}
+                    className="w-full rounded border border-gray-300 px-2 py-1.5 text-xs"
+                  >
+                    {(Object.keys(MEDIO_PAGO_LABEL) as MedioPago[]).map((m) => (
+                      <option key={m} value={m}>
+                        {MEDIO_PAGO_LABEL[m]}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block">
+                  <span className="mb-0.5 block text-[11px] text-gray-500">Monto</span>
+                  <div className="flex items-center rounded border border-gray-300">
+                    <span className="px-2 text-xs text-gray-500">$</span>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={l.montoTexto}
+                      onChange={(e) => actualizar(l.key, 'montoTexto', e.target.value)}
+                      onBlur={() => {
+                        const n = parseNumeroAR(l.montoTexto);
+                        if (n !== null) actualizar(l.key, 'montoTexto', formatNumeroAR(n));
+                      }}
+                      placeholder="0"
+                      className="w-full rounded-r px-1 py-1.5 text-xs tabular-nums focus:outline-none"
+                    />
+                  </div>
+                </label>
+                <label className="block">
+                  <span className="mb-0.5 block text-[11px] text-gray-500">
+                    Fecha {programado ? '(débito futuro)' : 'del pago'}
+                  </span>
+                  <input
+                    type="date"
+                    value={l.fecha}
+                    onChange={(e) => actualizar(l.key, 'fecha', e.target.value)}
+                    className="w-full rounded border border-gray-300 px-2 py-1.5 text-xs"
+                  />
+                </label>
+                <label className="block">
+                  <span className="mb-0.5 block text-[11px] text-gray-500">
+                    N° op / echeq {requiereNumero ? '' : '(opcional)'}
+                  </span>
+                  <input
+                    type="text"
+                    value={l.numero}
+                    onChange={(e) => actualizar(l.key, 'numero', e.target.value)}
+                    placeholder={l.medio === 'cheque_galicia' ? 'N° de echeq' : 'N° de operación'}
+                    className="w-full rounded border border-gray-300 px-2 py-1.5 text-xs font-mono"
+                  />
+                </label>
+              </div>
+              {montoNum > 0 && (
+                <div className="mt-1 text-right text-[11px] text-gray-500 tabular-nums">
+                  {formatARS(montoNum)}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      <button
+        type="button"
+        onClick={agregar}
+        className="mt-2 w-full rounded border border-dashed border-rodziny-300 px-3 py-1.5 text-xs text-rodziny-700 hover:bg-rodziny-100"
+      >
+        + Agregar pago
+      </button>
+
+      {/* Resumen: suma vs total */}
+      <div className="mt-3 space-y-1 border-t border-rodziny-200 pt-2 text-xs">
+        <div className="flex justify-between text-gray-600">
+          <span>Total factura</span>
+          <span className="tabular-nums">{formatARS(importeTotal)}</span>
+        </div>
+        <div className="flex justify-between text-gray-600">
+          <span>Suma de los pagos</span>
+          <span className="tabular-nums">{formatARS(totalPlan)}</span>
+        </div>
+        {planCuadra ? (
+          <div className="flex justify-between font-semibold text-green-700">
+            <span>✓ Cuadra con el total</span>
+            <span className="tabular-nums">{formatARS(0)}</span>
+          </div>
+        ) : (
+          <div className="flex justify-between font-semibold text-amber-800">
+            <span>{faltaAsignar > 0 ? 'Falta asignar' : 'Te pasaste por'}</span>
+            <span className="tabular-nums">{formatARS(Math.abs(faltaAsignar))}</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (

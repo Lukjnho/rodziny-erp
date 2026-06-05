@@ -154,6 +154,10 @@ export interface PagoGasto {
   numero_operacion: string | null;
   comprobante_pago_path: string | null;
   conciliado_movimiento_id: string | null;
+  // true = cuota agendada a futuro (echeq sin debitar) — la plata todavía no salió,
+  // no cuenta para el "pagado real" del gasto. El flujo de caja igual la imputa por
+  // fecha_pago en su mes. Pasa a false cuando se confirma/concilia el débito.
+  programado: boolean;
   notas: string | null;
   creado_por: string | null;
   created_at: string;

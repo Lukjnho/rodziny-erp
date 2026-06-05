@@ -5,6 +5,7 @@ import { formatARS, formatFecha, cn } from '@/lib/utils';
 import type { Gasto, MedioPago, PagoGasto } from './types';
 import { MEDIO_PAGO_LABEL } from './types';
 import { PagarGastoModal } from './PagarGastoModal';
+import { recomputarEstadoGasto } from './recomputarEstadoGasto';
 
 type Vista = 'pendientes' | 'pagados' | 'todos';
 
@@ -134,6 +135,31 @@ export function PagosPanel({ local, desde, hasta }: Props) {
     qc.invalidateQueries({ queryKey: ['movimientos_bancarios'] });
   }
 
+  // Confirmar el débito de un echeq programado: la plata salió, deja de ser "a futuro".
+  // El gasto recalcula su estado (puede pasar de Parcial → Pagado).
+  async function confirmarDebito(pago: PagoGasto, g: Gasto) {
+    if (
+      !window.confirm(
+        `¿Confirmar que se debitó el echeq de ${formatARS(Number(pago.monto))} (${formatFecha(pago.fecha_pago)})?\n\nLa cuota pasa a pagada y el gasto se recalcula.`,
+      )
+    )
+      return;
+    const { error } = await supabase
+      .from('pagos_gastos')
+      .update({ programado: false })
+      .eq('id', pago.id);
+    if (error) {
+      window.alert(error.message);
+      return;
+    }
+    await recomputarEstadoGasto(g.id);
+    qc.invalidateQueries({ queryKey: ['gastos_pagos_pendientes'] });
+    qc.invalidateQueries({ queryKey: ['gastos_pagos_rango'] });
+    qc.invalidateQueries({ queryKey: ['gastos_listado'] });
+    qc.invalidateQueries({ queryKey: ['pagos_gastos'] });
+    qc.invalidateQueries({ queryKey: ['gastos_resumen_kpis'] });
+  }
+
   return (
     <div>
       {/* Filtros */}
@@ -232,18 +258,24 @@ export function PagosPanel({ local, desde, hasta }: Props) {
                       {formatARS(g.importe_total)}
                     </td>
                     <td className="px-3 py-2 text-center">
-                      <span
-                        className={cn(
-                          'inline-block rounded px-2 py-0.5 text-[10px] font-medium',
-                          pagado
-                            ? 'bg-green-100 text-green-800'
-                            : vencido
-                              ? 'bg-red-100 text-red-800'
-                              : 'bg-amber-100 text-amber-800',
-                        )}
-                      >
-                        {pagado ? 'Pagado' : vencido ? 'Vencido' : 'Pendiente'}
-                      </span>
+                      {pago?.programado ? (
+                        <span className="inline-block rounded bg-blue-100 px-2 py-0.5 text-[10px] font-medium text-blue-700">
+                          🗓 Programado
+                        </span>
+                      ) : (
+                        <span
+                          className={cn(
+                            'inline-block rounded px-2 py-0.5 text-[10px] font-medium',
+                            pagado
+                              ? 'bg-green-100 text-green-800'
+                              : vencido
+                                ? 'bg-red-100 text-red-800'
+                                : 'bg-amber-100 text-amber-800',
+                          )}
+                        >
+                          {pagado ? 'Pagado' : vencido ? 'Vencido' : 'Pendiente'}
+                        </span>
+                      )}
                     </td>
                     <td className="whitespace-nowrap px-3 py-2 text-center">
                       {pagado ? (
@@ -271,7 +303,15 @@ export function PagosPanel({ local, desde, hasta }: Props) {
                       {pago ? formatFecha(pago.fecha_pago) : '—'}
                     </td>
                     <td className="whitespace-nowrap px-3 py-2 text-right">
-                      {!pagado ? (
+                      {pago?.programado ? (
+                        <button
+                          onClick={() => confirmarDebito(pago, g)}
+                          className="rounded bg-blue-600 px-2 py-1 text-[10px] font-medium text-white hover:bg-blue-700"
+                          title="Marcar que el echeq ya se debitó"
+                        >
+                          ✓ Confirmar débito
+                        </button>
+                      ) : !pagado ? (
                         <button
                           onClick={() => setGastoAPagar(g)}
                           className="rounded bg-green-600 px-2 py-1 text-[10px] font-medium text-white hover:bg-green-700"
