@@ -41,8 +41,14 @@ const REQUISITOS: Record<Local, Requisito[]> = {
   ],
 };
 
+// Corte de la jornada operativa (hora AR). El turno noche cierra hasta la ~01hs:
+// para que esos cierres se imputen al día que corresponde (y no al siguiente),
+// todo lo cargado entre las 00:00 y las 04:59 AR cuenta como el día anterior.
+// Debe coincidir con CORTE_JORNADA_H en MostradorPage.tsx.
+const CORTE_JORNADA_H = 5;
+
 function hoyAR(): string {
-  const offsetMs = 3 * 60 * 60 * 1000;
+  const offsetMs = (3 + CORTE_JORNADA_H) * 60 * 60 * 1000;
   return new Date(new Date().getTime() - offsetMs).toISOString().slice(0, 10);
 }
 
@@ -62,6 +68,10 @@ export function useCierresFaltantes(local: Local, client?: SupabaseClient) {
   const fecha = hoyAR();
   const fechaAyer = ayerAR(fecha);
   const hora = horaAR();
+  // En la madrugada (00:00–04:59 AR) la jornada operativa de `fecha` ya terminó
+  // por completo (es el día anterior), así que todos sus requisitos cuentan como
+  // vencidos. Fuera de esa franja vale la hora real de pared.
+  const horaEfectiva = hora < CORTE_JORNADA_H ? 24 : hora;
   const sb = client ?? supabaseAuth;
 
   const { data, isLoading } = useQuery({
@@ -102,7 +112,7 @@ export function useCierresFaltantes(local: Local, client?: SupabaseClient) {
 
   // Día actual: obligatorio a partir de su horaMin
   for (const r of requisitos) {
-    if (hora >= r.horaMin && !tiene(fecha, r.tipo, r.turno))
+    if (horaEfectiva >= r.horaMin && !tiene(fecha, r.tipo, r.turno))
       faltantes.push({ tipo: r.tipo, turno: r.turno, fecha, label: `${r.label} (hoy)` });
   }
 

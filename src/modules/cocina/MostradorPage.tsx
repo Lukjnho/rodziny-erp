@@ -80,10 +80,17 @@ function ventasFudoDelProducto(producto: Producto, ranking: FudoRankingItem[] | 
   return total;
 }
 
+// Corte de la jornada operativa (hora AR). El turno noche cierra hasta la ~01hs:
+// para que esos cierres se imputen al día que corresponde (y no al siguiente),
+// todo lo cargado entre las 00:00 y las 04:59 AR cuenta como el día anterior.
+const CORTE_JORNADA_H = 5;
+
 function hoyAR(): string {
   // Argentina: UTC-3 sin horario de verano. toISOString() devuelve UTC.
+  // Restamos el offset AR + el corte de jornada para que la madrugada siga
+  // perteneciendo al día operativo anterior.
   const ahora = new Date();
-  const offsetMs = 3 * 60 * 60 * 1000;
+  const offsetMs = (3 + CORTE_JORNADA_H) * 60 * 60 * 1000;
   return new Date(ahora.getTime() - offsetMs).toISOString().slice(0, 10);
 }
 
