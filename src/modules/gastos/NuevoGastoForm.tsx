@@ -40,7 +40,7 @@ interface NuevoGastoFormProps {
 
 // ----- Tipos internos -----
 
-type TipoGasto = 'digital' | 'fisico' | 'cuenta_corriente';
+type TipoGasto = 'digital' | 'efectivo' | 'cuenta_corriente' | 'plan';
 type Step = 'tipo' | 'upload' | 'processing' | 'preview' | 'saving' | 'done';
 
 interface OcrExtraido {
@@ -204,11 +204,6 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
   const [crearProveedorSugerido, setCrearProveedorSugerido] = useState<
     { razon_social: string; cuit: string } | null
   >(null);
-
-  // Comprobante de pago manual (obligatorio en flujo físico + pagado + medio ≠ efectivo).
-  // Captura/PDF de la transferencia o cheque. En digital ya vino en el paso de upload.
-  const [pagoComprobanteFile, setPagoComprobanteFile] = useState<File | null>(null);
-  const pagoComprobanteInputRef = useRef<HTMLInputElement>(null);
 
   // Importe como string formateado (asi se muestra "285.453,50" mientras se edita)
   const [importeTexto, setImporteTexto] = useState<string>('');
@@ -1022,20 +1017,36 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
   }
 
   // Defaults al entrar al preview, según tipo de carga:
-  //  - digital: pagado=true (subió comprobante)
-  //  - fisico: pagado=true por default (lo cargás porque YA lo pagaste a mano)
+  //  - digital: pagado=true (subió comprobante; cualquier medio)
+  //  - efectivo: pagado=true, medio fijo efectivo (sin comprobante ni N° op)
   //  - cuenta_corriente: pagado=false fijo (todavía no pagaste — vence el día X)
+  //  - plan: plan de pagos (varias cuotas); pagado/medio se derivan de las cuotas
   useEffect(() => {
     if (step !== 'preview') return;
-    if (tipoGasto === 'fisico') {
-      setMedioPago((prev) => (prev === 'transferencia_mp' ? 'efectivo' : prev));
+    if (tipoGasto === 'efectivo') {
+      setMedioPago('efectivo');
       setFecha((prev) => prev || new Date().toISOString().slice(0, 10));
       setPagado(true);
+      setPlanPagos(false);
     } else if (tipoGasto === 'cuenta_corriente') {
       setFecha((prev) => prev || new Date().toISOString().slice(0, 10));
       setPagado(false);
+      setPlanPagos(false);
     } else if (tipoGasto === 'digital') {
       setPagado(true);
+      setPlanPagos(false);
+    } else if (tipoGasto === 'plan') {
+      setFecha((prev) => prev || new Date().toISOString().slice(0, 10));
+      setPlanPagos(true);
+      // Sembramos 2 cuotas (transferencia hoy + echeq) si no hay
+      setLineasPago((prev) =>
+        prev.length > 0
+          ? prev
+          : [
+              nuevaLineaPago('transferencia_mp', new Date().toISOString().slice(0, 10)),
+              nuevaLineaPago('cheque_galicia', ''),
+            ],
+      );
     }
   }, [step, tipoGasto]);
 
@@ -1144,13 +1155,6 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
         setError('Falta la fecha de pago');
         return;
       }
-      // En flujo "físico" el comprobante de pago se carga acá (en digital ya vino
-      // del paso de upload del OCR). Si el medio no es efectivo, lo exigimos
-      // para mantener la regla uniforme con PagarGastoModal y ChecklistPagos.
-      if (tipoGasto === 'fisico' && medioRequiereComprobante(medioPago) && !pagoComprobanteFile) {
-        setError('Comprobante de pago obligatorio para transferencias, cheques y tarjeta. Subí la captura o PDF.');
-        return;
-      }
     }
     // Si es cuenta corriente (no pagado), la fecha de vencimiento es obligatoria
     if (tipoGasto === 'cuenta_corriente' && !planPagos && !fechaVencimiento) {
@@ -1178,18 +1182,9 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
         if (errFac) throw errFac;
       }
 
-      // Comprobante de pago manual (flujo físico). En digital ya vino con OCR.
-      let pagoComprobantePath: string | null = filePath;
-      if (pagoComprobanteFile) {
-        const ext = pagoComprobanteFile.name.split('.').pop()?.toLowerCase() ?? 'bin';
-        pagoComprobantePath = `${local}/${periodo}/pago_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
-        const { error: errPago } = await supabase.storage
-          .from('gastos-comprobantes')
-          .upload(pagoComprobantePath, pagoComprobanteFile, {
-            contentType: pagoComprobanteFile.type || 'application/octet-stream',
-          });
-        if (errPago) throw errPago;
-      }
+      // Comprobante de pago: en digital vino con OCR (filePath). En efectivo/cta cte/plan
+      // no hay comprobante único acá (el plan adjunta uno por cuota).
+      const pagoComprobantePath: string | null = filePath;
 
       // Plan de pagos: parseamos las cuotas y derivamos estado/vencimiento del gasto.
       //  - ejecutadas (fecha <= hoy): plata que ya salió → cuentan para el "pagado real"
@@ -1473,7 +1468,7 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
               {step === 'tipo' && 'Elegí cómo cargarlo'}
               {step === 'upload' && 'Sube una foto o PDF del comprobante'}
               {step === 'processing' && 'Analizando con IA…'}
-              {step === 'preview' && (tipoGasto === 'digital' ? 'Verificá los datos antes de guardar' : tipoGasto === 'cuenta_corriente' ? 'Cargá la factura — pago pendiente' : 'Cargá los datos del gasto')}
+              {step === 'preview' && (tipoGasto === 'digital' ? 'Verificá los datos antes de guardar' : tipoGasto === 'cuenta_corriente' ? 'Cargá la factura — pago pendiente' : tipoGasto === 'plan' ? 'Cargá la factura y el plan de pagos' : 'Cargá los datos del gasto')}
               {step === 'saving' && 'Guardando…'}
               {step === 'done' && 'Listo'}
             </p>
@@ -1546,15 +1541,15 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
               <button
                 type="button"
                 onClick={() => {
-                  setTipoGasto('fisico');
+                  setTipoGasto('efectivo');
                   setStep('preview');
                 }}
                 className="flex w-full flex-col items-center gap-2 rounded-lg border-2 border-gray-200 bg-gray-50 p-6 text-center transition hover:border-gray-400 hover:bg-gray-100"
               >
                 <div className="text-4xl">💵</div>
-                <div className="text-base font-semibold text-gray-800">Pagado a mano</div>
+                <div className="text-base font-semibold text-gray-800">Pago en efectivo</div>
                 <div className="text-xs text-gray-600">
-                  Ya pagué (efectivo o transferencia hecha) pero no tengo foto del comprobante — cargo todo a mano
+                  Pagué en efectivo, sin comprobante — cargo los datos a mano
                 </div>
               </button>
 
@@ -1570,6 +1565,21 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
                 <div className="text-base font-semibold text-amber-900">Cuenta corriente</div>
                 <div className="text-xs text-amber-800">
                   Todavía no lo pagué — registro la factura con fecha de vencimiento. Cuando se pague, lo concilio con el comprobante.
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setTipoGasto('plan');
+                  setStep('preview');
+                }}
+                className="flex w-full flex-col items-center gap-2 rounded-lg border-2 border-rodziny-200 bg-rodziny-50 p-6 text-center transition hover:border-rodziny-400 hover:bg-rodziny-100"
+              >
+                <div className="text-4xl">🧾</div>
+                <div className="text-base font-semibold text-rodziny-900">Plan de pagos</div>
+                <div className="text-xs text-gray-600">
+                  Una factura saldada en varias cuotas (ej: transferencia + echeq a 30/60 días)
                 </div>
               </button>
             </div>
@@ -2350,69 +2360,9 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
                 )}
               </Field>
 
-              {/* Toggle Pagado / Pendiente / Plan de pagos — solo en flujo "fisico"
-                  (en cuenta_corriente es siempre Pendiente) */}
-              {tipoGasto === 'fisico' && (
-                <Field label="Estado del pago *">
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setPagado(true);
-                        setPlanPagos(false);
-                      }}
-                      className={cn(
-                        'flex-1 rounded border px-3 py-2 text-sm font-medium',
-                        pagado && !planPagos
-                          ? 'border-green-600 bg-green-50 text-green-900'
-                          : 'border-gray-300 text-gray-700',
-                      )}
-                    >
-                      ✓ Pagado
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setPagado(false);
-                        setPlanPagos(false);
-                      }}
-                      className={cn(
-                        'flex-1 rounded border px-3 py-2 text-sm font-medium',
-                        !pagado && !planPagos
-                          ? 'border-amber-500 bg-amber-50 text-amber-900'
-                          : 'border-gray-300 text-gray-700',
-                      )}
-                    >
-                      📋 Aún no pagué
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setPlanPagos(true);
-                        // Sembramos 2 cuotas: la 1ª hoy (transferencia), la 2ª a definir.
-                        if (lineasPago.length === 0) {
-                          setLineasPago([
-                            nuevaLineaPago('transferencia_mp', fecha || new Date().toISOString().slice(0, 10)),
-                            nuevaLineaPago('cheque_galicia', ''),
-                          ]);
-                        }
-                      }}
-                      className={cn(
-                        'flex-1 rounded border px-3 py-2 text-sm font-medium',
-                        planPagos
-                          ? 'border-rodziny-600 bg-rodziny-50 text-rodziny-900'
-                          : 'border-gray-300 text-gray-700',
-                      )}
-                    >
-                      🧾 Plan de pagos
-                    </button>
-                  </div>
-                </Field>
-              )}
-
-              {/* Fecha de vencimiento — visible cuando NO está pagado (cuenta corriente o físico-pendiente) */}
-              {!pagado && !planPagos && (
-                <Field label={tipoGasto === 'cuenta_corriente' ? 'Fecha de vencimiento *' : 'Fecha de vencimiento (opcional)'}>
+              {/* Fecha de vencimiento — solo en cuenta corriente (no pagado) */}
+              {tipoGasto === 'cuenta_corriente' && (
+                <Field label="Fecha de vencimiento *">
                   <input
                     type="date"
                     value={fechaVencimiento}
@@ -2426,7 +2376,7 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
               )}
 
               {/* Plan de pagos — editor de N cuotas (transferencia + echeq, etc.) */}
-              {planPagos && (
+              {tipoGasto === 'plan' && (
                 <PlanPagosEditor
                   lineas={lineasPago}
                   setLineas={setLineasPago}
@@ -2439,34 +2389,41 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
                 />
               )}
 
-              {/* Bloque de pago — visible solo si está pagado (siempre en flujo digital) */}
-              {pagado && !planPagos && (
+              {/* Pago en efectivo — solo fecha (medio fijo efectivo, sin N° op ni comprobante) */}
+              {tipoGasto === 'efectivo' && (
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label="Fecha de pago *">
+                    <input
+                      type="date"
+                      value={fechaPago}
+                      onChange={(e) => setFechaPago(e.target.value)}
+                      className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                    />
+                  </Field>
+                  <Field label="Medio de pago">
+                    <div className="rounded border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700">
+                      💵 Efectivo
+                    </div>
+                  </Field>
+                </div>
+              )}
+
+              {/* Pago digital — medio + N° de operación (el comprobante ya vino con OCR) */}
+              {tipoGasto === 'digital' && (
                 <>
-                  <div className="grid grid-cols-2 gap-3">
-                    {tipoGasto !== 'digital' && (
-                      <Field label="Fecha de pago *">
-                        <input
-                          type="date"
-                          value={fechaPago}
-                          onChange={(e) => setFechaPago(e.target.value)}
-                          className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
-                        />
-                      </Field>
-                    )}
-                    <Field label="Medio de pago *">
-                      <select
-                        value={medioPago}
-                        onChange={(e) => setMedioPago(e.target.value as MedioPago)}
-                        className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
-                      >
-                        {(Object.keys(MEDIO_PAGO_LABEL) as MedioPago[]).map((m) => (
-                          <option key={m} value={m}>
-                            {MEDIO_PAGO_LABEL[m]}
-                          </option>
-                        ))}
-                      </select>
-                    </Field>
-                  </div>
+                  <Field label="Medio de pago *">
+                    <select
+                      value={medioPago}
+                      onChange={(e) => setMedioPago(e.target.value as MedioPago)}
+                      className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                    >
+                      {(Object.keys(MEDIO_PAGO_LABEL) as MedioPago[]).map((m) => (
+                        <option key={m} value={m}>
+                          {MEDIO_PAGO_LABEL[m]}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
 
                   <Field label={`N° de operacion${medioPago !== 'efectivo' ? ' *' : ''}`}>
                     <input
@@ -2489,43 +2446,6 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
                       </p>
                     )}
                   </Field>
-
-                  {/* Comprobante de pago — obligatorio en flujo físico cuando medio≠efectivo.
-                      En digital ya vino del paso de upload con OCR. */}
-                  {tipoGasto === 'fisico' && medioPago !== 'efectivo' && (
-                    <Field label="Comprobante de pago *">
-                      <input
-                        ref={pagoComprobanteInputRef}
-                        type="file"
-                        accept="image/*,application/pdf"
-                        className="hidden"
-                        onChange={(e) => {
-                          const f = e.target.files?.[0];
-                          if (f) setPagoComprobanteFile(f);
-                        }}
-                      />
-                      {pagoComprobanteFile ? (
-                        <div className="flex items-center justify-between rounded border border-green-200 bg-green-50 px-3 py-2 text-sm">
-                          <span className="truncate text-green-800">📎 {pagoComprobanteFile.name}</span>
-                          <button
-                            type="button"
-                            onClick={() => setPagoComprobanteFile(null)}
-                            className="ml-2 text-xs text-red-600 hover:underline"
-                          >
-                            Quitar
-                          </button>
-                        </div>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => pagoComprobanteInputRef.current?.click()}
-                          className="w-full rounded border border-dashed border-amber-300 bg-amber-50 px-3 py-3 text-sm text-amber-800 hover:bg-amber-100"
-                        >
-                          + Adjuntar captura / PDF del comprobante de pago
-                        </button>
-                      )}
-                    </Field>
-                  )}
                 </>
               )}
 
@@ -2693,7 +2613,7 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
         {/* Footer */}
         {(step === 'tipo' || step === 'preview' || step === 'upload') && (
           <div className="flex justify-between gap-2 border-t px-4 py-3">
-            {/* Boton volver (preview en flujo fisico → tipo; upload → tipo) */}
+            {/* Boton volver (preview en efectivo/cta cte/plan → tipo; upload → tipo) */}
             {step === 'upload' && (
               <button
                 onClick={() => setStep('tipo')}
