@@ -1,6 +1,7 @@
 import { useState, useEffect, type FormEvent } from 'react';
 import { cn } from '@/lib/utils';
-import { useCrearItem, useActualizarItem } from './useAgenda';
+import { useAuth } from '@/lib/auth';
+import { useCrearItem, useActualizarItem, useCompaneros } from './useAgenda';
 import type {
   AgendaItem,
   AgendaItemInput,
@@ -45,6 +46,19 @@ function partsToIso(fecha: string, hora: string | null, allDay: boolean): string
 export function NuevoItemModal({ editando, fechaInicial, usuarioId, onClose }: Props) {
   const crear = useCrearItem(usuarioId);
   const actualizar = useActualizarItem();
+  const { user } = useAuth();
+  const { data: companeros } = useCompaneros();
+
+  // El "dueño" del item es el usuario destino (usuarioId si un admin crea para otro,
+  // o el logueado). No tiene sentido compartirlo consigo mismo.
+  const duenoId = usuarioId ?? user?.id;
+  const [asignados, setAsignados] = useState<string[]>(editando?.asignados ?? []);
+
+  function toggleAsignado(id: string) {
+    setAsignados((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+    );
+  }
 
   const [tipo, setTipo] = useState<TipoItem>(editando?.tipo ?? 'tarea');
   const [titulo, setTitulo] = useState(editando?.titulo ?? '');
@@ -93,6 +107,7 @@ export function NuevoItemModal({ editando, fechaInicial, usuarioId, onClose }: P
       prioridad: prioridad || null,
       recurrencia: recurrenciaFreq ? { freq: recurrenciaFreq, interval: 1 } : null,
       nota: nota.trim() || null,
+      asignados,
     };
 
     try {
@@ -256,6 +271,43 @@ export function NuevoItemModal({ editando, fechaInicial, usuarioId, onClose }: P
               className="w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-rodziny-500 focus:outline-none focus:ring-1 focus:ring-rodziny-500"
               placeholder="Detalles adicionales..."
             />
+          </div>
+
+          {/* Compartir con */}
+          <div>
+            <label className="mb-1 block text-xs font-medium text-gray-600">
+              Compartir con <span className="text-gray-400">(opcional)</span>
+            </label>
+            <div className="flex flex-wrap gap-1.5">
+              {(companeros ?? [])
+                .filter((c) => c.user_id !== duenoId)
+                .map((c) => {
+                  const sel = asignados.includes(c.user_id);
+                  return (
+                    <button
+                      key={c.user_id}
+                      type="button"
+                      onClick={() => toggleAsignado(c.user_id)}
+                      className={cn(
+                        'rounded-full border px-3 py-1 text-xs transition-colors',
+                        sel
+                          ? 'border-rodziny-500 bg-rodziny-50 font-medium text-rodziny-700'
+                          : 'border-gray-200 text-gray-600 hover:bg-gray-50',
+                      )}
+                    >
+                      {sel ? '✓ ' : ''}
+                      {c.nombre}
+                    </button>
+                  );
+                })}
+            </div>
+            {asignados.length > 0 && (
+              <p className="mt-1.5 text-xs text-gray-500">
+                Se compartirá con {asignados.length}{' '}
+                {asignados.length === 1 ? 'persona' : 'personas'}. La verán en su agenda y
+                podrán tildarla.
+              </p>
+            )}
           </div>
 
           {error && (

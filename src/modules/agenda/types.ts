@@ -20,6 +20,7 @@ export interface AgendaItem {
   completado_at: string | null;
   recurrencia: Recurrencia | null;
   nota: string | null;
+  asignados: string[]; // user_id de las personas con quienes se comparte
   created_at: string;
 }
 
@@ -32,6 +33,7 @@ export interface AgendaItemInput {
   prioridad: Prioridad | null;
   recurrencia: Recurrencia | null;
   nota: string | null;
+  asignados: string[];
 }
 
 export const TIPO_LABEL: Record<TipoItem, string> = {

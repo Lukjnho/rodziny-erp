@@ -5,26 +5,24 @@ import type { AgendaItem, AgendaItemInput } from './types';
 
 const QUERY_KEY = 'agenda-items';
 
-// Lista de usuarios para el selector de admin ("ver agenda de…").
-// Solo se ejecuta para admins (RLS permite a admins leer todos los perfiles).
+// Lista de compañeros (user_id + nombre) para:
+//  - el selector de admin ("ver agenda de…")
+//  - el campo "compartir con" al crear/editar un item.
+// Vía RPC agenda_companeros() para que cualquier usuario (no solo admin)
+// pueda elegir a quién asignar sin exponer el resto de la tabla perfiles.
 export interface PerfilAgenda {
   user_id: string;
   nombre: string;
 }
 
-export function usePerfilesAgenda() {
-  const { perfil } = useAuth();
+export function useCompaneros() {
   return useQuery({
-    queryKey: ['perfiles-agenda'],
+    queryKey: ['agenda-companeros'],
     queryFn: async (): Promise<PerfilAgenda[]> => {
-      const { data, error } = await supabase
-        .from('perfiles')
-        .select('user_id, nombre')
-        .order('nombre');
+      const { data, error } = await supabase.rpc('agenda_companeros');
       if (error) throw error;
       return (data ?? []) as PerfilAgenda[];
     },
-    enabled: !!perfil?.es_admin,
   });
 }
 
@@ -36,10 +34,11 @@ export function useAgendaItems(usuarioId?: string) {
   return useQuery({
     queryKey: [QUERY_KEY, targetId],
     queryFn: async (): Promise<AgendaItem[]> => {
+      // Items propios (creador) + los que me compartieron (asignados contiene mi id).
       const { data, error } = await supabase
         .from('agenda_items')
         .select('*')
-        .eq('usuario_id', targetId!)
+        .or(`usuario_id.eq.${targetId},asignados.cs.{${targetId}}`)
         .order('fecha_inicio', { ascending: true });
       if (error) throw error;
       return (data ?? []) as AgendaItem[];

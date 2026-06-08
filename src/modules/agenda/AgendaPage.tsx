@@ -4,7 +4,7 @@ import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
 import { ListaTab } from './ListaTab';
 import { CalendarioTab } from './CalendarioTab';
-import { usePerfilesAgenda } from './useAgenda';
+import { useCompaneros } from './useAgenda';
 
 type Tab = 'lista' | 'calendario';
 
@@ -86,7 +86,7 @@ function SelectorUsuario({
   propioId?: string;
   onChange: (v: string) => void;
 }) {
-  const { data: perfiles } = usePerfilesAgenda();
+  const { data: perfiles } = useCompaneros();
   const otros = (perfiles ?? []).filter((p) => p.user_id !== propioId);
 
   return (

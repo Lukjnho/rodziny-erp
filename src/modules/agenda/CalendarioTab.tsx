@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import { cn } from '@/lib/utils';
-import { useAgendaItems, useToggleCompletado } from './useAgenda';
+import { useAuth } from '@/lib/auth';
+import { useAgendaItems, useToggleCompletado, useCompaneros } from './useAgenda';
 import { NuevoItemModal } from './NuevoItemModal';
 import type { AgendaItem } from './types';
 import { TIPO_ICONO, PRIORIDAD_COLOR } from './types';
@@ -46,6 +47,14 @@ function getGrillaMes(anio: number, mes: number): Date[] {
 export function CalendarioTab({ usuarioId }: { usuarioId?: string }) {
   const { data: items } = useAgendaItems(usuarioId);
   const toggle = useToggleCompletado();
+  const { user } = useAuth();
+  const { data: companeros } = useCompaneros();
+  const nombrePorId = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const c of companeros ?? []) m[c.user_id] = c.nombre;
+    return m;
+  }, [companeros]);
+  const miId = usuarioId ?? user?.id;
   const [mesActual, setMesActual] = useState(() => {
     const h = new Date();
     return { anio: h.getFullYear(), mes: h.getMonth() };
@@ -251,6 +260,19 @@ export function CalendarioTab({ usuarioId }: { usuarioId?: string }) {
                         {new Date(item.fecha_inicio).toTimeString().substring(0, 5)}
                       </div>
                     )}
+                    {(() => {
+                      const meLaCompartieron = miId != null && item.usuario_id !== miId;
+                      const otros = (item.asignados ?? []).filter((id) => id !== miId);
+                      const nombres = otros.map((id) => nombrePorId[id]).filter(Boolean);
+                      const creador = nombrePorId[item.usuario_id];
+                      if (!meLaCompartieron && nombres.length === 0) return null;
+                      return (
+                        <div className="mt-0.5 text-[11px] text-violet-700">
+                          {meLaCompartieron && creador && <span>👤 de {creador} </span>}
+                          {nombres.length > 0 && <span>👥 {nombres.join(', ')}</span>}
+                        </div>
+                      );
+                    })()}
                   </div>
                 </div>
               ))}

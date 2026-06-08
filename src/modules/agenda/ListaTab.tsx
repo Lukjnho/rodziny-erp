@@ -1,9 +1,11 @@
 import { useState, useMemo } from 'react';
 import { cn } from '@/lib/utils';
+import { useAuth } from '@/lib/auth';
 import {
   useAgendaItems,
   useToggleCompletado,
   useEliminarItem,
+  useCompaneros,
 } from './useAgenda';
 import { NuevoItemModal } from './NuevoItemModal';
 import type { AgendaItem } from './types';
@@ -58,6 +60,15 @@ export function ListaTab({ usuarioId }: { usuarioId?: string }) {
   const { data: items, isLoading } = useAgendaItems(usuarioId);
   const toggle = useToggleCompletado();
   const eliminar = useEliminarItem();
+  const { user } = useAuth();
+  const { data: companeros } = useCompaneros();
+  const nombrePorId = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const c of companeros ?? []) m[c.user_id] = c.nombre;
+    return m;
+  }, [companeros]);
+  // A quién pertenece la vista (yo, o el usuario que el admin está mirando).
+  const miId = usuarioId ?? user?.id;
   const [modalAbierto, setModalAbierto] = useState(false);
   const [editando, setEditando] = useState<AgendaItem | null>(null);
   const [hechasAbiertas, setHechasAbiertas] = useState(false);
@@ -135,6 +146,8 @@ export function ListaTab({ usuarioId }: { usuarioId?: string }) {
                 key={g}
                 grupo={g}
                 items={grupos[g]}
+                nombrePorId={nombrePorId}
+                miId={miId}
                 onToggle={(id, completado) => toggle.mutate({ id, completado })}
                 onEditar={(item) => {
                   setEditando(item);
@@ -164,6 +177,8 @@ export function ListaTab({ usuarioId }: { usuarioId?: string }) {
                     <ItemRow
                       key={item.id}
                       item={item}
+                      nombrePorId={nombrePorId}
+                      miId={miId}
                       onToggle={(c) => toggle.mutate({ id: item.id, completado: c })}
                       onEditar={() => {
                         setEditando(item);
@@ -198,12 +213,16 @@ export function ListaTab({ usuarioId }: { usuarioId?: string }) {
 function SeccionGrupo({
   grupo,
   items,
+  nombrePorId,
+  miId,
   onToggle,
   onEditar,
   onEliminar,
 }: {
   grupo: Grupo;
   items: AgendaItem[];
+  nombrePorId: Record<string, string>;
+  miId?: string;
   onToggle: (id: string, completado: boolean) => void;
   onEditar: (item: AgendaItem) => void;
   onEliminar: (id: string) => void;
@@ -226,6 +245,8 @@ function SeccionGrupo({
           <ItemRow
             key={item.id}
             item={item}
+            nombrePorId={nombrePorId}
+            miId={miId}
             atrasada={grupo === 'atrasadas'}
             onToggle={(c) => onToggle(item.id, c)}
             onEditar={() => onEditar(item)}
@@ -239,18 +260,29 @@ function SeccionGrupo({
 
 function ItemRow({
   item,
+  nombrePorId,
+  miId,
   atrasada,
   onToggle,
   onEditar,
   onEliminar,
 }: {
   item: AgendaItem;
+  nombrePorId: Record<string, string>;
+  miId?: string;
   atrasada?: boolean;
   onToggle: (completado: boolean) => void;
   onEditar: () => void;
   onEliminar: () => void;
 }) {
   const prio = item.prioridad ? PRIORIDAD_COLOR[item.prioridad] : null;
+  // Si yo soy asignado pero no el creador, la tarea me la compartieron.
+  const meLaCompartieron = miId != null && item.usuario_id !== miId;
+  const nombreCreador = nombrePorId[item.usuario_id];
+  const otrosAsignados = (item.asignados ?? []).filter((id) => id !== miId);
+  const nombresCompartido = otrosAsignados
+    .map((id) => nombrePorId[id])
+    .filter(Boolean);
   return (
     <div
       className={cn(
@@ -282,6 +314,19 @@ function ItemRow({
           </span>
           {item.recurrencia && <span className="text-rodziny-600">🔁</span>}
           {item.nota && <span className="text-gray-400">· {item.nota.substring(0, 40)}{item.nota.length > 40 ? '…' : ''}</span>}
+          {meLaCompartieron && nombreCreador && (
+            <span className="rounded-full bg-violet-50 px-2 py-0.5 text-[11px] font-medium text-violet-700">
+              👤 de {nombreCreador}
+            </span>
+          )}
+          {nombresCompartido.length > 0 && (
+            <span
+              className="rounded-full bg-violet-50 px-2 py-0.5 text-[11px] font-medium text-violet-700"
+              title={nombresCompartido.join(', ')}
+            >
+              👥 {nombresCompartido.join(', ')}
+            </span>
+          )}
         </div>
       </div>
       {prio && !item.completado && (
