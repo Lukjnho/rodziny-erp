@@ -1473,6 +1473,11 @@ function FormPasta({
         return;
       }
     }
+    // Muzzarella obligatoria en ñoquis rellenos: sin gramos no se puede guardar.
+    if (esConMuzzarella && (!muzzarellaGramos || Number(muzzarellaGramos) <= 0)) {
+      setError('Los ñoquis rellenos llevan muzzarella. Cargá los gramos antes de guardar.');
+      return;
+    }
     if (!responsable.trim()) {
       setError('Elegí responsable');
       return;
