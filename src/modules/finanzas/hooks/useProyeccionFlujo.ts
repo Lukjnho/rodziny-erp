@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { remuneracionConPresentismo } from '@/modules/rrhh/utils';
 
 // ── Proyección de flujo de caja ────────────────────────────────────────────────
 // Proyecta 12 meses rodantes con DOS saldos en paralelo:
@@ -341,9 +342,10 @@ export function useProyeccionFlujo(): ProyeccionResult {
     cmvPct = sumIngUsado > 0 ? sumCmvUsado / sumIngUsado : 0;
   }
 
-  // Sueldos recurrentes = suma del neto en mano de los activos.
+  // Sueldos recurrentes = suma del neto en mano (base + presentismo) de los activos.
+  // sueldo_neto guarda el base SIN presentismo; el egreso real asume presentismo ganado.
   const sueldosMensuales = (empleados ?? []).reduce(
-    (s, e) => s + Number(e.sueldo_neto || 0),
+    (s, e) => s + remuneracionConPresentismo(Number(e.sueldo_neto || 0)),
     0,
   );
 
@@ -368,7 +370,7 @@ export function useProyeccionFlujo(): ProyeccionResult {
     const inicioSem = mes === 6 ? new Date(año, 0, 1) : new Date(año, 6, 1);
     const finSem = mes === 6 ? new Date(año, 5, 30) : new Date(año, 11, 31);
     return (empleados ?? []).reduce((s, e) => {
-      const sueldo = Number(e.sueldo_neto || 0);
+      const sueldo = remuneracionConPresentismo(Number(e.sueldo_neto || 0));
       if (sueldo <= 0) return s;
       const ingreso = e.fecha_ingreso ? new Date(e.fecha_ingreso) : inicioSem;
       const desde = ingreso > inicioSem ? ingreso : inicioSem;

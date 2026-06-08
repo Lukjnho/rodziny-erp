@@ -59,7 +59,7 @@ const ayudaPorTab: Record<Tab, { titulo: string; pasos: string[] }> = {
   legajos: {
     titulo: 'Legajos del personal',
     pasos: [
-      'Cargá acá los datos básicos de cada empleado: nombre, DNI, puesto, local, sueldo neto.',
+      'Cargá acá los datos básicos de cada empleado: nombre, DNI, puesto, local, sueldo base (sin presentismo).',
       'El "Estado laboral" indica si está en período de prueba o ya quedó efectivo.',
       'Para efectivizar a alguien, editá su legajo y cambiá el estado a "Efectivo" — se guarda la fecha automáticamente.',
       'Los empleados en prueba con más de 3 meses aparecen con alerta amarilla 🟡.',
@@ -106,7 +106,7 @@ const ayudaPorTab: Record<Tab, { titulo: string; pasos: string[] }> = {
       'Cada empleado se liquida según su modalidad: "Quincenal" cobra la mitad del sueldo cada quincena, "Mensual" cobra todo en Q2.',
       'Cambiá la modalidad desde el select debajo del nombre — se guarda en el legajo.',
       'El toggle de Presentismo se pre-marca automáticamente leyendo la asistencia (regla CCT: 0 ausencias y 0 tardanzas, o 1 ≤10min). Podés modificarlo manualmente y aparece un 🖊 indicador.',
-      'Si no cobra presentismo se descuenta `sueldo × 10/110` de la base.',
+      'El presentismo es un beneficio: si lo gana, se SUMA un +10% sobre el sueldo base. Si no lo gana, cobra solo el base.',
       'Click en Adelantos o Sanciones para abrir el panel lateral y cargar/borrar items. Se descuentan del total automáticamente.',
       'Para mensuales: en Q1 se pueden cargar adelantos pero el total aparece atenuado (cobran en Q2). En Q2 ves el mes completo.',
       'Abajo: F931, libro de sueldos y monto total a pagar a ARCA del mes (alimentará Finanzas).',
@@ -592,7 +592,12 @@ function LegajosTab() {
               <th className="px-4 py-2 text-left">Puesto</th>
               <th className="px-4 py-2 text-left">Local</th>
               <th className="px-4 py-2 text-left">Ingreso</th>
-              <th className="px-4 py-2 text-right">Sueldo neto</th>
+              <th
+                className="px-4 py-2 text-right"
+                title="Sueldo base sin presentismo. El presentismo es un +10% que se suma cuando el empleado lo gana."
+              >
+                Sueldo base
+              </th>
               <th className="px-4 py-2 text-center" title="Entra al pool de mano de obra del costeo de productos">
                 Producción
               </th>
@@ -865,13 +870,17 @@ function ModalEmpleado({
                 className="input"
               />
             </Field>
-            <Field label="Sueldo neto (en mano)">
+            <Field label="Sueldo base (sin presentismo)">
               <input
                 type="number"
                 value={form.sueldo_neto}
                 onChange={(e) => setForm({ ...form, sueldo_neto: Number(e.target.value) })}
                 className="input"
               />
+              <p className="mt-1 text-[10px] text-gray-400">
+                Cargá el básico SIN presentismo. El presentismo (+10%) se suma automáticamente en
+                Sueldos cuando el empleado lo gana.
+              </p>
             </Field>
             <Field label="Tipo de horario">
               <select

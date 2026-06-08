@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { remuneracionConPresentismo } from '@/modules/rrhh/utils';
 
 export interface PoolLocal {
   local: string;
@@ -86,8 +87,11 @@ export function useManoObra(periodo: string = periodoActual()) {
     const prod = prodQ.data ?? [];
     const recetas = recetasQ.data ?? [];
 
+    // total_sueldos (RPC) suma el base SIN presentismo; el costo real de MO
+    // incluye el presentismo +10% que efectivamente se paga.
     const poolByLocal = new Map<string, number>();
-    for (const p of pools) poolByLocal.set(p.local, Number(p.total_sueldos));
+    for (const p of pools)
+      poolByLocal.set(p.local, remuneracionConPresentismo(Number(p.total_sueldos)));
 
     const minutosByReceta = new Map<string, number | null>();
     for (const r of recetas) minutosByReceta.set(r.id, r.minutos_lote);

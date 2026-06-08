@@ -5,7 +5,14 @@ import { useAuth } from '@/lib/auth';
 import { cn, formatARS } from '@/lib/utils';
 import { procesarComprobantePago } from '@/lib/ocrComprobantePago';
 import type { Empleado } from './RRHHPage';
-import { MESES, diasDeQuincena, ultimoDiaDelMes, normalizarTexto, type Quincena } from './utils';
+import {
+  MESES,
+  diasDeQuincena,
+  ultimoDiaDelMes,
+  normalizarTexto,
+  montoPresentismo,
+  type Quincena,
+} from './utils';
 import type {
   Liquidacion,
   Adelanto,
@@ -494,7 +501,7 @@ export function SueldosTab() {
     presentismoAuto: boolean;
     cobraPresentismo: boolean;
     presentismoOverride: boolean;
-    deduccionPresentismo: number;
+    montoPresentismo: number; // beneficio +10% sobre base cuando lo gana
     adelantosEmp: Adelanto[];
     sancionesEmp: Sancion[];
     descuentosEmp: Descuento[];
@@ -550,7 +557,8 @@ export function SueldosTab() {
       const presentismoOverride =
         !!liquidacion && liquidacion.cobra_presentismo !== presentismoAuto;
 
-      const deduccionPresentismo = !cobraPresentismo && base > 0 ? (base * 10) / 110 : 0;
+      // Presentismo = beneficio del 10% que se SUMA al base cuando el empleado lo gana.
+      const montoPres = cobraPresentismo && base > 0 ? montoPresentismo(base) : 0;
 
       // Adelantos y sanciones
       // - quincenal: solo los del periodo actual
@@ -593,8 +601,8 @@ export function SueldosTab() {
       // del Q1 se muestran informativamente y se descontarán del total en Q2.
       // Redondeo a múltiplo de 100 más cercano para que termine en 00 (más práctico para pagar en cash).
       const totalCrudo =
-        base -
-        deduccionPresentismo -
+        base +
+        montoPres -
         adelantosMonto -
         sancionesMonto -
         descuentosMonto +
@@ -677,7 +685,7 @@ export function SueldosTab() {
         presentismoAuto,
         cobraPresentismo,
         presentismoOverride,
-        deduccionPresentismo,
+        montoPresentismo: montoPres,
         adelantosEmp,
         sancionesEmp,
         descuentosEmp,
@@ -1576,7 +1584,7 @@ function FilaEmpleado({
     presentismoAuto: boolean;
     cobraPresentismo: boolean;
     presentismoOverride: boolean;
-    deduccionPresentismo: number;
+    montoPresentismo: number;
     adelantosMonto: number;
     sancionesMonto: number;
     descuentosMonto: number;
@@ -1615,7 +1623,7 @@ function FilaEmpleado({
     base,
     cobraPresentismo,
     presentismoOverride,
-    deduccionPresentismo,
+    montoPresentismo: montoPres,
     adelantosMonto,
     sancionesMonto,
     descuentosMonto,
@@ -1716,8 +1724,8 @@ function FilaEmpleado({
               className="h-4 w-4"
             />
             {presentismoOverride && <span className="text-[10px] text-rodziny-700">🖊</span>}
-            {!cobraPresentismo && (
-              <span className="text-[10px] text-red-600">-{formatARS(deduccionPresentismo)}</span>
+            {cobraPresentismo && montoPres > 0 && (
+              <span className="text-[10px] text-green-700">+{formatARS(montoPres)}</span>
             )}
           </label>
         )}

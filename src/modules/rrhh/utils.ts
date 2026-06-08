@@ -31,6 +31,23 @@ export const MESES = [
 // Tolerancia en minutos para considerar puntual una entrada/salida
 export const TOLERANCIA_MIN = 10;
 
+// ── Presentismo ─────────────────────────────────────────────────────────────
+// Modelo: el presentismo es un BENEFICIO del 10% que se SUMA al sueldo base
+// cuando el empleado lo gana. empleados.sueldo_neto guarda el base SIN presentismo.
+export const PRESENTISMO_PCT = 0.1;
+
+// Monto del presentismo sobre un sueldo base (redondeado a pesos enteros, sin centavos)
+export function montoPresentismo(base: number): number {
+  return Math.round(base * PRESENTISMO_PCT);
+}
+
+// Remuneración esperada CON presentismo (base + 10%). Usar cuando se necesita el
+// "en mano real" asumiendo que el empleado gana el presentismo: aguinaldo,
+// costeo de mano de obra, proyección de caja, etc.
+export function remuneracionConPresentismo(base: number): number {
+  return base + montoPresentismo(base);
+}
+
 // ── Fecha en formato YYYY-MM-DD (timezone-safe) ─────────────────────────────
 export function ymd(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;

@@ -4,7 +4,7 @@ import { supabase } from '@/lib/supabase';
 import { formatARS, cn } from '@/lib/utils';
 import { KPICard } from '@/components/ui/KPICard';
 import type { Empleado } from './RRHHPage';
-import { parseYmd, ymd, normalizarTexto } from './utils';
+import { parseYmd, ymd, normalizarTexto, remuneracionConPresentismo } from './utils';
 
 // ── Tipos ────────────────────────────────────────────────────────────────────
 type MedioPagoGasto =
@@ -165,7 +165,9 @@ export function AguinaldoTab() {
 
     return filtrados
       .map((emp) => {
-        const sueldoLegajo = Number(emp.sueldo_neto || 0);
+        // sueldo_neto en el legajo es el base SIN presentismo; la mejor remuneración
+        // del semestre (base del SAC) incluye el presentismo +10%.
+        const sueldoLegajo = remuneracionConPresentismo(Number(emp.sueldo_neto || 0));
         const diasTrab = diasTrabajadosEnSemestre(emp.fecha_ingreso, año, semestre);
         // Fórmula LCT art. 121 simplificada: (sueldo del legajo / 2) × (días / 180)
         const montoCalculado =
