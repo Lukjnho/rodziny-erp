@@ -694,6 +694,20 @@ function CierreSimple({
         );
       }
 
+      // Tope de sanidad: un valor desmesurado casi siempre es gramos cargados
+      // como kilos (ej: 3270 en vez de 3,27). Lo rebotamos con mensaje claro en
+      // vez de guardar un stock disparatado. kg → 100 / unidades → 1000.
+      const topeSanidad = unidad === 'kg' ? 100 : 1000;
+      const absurda = cierres.find((c) => c.cantidad > topeSanidad);
+      if (absurda) {
+        const nom =
+          productos?.find((p) => p.id === absurda.recetaId)?.nombre ?? 'un producto';
+        const enKg = unidad === 'kg' ? ` (¿cargaste gramos en vez de kilos? serían ${(absurda.cantidad / 1000).toLocaleString('es-AR')} kg)` : '';
+        throw new Error(
+          `La cantidad de "${nom}" (${absurda.cantidad.toLocaleString('es-AR')} ${unidad}) parece un error.${enKg} Revisala y volvé a guardar.`,
+        );
+      }
+
       const payload = cierres.map(({ recetaId, cantidad }) => ({
         fecha,
         local,
