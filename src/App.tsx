@@ -51,6 +51,9 @@ const DashboardPage = lazy(() =>
 const AgendaPage = lazy(() =>
   import('@/modules/agenda/AgendaPage').then((m) => ({ default: m.AgendaPage })),
 );
+const ConveniosPage = lazy(() =>
+  import('@/modules/convenios/ConveniosPage').then((m) => ({ default: m.ConveniosPage })),
+);
 
 const qc = new QueryClient({ defaultOptions: { queries: { staleTime: 1000 * 60 * 2 } } });
 
@@ -142,9 +145,11 @@ function AppInterna() {
                 ? '/productos'
                 : tienePermiso('agenda')
                   ? '/agenda'
-                  : tienePermiso('usuarios')
-                    ? '/usuarios'
-                    : null;
+                  : tienePermiso('convenios')
+                    ? '/convenios'
+                    : tienePermiso('usuarios')
+                      ? '/usuarios'
+                      : null;
 
   return (
     <div className="flex min-h-screen">
@@ -221,6 +226,14 @@ function AppInterna() {
               element={
                 <Ruta modulo="agenda">
                   <AgendaPage />
+                </Ruta>
+              }
+            />
+            <Route
+              path="/convenios"
+              element={
+                <Ruta modulo="convenios">
+                  <ConveniosPage />
                 </Ruta>
               }
             />
