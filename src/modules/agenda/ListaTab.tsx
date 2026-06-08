@@ -276,6 +276,10 @@ function ItemRow({
   onEliminar: () => void;
 }) {
   const prio = item.prioridad ? PRIORIDAD_COLOR[item.prioridad] : null;
+  const [notaAbierta, setNotaAbierta] = useState(false);
+  // La nota es "larga" si no entra en el preview de 40 caracteres o tiene saltos
+  // de línea: en ese caso ofrecemos expandirla para leerla completa sin editar.
+  const notaLarga = !!item.nota && (item.nota.length > 40 || item.nota.includes('\n'));
   // Si yo soy asignado pero no el creador, la tarea me la compartieron.
   const meLaCompartieron = miId != null && item.usuario_id !== miId;
   const nombreCreador = nombrePorId[item.usuario_id];
@@ -313,7 +317,18 @@ function ItemRow({
             {formatFechaHora(item.fecha_inicio, item.all_day)}
           </span>
           {item.recurrencia && <span className="text-rodziny-600">🔁</span>}
-          {item.nota && <span className="text-gray-400">· {item.nota.substring(0, 40)}{item.nota.length > 40 ? '…' : ''}</span>}
+          {item.nota && !notaLarga && <span className="text-gray-400">· {item.nota}</span>}
+          {item.nota && notaLarga && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setNotaAbierta((v) => !v);
+              }}
+              className="text-gray-400 hover:text-gray-600"
+            >
+              · {item.nota.substring(0, 40)}… <span className="text-rodziny-600">{notaAbierta ? 'ver menos' : 'ver más'}</span>
+            </button>
+          )}
           {meLaCompartieron && nombreCreador && (
             <span className="rounded-full bg-violet-50 px-2 py-0.5 text-[11px] font-medium text-violet-700">
               👤 de {nombreCreador}
@@ -328,6 +343,14 @@ function ItemRow({
             </span>
           )}
         </div>
+        {notaAbierta && item.nota && (
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="mt-1.5 cursor-default whitespace-pre-wrap rounded border border-gray-100 bg-gray-50 px-2.5 py-2 text-xs leading-relaxed text-gray-600"
+          >
+            {item.nota}
+          </div>
+        )}
       </div>
       {prio && !item.completado && (
         <span
