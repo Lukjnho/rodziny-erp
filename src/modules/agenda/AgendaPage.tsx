@@ -4,6 +4,7 @@ import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
 import { ListaTab } from './ListaTab';
 import { CalendarioTab } from './CalendarioTab';
+import { NotificacionesBoton } from './NotificacionesBoton';
 import { useCompaneros } from './useAgenda';
 
 type Tab = 'lista' | 'calendario';
@@ -45,6 +46,8 @@ export function AgendaPage() {
 
   return (
     <PageContainer title="Agenda" subtitle={subtitle}>
+      {verPropia && <NotificacionesBoton />}
+
       {esAdmin && (
         <SelectorUsuario
           valor={usuarioId ?? ''}
