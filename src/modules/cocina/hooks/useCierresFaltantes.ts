@@ -18,6 +18,9 @@ interface Requisito {
   turno: TurnoCierre;
   horaMin: number; // hora del día (AR) a partir de la cual el cierre de HOY es obligatorio
   label: string;
+  // Si es true, este cierre NO se exige los domingos (ese día se cuenta una sola
+  // vez, a la noche). Aplica al turno mediodía de pastas.
+  omitirDomingo?: boolean;
 }
 
 // Cierres obligatorios por local. El día anterior se exige siempre (sin importar
@@ -25,21 +28,28 @@ interface Requisito {
 //   - Vedia: Pastas mediodía (16h) / noche (23h) · Salsas (23h) · Postres (23h).
 //   - Saavedra: igual + Panadería (23h). No tiene Fudo, pero el cierre es manual
 //     (no depende de ventas automáticas), así que las reglas de presencia aplican.
+//   - Los domingos no se exige el cierre de pastas de mediodía (se cuenta solo a la noche).
 const REQUISITOS: Record<Local, Requisito[]> = {
   vedia: [
-    { tipo: 'pasta', turno: 'mediodia', horaMin: 16, label: 'Pastas · mediodía' },
+    { tipo: 'pasta', turno: 'mediodia', horaMin: 16, label: 'Pastas · mediodía', omitirDomingo: true },
     { tipo: 'pasta', turno: 'noche', horaMin: 23, label: 'Pastas · noche' },
     { tipo: 'salsa', turno: null, horaMin: 23, label: 'Salsas' },
     { tipo: 'postre', turno: null, horaMin: 23, label: 'Postres' },
   ],
   saavedra: [
-    { tipo: 'pasta', turno: 'mediodia', horaMin: 16, label: 'Pastas · mediodía' },
+    { tipo: 'pasta', turno: 'mediodia', horaMin: 16, label: 'Pastas · mediodía', omitirDomingo: true },
     { tipo: 'pasta', turno: 'noche', horaMin: 23, label: 'Pastas · noche' },
     { tipo: 'salsa', turno: null, horaMin: 23, label: 'Salsas' },
     { tipo: 'postre', turno: null, horaMin: 23, label: 'Postres' },
     { tipo: 'panaderia', turno: null, horaMin: 23, label: 'Panadería' },
   ],
 };
+
+// Día de la semana (0 = domingo … 6 = sábado) para una fecha operativa 'YYYY-MM-DD'.
+// Se parsea al mediodía UTC para evitar corrimientos de zona horaria.
+function esDomingo(fecha: string): boolean {
+  return new Date(fecha + 'T12:00:00Z').getUTCDay() === 0;
+}
 
 // Corte de la jornada operativa (hora AR). El turno noche cierra hasta la ~01hs:
 // para que esos cierres se imputen al día que corresponde (y no al siguiente),
@@ -106,12 +116,14 @@ export function useCierresFaltantes(local: Local, client?: SupabaseClient) {
 
   // Día anterior: todos los cierres son obligatorios (atrasados)
   for (const r of requisitos) {
+    if (r.omitirDomingo && esDomingo(fechaAyer)) continue;
     if (!tiene(fechaAyer, r.tipo, r.turno))
       faltantes.push({ tipo: r.tipo, turno: r.turno, fecha: fechaAyer, label: `${r.label} (ayer)` });
   }
 
   // Día actual: obligatorio a partir de su horaMin
   for (const r of requisitos) {
+    if (r.omitirDomingo && esDomingo(fecha)) continue;
     if (horaEfectiva >= r.horaMin && !tiene(fecha, r.tipo, r.turno))
       faltantes.push({ tipo: r.tipo, turno: r.turno, fecha, label: `${r.label} (hoy)` });
   }
