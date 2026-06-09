@@ -627,31 +627,48 @@ function Fichando({
       return;
     }
     let resuelto = false;
+
+    function onExito(pos: GeolocationPosition) {
+      if (resuelto) return;
+      resuelto = true;
+      const { latitude, longitude } = pos.coords;
+      setCoords({ lat: latitude, lng: longitude });
+      const det = detectarLocal(latitude, longitude);
+      if (det) {
+        setLocalDetectado(det.key);
+        setSinUbicacion(false);
+        setPaso('foto');
+      } else {
+        // Ubicación OK pero fuera del radio del local → bloquear
+        setDistanciaFuera(Math.round(distanciaAlLocalMasCercano(latitude, longitude)));
+        setPaso('gps_bloqueado');
+      }
+    }
+
+    function onFallaFinal() {
+      if (resuelto) return;
+      resuelto = true;
+      // Ni alta precisión ni red resolvieron → deja pasar con marca
+      setSinUbicacion(true);
+      setPaso('foto');
+    }
+
+    // Etapa 1: alta precisión con ventana corta. Adentro del local el GPS satelital
+    // suele no conseguir fix; en vez de marcar "sin ubicación" al primer timeout,
+    // reintentamos por red.
     navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        if (resuelto) return;
-        resuelto = true;
-        const { latitude, longitude } = pos.coords;
-        setCoords({ lat: latitude, lng: longitude });
-        const det = detectarLocal(latitude, longitude);
-        if (det) {
-          setLocalDetectado(det.key);
-          setSinUbicacion(false);
-          setPaso('foto');
-        } else {
-          // GPS OK pero fuera del radio del local → bloquear
-          setDistanciaFuera(Math.round(distanciaAlLocalMasCercano(latitude, longitude)));
-          setPaso('gps_bloqueado');
-        }
-      },
+      onExito,
       () => {
         if (resuelto) return;
-        resuelto = true;
-        // Permiso denegado / timeout / sin señal → deja pasar con marca
-        setSinUbicacion(true);
-        setPaso('foto');
+        // Etapa 2: ubicación por red (WiFi/antena). Resuelve rápido en interiores y es
+        // de sobra precisa para el radio de 100 m del local.
+        navigator.geolocation.getCurrentPosition(onExito, onFallaFinal, {
+          enableHighAccuracy: false,
+          timeout: 15000,
+          maximumAge: 120000,
+        });
       },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 },
+      { enableHighAccuracy: true, timeout: 5000, maximumAge: 60000 },
     );
   }, [paso]);
 
