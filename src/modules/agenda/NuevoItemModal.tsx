@@ -1,6 +1,7 @@
 import { useState, useEffect, type FormEvent } from 'react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
+import { notificarTareaCompartida } from '@/lib/push';
 import { useCrearItem, useActualizarItem, useCompaneros } from './useAgenda';
 import type {
   AgendaItem,
@@ -46,7 +47,7 @@ function partsToIso(fecha: string, hora: string | null, allDay: boolean): string
 export function NuevoItemModal({ editando, fechaInicial, usuarioId, onClose }: Props) {
   const crear = useCrearItem(usuarioId);
   const actualizar = useActualizarItem();
-  const { user } = useAuth();
+  const { user, perfil } = useAuth();
   const { data: companeros } = useCompaneros();
 
   // El "dueño" del item es el usuario destino (usuarioId si un admin crea para otro,
@@ -76,6 +77,9 @@ export function NuevoItemModal({ editando, fechaInicial, usuarioId, onClose }: P
   const [nota, setNota] = useState(editando?.nota ?? '');
   const [recurrenciaFreq, setRecurrenciaFreq] = useState<FrecuenciaRecurrencia | ''>(
     editando?.recurrencia?.freq ?? '',
+  );
+  const [recordatorio, setRecordatorio] = useState<number | ''>(
+    editando ? (editando.recordatorio_minutos ?? '') : 30,
   );
 
   const [guardando, setGuardando] = useState(false);
@@ -108,6 +112,7 @@ export function NuevoItemModal({ editando, fechaInicial, usuarioId, onClose }: P
       recurrencia: recurrenciaFreq ? { freq: recurrenciaFreq, interval: 1 } : null,
       nota: nota.trim() || null,
       asignados,
+      recordatorio_minutos: allDay ? null : (recordatorio === '' ? null : recordatorio),
     };
 
     try {
@@ -116,6 +121,14 @@ export function NuevoItemModal({ editando, fechaInicial, usuarioId, onClose }: P
       } else {
         await crear.mutateAsync(input);
       }
+
+      // Avisar (push) solo a los recién agregados: al crear, todos; al editar, los nuevos.
+      const yaTenia = editando?.asignados ?? [];
+      const nuevos = asignados.filter((id) => id !== duenoId && !yaTenia.includes(id));
+      if (nuevos.length > 0) {
+        void notificarTareaCompartida(nuevos, titulo.trim(), perfil?.nombre ?? 'Alguien');
+      }
+
       onClose();
     } catch (e: any) {
       setError(e.message || 'Error al guardar');
@@ -272,6 +285,28 @@ export function NuevoItemModal({ editando, fechaInicial, usuarioId, onClose }: P
               placeholder="Detalles adicionales..."
             />
           </div>
+
+          {/* Recordatorio (solo si tiene hora) */}
+          {!allDay && (
+            <div>
+              <label className="mb-1 block text-xs font-medium text-gray-600">
+                Recordarme antes <span className="text-gray-400">(push al celular)</span>
+              </label>
+              <select
+                value={recordatorio}
+                onChange={(e) =>
+                  setRecordatorio(e.target.value === '' ? '' : Number(e.target.value))
+                }
+                className="w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-rodziny-500 focus:outline-none focus:ring-1 focus:ring-rodziny-500"
+              >
+                <option value="">Sin recordatorio</option>
+                <option value="15">15 minutos antes</option>
+                <option value="30">30 minutos antes</option>
+                <option value="60">1 hora antes</option>
+                <option value="1440">1 día antes</option>
+              </select>
+            </div>
+          )}
 
           {/* Compartir con */}
           <div>

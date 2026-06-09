@@ -21,6 +21,7 @@ export interface AgendaItem {
   recurrencia: Recurrencia | null;
   nota: string | null;
   asignados: string[]; // user_id de las personas con quienes se comparte
+  recordatorio_minutos: number | null; // avisar X min antes (solo con hora)
   created_at: string;
 }
 
@@ -34,6 +35,7 @@ export interface AgendaItemInput {
   recurrencia: Recurrencia | null;
   nota: string | null;
   asignados: string[];
+  recordatorio_minutos: number | null;
 }
 
 export const TIPO_LABEL: Record<TipoItem, string> = {

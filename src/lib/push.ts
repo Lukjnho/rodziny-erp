@@ -95,6 +95,28 @@ export async function desactivarNotificaciones(): Promise<void> {
   await supabase.from('push_subscriptions').delete().eq('endpoint', endpoint);
 }
 
+/** Notifica a las personas a quienes se les compartió/asignó una tarea. */
+export async function notificarTareaCompartida(
+  userIds: string[],
+  titulo: string,
+  deNombre: string,
+): Promise<void> {
+  if (userIds.length === 0) return;
+  // No bloquear el guardado si el push falla: se intenta y se ignora el error.
+  try {
+    await supabase.functions.invoke('enviar-push', {
+      body: {
+        user_ids: userIds,
+        title: `📋 ${deNombre} te compartió una tarea`,
+        body: titulo,
+        url: '/agenda',
+      },
+    });
+  } catch {
+    /* el push es best-effort */
+  }
+}
+
 /** Envía un push de prueba al propio usuario (vía edge function). */
 export async function enviarPushDePrueba(): Promise<void> {
   const { data: sesion } = await supabase.auth.getUser();

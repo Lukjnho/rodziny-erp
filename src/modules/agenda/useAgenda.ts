@@ -70,7 +70,12 @@ export function useActualizarItem() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, input }: { id: string; input: Partial<AgendaItemInput> }) => {
-      const { error } = await supabase.from('agenda_items').update(input).eq('id', id);
+      // Si cambió el recordatorio o la fecha, re-armarlo (que vuelva a disparar).
+      const payload =
+        'recordatorio_minutos' in input || 'fecha_inicio' in input
+          ? { ...input, recordatorio_enviado_at: null }
+          : input;
+      const { error } = await supabase.from('agenda_items').update(payload).eq('id', id);
       if (error) throw error;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: [QUERY_KEY] }),
