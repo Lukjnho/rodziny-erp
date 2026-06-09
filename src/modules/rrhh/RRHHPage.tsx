@@ -711,6 +711,151 @@ function LegajosTab() {
 }
 
 // ── Modal alta/edición ──────────────────────────────────────────────────────
+// ─── Recibos de sueldo dentro del legajo ─────────────────────────────────────
+// Muestra los recibos de este empleado (subidos desde Documentos del contador o
+// desde acá mismo) y permite subir uno nuevo ya asignado a esta persona.
+interface ReciboEmpleado {
+  id: string;
+  periodo: string | null;
+  monto_neto: number | null;
+  archivo_path: string;
+  created_at: string;
+}
+
+function SeccionRecibosEmpleado({ empleadoId }: { empleadoId: string }) {
+  const qc = useQueryClient();
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [subiendo, setSubiendo] = useState(false);
+  const [errorSubida, setErrorSubida] = useState<string | null>(null);
+
+  const { data: recibos } = useQuery({
+    queryKey: ['recibos_empleado', empleadoId],
+    queryFn: async (): Promise<ReciboEmpleado[]> => {
+      const { data, error } = await supabase
+        .from('recibos_sueldo')
+        .select('id, periodo, monto_neto, archivo_path, created_at')
+        .eq('empleado_id', empleadoId)
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      return data as ReciboEmpleado[];
+    },
+  });
+
+  async function abrir(path: string) {
+    const { data, error } = await supabase.storage
+      .from('correos-contadores')
+      .createSignedUrl(path, 300);
+    if (!error && data) window.open(data.signedUrl, '_blank');
+  }
+
+  async function subir(file: File) {
+    setErrorSubida(null);
+    setSubiendo(true);
+    try {
+      const ext = file.name.split('.').pop()?.toLowerCase() || 'pdf';
+      const mes = new Date().toISOString().slice(0, 7);
+      const rand = crypto.randomUUID().slice(0, 8);
+      const path = `inbox/${mes}/${Date.now()}_${rand}.${ext}`;
+      const { error: upErr } = await supabase.storage
+        .from('correos-contadores')
+        .upload(path, file, { contentType: file.type || 'application/octet-stream' });
+      if (upErr) throw new Error(upErr.message);
+
+      // OCR para extraer período y neto (best-effort); el empleado lo forzamos a este.
+      let periodo: string | null = null;
+      let neto: number | null = null;
+      try {
+        const { data: res } = await supabase.functions.invoke<{
+          ok: boolean;
+          datos?: { periodo?: string | null; neto?: number | null };
+        }>('ocr-contador-doc', { body: { path } });
+        if (res?.ok && res.datos) {
+          periodo = res.datos.periodo ?? null;
+          neto = typeof res.datos.neto === 'number' ? res.datos.neto : null;
+        }
+      } catch {
+        /* si el OCR falla igual guardamos el recibo asignado */
+      }
+
+      const { error } = await supabase
+        .from('recibos_sueldo')
+        .insert({ empleado_id: empleadoId, periodo, monto_neto: neto, archivo_path: path });
+      if (error) throw error;
+      qc.invalidateQueries({ queryKey: ['recibos_empleado', empleadoId] });
+      qc.invalidateQueries({ queryKey: ['recibos_sueldo'] });
+    } catch (e) {
+      setErrorSubida((e as Error).message);
+    } finally {
+      setSubiendo(false);
+    }
+  }
+
+  async function borrar(id: string) {
+    await supabase.from('recibos_sueldo').delete().eq('id', id);
+    qc.invalidateQueries({ queryKey: ['recibos_empleado', empleadoId] });
+    qc.invalidateQueries({ queryKey: ['recibos_sueldo'] });
+  }
+
+  return (
+    <div className="border-t border-gray-100 pt-4">
+      <div className="mb-2 flex items-center justify-between">
+        <span className="text-xs font-semibold uppercase tracking-wide text-gray-700">
+          Recibos de sueldo
+        </span>
+        <button
+          type="button"
+          onClick={() => fileRef.current?.click()}
+          disabled={subiendo}
+          className="rounded border border-rodziny-300 px-2 py-1 text-[11px] font-medium text-rodziny-700 hover:bg-rodziny-50 disabled:opacity-50"
+        >
+          {subiendo ? 'Subiendo…' : '+ Subir recibo'}
+        </button>
+        <input
+          ref={fileRef}
+          type="file"
+          accept="application/pdf,image/*"
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) subir(f);
+            e.target.value = '';
+          }}
+        />
+      </div>
+      {errorSubida && <p className="mb-2 text-[11px] text-red-600">{errorSubida}</p>}
+      <div className="divide-y divide-gray-100 rounded border border-gray-100">
+        {(recibos ?? []).length === 0 && (
+          <p className="px-3 py-3 text-center text-[11px] text-gray-400">
+            Sin recibos cargados todavía.
+          </p>
+        )}
+        {(recibos ?? []).map((r) => (
+          <div key={r.id} className="flex items-center gap-3 px-3 py-1.5 text-xs">
+            <span className="flex-1 text-gray-700">{r.periodo ?? formatFecha(r.created_at)}</span>
+            <span className="tabular-nums text-gray-600">
+              {r.monto_neto ? formatARS(r.monto_neto) : '—'}
+            </span>
+            <button
+              type="button"
+              onClick={() => abrir(r.archivo_path)}
+              className="text-blue-600 hover:underline"
+            >
+              ver PDF
+            </button>
+            <button
+              type="button"
+              onClick={() => window.confirm('¿Borrar este recibo?') && borrar(r.id)}
+              className="text-gray-400 hover:text-red-600"
+            >
+              ✕
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function ModalEmpleado({
   empleado,
   onClose,
@@ -1037,6 +1182,9 @@ function ModalEmpleado({
               className="input"
             />
           </Field>
+
+          {empleado && <SeccionRecibosEmpleado empleadoId={empleado.id} />}
+
           {error && <div className="rounded bg-red-50 px-3 py-2 text-sm text-red-600">{error}</div>}
         </div>
         <div className="sticky bottom-0 flex justify-end gap-2 border-t border-gray-100 bg-white px-6 py-3">
