@@ -7,7 +7,7 @@ import { usePagosAlertas } from '@/modules/finanzas/hooks/usePagosAlertas';
 // a cualquiera de estos, mostramos el item Finanzas en el sidebar.
 const MODULOS_FINANZAS: Modulo[] = ['finanzas', 'ventas', 'edr', 'gastos', 'amortizaciones'];
 
-const NAV: { to: string; label: string; icon: string; modulo: Modulo | 'finanzas-grupo' }[] = [
+const NAV: { to: string; label: string; icon: string; modulo: Modulo | 'finanzas-grupo' | 'admin-only' }[] = [
   { to: '/', label: 'Dashboard', icon: '▦', modulo: 'dashboard' },
   { to: '/finanzas', label: 'Finanzas', icon: '💰', modulo: 'finanzas-grupo' },
   { to: '/rrhh', label: 'RRHH', icon: '👥', modulo: 'rrhh' },
@@ -18,6 +18,7 @@ const NAV: { to: string; label: string; icon: string; modulo: Modulo | 'finanzas
   { to: '/agenda', label: 'Agenda', icon: '📅', modulo: 'agenda' },
   { to: '/convenios', label: 'Convenios', icon: '🤝', modulo: 'convenios' },
   { to: '/usuarios', label: 'Usuarios', icon: '🔑', modulo: 'usuarios' },
+  { to: '/integraciones', label: 'Integraciones', icon: '📧', modulo: 'admin-only' },
 ];
 
 export function Sidebar() {
@@ -26,7 +27,9 @@ export function Sidebar() {
   const items = NAV.filter((n) =>
     n.modulo === 'finanzas-grupo'
       ? MODULOS_FINANZAS.some((m) => tienePermiso(m))
-      : tienePermiso(n.modulo),
+      : n.modulo === 'admin-only'
+        ? !!perfil?.es_admin
+        : tienePermiso(n.modulo),
   );
 
   const iniciales = (perfil?.nombre || '?').slice(0, 1).toUpperCase();

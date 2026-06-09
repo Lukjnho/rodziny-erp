@@ -54,6 +54,9 @@ const AgendaPage = lazy(() =>
 const ConveniosPage = lazy(() =>
   import('@/modules/convenios/ConveniosPage').then((m) => ({ default: m.ConveniosPage })),
 );
+const IntegracionesPage = lazy(() =>
+  import('@/modules/integraciones/IntegracionesPage').then((m) => ({ default: m.IntegracionesPage })),
+);
 
 const qc = new QueryClient({ defaultOptions: { queries: { staleTime: 1000 * 60 * 2 } } });
 
@@ -94,6 +97,12 @@ const MODULOS_FINANZAS: Modulo[] = ['finanzas', 'ventas', 'edr', 'gastos', 'amor
 function RutaFinanzas({ children }: { children: ReactNode }) {
   const { tienePermiso } = useAuth();
   return MODULOS_FINANZAS.some((m) => tienePermiso(m)) ? <>{children}</> : <SinAcceso />;
+}
+
+// Rutas reservadas solo a administradores (no usan el sistema de permisos por módulo).
+function RutaAdmin({ children }: { children: ReactNode }) {
+  const { perfil } = useAuth();
+  return perfil?.es_admin ? <>{children}</> : <SinAcceso />;
 }
 
 function AppInterna() {
@@ -243,6 +252,14 @@ function AppInterna() {
                 <Ruta modulo="usuarios">
                   <UsuariosPage />
                 </Ruta>
+              }
+            />
+            <Route
+              path="/integraciones"
+              element={
+                <RutaAdmin>
+                  <IntegracionesPage />
+                </RutaAdmin>
               }
             />
             <Route path="*" element={<Navigate to={primeraRutaPermitida || '/'} replace />} />
