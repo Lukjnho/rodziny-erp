@@ -1,347 +1,466 @@
-import { useState, useEffect } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useState, useRef, useMemo } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { PageContainer } from '@/components/layout/PageContainer';
-import { cn } from '@/lib/utils';
+import { cn, formatARS } from '@/lib/utils';
+import { normalizarTexto } from '@/modules/rrhh/utils';
 
 // ── Tipos ──────────────────────────────────────────────────────────────────
-interface EstadoCorreo {
-  conectado: boolean;
-  email_casilla: string | null;
-  ultima_lectura: string | null;
-  ultimo_error: string | null;
-  updated_at: string | null;
+interface EmpleadoMin {
+  id: string;
+  nombre: string;
+  apellido: string;
+  dni: string | null;
 }
 
-interface Remitente {
+interface DatosOcr {
+  tipo: 'recibo' | 'vep' | 'desconocido';
+  empleado_nombre: string | null;
+  cuil: string | null;
+  periodo: string | null;
+  neto: number | null;
+  impuesto: string | null;
+  vencimiento: string | null;
+  monto: number | null;
+  numero: string | null;
+  descripcion: string | null;
+  confianza: number;
+}
+
+interface ReciboRow {
   id: string;
-  email: string;
-  nombre: string | null;
-  activo: boolean;
+  empleado_id: string | null;
+  cuil_detectado: string | null;
+  nombre_detectado: string | null;
+  periodo: string | null;
+  monto_neto: number | null;
+  archivo_path: string;
   created_at: string;
 }
 
-// Traduce el ?error= que devuelve el callback de Microsoft a algo legible.
-const ERRORES: Record<string, string> = {
-  token: 'Microsoft no devolvió el acceso. Revisá el Client Secret y volvé a intentar.',
-  state_invalido: 'La sesión de conexión expiró. Reintentá desde "Conectar Outlook".',
-  faltan_parametros: 'Microsoft no devolvió el código de autorización.',
-  access_denied: 'Cancelaste el permiso en la pantalla de Microsoft.',
+interface VepRow {
+  id: string;
+  descripcion: string | null;
+  impuesto: string | null;
+  periodo: string | null;
+  vencimiento: string | null;
+  monto: number | null;
+  archivo_path: string;
+  pagado: boolean;
+  fecha_pago: string | null;
+  created_at: string;
+}
+
+type ItemProc = {
+  id: string;
+  nombre: string;
+  estado: 'subiendo' | 'analizando' | 'ok' | 'error';
+  resultado?: string;
+  tipo?: DatosOcr['tipo'];
 };
 
-function fechaHora(iso: string | null): string {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  return d.toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' });
+// ── Helpers ──────────────────────────────────────────────────────────────────
+function soloDigitos(s: string | null | undefined): string {
+  return (s ?? '').replace(/\D/g, '');
+}
+// DNI a partir del CUIL (11 dígitos): los 8 del medio, sin ceros a la izquierda.
+function dniDeCuil(cuil: string | null): string {
+  const d = soloDigitos(cuil);
+  if (d.length < 11) return '';
+  const medio = d.slice(2, 10);
+  const n = Number(medio);
+  return Number.isFinite(n) ? String(n) : '';
+}
+function normDni(dni: string | null): string {
+  const n = Number(soloDigitos(dni));
+  return Number.isFinite(n) && n > 0 ? String(n) : '';
+}
+
+async function abrirArchivo(path: string) {
+  const { data, error } = await supabase.storage
+    .from('correos-contadores')
+    .createSignedUrl(path, 300);
+  if (!error && data) window.open(data.signedUrl, '_blank');
+}
+
+// Urgencia de un VEP según vencimiento (mismo criterio visual que Finanzas)
+function urgenciaVep(venc: string | null, pagado: boolean): 'pagado' | 'vencido' | 'hoy' | 'semana' | 'ok' {
+  if (pagado) return 'pagado';
+  if (!venc) return 'ok';
+  const hoy = new Date();
+  hoy.setHours(0, 0, 0, 0);
+  const v = new Date(venc + 'T00:00:00');
+  const dias = Math.round((v.getTime() - hoy.getTime()) / 86_400_000);
+  if (dias < 0) return 'vencido';
+  if (dias === 0) return 'hoy';
+  if (dias <= 7) return 'semana';
+  return 'ok';
 }
 
 export function IntegracionesPage() {
   const qc = useQueryClient();
-  const [aviso, setAviso] = useState<{ tipo: 'ok' | 'error'; texto: string } | null>(null);
-  const [conectando, setConectando] = useState(false);
+  const [items, setItems] = useState<ItemProc[]>([]);
+  const [arrastrando, setArrastrando] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
 
-  // Leer ?conectado=1 / ?error= que deja el callback al volver
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    if (params.get('conectado') === '1') {
-      setAviso({ tipo: 'ok', texto: '✓ Outlook conectado correctamente.' });
-      qc.invalidateQueries({ queryKey: ['correo_estado'] });
-    } else if (params.get('error')) {
-      const code = params.get('error') ?? '';
-      setAviso({ tipo: 'error', texto: ERRORES[code] ?? `Error al conectar: ${code}` });
-    }
-    if (params.has('conectado') || params.has('error')) {
-      window.history.replaceState({}, '', '/integraciones');
-    }
-  }, [qc]);
-
-  // ── Estado de la conexión ──
-  const { data: estado, isLoading } = useQuery({
-    queryKey: ['correo_estado'],
-    queryFn: async (): Promise<EstadoCorreo | null> => {
-      const { data, error } = await supabase.rpc('correo_integracion_estado');
-      if (error) throw error;
-      return (data?.[0] ?? null) as EstadoCorreo | null;
-    },
-    refetchInterval: 1000 * 30,
-  });
-
-  // ── Remitentes ──
-  const { data: remitentes } = useQuery({
-    queryKey: ['correo_remitentes'],
-    queryFn: async (): Promise<Remitente[]> => {
+  const { data: empleados } = useQuery({
+    queryKey: ['empleados-min-contador'],
+    queryFn: async (): Promise<EmpleadoMin[]> => {
       const { data, error } = await supabase
-        .from('correo_remitentes')
-        .select('*')
-        .order('created_at', { ascending: true });
+        .from('empleados')
+        .select('id, nombre, apellido, dni')
+        .eq('activo', true);
       if (error) throw error;
-      return data as Remitente[];
+      return data as EmpleadoMin[];
     },
   });
 
-  const conectar = useMutation({
-    mutationFn: async () => {
-      const { data, error } = await supabase.functions.invoke<{ ok: boolean; url?: string; error?: string }>(
-        'outlook',
-        { body: { action: 'consent_url' } },
-      );
-      if (error) throw error;
-      if (!data?.ok || !data.url) throw new Error(data?.error ?? 'No se pudo generar el enlace.');
-      return data.url;
-    },
-    onMutate: () => setConectando(true),
-    onSuccess: (url) => {
-      window.location.href = url; // ir a la pantalla de login de Microsoft
-    },
-    onError: (e: Error) => {
-      setConectando(false);
-      setAviso({ tipo: 'error', texto: e.message });
-    },
-  });
-
-  const desconectar = useMutation({
-    mutationFn: async () => {
-      const { data, error } = await supabase.functions.invoke<{ ok: boolean; error?: string }>('outlook', {
-        body: { action: 'desconectar' },
+  // Matchea el recibo a un empleado por DNI (desde el CUIL) y, si no, por nombre.
+  const matchEmpleado = (datos: DatosOcr): string | null => {
+    if (!empleados) return null;
+    const dni = dniDeCuil(datos.cuil);
+    if (dni) {
+      const porDni = empleados.find((e) => normDni(e.dni) === dni);
+      if (porDni) return porDni.id;
+    }
+    if (datos.empleado_nombre) {
+      const q = normalizarTexto(datos.empleado_nombre);
+      const porNombre = empleados.find((e) => {
+        const full = normalizarTexto(`${e.nombre} ${e.apellido}`);
+        const inv = normalizarTexto(`${e.apellido} ${e.nombre}`);
+        return q.includes(normalizarTexto(e.apellido)) && (full.includes(q) || inv.includes(q) || q.includes(full) || q.includes(inv));
       });
-      if (error) throw error;
-      if (!data?.ok) throw new Error(data?.error ?? 'No se pudo desconectar.');
-    },
-    onSuccess: () => {
-      setAviso({ tipo: 'ok', texto: 'Outlook desconectado.' });
-      qc.invalidateQueries({ queryKey: ['correo_estado'] });
-    },
-    onError: (e: Error) => setAviso({ tipo: 'error', texto: e.message }),
-  });
+      if (porNombre) return porNombre.id;
+    }
+    return null;
+  };
 
-  const conectado = !!estado?.conectado;
+  async function procesarArchivo(file: File) {
+    const itemId = crypto.randomUUID();
+    setItems((prev) => [{ id: itemId, nombre: file.name, estado: 'subiendo' }, ...prev]);
+    const setItem = (patch: Partial<ItemProc>) =>
+      setItems((prev) => prev.map((it) => (it.id === itemId ? { ...it, ...patch } : it)));
+
+    try {
+      // 1) Subir al bucket
+      const ext = file.name.split('.').pop()?.toLowerCase() || 'pdf';
+      const mes = new Date().toISOString().slice(0, 7);
+      const rand = crypto.randomUUID().slice(0, 8);
+      const path = `inbox/${mes}/${Date.now()}_${rand}.${ext}`;
+      const { error: upErr } = await supabase.storage
+        .from('correos-contadores')
+        .upload(path, file, { contentType: file.type || 'application/octet-stream' });
+      if (upErr) throw new Error(`No se pudo subir: ${upErr.message}`);
+
+      // 2) OCR + clasificación
+      setItem({ estado: 'analizando' });
+      const { data: res, error: ocrErr } = await supabase.functions.invoke<{
+        ok: boolean;
+        datos?: DatosOcr;
+        error?: string;
+      }>('ocr-contador-doc', { body: { path } });
+      if (ocrErr) throw new Error(ocrErr.message);
+      if (!res?.ok || !res.datos) throw new Error(res?.error ?? 'El OCR no devolvió datos.');
+      const d = res.datos;
+
+      // 3) Rutear según tipo
+      if (d.tipo === 'recibo') {
+        const empleadoId = matchEmpleado(d);
+        const { error } = await supabase.from('recibos_sueldo').insert({
+          empleado_id: empleadoId,
+          cuil_detectado: d.cuil,
+          nombre_detectado: d.empleado_nombre,
+          periodo: d.periodo,
+          monto_neto: d.neto,
+          archivo_path: path,
+        });
+        if (error) throw error;
+        setItem({
+          estado: 'ok',
+          tipo: 'recibo',
+          resultado: empleadoId
+            ? `Recibo → ${d.empleado_nombre ?? 'empleado'} (RRHH)`
+            : `Recibo de ${d.empleado_nombre ?? 'empleado'} — sin asignar, asignalo abajo`,
+        });
+        qc.invalidateQueries({ queryKey: ['recibos_sueldo'] });
+      } else if (d.tipo === 'vep') {
+        const { error } = await supabase.from('veps').insert({
+          descripcion: d.descripcion,
+          impuesto: d.impuesto,
+          periodo: d.periodo,
+          vencimiento: d.vencimiento,
+          monto: d.monto,
+          archivo_path: path,
+        });
+        if (error) throw error;
+        setItem({
+          estado: 'ok',
+          tipo: 'vep',
+          resultado: `VEP ${d.impuesto ?? ''} → Finanzas${d.vencimiento ? ` · vence ${d.vencimiento}` : ''}`,
+        });
+        qc.invalidateQueries({ queryKey: ['veps'] });
+        qc.invalidateQueries({ queryKey: ['veps_alertas'] });
+      } else {
+        setItem({
+          estado: 'error',
+          tipo: 'desconocido',
+          resultado: 'No se reconoció como recibo ni VEP. Revisalo y cargalo a mano.',
+        });
+      }
+    } catch (e) {
+      setItem({ estado: 'error', resultado: (e as Error).message });
+    }
+  }
+
+  function manejarArchivos(files: FileList | null) {
+    if (!files) return;
+    Array.from(files).forEach((f) => procesarArchivo(f));
+  }
 
   return (
-    <PageContainer title="Integraciones">
+    <PageContainer title="Documentos del contador">
       <div className="space-y-4">
-        {aviso && (
-          <div
-            className={cn(
-              'flex items-start justify-between gap-3 rounded-lg border p-3 text-sm',
-              aviso.tipo === 'ok'
-                ? 'border-green-200 bg-green-50 text-green-800'
-                : 'border-red-200 bg-red-50 text-red-800',
-            )}
-          >
-            <span>{aviso.texto}</span>
-            <button onClick={() => setAviso(null)} className="text-xs opacity-60 hover:opacity-100">
-              ✕
-            </button>
+        <p className="text-sm text-gray-500">
+          Arrastrá acá los recibos de sueldo y VEPs que te manda el contador. El sistema detecta solo
+          qué es cada uno: los <span className="font-medium">recibos</span> van al legajo del empleado
+          (RRHH) y los <span className="font-medium">VEPs</span> a Finanzas con alerta de vencimiento.
+        </p>
+
+        {/* ── Zona de subida ── */}
+        <div
+          onDragOver={(e) => {
+            e.preventDefault();
+            setArrastrando(true);
+          }}
+          onDragLeave={() => setArrastrando(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            setArrastrando(false);
+            manejarArchivos(e.dataTransfer.files);
+          }}
+          onClick={() => fileRef.current?.click()}
+          className={cn(
+            'flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed p-8 text-center transition-colors',
+            arrastrando ? 'border-blue-400 bg-blue-50' : 'border-gray-300 bg-white hover:border-blue-300',
+          )}
+        >
+          <div className="text-3xl">📥</div>
+          <p className="mt-2 text-sm font-medium text-gray-700">
+            Arrastrá los PDF acá, o hacé click para elegir
+          </p>
+          <p className="text-xs text-gray-400">Podés soltar varios a la vez · PDF o imágenes</p>
+          <input
+            ref={fileRef}
+            type="file"
+            accept="application/pdf,image/*"
+            multiple
+            className="hidden"
+            onChange={(e) => manejarArchivos(e.target.files)}
+          />
+        </div>
+
+        {/* ── Lista de procesamiento (sesión actual) ── */}
+        {items.length > 0 && (
+          <div className="space-y-1.5">
+            {items.map((it) => (
+              <div
+                key={it.id}
+                className={cn(
+                  'flex items-center gap-3 rounded border px-3 py-2 text-xs',
+                  it.estado === 'ok'
+                    ? 'border-green-200 bg-green-50'
+                    : it.estado === 'error'
+                      ? 'border-amber-200 bg-amber-50'
+                      : 'border-gray-200 bg-white',
+                )}
+              >
+                <span className="text-base">
+                  {it.estado === 'ok' ? '✓' : it.estado === 'error' ? '⚠' : '⏳'}
+                </span>
+                <span className="min-w-0 flex-1 truncate">
+                  <span className="font-medium text-gray-700">{it.nombre}</span>
+                  {it.resultado && <span className="ml-2 text-gray-500">{it.resultado}</span>}
+                  {!it.resultado && (
+                    <span className="ml-2 text-gray-400">
+                      {it.estado === 'subiendo' ? 'Subiendo…' : 'Analizando…'}
+                    </span>
+                  )}
+                </span>
+              </div>
+            ))}
           </div>
         )}
 
-        {/* ── Tarjeta Outlook ── */}
-        <div className="rounded-lg border border-gray-200 bg-white p-5">
-          <div className="flex items-start justify-between gap-4">
-            <div className="flex items-start gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-50 text-xl">
-                📧
-              </div>
-              <div>
-                <h3 className="text-base font-semibold text-gray-900">Outlook — Correo de contadores</h3>
-                <p className="mt-0.5 text-xs text-gray-500">
-                  Lee los mails de los contadores y extrae recibos de sueldo (→ RRHH) y VEPs (→
-                  Finanzas). Permiso de <span className="font-medium">solo lectura</span>.
-                </p>
-                <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
-                  <span
-                    className={cn(
-                      'inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 font-medium',
-                      conectado ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500',
-                    )}
-                  >
-                    <span
-                      className={cn(
-                        'h-1.5 w-1.5 rounded-full',
-                        conectado ? 'bg-green-500' : 'bg-gray-400',
-                      )}
-                    />
-                    {isLoading ? 'Cargando…' : conectado ? 'Conectado' : 'Sin conectar'}
-                  </span>
-                  {estado?.email_casilla && (
-                    <span className="text-gray-600">{estado.email_casilla}</span>
-                  )}
-                  {conectado && (
-                    <span className="text-gray-400">
-                      Última lectura: {fechaHora(estado?.ultima_lectura ?? null)}
-                    </span>
-                  )}
-                </div>
-                {estado?.ultimo_error && (
-                  <p className="mt-2 rounded border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] text-amber-700">
-                    ⚠ Último error: {estado.ultimo_error}
-                  </p>
-                )}
-              </div>
-            </div>
-            <div className="shrink-0">
-              {conectado ? (
-                <button
-                  onClick={() => {
-                    if (window.confirm('¿Desconectar la casilla de Outlook? Se dejará de leer correo.'))
-                      desconectar.mutate();
-                  }}
-                  disabled={desconectar.isPending}
-                  className="rounded border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-                >
-                  {desconectar.isPending ? 'Desconectando…' : 'Desconectar'}
-                </button>
-              ) : (
-                <button
-                  onClick={() => conectar.mutate()}
-                  disabled={conectando}
-                  className="rounded bg-blue-600 px-4 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-                >
-                  {conectando ? 'Redirigiendo…' : 'Conectar Outlook'}
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
+        {/* ── Recibos ── */}
+        <SeccionRecibos empleados={empleados ?? []} />
 
-        {/* ── Remitentes de contadores ── */}
-        <SeccionRemitentes remitentes={remitentes ?? []} />
-
-        {/* ── Nota Paso 2 ── */}
-        <p className="text-xs text-gray-400">
-          La lectura automática y las alertas se activan una vez conectada la casilla y cargados los
-          remitentes.
-        </p>
+        {/* ── VEPs ── */}
+        <SeccionVeps />
       </div>
     </PageContainer>
   );
 }
 
-// ─── Sección remitentes ──────────────────────────────────────────────────────
-function SeccionRemitentes({ remitentes }: { remitentes: Remitente[] }) {
+// ─── Recibos ─────────────────────────────────────────────────────────────────
+function SeccionRecibos({ empleados }: { empleados: EmpleadoMin[] }) {
   const qc = useQueryClient();
-  const [email, setEmail] = useState('');
-  const [nombre, setNombre] = useState('');
-  const [error, setError] = useState<string | null>(null);
-
-  const invalidar = () => qc.invalidateQueries({ queryKey: ['correo_remitentes'] });
-
-  const agregar = useMutation({
-    mutationFn: async () => {
-      const limpio = email.trim().toLowerCase();
-      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(limpio)) throw new Error('Email inválido.');
-      const { error } = await supabase
-        .from('correo_remitentes')
-        .insert({ email: limpio, nombre: nombre.trim() || null });
+  const { data: recibos } = useQuery({
+    queryKey: ['recibos_sueldo'],
+    queryFn: async (): Promise<ReciboRow[]> => {
+      const { data, error } = await supabase
+        .from('recibos_sueldo')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(60);
       if (error) throw error;
+      return data as ReciboRow[];
     },
-    onSuccess: () => {
-      setEmail('');
-      setNombre('');
-      setError(null);
-      invalidar();
-    },
-    onError: (e: Error) =>
-      setError(
-        e.message.includes('duplicate') || e.message.includes('uniq')
-          ? 'Ese remitente ya está cargado.'
-          : e.message,
-      ),
   });
 
-  const toggleActivo = useMutation({
-    mutationFn: async (r: Remitente) => {
-      const { error } = await supabase
-        .from('correo_remitentes')
-        .update({ activo: !r.activo })
-        .eq('id', r.id);
-      if (error) throw error;
-    },
-    onSuccess: invalidar,
-  });
+  const nombreEmp = useMemo(() => {
+    const m = new Map<string, string>();
+    empleados.forEach((e) => m.set(e.id, `${e.apellido}, ${e.nombre}`));
+    return m;
+  }, [empleados]);
 
-  const borrar = useMutation({
-    mutationFn: async (id: string) => {
-      const { error } = await supabase.from('correo_remitentes').delete().eq('id', id);
-      if (error) throw error;
-    },
-    onSuccess: invalidar,
-  });
+  async function asignar(id: string, empleadoId: string) {
+    await supabase.from('recibos_sueldo').update({ empleado_id: empleadoId || null }).eq('id', id);
+    qc.invalidateQueries({ queryKey: ['recibos_sueldo'] });
+  }
+  async function borrar(id: string) {
+    await supabase.from('recibos_sueldo').delete().eq('id', id);
+    qc.invalidateQueries({ queryKey: ['recibos_sueldo'] });
+  }
 
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-5">
-      <h3 className="text-sm font-semibold text-gray-900">Remitentes de contadores</h3>
-      <p className="mt-0.5 text-xs text-gray-500">
-        Solo se procesan los mails que llegan de estas direcciones. Agregá las casillas de tus
-        contadores.
-      </p>
-
-      <div className="mt-3 flex flex-wrap items-end gap-2">
-        <div className="flex-1 min-w-[200px]">
-          <label className="mb-1 block text-[11px] font-medium text-gray-600">Email</label>
-          <input
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="contador@estudio.com"
-            className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
-          />
-        </div>
-        <div className="min-w-[160px]">
-          <label className="mb-1 block text-[11px] font-medium text-gray-600">Nombre (opcional)</label>
-          <input
-            type="text"
-            value={nombre}
-            onChange={(e) => setNombre(e.target.value)}
-            placeholder="Estudio Pérez"
-            className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
-          />
-        </div>
-        <button
-          onClick={() => agregar.mutate()}
-          disabled={agregar.isPending || !email.trim()}
-          className="rounded bg-rodziny-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-rodziny-700 disabled:opacity-50"
-        >
-          + Agregar
-        </button>
-      </div>
-      {error && <p className="mt-1 text-xs text-red-600">{error}</p>}
-
-      <div className="mt-4 divide-y divide-gray-100 border-t border-gray-100">
-        {remitentes.length === 0 && (
-          <p className="py-4 text-center text-xs text-gray-400">
-            Todavía no hay remitentes cargados.
-          </p>
+    <div className="rounded-lg border border-gray-200 bg-white p-4">
+      <h3 className="text-sm font-semibold text-gray-900">Recibos de sueldo (→ RRHH)</h3>
+      <div className="mt-2 divide-y divide-gray-100">
+        {(recibos ?? []).length === 0 && (
+          <p className="py-4 text-center text-xs text-gray-400">Todavía no hay recibos cargados.</p>
         )}
-        {remitentes.map((r) => (
-          <div key={r.id} className="flex items-center justify-between gap-3 py-2">
-            <div className="min-w-0">
-              <div className="truncate text-sm text-gray-800">{r.email}</div>
-              {r.nombre && <div className="text-[11px] text-gray-500">{r.nombre}</div>}
+        {(recibos ?? []).map((r) => (
+          <div key={r.id} className="flex flex-wrap items-center gap-3 py-2 text-xs">
+            <div className="min-w-[180px] flex-1">
+              {r.empleado_id ? (
+                <span className="font-medium text-gray-800">{nombreEmp.get(r.empleado_id) ?? 'Empleado'}</span>
+              ) : (
+                <select
+                  defaultValue=""
+                  onChange={(e) => asignar(r.id, e.target.value)}
+                  className="rounded border border-amber-300 bg-amber-50 px-1.5 py-1 text-[11px] text-amber-800"
+                >
+                  <option value="">⚠ Asignar a… ({r.nombre_detectado ?? 'sin nombre'})</option>
+                  {empleados.map((e) => (
+                    <option key={e.id} value={e.id}>
+                      {e.apellido}, {e.nombre}
+                    </option>
+                  ))}
+                </select>
+              )}
             </div>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => toggleActivo.mutate(r)}
-                className={cn(
-                  'rounded-full px-2 py-0.5 text-[10px] font-medium',
-                  r.activo ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500',
-                )}
-                title="Activar / pausar"
-              >
-                {r.activo ? 'Activo' : 'Pausado'}
+            <span className="text-gray-500">{r.periodo ?? '—'}</span>
+            <span className="tabular-nums text-gray-700">{r.monto_neto ? formatARS(r.monto_neto) : '—'}</span>
+            <button onClick={() => abrirArchivo(r.archivo_path)} className="text-blue-600 hover:underline">
+              ver PDF
+            </button>
+            <button
+              onClick={() => window.confirm('¿Borrar este recibo?') && borrar(r.id)}
+              className="text-gray-400 hover:text-red-600"
+            >
+              ✕
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── VEPs ────────────────────────────────────────────────────────────────────
+function SeccionVeps() {
+  const qc = useQueryClient();
+  const { data: veps } = useQuery({
+    queryKey: ['veps'],
+    queryFn: async (): Promise<VepRow[]> => {
+      const { data, error } = await supabase
+        .from('veps')
+        .select('*')
+        .order('vencimiento', { ascending: true, nullsFirst: false })
+        .limit(60);
+      if (error) throw error;
+      return data as VepRow[];
+    },
+  });
+
+  async function togglePagado(v: VepRow) {
+    await supabase
+      .from('veps')
+      .update({
+        pagado: !v.pagado,
+        fecha_pago: !v.pagado ? new Date().toISOString().slice(0, 10) : null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', v.id);
+    qc.invalidateQueries({ queryKey: ['veps'] });
+    qc.invalidateQueries({ queryKey: ['veps_alertas'] });
+  }
+  async function borrar(id: string) {
+    await supabase.from('veps').delete().eq('id', id);
+    qc.invalidateQueries({ queryKey: ['veps'] });
+    qc.invalidateQueries({ queryKey: ['veps_alertas'] });
+  }
+
+  const colorUrg: Record<string, string> = {
+    vencido: 'bg-red-100 text-red-700',
+    hoy: 'bg-red-50 text-red-600',
+    semana: 'bg-amber-100 text-amber-700',
+    ok: 'bg-gray-100 text-gray-500',
+    pagado: 'bg-green-100 text-green-700',
+  };
+
+  return (
+    <div className="rounded-lg border border-gray-200 bg-white p-4">
+      <h3 className="text-sm font-semibold text-gray-900">VEPs a pagar (→ Finanzas)</h3>
+      <div className="mt-2 divide-y divide-gray-100">
+        {(veps ?? []).length === 0 && (
+          <p className="py-4 text-center text-xs text-gray-400">Todavía no hay VEPs cargados.</p>
+        )}
+        {(veps ?? []).map((v) => {
+          const urg = urgenciaVep(v.vencimiento, v.pagado);
+          return (
+            <div key={v.id} className="flex flex-wrap items-center gap-3 py-2 text-xs">
+              <span className="min-w-[140px] flex-1 font-medium text-gray-800">
+                {v.impuesto ?? v.descripcion ?? 'VEP'}
+              </span>
+              <span className="text-gray-500">{v.periodo ?? '—'}</span>
+              <span className={cn('rounded-full px-2 py-0.5 text-[10px] font-medium', colorUrg[urg])}>
+                {v.pagado ? 'Pagado' : v.vencimiento ? `Vence ${v.vencimiento}` : 'Sin vto.'}
+              </span>
+              <span className="tabular-nums text-gray-700">{v.monto ? formatARS(v.monto) : '—'}</span>
+              <button onClick={() => abrirArchivo(v.archivo_path)} className="text-blue-600 hover:underline">
+                ver PDF
               </button>
               <button
-                onClick={() => {
-                  if (window.confirm(`¿Borrar el remitente ${r.email}?`)) borrar.mutate(r.id);
-                }}
-                className="text-xs text-gray-400 hover:text-red-600"
-                title="Borrar"
+                onClick={() => togglePagado(v)}
+                className={cn(
+                  'rounded px-2 py-0.5 text-[10px] font-medium',
+                  v.pagado
+                    ? 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                    : 'bg-green-600 text-white hover:bg-green-700',
+                )}
+              >
+                {v.pagado ? 'Desmarcar' : 'Marcar pagado'}
+              </button>
+              <button
+                onClick={() => window.confirm('¿Borrar este VEP?') && borrar(v.id)}
+                className="text-gray-400 hover:text-red-600"
               >
                 ✕
               </button>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
