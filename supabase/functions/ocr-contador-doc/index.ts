@@ -1,11 +1,12 @@
 // Edge Function: ocr-contador-doc
-// Recibe el path de un PDF/imagen ya subido al bucket 'correos-contadores',
-// lo manda a Claude y CLASIFICA si es un recibo de sueldo o un VEP (volante de
-// pago AFIP/ARCA), extrayendo los campos clave. No escribe en DB: devuelve el
-// JSON y el front rutea a recibos_sueldo (RRHH) o veps (Finanzas).
+// Recibe el path de un PDF/imagen del bucket 'correos-contadores', lo manda a
+// Claude y CLASIFICA: recibo(s) de sueldo o VEP (volante de pago AFIP/ARCA).
+// Un PDF de recibos puede traer VARIOS empleados (uno por pagina, a veces con
+// copia empleado/empleador duplicada) -> devuelve un ARRAY deduplicado por CUIL.
+// No escribe en DB: el front rutea a recibos_sueldo (RRHH) o veps (Finanzas).
 //
 // Body: { path: string }
-// Response: { ok: true, datos: {...} } | { ok: false, error: string }
+// Response: { ok: true, datos: { tipo, recibos?: [...], vep?: {...}, ... } } | { ok:false, error }
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
@@ -22,32 +23,41 @@ const corsHeaders = {
 const PROMPT = `Sos un sistema de clasificacion y extraccion de documentos contables argentinos para la empresa Rodziny S.A.S. (gastronomia, Resistencia Chaco). Los manda el contador por mail.
 
 Un documento puede ser:
-- "recibo": un RECIBO DE SUELDO / haberes de un empleado.
-- "vep": un VEP (Volante Electronico de Pago) de AFIP/ARCA, o una boleta/volante de pago de impuestos o cargas sociales (F931, IVA, Ganancias, Autonomos, Seguridad Social, etc.).
-- "desconocido": cualquier otra cosa.
+- "recibo": uno o VARIOS RECIBOS DE SUELDO / haberes de empleados (suele venir un PDF con muchos empleados, uno por pagina).
+- "vep": un VEP (Volante Electronico de Pago) de AFIP/ARCA o boleta de pago de impuestos/cargas sociales (F931, IVA, Ganancias, Autonomos, SICOSS, etc.).
+- "desconocido": cualquier otra cosa (acuses, declaraciones juradas sin importe, capturas de pantalla sin datos, etc.).
 
-Analiza el archivo y devolve UNICAMENTE un JSON estricto (sin markdown, sin texto antes ni despues):
+Analiza TODO el archivo (todas las paginas) y devolve UNICAMENTE un JSON estricto (sin markdown, sin texto antes ni despues):
 
 {
   "tipo": "recibo" | "vep" | "desconocido",
-  "empleado_nombre": string | null,   // solo si tipo=recibo: nombre y apellido del empleado
-  "cuil": string | null,              // solo recibo: CUIL del empleado, solo digitos (11)
-  "periodo": string | null,           // periodo liquidado o del impuesto. Formato YYYY-MM si se puede
-  "neto": number | null,              // solo recibo: neto a cobrar (sin signo ni separadores)
-  "impuesto": string | null,          // solo vep: nombre corto del concepto (ej "F931 Seg. Social", "IVA", "Ganancias", "Autonomos")
-  "vencimiento": string | null,       // solo vep: fecha de vencimiento de pago, formato YYYY-MM-DD
-  "monto": number | null,             // solo vep: importe a pagar (sin signo ni separadores)
-  "numero": string | null,            // solo vep: numero de VEP si aparece
-  "descripcion": string | null,       // resumen corto humano del documento
-  "confianza": number                 // 0 a 1, honesto
+  "recibos": [                      // SOLO si tipo=recibo. Un objeto por empleado.
+    {
+      "empleado_nombre": string,    // apellido y nombre como figura
+      "cuil": string,               // 11 digitos, solo numeros
+      "periodo": string,            // periodo de pago, formato YYYY-MM
+      "neto": number                // TOTAL NETO a cobrar (sin signo ni separadores de miles, decimal con punto)
+    }
+  ],
+  "vep": {                          // SOLO si tipo=vep
+    "impuesto": string,             // concepto corto (ej "F931 SICOSS", "IVA", "Ganancias", "Autonomos")
+    "periodo": string,              // YYYY-MM
+    "vencimiento": string,          // fecha de vencimiento/expiracion, formato YYYY-MM-DD
+    "monto": number,                // importe total a pagar
+    "numero": string                // Nro de VEP si aparece
+  },
+  "descripcion": string,            // resumen corto humano
+  "confianza": number               // 0 a 1, honesto
 }
 
-REGLAS:
-1. Montos: numero plano, sin $ ni puntos de miles. Coma decimal -> punto.
-2. Fechas: YYYY-MM-DD. Periodo: YYYY-MM (si solo hay mes/anio).
-3. CUIL: solo los 11 digitos, sin guiones.
-4. Si no estas seguro del tipo, usa "desconocido" y confianza baja. NO inventes.
-5. SALIDA: exclusivamente el objeto JSON. Nada de markdown ni notas.`;
+REGLAS CRITICAS:
+1. RECIBOS MULTIPLES: si el PDF tiene varios empleados, incluilos a TODOS en el array "recibos".
+2. DEDUPLICAR: cada recibo suele estar impreso dos veces (copia empleado y copia empleador) en la misma pagina. Incluí cada empleado UNA SOLA VEZ (por CUIL). No repitas.
+3. neto = el "TOTAL NETO" / "SON PESOS" que efectivamente cobra el empleado, NO el bruto ni los descuentos.
+4. Montos: numero plano, sin $ ni puntos de miles, decimal con punto. Fechas YYYY-MM-DD, periodos YYYY-MM.
+5. CUIL: 11 digitos sin guiones. El CUIT de la empresa (30-71735236-6) NO es el CUIL del empleado.
+6. Si no estas seguro del tipo o no hay datos extraibles (ej. captura de pantalla, acuse), usa "desconocido". NO inventes montos ni fechas.
+7. SALIDA: exclusivamente el objeto JSON. Nada de markdown ni notas.`;
 
 function extraerObjetoJson(text: string): string {
   const start = text.indexOf('{');
@@ -109,7 +119,7 @@ Deno.serve(async (req) => {
       },
       body: JSON.stringify({
         model: ANTHROPIC_MODEL,
-        max_tokens: 1024,
+        max_tokens: 4096,
         messages: [
           {
             role: 'user',

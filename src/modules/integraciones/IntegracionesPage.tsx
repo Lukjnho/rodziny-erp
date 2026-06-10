@@ -13,18 +13,24 @@ interface EmpleadoMin {
   dni: string | null;
 }
 
-interface DatosOcr {
-  tipo: 'recibo' | 'vep' | 'desconocido';
+interface ReciboOcr {
   empleado_nombre: string | null;
   cuil: string | null;
   periodo: string | null;
   neto: number | null;
-  impuesto: string | null;
-  vencimiento: string | null;
-  monto: number | null;
-  numero: string | null;
-  descripcion: string | null;
-  confianza: number;
+}
+interface DatosOcr {
+  tipo: 'recibo' | 'vep' | 'desconocido';
+  recibos?: ReciboOcr[];
+  vep?: {
+    impuesto: string | null;
+    periodo: string | null;
+    vencimiento: string | null;
+    monto: number | null;
+    numero: string | null;
+  } | null;
+  descripcion?: string | null;
+  confianza?: number;
 }
 
 interface ReciboRow {
@@ -115,16 +121,16 @@ export function IntegracionesPage() {
     },
   });
 
-  // Matchea el recibo a un empleado por DNI (desde el CUIL) y, si no, por nombre.
-  const matchEmpleado = (datos: DatosOcr): string | null => {
+  // Matchea un recibo a un empleado por DNI (desde el CUIL) y, si no, por nombre.
+  const matchEmpleado = (r: ReciboOcr): string | null => {
     if (!empleados) return null;
-    const dni = dniDeCuil(datos.cuil);
+    const dni = dniDeCuil(r.cuil);
     if (dni) {
       const porDni = empleados.find((e) => normDni(e.dni) === dni);
       if (porDni) return porDni.id;
     }
-    if (datos.empleado_nombre) {
-      const q = normalizarTexto(datos.empleado_nombre);
+    if (r.empleado_nombre) {
+      const q = normalizarTexto(r.empleado_nombre);
       const porNombre = empleados.find((e) => {
         const full = normalizarTexto(`${e.nombre} ${e.apellido}`);
         const inv = normalizarTexto(`${e.apellido} ${e.nombre}`);
@@ -165,38 +171,48 @@ export function IntegracionesPage() {
 
       // 3) Rutear según tipo
       if (d.tipo === 'recibo') {
-        const empleadoId = matchEmpleado(d);
-        const { error } = await supabase.from('recibos_sueldo').insert({
-          empleado_id: empleadoId,
-          cuil_detectado: d.cuil,
-          nombre_detectado: d.empleado_nombre,
-          periodo: d.periodo,
-          monto_neto: d.neto,
+        const lista = (d.recibos ?? []).filter((r) => r.cuil || r.empleado_nombre);
+        if (lista.length === 0) throw new Error('Se detectó un recibo pero no se pudo leer ningún empleado.');
+
+        const filas = lista.map((r) => ({
+          empleado_id: matchEmpleado(r),
+          cuil_detectado: r.cuil,
+          nombre_detectado: r.empleado_nombre,
+          periodo: r.periodo,
+          monto_neto: r.neto,
           archivo_path: path,
-        });
+        }));
+        const { error } = await supabase.from('recibos_sueldo').insert(filas);
         if (error) throw error;
+
+        const asignados = filas.filter((f) => f.empleado_id).length;
+        const sinAsignar = filas.length - asignados;
         setItem({
           estado: 'ok',
           tipo: 'recibo',
-          resultado: empleadoId
-            ? `Recibo → ${d.empleado_nombre ?? 'empleado'} (RRHH)`
-            : `Recibo de ${d.empleado_nombre ?? 'empleado'} — sin asignar, asignalo abajo`,
+          resultado:
+            filas.length === 1
+              ? asignados
+                ? `Recibo → ${lista[0].empleado_nombre ?? 'empleado'} (RRHH)`
+                : `Recibo de ${lista[0].empleado_nombre ?? 'empleado'} — sin asignar, asignalo abajo`
+              : `${filas.length} recibos → ${asignados} asignados${sinAsignar ? `, ${sinAsignar} sin asignar (abajo)` : ''} (RRHH)`,
         });
         qc.invalidateQueries({ queryKey: ['recibos_sueldo'] });
       } else if (d.tipo === 'vep') {
+        const v = d.vep ?? null;
         const { error } = await supabase.from('veps').insert({
           descripcion: d.descripcion,
-          impuesto: d.impuesto,
-          periodo: d.periodo,
-          vencimiento: d.vencimiento,
-          monto: d.monto,
+          impuesto: v?.impuesto ?? null,
+          periodo: v?.periodo ?? null,
+          vencimiento: v?.vencimiento ?? null,
+          monto: v?.monto ?? null,
           archivo_path: path,
         });
         if (error) throw error;
         setItem({
           estado: 'ok',
           tipo: 'vep',
-          resultado: `VEP ${d.impuesto ?? ''} → Finanzas${d.vencimiento ? ` · vence ${d.vencimiento}` : ''}`,
+          resultado: `VEP ${v?.impuesto ?? ''} → Finanzas${v?.vencimiento ? ` · vence ${v.vencimiento}` : ''}`,
         });
         qc.invalidateQueries({ queryKey: ['veps'] });
         qc.invalidateQueries({ queryKey: ['veps_alertas'] });

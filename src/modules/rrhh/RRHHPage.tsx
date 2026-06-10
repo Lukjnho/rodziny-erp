@@ -767,11 +767,12 @@ function SeccionRecibosEmpleado({ empleadoId }: { empleadoId: string }) {
       try {
         const { data: res } = await supabase.functions.invoke<{
           ok: boolean;
-          datos?: { periodo?: string | null; neto?: number | null };
+          datos?: { recibos?: { periodo?: string | null; neto?: number | null }[] };
         }>('ocr-contador-doc', { body: { path } });
-        if (res?.ok && res.datos) {
-          periodo = res.datos.periodo ?? null;
-          neto = typeof res.datos.neto === 'number' ? res.datos.neto : null;
+        const primero = res?.ok ? res.datos?.recibos?.[0] : undefined;
+        if (primero) {
+          periodo = primero.periodo ?? null;
+          neto = typeof primero.neto === 'number' ? primero.neto : null;
         }
       } catch {
         /* si el OCR falla igual guardamos el recibo asignado */
