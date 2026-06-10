@@ -738,37 +738,27 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
         if (errPago) throw errPago;
       }
 
-      // 4) Stock + movimientos + self-learning de categoria_gasto_id en productos
+      // 4) Self-learning de costo y categoria_gasto_id en productos. NO toca stock:
+      //    el inventario lo maneja el QR de Recepción (RPC mig 102). Este gasto suele
+      //    venir de validar una recepción pendiente (prefill.recepcion_id) que ya
+      //    sumó el stock; sumarlo acá de nuevo contaría doble la entrega.
       if (form.vincular_stock && form.items.length > 0 && !gastoEditando) {
         for (const it of form.items) {
           const { data: prodActual } = await supabase
             .from('productos')
-            .select('stock_actual, categoria_gasto_id')
+            .select('categoria_gasto_id')
             .eq('id', it.producto_id)
             .single();
-          if (prodActual) {
-            const updates: Record<string, unknown> = {
-              stock_actual: (prodActual.stock_actual ?? 0) + it.cantidad,
-              costo_unitario: it.precio_unitario,
-              updated_at: new Date().toISOString(),
-            };
-            // Self-learning: si el producto no tenía subcat guardada, persistir la actual
-            if (!prodActual.categoria_gasto_id && it.categoria_gasto_id) {
-              updates.categoria_gasto_id = it.categoria_gasto_id;
-            }
-            await supabase.from('productos').update(updates).eq('id', it.producto_id);
+          if (!prodActual) continue;
+          const updates: Record<string, unknown> = {
+            costo_unitario: it.precio_unitario,
+            updated_at: new Date().toISOString(),
+          };
+          // Self-learning: si el producto no tenía subcat guardada, persistir la actual
+          if (!prodActual.categoria_gasto_id && it.categoria_gasto_id) {
+            updates.categoria_gasto_id = it.categoria_gasto_id;
           }
-          await supabase.from('movimientos_stock').insert({
-            local: form.local,
-            producto_id: it.producto_id,
-            producto_nombre: it.producto_nombre,
-            tipo: 'entrada',
-            cantidad: it.cantidad,
-            unidad: it.unidad,
-            motivo: 'Compra a proveedor',
-            observacion: `Gasto ${proveedorNombre} · ${form.tipo_comprobante.toUpperCase()} ${nroCompleto}`,
-            registrado_por: perfil?.nombre ?? null,
-          });
+          await supabase.from('productos').update(updates).eq('id', it.producto_id);
         }
       }
 
@@ -1116,9 +1106,9 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
                 onChange={(e) => setForm({ ...form, vincular_stock: e.target.checked })}
                 className="rounded"
               />
-              <span className="text-sm font-medium text-gray-700">Vincular a stock</span>
+              <span className="text-sm font-medium text-gray-700">Detallar productos</span>
               <span className="text-[11px] text-gray-500">
-                (suma los productos al inventario y crea movimiento de entrada)
+                (aprende costo y categoría; el stock lo suma Recepción)
               </span>
             </label>
 

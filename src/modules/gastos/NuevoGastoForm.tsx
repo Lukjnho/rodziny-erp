@@ -1361,66 +1361,53 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
           .eq('id', comprobanteId);
       }
 
-      // 4) Stock + movimientos + self-learning de categoria_gasto_id en productos
-      //    El costo_unitario solo se actualiza si el usuario tildó "actualizar costo"
-      //    en el item (variación inline en el modal); si no, se suma stock al precio
-      //    de referencia anterior y la compra queda como caso puntual.
+      // 4) Self-learning de categoria_gasto_id y costo en productos. NO toca stock:
+      //    el inventario físico lo maneja el QR de Recepción (RPC mig 102). El gasto
+      //    es solo contable; si también sumara stock contaríamos doble la entrega
+      //    (la recibe el QR y la carga Martín). El costo_unitario solo se actualiza
+      //    si el encargado tildó "actualizar costo" en el item (variación inline).
       if (vincularStock && items.length > 0) {
-        const proveedorNombre = proveedor?.razon_social ?? '';
-        const tipoLabel = (tipoComprobante ?? '').toUpperCase();
-        const refLabel = nOperacion ? ` ${nOperacion}` : '';
         const gastoHistorialId = gastosCreados[0] ?? null;
         for (const it of items) {
           const { data: prodActual } = await supabase
             .from('productos')
-            .select('stock_actual, categoria_gasto_id, costo_unitario')
+            .select('categoria_gasto_id, costo_unitario')
             .eq('id', it.producto_id)
             .single();
-          if (prodActual) {
-            const updates: Record<string, unknown> = {
-              stock_actual: (prodActual.stock_actual ?? 0) + it.cantidad,
-              updated_at: new Date().toISOString(),
-            };
-            // Self-learning: si el producto no tenía subcat guardada, persistir la actual
-            if (!prodActual.categoria_gasto_id && it.categoria_gasto_id) {
-              updates.categoria_gasto_id = it.categoria_gasto_id;
-            }
-            // Solo actualizar costo si el encargado lo confirmó en el alerta inline
-            if (it.actualizar_costo && it.precio_unitario > 0) {
-              updates.costo_unitario = it.precio_unitario;
-            }
-            await supabase.from('productos').update(updates).eq('id', it.producto_id);
+          if (!prodActual) continue;
 
-            // Registrar en historial cuando hubo cambio de costo aprobado
-            if (it.actualizar_costo && it.precio_unitario > 0) {
-              const costoAnterior = prodActual.costo_unitario ?? null;
-              const variacionPct =
-                costoAnterior && costoAnterior > 0
-                  ? (it.precio_unitario - costoAnterior) / costoAnterior
-                  : null;
-              await supabase.from('productos_costo_historial').insert({
-                producto_id: it.producto_id,
-                costo_anterior: costoAnterior,
-                costo_nuevo: it.precio_unitario,
-                variacion_pct: variacionPct,
-                fuente: 'gasto_item',
-                gasto_id: gastoHistorialId,
-                usuario: user?.id ?? null,
-                comentario: 'Aceptado inline desde Nuevo gasto',
-              });
-            }
+          const updates: Record<string, unknown> = {};
+          // Self-learning: si el producto no tenía subcat guardada, persistir la actual
+          if (!prodActual.categoria_gasto_id && it.categoria_gasto_id) {
+            updates.categoria_gasto_id = it.categoria_gasto_id;
           }
-          await supabase.from('movimientos_stock').insert({
-            local,
-            producto_id: it.producto_id,
-            producto_nombre: it.producto_nombre,
-            tipo: 'entrada',
-            cantidad: it.cantidad,
-            unidad: it.unidad,
-            motivo: 'Compra a proveedor',
-            observacion: `Gasto ${proveedorNombre}${tipoLabel ? ` · ${tipoLabel}` : ''}${refLabel}`,
-            registrado_por: user?.id ?? null,
-          });
+          // Solo actualizar costo si el encargado lo confirmó en el alerta inline
+          if (it.actualizar_costo && it.precio_unitario > 0) {
+            updates.costo_unitario = it.precio_unitario;
+          }
+          if (Object.keys(updates).length > 0) {
+            updates.updated_at = new Date().toISOString();
+            await supabase.from('productos').update(updates).eq('id', it.producto_id);
+          }
+
+          // Registrar en historial cuando hubo cambio de costo aprobado
+          if (it.actualizar_costo && it.precio_unitario > 0) {
+            const costoAnterior = prodActual.costo_unitario ?? null;
+            const variacionPct =
+              costoAnterior && costoAnterior > 0
+                ? (it.precio_unitario - costoAnterior) / costoAnterior
+                : null;
+            await supabase.from('productos_costo_historial').insert({
+              producto_id: it.producto_id,
+              costo_anterior: costoAnterior,
+              costo_nuevo: it.precio_unitario,
+              variacion_pct: variacionPct,
+              fuente: 'gasto_item',
+              gasto_id: gastoHistorialId,
+              usuario: user?.id ?? null,
+              comentario: 'Aceptado inline desde Nuevo gasto',
+            });
+          }
         }
       }
 
@@ -1892,9 +1879,9 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
                       }}
                       className="rounded"
                     />
-                    <span className="text-sm font-medium text-gray-700">Vincular a stock</span>
+                    <span className="text-sm font-medium text-gray-700">Detallar productos</span>
                     <span className="text-[11px] text-gray-500">
-                      (suma productos al inventario)
+                      (aprende costo y categoría; el stock lo suma Recepción)
                     </span>
                   </label>
 

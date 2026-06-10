@@ -226,42 +226,18 @@ function RecepcionPageInner() {
         .upload(fotoPath, foto, { contentType: foto.type || 'image/jpeg' });
       if (errFoto) throw errFoto;
 
-      // 1) Crear recepción pendiente
-      const { error: errRecep } = await supabase.from('recepciones_pendientes').insert({
-        local,
-        proveedor: null,
-        items: carrito,
-        registrado_por: registradoPor.trim(),
-        notas: notas.trim() || null,
-        foto_path: fotoPath,
+      // 1) Recepción + suma de stock + movimientos en una sola transacción atómica.
+      // Se hace vía RPC SECURITY DEFINER (mig 102) porque el QR corre como anon y,
+      // desde el hardening de jun 2026, anon no puede hacer UPDATE directo sobre
+      // productos (el update se descartaba en silencio y el stock no se movía).
+      const { error: errRpc } = await supabase.rpc('recepcionar_mercaderia', {
+        p_local: local,
+        p_items: carrito,
+        p_registrado_por: registradoPor.trim(),
+        p_foto_path: fotoPath,
+        p_notas: notas.trim() || null,
       });
-      if (errRecep) throw errRecep;
-
-      // 2) Actualizar stock de cada producto
-      for (const item of carrito) {
-        const prod = productos?.find((p) => p.id === item.producto_id);
-        if (!prod) continue;
-        const nuevoStock = prod.stock_actual + item.cantidad;
-        const { error: errStock } = await supabase
-          .from('productos')
-          .update({ stock_actual: nuevoStock, updated_at: new Date().toISOString() })
-          .eq('id', prod.id);
-        if (errStock) throw errStock;
-
-        // 3) Registrar movimiento de entrada
-        const { error: errMov } = await supabase.from('movimientos_stock').insert({
-          local,
-          producto_id: prod.id,
-          producto_nombre: prod.nombre,
-          tipo: 'entrada',
-          cantidad: item.cantidad,
-          unidad: prod.unidad,
-          motivo: 'Recepción mercadería',
-          observacion: null,
-          registrado_por: registradoPor.trim(),
-        });
-        if (errMov) throw errMov;
-      }
+      if (errRpc) throw errRpc;
 
       setExito(true);
       setTimeout(() => {
