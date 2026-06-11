@@ -44,19 +44,6 @@ interface ReciboRow {
   created_at: string;
 }
 
-interface VepRow {
-  id: string;
-  descripcion: string | null;
-  impuesto: string | null;
-  periodo: string | null;
-  vencimiento: string | null;
-  monto: number | null;
-  archivo_path: string;
-  pagado: boolean;
-  fecha_pago: string | null;
-  created_at: string;
-}
-
 type ItemProc = {
   id: string;
   nombre: string;
@@ -89,18 +76,25 @@ async function abrirArchivo(path: string) {
   if (!error && data) window.open(data.signedUrl, '_blank');
 }
 
-// Urgencia de un VEP según vencimiento (mismo criterio visual que Finanzas)
-function urgenciaVep(venc: string | null, pagado: boolean): 'pagado' | 'vencido' | 'hoy' | 'semana' | 'ok' {
-  if (pagado) return 'pagado';
-  if (!venc) return 'ok';
-  const hoy = new Date();
-  hoy.setHours(0, 0, 0, 0);
-  const v = new Date(venc + 'T00:00:00');
-  const dias = Math.round((v.getTime() - hoy.getTime()) / 86_400_000);
-  if (dias < 0) return 'vencido';
-  if (dias === 0) return 'hoy';
-  if (dias <= 7) return 'semana';
-  return 'ok';
+// Categorías de gasto para rutear el VEP a Pagos Fijos (IDs estables).
+const CAT_CARGAS = { id: '0ad4dc6c-016a-4146-8b00-38cb5bae797f', nombre: 'Cargas sociales' };
+const CAT_IMPUESTOS = { id: '407704c3-9b1a-45c4-92c8-f4f41642e4ac', nombre: 'Impuestos y Tasas' };
+const MESES_ES = [
+  'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+  'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre',
+];
+// 'YYYY-MM' -> 'Abril 2026'
+function mesNombre(periodo: string | null): string {
+  if (!periodo) return '';
+  const [y, m] = periodo.split('-').map(Number);
+  return MESES_ES[(m || 1) - 1] ? `${MESES_ES[(m || 1) - 1]} ${y}` : periodo;
+}
+function esCargaSocial(imp: string | null | undefined): boolean {
+  const s = (imp ?? '').toLowerCase();
+  return (
+    s.includes('sicoss') || s.includes('931') || s.includes('social') ||
+    s.includes('carga') || s.includes('seguridad') || s.includes('sijp')
+  );
 }
 
 export function IntegracionesPage() {
@@ -200,22 +194,33 @@ export function IntegracionesPage() {
         qc.invalidateQueries({ queryKey: ['recibos_sueldo'] });
       } else if (d.tipo === 'vep') {
         const v = d.vep ?? null;
-        const { error } = await supabase.from('veps').insert({
-          descripcion: d.descripcion,
-          impuesto: v?.impuesto ?? null,
-          periodo: v?.periodo ?? null,
-          vencimiento: v?.vencimiento ?? null,
+        const venc = v?.vencimiento ?? null;
+        const periodoImp = v?.periodo ?? null;
+        // Aparece en el mes de PAGO (vencimiento); el concepto lleva el período del impuesto.
+        const periodoPago = venc ? venc.slice(0, 7) : periodoImp ?? new Date().toISOString().slice(0, 7);
+        const carga = esCargaSocial(v?.impuesto);
+        const cat = carga ? CAT_CARGAS : CAT_IMPUESTOS;
+        const concepto = carga
+          ? `Pago cargas sociales ${mesNombre(periodoImp)}`.trim()
+          : `Pago ${v?.impuesto ?? 'impuesto'} ${mesNombre(periodoImp)}`.trim();
+        const { error } = await supabase.from('pagos_fijos').insert({
+          periodo: periodoPago,
+          concepto,
+          categoria: cat.nombre,
+          categoria_gasto_id: cat.id,
           monto: v?.monto ?? null,
-          archivo_path: path,
+          fecha_vencimiento: venc,
+          comprobante_path: path,
+          notas: `VEP ${v?.impuesto ?? ''}${v?.numero ? ` N° ${v.numero}` : ''} · período ${periodoImp ?? '—'}`.trim(),
         });
         if (error) throw error;
         setItem({
           estado: 'ok',
           tipo: 'vep',
-          resultado: `VEP ${v?.impuesto ?? ''} → Finanzas${v?.vencimiento ? ` · vence ${v.vencimiento}` : ''}`,
+          resultado: `VEP ${v?.impuesto ?? ''} → Pagos Fijos (${mesNombre(periodoPago)})${venc ? ` · vence ${venc}` : ''}`,
         });
-        qc.invalidateQueries({ queryKey: ['veps'] });
-        qc.invalidateQueries({ queryKey: ['veps_alertas'] });
+        qc.invalidateQueries({ queryKey: ['pagos_fijos'] });
+        qc.invalidateQueries({ queryKey: ['pagos_alertas_global'] });
       } else {
         setItem({
           estado: 'error',
@@ -310,8 +315,11 @@ export function IntegracionesPage() {
         {/* ── Recibos ── */}
         <SeccionRecibos empleados={empleados ?? []} />
 
-        {/* ── VEPs ── */}
-        <SeccionVeps />
+        <p className="text-xs text-gray-400">
+          Los VEPs detectados se cargan automáticamente en{' '}
+          <span className="font-medium">Finanzas → Pagos Fijos</span> (en el mes de su vencimiento),
+          con su PDF adjunto y el aviso de pago.
+        </p>
       </div>
     </PageContainer>
   );
@@ -393,91 +401,3 @@ function SeccionRecibos({ empleados }: { empleados: EmpleadoMin[] }) {
   );
 }
 
-// ─── VEPs ────────────────────────────────────────────────────────────────────
-function SeccionVeps() {
-  const qc = useQueryClient();
-  const { data: veps } = useQuery({
-    queryKey: ['veps'],
-    queryFn: async (): Promise<VepRow[]> => {
-      const { data, error } = await supabase
-        .from('veps')
-        .select('*')
-        .order('vencimiento', { ascending: true, nullsFirst: false })
-        .limit(60);
-      if (error) throw error;
-      return data as VepRow[];
-    },
-  });
-
-  async function togglePagado(v: VepRow) {
-    await supabase
-      .from('veps')
-      .update({
-        pagado: !v.pagado,
-        fecha_pago: !v.pagado ? new Date().toISOString().slice(0, 10) : null,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', v.id);
-    qc.invalidateQueries({ queryKey: ['veps'] });
-    qc.invalidateQueries({ queryKey: ['veps_alertas'] });
-  }
-  async function borrar(id: string) {
-    await supabase.from('veps').delete().eq('id', id);
-    qc.invalidateQueries({ queryKey: ['veps'] });
-    qc.invalidateQueries({ queryKey: ['veps_alertas'] });
-  }
-
-  const colorUrg: Record<string, string> = {
-    vencido: 'bg-red-100 text-red-700',
-    hoy: 'bg-red-50 text-red-600',
-    semana: 'bg-amber-100 text-amber-700',
-    ok: 'bg-gray-100 text-gray-500',
-    pagado: 'bg-green-100 text-green-700',
-  };
-
-  return (
-    <div className="rounded-lg border border-gray-200 bg-white p-4">
-      <h3 className="text-sm font-semibold text-gray-900">VEPs a pagar (→ Finanzas)</h3>
-      <div className="mt-2 divide-y divide-gray-100">
-        {(veps ?? []).length === 0 && (
-          <p className="py-4 text-center text-xs text-gray-400">Todavía no hay VEPs cargados.</p>
-        )}
-        {(veps ?? []).map((v) => {
-          const urg = urgenciaVep(v.vencimiento, v.pagado);
-          return (
-            <div key={v.id} className="flex flex-wrap items-center gap-3 py-2 text-xs">
-              <span className="min-w-[140px] flex-1 font-medium text-gray-800">
-                {v.impuesto ?? v.descripcion ?? 'VEP'}
-              </span>
-              <span className="text-gray-500">{v.periodo ?? '—'}</span>
-              <span className={cn('rounded-full px-2 py-0.5 text-[10px] font-medium', colorUrg[urg])}>
-                {v.pagado ? 'Pagado' : v.vencimiento ? `Vence ${v.vencimiento}` : 'Sin vto.'}
-              </span>
-              <span className="tabular-nums text-gray-700">{v.monto ? formatARS(v.monto) : '—'}</span>
-              <button onClick={() => abrirArchivo(v.archivo_path)} className="text-blue-600 hover:underline">
-                ver PDF
-              </button>
-              <button
-                onClick={() => togglePagado(v)}
-                className={cn(
-                  'rounded px-2 py-0.5 text-[10px] font-medium',
-                  v.pagado
-                    ? 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                    : 'bg-green-600 text-white hover:bg-green-700',
-                )}
-              >
-                {v.pagado ? 'Desmarcar' : 'Marcar pagado'}
-              </button>
-              <button
-                onClick={() => window.confirm('¿Borrar este VEP?') && borrar(v.id)}
-                className="text-gray-400 hover:text-red-600"
-              >
-                ✕
-              </button>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}

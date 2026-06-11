@@ -2,7 +2,6 @@ import { NavLink } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import { useAuth, type Modulo } from '@/lib/auth';
 import { usePagosAlertas } from '@/modules/finanzas/hooks/usePagosAlertas';
-import { useVepsAlertas } from '@/modules/integraciones/useVepsAlertas';
 
 // Modulos que viven dentro del tab de Finanzas. Si el usuario tiene permiso
 // a cualquiera de estos, mostramos el item Finanzas en el sidebar.
@@ -25,7 +24,6 @@ const NAV: { to: string; label: string; icon: string; modulo: Modulo | 'finanzas
 export function Sidebar() {
   const { perfil, signOut, tienePermiso } = useAuth();
   const { data: alertas } = usePagosAlertas();
-  const { data: vepsAlertas } = useVepsAlertas();
   const items = NAV.filter((n) =>
     n.modulo === 'finanzas-grupo'
       ? MODULOS_FINANZAS.some((m) => tienePermiso(m))
@@ -63,15 +61,8 @@ export function Sidebar() {
       {/* Nav */}
       <nav className="flex-1 space-y-0.5 px-3 py-3">
         {items.map(({ to, label, icon, modulo }) => {
-          const esVeps = modulo === 'admin-only';
-          const conteoBadge = esVeps
-            ? (vepsAlertas?.urgentesTotal ?? 0)
-            : modulo === 'finanzas-grupo'
-              ? (alertas?.urgentesTotal ?? 0)
-              : 0;
-          const mostrarBadge = conteoBadge > 0;
-          const hayVencidos = esVeps ? (vepsAlertas?.vencidos ?? 0) > 0 : (alertas?.vencidos ?? 0) > 0;
-          const badgeColor = hayVencidos ? 'bg-red-500' : 'bg-amber-500';
+          const mostrarBadge = modulo === 'finanzas-grupo' && (alertas?.urgentesTotal ?? 0) > 0;
+          const badgeColor = (alertas?.vencidos ?? 0) > 0 ? 'bg-red-500' : 'bg-amber-500';
           return (
             <NavLink
               key={to}
@@ -96,7 +87,7 @@ export function Sidebar() {
                     badgeColor,
                   )}
                 >
-                  {conteoBadge}
+                  {alertas!.urgentesTotal}
                 </span>
               )}
             </NavLink>

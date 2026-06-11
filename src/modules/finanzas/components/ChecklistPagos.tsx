@@ -21,6 +21,7 @@ interface PagoFijo {
   medio_pago: string | null;
   gasto_id: string | null;
   notas: string | null;
+  comprobante_path: string | null;
 }
 
 interface CategoriaGasto {
@@ -1088,13 +1089,29 @@ function FilaPago({
         />
       </td>
       <td className="px-2 py-2">
-        <button
-          onClick={onDelete}
-          className="text-sm text-gray-300 transition-colors hover:text-red-500"
-          title="Eliminar"
-        >
-          🗑
-        </button>
+        <div className="flex items-center gap-2">
+          {pago.comprobante_path && (
+            <button
+              onClick={async () => {
+                const { data } = await supabase.storage
+                  .from('correos-contadores')
+                  .createSignedUrl(pago.comprobante_path!, 300);
+                if (data) window.open(data.signedUrl, '_blank');
+              }}
+              className="text-xs text-blue-600 hover:underline"
+              title="Ver comprobante (ej. PDF del VEP)"
+            >
+              📎
+            </button>
+          )}
+          <button
+            onClick={onDelete}
+            className="text-sm text-gray-300 transition-colors hover:text-red-500"
+            title="Eliminar"
+          >
+            🗑
+          </button>
+        </div>
       </td>
     </tr>
   );

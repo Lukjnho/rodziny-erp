@@ -12,6 +12,7 @@ import { SueldosTab } from './SueldosTab';
 import { EvaluacionesTab } from './EvaluacionesTab';
 import { VacacionesTab } from './VacacionesTab';
 import { AguinaldoTab } from './AguinaldoTab';
+import { RecibosTab } from './RecibosTab';
 
 type Tab =
   | 'legajos'
@@ -19,6 +20,7 @@ type Tab =
   | 'asistencia'
   | 'horas'
   | 'sueldos'
+  | 'recibos'
   | 'evaluaciones'
   | 'vacaciones'
   | 'aguinaldo';
@@ -110,6 +112,15 @@ const ayudaPorTab: Record<Tab, { titulo: string; pasos: string[] }> = {
       'Click en Adelantos o Sanciones para abrir el panel lateral y cargar/borrar items. Se descuentan del total automáticamente.',
       'Para mensuales: en Q1 se pueden cargar adelantos pero el total aparece atenuado (cobran en Q2). En Q2 ves el mes completo.',
       'Abajo: F931, libro de sueldos y monto total a pagar a ARCA del mes (alimentará Finanzas).',
+    ],
+  },
+  recibos: {
+    titulo: 'Recibos de sueldo',
+    pasos: [
+      'Vista global de todos los recibos cargados (desde Documentos del contador o desde el legajo).',
+      'Filtrá por período, local o buscá por empleado.',
+      'Los recibos que no matchearon a un empleado aparecen con "⚠ Asignar…" — elegí la persona del desplegable.',
+      'Cada recibo se ve con "ver" (PDF). La vista por persona está en Legajos → editar empleado.',
     ],
   },
   aguinaldo: {
@@ -282,6 +293,9 @@ export function RRHHPage() {
         <TabButton activo={tab === 'horas'} onClick={() => setTab('horas')}>
           Horas
         </TabButton>
+        <TabButton activo={tab === 'recibos'} onClick={() => setTab('recibos')}>
+          Recibos
+        </TabButton>
         <TabButton activo={tab === 'sueldos'} onClick={() => setTab('sueldos')}>
           Sueldos
         </TabButton>
@@ -308,6 +322,7 @@ export function RRHHPage() {
       {tab === 'asistencia' && <AsistenciaTab />}
       {tab === 'horas' && <HorasTab />}
       {tab === 'sueldos' && <SueldosTab />}
+      {tab === 'recibos' && <RecibosTab />}
       {tab === 'evaluaciones' && <EvaluacionesTab />}
       {tab === 'vacaciones' && <VacacionesTab />}
       {tab === 'aguinaldo' && <AguinaldoTab />}
