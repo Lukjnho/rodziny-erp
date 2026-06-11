@@ -493,12 +493,13 @@ export function ConciliacionTab() {
         const LOTE = 300;
         for (let i = 0; i < ids.length; i += LOTE) {
           const batch = ids.slice(i, i + LOTE);
-          const [pg, ps, dv] = await Promise.all([
+          const [pg, ps, dv, ad] = await Promise.all([
             supabase.from('pagos_gastos').select('conciliado_movimiento_id').in('conciliado_movimiento_id', batch),
             supabase.from('pagos_sueldos').select('conciliado_movimiento_id').in('conciliado_movimiento_id', batch),
             supabase.from('dividendos').select('conciliado_movimiento_id').in('conciliado_movimiento_id', batch),
+            supabase.from('adelantos').select('conciliado_movimiento_id').in('conciliado_movimiento_id', batch),
           ]);
-          for (const r of [...(pg.data ?? []), ...(ps.data ?? []), ...(dv.data ?? [])]) {
+          for (const r of [...(pg.data ?? []), ...(ps.data ?? []), ...(dv.data ?? []), ...(ad.data ?? [])]) {
             if (r.conciliado_movimiento_id) excl.add(r.conciliado_movimiento_id as string);
           }
         }
@@ -573,7 +574,17 @@ export function ConciliacionTab() {
       const porDividendos =
         ((cdiv as { por_op: number; por_monto_fecha: number })?.por_op ?? 0) +
         ((cdiv as { por_op: number; por_monto_fecha: number })?.por_monto_fecha ?? 0);
-      const total = (res?.conciliados ?? 0) + porConsolidado + porSueldos + porDividendos;
+      // Adelantos de sueldo pagados por transferencia (por N° op o monto+fecha)
+      const { data: cadel, error: errAdel } = await supabase.rpc('conciliar_adelantos', {
+        p_desde: desde,
+        p_hasta: hasta,
+      });
+      if (errAdel) throw errAdel;
+      const porAdelantos =
+        ((cadel as { por_op: number; por_monto_fecha: number })?.por_op ?? 0) +
+        ((cadel as { por_op: number; por_monto_fecha: number })?.por_monto_fecha ?? 0);
+      const total =
+        (res?.conciliados ?? 0) + porConsolidado + porSueldos + porDividendos + porAdelantos;
       qc.invalidateQueries({ queryKey: ['conciliacion'] });
       qc.invalidateQueries({ queryKey: ['gastos_conciliados_ids'] });
       qc.invalidateQueries({ queryKey: ['gastos_listado'] });
@@ -584,6 +595,7 @@ export function ConciliacionTab() {
         if (porConsolidado > 0) detalles.push(`${porConsolidado} en transferencias consolidadas`);
         if (porSueldos > 0) detalles.push(`${porSueldos} sueldos por transferencia`);
         if (porDividendos > 0) detalles.push(`${porDividendos} dividendos`);
+        if (porAdelantos > 0) detalles.push(`${porAdelantos} adelantos`);
         setMensaje({
           tipo: 'ok',
           texto: `${total} gasto(s) vinculado(s) con su movimiento bancario${

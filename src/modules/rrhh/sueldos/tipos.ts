@@ -26,6 +26,13 @@ export interface Adelanto {
   fecha: string;
   monto: number;
   motivo: string | null;
+  // Pago por transferencia → exige comprobante + N° op para conciliar contra el
+  // extracto (igual que sueldos/dividendos). 'efectivo' o null no se concilia.
+  // Para transferencia se guarda 'transferencia mercadopago' | 'transferencia galicia'.
+  medio_pago: string | null;
+  numero_operacion: string | null;
+  comprobante_path: string | null;
+  conciliado_movimiento_id: string | null;
   created_at: string;
 }
 
