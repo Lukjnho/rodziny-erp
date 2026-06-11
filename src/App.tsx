@@ -99,12 +99,6 @@ function RutaFinanzas({ children }: { children: ReactNode }) {
   return MODULOS_FINANZAS.some((m) => tienePermiso(m)) ? <>{children}</> : <SinAcceso />;
 }
 
-// Rutas reservadas solo a administradores (no usan el sistema de permisos por módulo).
-function RutaAdmin({ children }: { children: ReactNode }) {
-  const { perfil } = useAuth();
-  return perfil?.es_admin ? <>{children}</> : <SinAcceso />;
-}
-
 function AppInterna() {
   const { user, perfil, cargando, tienePermiso } = useAuth();
 
@@ -257,9 +251,9 @@ function AppInterna() {
             <Route
               path="/integraciones"
               element={
-                <RutaAdmin>
+                <Ruta modulo="integraciones">
                   <IntegracionesPage />
-                </RutaAdmin>
+                </Ruta>
               }
             />
             <Route path="*" element={<Navigate to={primeraRutaPermitida || '/'} replace />} />

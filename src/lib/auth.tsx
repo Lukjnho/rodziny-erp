@@ -18,7 +18,8 @@ export type Modulo =
   | 'almacen'
   | 'productos'
   | 'agenda'
-  | 'convenios';
+  | 'convenios'
+  | 'integraciones';
 
 export interface Perfil {
   user_id: string;
@@ -39,6 +40,7 @@ export interface Perfil {
   puede_ver_productos: boolean;
   puede_ver_agenda: boolean;
   puede_ver_convenios: boolean;
+  puede_ver_integraciones: boolean;
   // Si está seteado, el usuario solo ve datos de ese local en módulos
   // multilocal (Cocina, etc.). NULL = sin restricción.
   local_restringido: 'vedia' | 'saavedra' | null;
@@ -163,6 +165,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return perfil.puede_ver_agenda;
       case 'convenios':
         return perfil.puede_ver_convenios;
+      case 'integraciones':
+        return perfil.puede_ver_integraciones;
     }
   };
 
