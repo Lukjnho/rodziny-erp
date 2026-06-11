@@ -187,9 +187,9 @@ export function IntegracionesPage() {
           resultado:
             filas.length === 1
               ? asignados
-                ? `Recibo → ${lista[0].empleado_nombre ?? 'empleado'} (RRHH)`
-                : `Recibo de ${lista[0].empleado_nombre ?? 'empleado'} — sin asignar, asignalo abajo`
-              : `${filas.length} recibos → ${asignados} asignados${sinAsignar ? `, ${sinAsignar} sin asignar (abajo)` : ''} (RRHH)`,
+                ? `Recibo de ${lista[0].empleado_nombre ?? 'empleado'} → guardado en su legajo (RRHH → Recibos)`
+                : `Recibo de ${lista[0].empleado_nombre ?? 'empleado'} → cargado, falta asignarlo (abajo, en Recibos de sueldo)`
+              : `${filas.length} recibos → ${asignados} guardados en su legajo${sinAsignar ? `, ${sinAsignar} sin asignar (abajo)` : ''} · RRHH → Recibos`,
         });
         qc.invalidateQueries({ queryKey: ['recibos_sueldo'] });
       } else if (d.tipo === 'vep') {
@@ -217,7 +217,7 @@ export function IntegracionesPage() {
         setItem({
           estado: 'ok',
           tipo: 'vep',
-          resultado: `VEP ${v?.impuesto ?? ''} → Pagos Fijos (${mesNombre(periodoPago)})${venc ? ` · vence ${venc}` : ''}`,
+          resultado: `VEP ${v?.impuesto ?? ''} → Finanzas → Pagos Fijos (${mesNombre(periodoPago)})${venc ? ` · vence ${venc}` : ''}`,
         });
         qc.invalidateQueries({ queryKey: ['pagos_fijos'] });
         qc.invalidateQueries({ queryKey: ['pagos_alertas_global'] });
@@ -241,11 +241,42 @@ export function IntegracionesPage() {
   return (
     <PageContainer title="Documentos del contador">
       <div className="space-y-4">
-        <p className="text-sm text-gray-500">
-          Arrastrá acá los recibos de sueldo y VEPs que te manda el contador. El sistema detecta solo
-          qué es cada uno: los <span className="font-medium">recibos</span> van al legajo del empleado
-          (RRHH) y los <span className="font-medium">VEPs</span> a Finanzas con alerta de vencimiento.
-        </p>
+        {/* ── Guía: cómo funciona (para administración) ── */}
+        <div className="rounded-lg border border-blue-200 bg-blue-50/60 p-4">
+          <p className="text-sm font-semibold text-blue-900">¿Cómo funciona?</p>
+          <p className="mt-0.5 text-xs text-blue-800">
+            Arrastrá los PDF que manda el contador (podés soltar varios juntos). El sistema los lee y
+            los manda solo a donde corresponde:
+          </p>
+          <div className="mt-3 grid gap-2 sm:grid-cols-3">
+            <div className="rounded-md border border-blue-100 bg-white p-2.5">
+              <div className="text-sm font-medium text-gray-800">🧾 Recibo de sueldo</div>
+              <div className="mt-0.5 text-[11px] text-gray-600">
+                Se guarda en el <span className="font-medium">legajo de cada empleado</span> (lo ves
+                en <span className="font-medium">RRHH → Recibos</span> y dentro de cada legajo).
+              </div>
+            </div>
+            <div className="rounded-md border border-blue-100 bg-white p-2.5">
+              <div className="text-sm font-medium text-gray-800">🏛️ VEP / impuesto</div>
+              <div className="mt-0.5 text-[11px] text-gray-600">
+                Entra como pago en <span className="font-medium">Finanzas → Pagos Fijos</span> del mes
+                de vencimiento, con <span className="font-medium">aviso de pago</span>.
+              </div>
+            </div>
+            <div className="rounded-md border border-blue-100 bg-white p-2.5">
+              <div className="text-sm font-medium text-gray-800">❓ No reconocido</div>
+              <div className="mt-0.5 text-[11px] text-gray-600">
+                Si es una captura o un documento sin datos, queda marcado en{' '}
+                <span className="font-medium">ámbar</span> y se carga a mano.
+              </div>
+            </div>
+          </div>
+          <p className="mt-2 text-[11px] text-blue-700">
+            💡 Por cada archivo vas a ver abajo un cartel que dice <span className="font-medium">qué
+            era</span> y <span className="font-medium">a dónde fue</span>. Si subís el mismo dos veces,
+            se carga repetido (borralo con la ✕).
+          </p>
+        </div>
 
         {/* ── Zona de subida ── */}
         <div
@@ -283,6 +314,9 @@ export function IntegracionesPage() {
         {/* ── Lista de procesamiento (sesión actual) ── */}
         {items.length > 0 && (
           <div className="space-y-1.5">
+            <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+              Resultado de la subida
+            </p>
             {items.map((it) => (
               <div
                 key={it.id}
