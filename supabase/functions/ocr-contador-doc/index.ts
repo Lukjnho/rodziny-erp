@@ -2,7 +2,8 @@
 // Recibe el path de un PDF/imagen del bucket 'correos-contadores', lo manda a
 // Claude y CLASIFICA: recibo(s) de sueldo o VEP (volante de pago AFIP/ARCA).
 // Un PDF de recibos puede traer VARIOS empleados (uno por pagina, a veces con
-// copia empleado/empleador duplicada) -> devuelve un ARRAY deduplicado por CUIL.
+// copia empleado/empleador duplicada) -> devuelve un ARRAY deduplicado por CUIL,
+// con el numero de pagina de cada uno para poder cortar el PDF por empleado.
 // No escribe en DB: el front rutea a recibos_sueldo (RRHH) o veps (Finanzas).
 //
 // Body: { path: string }
@@ -31,12 +32,13 @@ Analiza TODO el archivo (todas las paginas) y devolve UNICAMENTE un JSON estrict
 
 {
   "tipo": "recibo" | "vep" | "desconocido",
-  "recibos": [                      // SOLO si tipo=recibo. Un objeto por empleado.
+  "recibos": [                      // SOLO si tipo=recibo. Un objeto por empleado, EN EL ORDEN del documento.
     {
       "empleado_nombre": string,    // apellido y nombre como figura
       "cuil": string,               // 11 digitos, solo numeros
       "periodo": string,            // periodo de pago, formato YYYY-MM
-      "neto": number                // TOTAL NETO a cobrar (sin signo ni separadores de miles, decimal con punto)
+      "neto": number,               // TOTAL NETO a cobrar (sin signo ni separadores de miles, decimal con punto)
+      "pagina": number              // numero de pagina del PDF (empieza en 1) donde aparece ESTE empleado
     }
   ],
   "vep": {                          // SOLO si tipo=vep
@@ -51,13 +53,14 @@ Analiza TODO el archivo (todas las paginas) y devolve UNICAMENTE un JSON estrict
 }
 
 REGLAS CRITICAS:
-1. RECIBOS MULTIPLES: si el PDF tiene varios empleados, incluilos a TODOS en el array "recibos".
-2. DEDUPLICAR: cada recibo suele estar impreso dos veces (copia empleado y copia empleador) en la misma pagina. Incluí cada empleado UNA SOLA VEZ (por CUIL). No repitas.
-3. neto = el "TOTAL NETO" / "SON PESOS" que efectivamente cobra el empleado, NO el bruto ni los descuentos.
-4. Montos: numero plano, sin $ ni puntos de miles, decimal con punto. Fechas YYYY-MM-DD, periodos YYYY-MM.
-5. CUIL: 11 digitos sin guiones. El CUIT de la empresa (30-71735236-6) NO es el CUIL del empleado.
-6. Si no estas seguro del tipo o no hay datos extraibles (ej. captura de pantalla, acuse), usa "desconocido". NO inventes montos ni fechas.
-7. SALIDA: exclusivamente el objeto JSON. Nada de markdown ni notas.`;
+1. RECIBOS MULTIPLES: si el PDF tiene varios empleados, incluilos a TODOS en el array "recibos", en el orden en que aparecen.
+2. DEDUPLICAR: cada recibo suele estar impreso dos veces (copia empleado y copia empleador) en la MISMA pagina. Incluí cada empleado UNA SOLA VEZ (por CUIL). No repitas. Las dos copias cuentan como UNA pagina.
+3. pagina: numero de pagina (base 1) donde figura el recibo de ese empleado. Normalmente empleado 1 = pagina 1, empleado 2 = pagina 2, etc.
+4. neto = el "TOTAL NETO" / "SON PESOS" que efectivamente cobra el empleado, NO el bruto ni los descuentos.
+5. Montos: numero plano, sin $ ni puntos de miles, decimal con punto. Fechas YYYY-MM-DD, periodos YYYY-MM.
+6. CUIL: 11 digitos sin guiones. El CUIT de la empresa (30-71735236-6) NO es el CUIL del empleado.
+7. Si no estas seguro del tipo o no hay datos extraibles (ej. captura de pantalla, acuse), usa "desconocido". NO inventes montos ni fechas.
+8. SALIDA: exclusivamente el objeto JSON. Nada de markdown ni notas.`;
 
 function extraerObjetoJson(text: string): string {
   const start = text.indexOf('{');

@@ -18,6 +18,7 @@ interface ReciboOcr {
   cuil: string | null;
   periodo: string | null;
   neto: number | null;
+  pagina: number | null;
 }
 interface DatosOcr {
   tipo: 'recibo' | 'vep' | 'desconocido';
@@ -168,16 +169,59 @@ export function IntegracionesPage() {
         const lista = (d.recibos ?? []).filter((r) => r.cuil || r.empleado_nombre);
         if (lista.length === 0) throw new Error('Se detectó un recibo pero no se pudo leer ningún empleado.');
 
-        const filas = lista.map((r) => ({
+        // Cortar el PDF por empleado: cada recibo se queda con SU hoja (confidencial).
+        // Si falla el corte, se cae al PDF completo. Las imágenes no se cortan.
+        const paths: (string | null)[] = lista.map(() => null);
+        const esPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+        if (esPdf) {
+          try {
+            const { PDFDocument } = await import('pdf-lib');
+            const src = await PDFDocument.load(await file.arrayBuffer());
+            const totalPags = src.getPageCount();
+            for (let i = 0; i < lista.length; i++) {
+              // 1 empleado por página y en orden → mapeo directo; si no, uso la página que dijo el OCR.
+              let idx: number | null = null;
+              if (lista.length === totalPags) idx = i;
+              else if (
+                typeof lista[i].pagina === 'number' &&
+                lista[i].pagina! >= 1 &&
+                lista[i].pagina! <= totalPags
+              )
+                idx = lista[i].pagina! - 1;
+              if (idx === null) continue;
+
+              const nueva = await PDFDocument.create();
+              const [pg] = await nueva.copyPages(src, [idx]);
+              nueva.addPage(pg);
+              const bytes = await nueva.save();
+              const rand = crypto.randomUUID().slice(0, 8);
+              const pPath = `inbox/${mes}/${Date.now()}_${rand}_emp${i + 1}.pdf`;
+              const { error: upE } = await supabase.storage
+                .from('correos-contadores')
+                .upload(pPath, bytes, { contentType: 'application/pdf' });
+              if (!upE) paths[i] = pPath;
+            }
+          } catch {
+            /* si el corte falla, cada recibo queda apuntando al PDF completo */
+          }
+        }
+
+        const filas = lista.map((r, i) => ({
           empleado_id: matchEmpleado(r),
           cuil_detectado: r.cuil,
           nombre_detectado: r.empleado_nombre,
           periodo: r.periodo,
           monto_neto: r.neto,
-          archivo_path: path,
+          archivo_path: paths[i] ?? path,
         }));
         const { error } = await supabase.from('recibos_sueldo').insert(filas);
         if (error) throw error;
+
+        // Si TODAS las hojas se cortaron bien, borramos el PDF completo para no
+        // dejar el lote entero (todos los sueldos) accesible.
+        if (paths.every((p) => p !== null)) {
+          await supabase.storage.from('correos-contadores').remove([path]);
+        }
 
         const asignados = filas.filter((f) => f.empleado_id).length;
         const sinAsignar = filas.length - asignados;
