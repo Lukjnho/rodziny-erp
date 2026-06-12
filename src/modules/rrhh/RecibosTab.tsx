@@ -23,6 +23,8 @@ interface EmpleadoMin {
   nombre: string;
   apellido: string;
   local: 'vedia' | 'saavedra';
+  estado_laboral: 'prueba' | 'efectivo' | 'suspendido' | 'baja';
+  activo: boolean;
 }
 
 async function abrirArchivo(path: string) {
@@ -57,7 +59,7 @@ export function RecibosTab() {
     queryFn: async (): Promise<EmpleadoMin[]> => {
       const { data, error } = await supabase
         .from('empleados')
-        .select('id, nombre, apellido, local')
+        .select('id, nombre, apellido, local, estado_laboral, activo')
         .order('apellido');
       if (error) throw error;
       return data as EmpleadoMin[];
@@ -106,8 +108,54 @@ export function RecibosTab() {
   const totalNeto = filtrados.reduce((s, r) => s + (Number(r.monto_neto) || 0), 0);
   const sinAsignar = filtrados.filter((r) => !r.empleado_id).length;
 
+  // Alerta accionable: efectivos (en blanco) que NO tienen recibo del período en curso.
+  // Si hay un período filtrado lo usamos; si no, el mes actual.
+  const periodoControl = periodo || new Date().toISOString().slice(0, 7);
+  const efectivosSinRecibo = useMemo(() => {
+    const conRecibo = new Set(
+      (recibos ?? [])
+        .filter((r) => r.periodo === periodoControl && r.empleado_id)
+        .map((r) => r.empleado_id as string),
+    );
+    return (empleados ?? []).filter(
+      (e) =>
+        e.activo &&
+        e.estado_laboral === 'efectivo' &&
+        (local === 'todos' || e.local === local) &&
+        !conRecibo.has(e.id),
+    );
+  }, [empleados, recibos, periodoControl, local]);
+
   return (
     <div className="space-y-3">
+      {/* Guía para quien opera el módulo (Tamara / Maxi) */}
+      <div className="rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-[11px] leading-relaxed text-blue-800">
+        <span className="font-semibold">📋 Cómo se cargan los recibos:</span> el contador los manda →
+        subilos en <span className="font-medium">Integraciones › Documentos del contador</span> (se
+        enlazan solos al empleado por CUIL). Los que queden{' '}
+        <span className="font-medium text-amber-700">⚠ sin asignar</span> asignalos a mano acá. El
+        desglose (bruto / aportes) sale del PDF y se ve abriendo el legajo del empleado. Cada{' '}
+        <span className="font-medium">efectivo</span> debería tener su recibo todos los meses.
+      </div>
+
+      {/* Alerta accionable: efectivos sin recibo del período */}
+      {efectivosSinRecibo.length > 0 && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          <p className="font-semibold">
+            ⚠ Faltan {efectivosSinRecibo.length} recibo{efectivosSinRecibo.length !== 1 ? 's' : ''} de
+            efectivos en {periodoControl}
+          </p>
+          <p className="mt-0.5 text-[11px] text-amber-700">
+            {efectivosSinRecibo
+              .map((e) => `${e.apellido}, ${e.nombre}`)
+              .join(' · ')}
+          </p>
+          <p className="mt-1 text-[10px] text-amber-600">
+            Pedíselos al contador o subilos cuando lleguen. Si alguno ya no es efectivo, corregí su
+            estado en el legajo.
+          </p>
+        </div>
+      )}
       {/* Filtros */}
       <div className="flex flex-wrap items-center gap-2 rounded-lg border border-gray-200 bg-white p-3">
         <select
