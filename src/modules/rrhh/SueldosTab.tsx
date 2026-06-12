@@ -11,7 +11,7 @@ import {
   ultimoDiaDelMes,
   normalizarTexto,
   montoPresentismo,
-  TOLERANCIA_MIN,
+  esTardanzaReal,
   type Quincena,
 } from './utils';
 import type {
@@ -99,11 +99,7 @@ function esSalidaNocturnaLegacy(f: Fichada): boolean {
 // ¿La persona llegó tarde ese día? (alguna entrada real con +10 min)
 function llegoTardeEseDia(fs: Fichada[]): boolean {
   return fs.some(
-    (f) =>
-      f.tipo === 'entrada' &&
-      !esSalidaNocturnaLegacy(f) &&
-      f.minutos_diferencia !== null &&
-      f.minutos_diferencia > TOLERANCIA_MIN,
+    (f) => f.tipo === 'entrada' && !esSalidaNocturnaLegacy(f) && esTardanzaReal(f.minutos_diferencia),
   );
 }
 
@@ -683,13 +679,9 @@ export function SueldosTab() {
           continue;
         }
 
-        // Tardanza del día = alguna entrada real con +10 min (10 min de tolerancia)
-        const entradaTarde = fs.find(
-          (f) =>
-            f.tipo === 'entrada' &&
-            f.minutos_diferencia !== null &&
-            f.minutos_diferencia > TOLERANCIA_MIN,
-        );
+        // Tardanza del día = alguna entrada real con +10 min (10 min de tolerancia),
+        // descartando los desfases de turno gigantes (cronograma incompleto)
+        const entradaTarde = fs.find((f) => f.tipo === 'entrada' && esTardanzaReal(f.minutos_diferencia));
         if (entradaTarde) {
           statsTardanzas++;
           detalleTardanzas.push({ fecha, minutos: entradaTarde.minutos_diferencia as number });

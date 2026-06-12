@@ -31,6 +31,22 @@ export const MESES = [
 // Tolerancia en minutos para considerar puntual una entrada/salida
 export const TOLERANCIA_MIN = 10;
 
+// Tope por encima del cual una "tardanza" deja de ser real y es un desfase de
+// turno: pasa cuando el empleado ficha un 2º turno que no está en el cronograma
+// del día (ej: entrada 20:00 comparada contra las 11:00 = +540 min). Esos valores
+// gigantes NO cuentan como tardanza.
+export const TARDANZA_MAX_MIN = 180;
+
+// ¿Esta diferencia de entrada es una tardanza REAL? (más de la tolerancia pero
+// dentro de lo plausible; descarta los desfases de turno por cronograma incompleto)
+export function esTardanzaReal(minutosDiferencia: number | null): boolean {
+  return (
+    minutosDiferencia !== null &&
+    minutosDiferencia > TOLERANCIA_MIN &&
+    minutosDiferencia <= TARDANZA_MAX_MIN
+  );
+}
+
 // ── Presentismo ─────────────────────────────────────────────────────────────
 // Modelo: el presentismo es un BENEFICIO del 10% que se SUMA al sueldo base
 // cuando el empleado lo gana. empleados.sueldo_neto guarda el base SIN presentismo.

@@ -5,6 +5,7 @@ import { cn } from '@/lib/utils';
 import type { Empleado } from './RRHHPage';
 import {
   TOLERANCIA_MIN,
+  esTardanzaReal,
   MESES,
   diasDeQuincena,
   diffMinutosVsTurnos,
@@ -268,13 +269,8 @@ export function AsistenciaTab() {
           nombresAnomalias.push(`${emp.nombre} ${emp.apellido} (incompleto)`);
         }
 
-        // Tardanzas: entrada con minutos_diferencia > tolerancia
-        const tardo = fs.some(
-          (f) =>
-            f.tipo === 'entrada' &&
-            f.minutos_diferencia !== null &&
-            f.minutos_diferencia > TOLERANCIA_MIN,
-        );
+        // Tardanzas: entrada con +10 min (descarta desfases de turno gigantes)
+        const tardo = fs.some((f) => f.tipo === 'entrada' && esTardanzaReal(f.minutos_diferencia));
         if (tardo) tardanzas++;
       });
 
@@ -629,12 +625,7 @@ function calcularEstadoEmpleado(
   if (crono?.es_franco) return { estado: 'franco', tarde: false };
   if (!crono?.publicado) return { estado: 'sin_turno', tarde: false };
 
-  const tarde = fs.some(
-    (f) =>
-      f.tipo === 'entrada' &&
-      f.minutos_diferencia !== null &&
-      f.minutos_diferencia > TOLERANCIA_MIN,
-  );
+  const tarde = fs.some((f) => f.tipo === 'entrada' && esTardanzaReal(f.minutos_diferencia));
 
   if (fs.length === 0) {
     if (fecha === hoyYmd && crono?.hora_entrada) {
