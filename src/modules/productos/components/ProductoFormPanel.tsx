@@ -96,6 +96,7 @@ interface ProductoRow {
   tipo: string;
   unidad: string;
   minimo_produccion: number | null;
+  controla_stock: boolean;
   local: string;
   activo: boolean;
   receta_id: string | null;
@@ -130,7 +131,7 @@ export function ProductoFormPanel({
     queryFn: async (): Promise<ProductoRow | null> => {
       const { data, error } = await supabase
         .from('cocina_productos')
-        .select('id, nombre, codigo, tipo, unidad, minimo_produccion, local, activo, receta_id, insumo_reventa_id, ml_por_venta, fudo_nombres')
+        .select('id, nombre, codigo, tipo, unidad, minimo_produccion, controla_stock, local, activo, receta_id, insumo_reventa_id, ml_por_venta, fudo_nombres')
         .eq('id', productoId)
         .maybeSingle();
       if (error) throw error;
@@ -215,6 +216,10 @@ function FormInterno({
   );
   const [activo, setActivo] = useState<boolean>(producto?.activo ?? true);
   const [fudoNombres, setFudoNombres] = useState<string[]>(producto?.fudo_nombres ?? []);
+  const [controlaStock, setControlaStock] = useState<boolean>(producto?.controla_stock ?? true);
+  const [minimo, setMinimo] = useState<string>(
+    producto?.minimo_produccion != null ? String(producto.minimo_produccion) : '',
+  );
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState('');
 
@@ -257,17 +262,25 @@ function FormInterno({
       setError('El nombre es obligatorio');
       return;
     }
+    // minimo_produccion acepta coma o punto decimal; vacío = sin mínimo (null).
+    const minimoNum = minimo.trim() === '' ? null : Number(minimo.replace(',', '.'));
+    if (minimoNum != null && (Number.isNaN(minimoNum) || minimoNum < 0)) {
+      setError('El mínimo debe ser un número válido');
+      return;
+    }
     setGuardando(true);
     setError('');
-    // Campos comunes. NO incluye `codigo` ni `minimo_produccion`:
-    //  - código: se autogenera SOLO al crear; al editar no se toca (UNIQUE + atado a lotes).
-    //  - minimo_produccion: fuera del form; usa el default de la base (100).
+    // `codigo` NO se incluye: se autogenera SOLO al crear; al editar no se toca
+    // (UNIQUE + atado a lotes). `minimo_produccion` y `controla_stock` ahora SÍ
+    // se editan desde el form (antes minimo quedaba fijo en el default 100).
     const row = {
       nombre: nombre.trim(),
       tipo,
       unidad,
       local,
       activo,
+      controla_stock: controlaStock,
+      minimo_produccion: minimoNum,
       receta_id: recetaId || null,
       // Reventa y receta son excluyentes: si hay receta, manda receta.
       insumo_reventa_id: recetaId ? null : insumoReventaId || null,
@@ -480,6 +493,39 @@ function FormInterno({
             <p className="text-[10px] italic text-gray-400">
               Elegí un local para ver los nombres Fudo disponibles.
             </p>
+          )}
+        </div>
+
+        <div className="border-t border-gray-100 pt-4">
+          <label className="flex items-center gap-2 text-sm text-gray-700">
+            <input
+              type="checkbox"
+              checked={controlaStock}
+              onChange={(e) => setControlaStock(e.target.checked)}
+              className="h-4 w-4"
+            />
+            Controlar stock
+          </label>
+          <p className="mt-1 text-[10px] italic text-gray-400">
+            Si está tildado, el producto aparece en Cocina › Stock y entra en el plan de
+            producción (qué producir según demanda y mínimo).
+          </p>
+          {controlaStock && (
+            <div className="mt-3 max-w-[12rem]">
+              <label className={labelCls}>Mínimo (alerta de faltante)</label>
+              <input
+                type="number"
+                inputMode="numeric"
+                min={0}
+                value={minimo}
+                onChange={(e) => setMinimo(e.target.value)}
+                className={inputCls}
+                placeholder="Ej. 30"
+              />
+              <p className="mt-1 text-[10px] italic text-gray-400">
+                Cuando el stock baja de este número, salta el aviso para reponer/producir.
+              </p>
+            </div>
           )}
         </div>
 
