@@ -116,6 +116,27 @@ function calcularPresentismoAuto(
   return false;
 }
 
+// Regla a la vista: el presentismo es un PREMIO a la puntualidad y la asistencia.
+export const REGLA_PRESENTISMO =
+  'El presentismo es un premio a la puntualidad y la responsabilidad. Se PIERDE en la quincena si hay: ' +
+  'cualquier falta (con o sin justificación), 2 o más tardanzas, o 1 tardanza de más de 10 minutos.';
+
+// Veredicto automático legible (mismo criterio exacto que calcularPresentismoAuto), para
+// mostrar POR QUÉ cada persona gana o pierde el presentismo.
+function motivoPresentismoAuto(a: {
+  ausencias: number;
+  tardanzas: number;
+  tardanzasGraves: number;
+}): { gana: boolean; motivo: string } {
+  if (a.ausencias > 0)
+    return { gana: false, motivo: `${a.ausencias} falta${a.ausencias > 1 ? 's' : ''}` };
+  if (a.tardanzas === 0) return { gana: true, motivo: 'sin faltas ni tardanzas' };
+  if (a.tardanzas === 1 && a.tardanzasGraves === 0)
+    return { gana: true, motivo: '1 tardanza ≤10min (perdonada)' };
+  if (a.tardanzas === 1) return { gana: false, motivo: '1 tardanza de +10min' };
+  return { gana: false, motivo: `${a.tardanzas} tardanzas` };
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 export function SueldosTab() {
   const qc = useQueryClient();
@@ -894,6 +915,16 @@ export function SueldosTab() {
         <KpiMini label="Descuentos" value={formatARS(kpis.totalDescuentos)} color="amber" />
       </div>
 
+      {/* Regla del presentismo a la vista (premio puntualidad) */}
+      <div className="rounded-lg border border-green-100 bg-green-50 px-3 py-2 text-[11px] leading-relaxed text-green-800">
+        <span className="font-semibold">🏅 Presentismo (premio puntualidad):</span> se PIERDE en la
+        quincena con <span className="font-medium">cualquier falta</span> (con o sin justificación),{' '}
+        <span className="font-medium">2 tardanzas</span>, o{' '}
+        <span className="font-medium">1 tardanza de más de 10 min</span>. La tilde se calcula sola
+        según las fichadas; debajo de cada una ves el motivo. Podés destildar/tildar a mano si hace
+        falta (queda marcado con 🖊).
+      </div>
+
       {/* ── Tabla de liquidación ──────────────────────────────────────────── */}
       <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
         <div className="overflow-x-auto">
@@ -903,7 +934,9 @@ export function SueldosTab() {
                 <th className="px-3 py-2 text-left font-semibold">Empleado</th>
                 <th className="px-2 py-2 text-left font-semibold">Local</th>
                 <th className="px-2 py-2 text-right font-semibold">Base</th>
-                <th className="px-2 py-2 text-center font-semibold">Presentismo</th>
+                <th className="px-2 py-2 text-center font-semibold" title={REGLA_PRESENTISMO}>
+                  Presentismo
+                </th>
                 <th className="px-2 py-2 text-right font-semibold">Adelantos</th>
                 <th className="px-2 py-2 text-right font-semibold">Sanciones</th>
                 <th
@@ -1636,6 +1669,7 @@ function FilaEmpleado({
     asistencia,
   } = fila;
   const tieneProblemas = asistencia.ausencias > 0 || asistencia.tardanzasGraves > 0;
+  const veredictoPres = motivoPresentismoAuto(asistencia);
 
   return (
     <tr
@@ -1713,21 +1747,38 @@ function FilaEmpleado({
         {esMensualEnQ1 ? (
           <span className="text-xs text-gray-300">—</span>
         ) : (
-          <label
-            className="inline-flex cursor-pointer items-center gap-1"
-            title={presentismoOverride ? 'Modificado manualmente' : 'Automático según asistencia'}
-          >
-            <input
-              type="checkbox"
-              checked={cobraPresentismo}
-              onChange={(e) => onTogglePresentismo(e.target.checked)}
-              className="h-4 w-4"
-            />
-            {presentismoOverride && <span className="text-[10px] text-rodziny-700">🖊</span>}
-            {cobraPresentismo && montoPres > 0 && (
-              <span className="text-[10px] text-green-700">+{formatARS(montoPres)}</span>
-            )}
-          </label>
+          <div className="flex flex-col items-center gap-0.5">
+            <label
+              className="inline-flex cursor-pointer items-center gap-1"
+              title={
+                (presentismoOverride
+                  ? `Modificado a mano. Automático: ${veredictoPres.gana ? 'gana' : 'pierde'} (${veredictoPres.motivo}).`
+                  : `Automático según fichadas: ${veredictoPres.gana ? 'gana' : 'pierde'} (${veredictoPres.motivo}).`) +
+                '\n\n' +
+                REGLA_PRESENTISMO
+              }
+            >
+              <input
+                type="checkbox"
+                checked={cobraPresentismo}
+                onChange={(e) => onTogglePresentismo(e.target.checked)}
+                className="h-4 w-4"
+              />
+              {presentismoOverride && <span className="text-[10px] text-rodziny-700">🖊</span>}
+              {cobraPresentismo && montoPres > 0 && (
+                <span className="text-[10px] text-green-700">+{formatARS(montoPres)}</span>
+              )}
+            </label>
+            {/* Motivo del veredicto automático: por qué gana o pierde */}
+            <span
+              className={cn(
+                'text-[9px] leading-tight',
+                veredictoPres.gana ? 'text-green-600' : 'text-red-500',
+              )}
+            >
+              {veredictoPres.gana ? '✓ puntual' : `✗ ${veredictoPres.motivo}`}
+            </span>
+          </div>
         )}
       </td>
       <td className="px-2 py-2 text-right">
@@ -1919,10 +1970,22 @@ function FilaAsistencia({
     asistencia.diasLaborales > 0
       ? Math.round((asistencia.completos / asistencia.diasLaborales) * 100)
       : 100;
+  const veredictoPres = motivoPresentismoAuto(asistencia);
 
   return (
     <tr className="bg-blue-50/40">
       <td colSpan={11} className="px-4 py-2.5">
+        {/* Veredicto del presentismo (premio puntualidad) */}
+        <div
+          className={cn(
+            'mb-2 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium',
+            veredictoPres.gana ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800',
+          )}
+          title={REGLA_PRESENTISMO}
+        >
+          🏅 Presentismo: {veredictoPres.gana ? 'GANA' : 'PIERDE'}
+          <span className="font-normal opacity-80">— {veredictoPres.motivo}</span>
+        </div>
         <div className="flex flex-wrap items-start gap-4 text-xs">
           {/* Resumen general */}
           <div className="flex items-center gap-3">
