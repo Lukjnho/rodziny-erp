@@ -5,7 +5,6 @@ import { UploadFudo } from './components/UploadFudo';
 import { CierreCaja } from './components/CierreCaja';
 import { FlujoCaja } from './components/FlujoCaja';
 import { ProyeccionFlujo } from './components/ProyeccionFlujo';
-import { VentasPage } from '@/modules/ventas/VentasPage';
 import { GastosPage } from '@/modules/gastos/GastosPage';
 import { EstadoResultados } from './edr/EstadoResultados';
 import { AmortizacionesPage } from './amortizaciones/AmortizacionesPage';
@@ -15,7 +14,6 @@ import { useAuth, type Modulo } from '@/lib/auth';
 import { cn } from '@/lib/utils';
 
 type Tab =
-  | 'ventas'
   | 'compras'
   | 'edr'
   | 'flujo'
@@ -35,13 +33,6 @@ interface TabDef {
 }
 
 const TABS: TabDef[] = [
-  {
-    id: 'ventas',
-    label: 'Resumen de Ventas',
-    icon: '📈',
-    subtitle: 'Análisis de ventas por período',
-    modulo: 'ventas',
-  },
   {
     id: 'compras',
     label: 'Resumen de Compras',
@@ -158,7 +149,6 @@ export function FinanzasPage() {
         ))}
       </div>
 
-      {tab === 'ventas' && <VentasPage embedded />}
       {tab === 'compras' && <GastosPage embedded />}
       {tab === 'edr' && <EstadoResultados embedded />}
       {tab === 'flujo' && <FlujoCaja onNavigateToTab={(t) => setTab(t as Tab)} />}

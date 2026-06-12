@@ -5,10 +5,11 @@ import { usePagosAlertas } from '@/modules/finanzas/hooks/usePagosAlertas';
 
 // Modulos que viven dentro del tab de Finanzas. Si el usuario tiene permiso
 // a cualquiera de estos, mostramos el item Finanzas en el sidebar.
-const MODULOS_FINANZAS: Modulo[] = ['finanzas', 'ventas', 'edr', 'gastos', 'amortizaciones'];
+const MODULOS_FINANZAS: Modulo[] = ['finanzas', 'edr', 'gastos', 'amortizaciones'];
 
 const NAV: { to: string; label: string; icon: string; modulo: Modulo | 'finanzas-grupo' }[] = [
   { to: '/', label: 'Dashboard', icon: '▦', modulo: 'dashboard' },
+  { to: '/ventas', label: 'Ventas', icon: '📈', modulo: 'ventas' },
   { to: '/finanzas', label: 'Finanzas', icon: '💰', modulo: 'finanzas-grupo' },
   { to: '/rrhh', label: 'RRHH', icon: '👥', modulo: 'rrhh' },
   { to: '/compras', label: 'Gastos-Compras', icon: '🧾', modulo: 'compras' },

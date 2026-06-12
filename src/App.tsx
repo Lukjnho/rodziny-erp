@@ -12,6 +12,9 @@ import { lazy, Suspense, type ReactNode } from 'react';
 const FinanzasPage = lazy(() =>
   import('@/modules/finanzas/FinanzasPage').then((m) => ({ default: m.FinanzasPage })),
 );
+const VentasPage = lazy(() =>
+  import('@/modules/ventas/VentasPage').then((m) => ({ default: m.VentasPage })),
+);
 const ComprasPage = lazy(() =>
   import('@/modules/compras/ComprasPage').then((m) => ({ default: m.ComprasPage })),
 );
@@ -92,7 +95,7 @@ function Ruta({ modulo, children }: { modulo: Modulo; children: ReactNode }) {
   return tienePermiso(modulo) ? <>{children}</> : <SinAcceso />;
 }
 
-const MODULOS_FINANZAS: Modulo[] = ['finanzas', 'ventas', 'edr', 'gastos', 'amortizaciones'];
+const MODULOS_FINANZAS: Modulo[] = ['finanzas', 'edr', 'gastos', 'amortizaciones'];
 
 function RutaFinanzas({ children }: { children: ReactNode }) {
   const { tienePermiso } = useAuth();
@@ -134,7 +137,9 @@ function AppInterna() {
   const tieneAlgunFinanzas = MODULOS_FINANZAS.some((m) => tienePermiso(m));
   const primeraRutaPermitida = tienePermiso('dashboard')
     ? '/'
-    : tieneAlgunFinanzas
+    : tienePermiso('ventas')
+      ? '/ventas'
+      : tieneAlgunFinanzas
       ? '/finanzas'
       : tienePermiso('rrhh')
         ? '/rrhh'
@@ -180,7 +185,14 @@ function AppInterna() {
                 </RutaFinanzas>
               }
             />
-            <Route path="/ventas" element={<Navigate to="/finanzas" replace />} />
+            <Route
+              path="/ventas"
+              element={
+                <Ruta modulo="ventas">
+                  <VentasPage />
+                </Ruta>
+              }
+            />
             <Route path="/edr" element={<Navigate to="/finanzas" replace />} />
             <Route path="/gastos" element={<Navigate to="/finanzas" replace />} />
             <Route path="/amortizaciones" element={<Navigate to="/finanzas" replace />} />
