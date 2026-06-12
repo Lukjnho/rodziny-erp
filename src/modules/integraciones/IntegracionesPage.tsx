@@ -18,6 +18,11 @@ interface ReciboOcr {
   cuil: string | null;
   periodo: string | null;
   neto: number | null;
+  bruto: number | null;
+  aporte_jubilacion: number | null;
+  aporte_obra_social: number | null;
+  aporte_pami: number | null;
+  total_aportes: number | null;
   pagina: number | null;
 }
 interface DatosOcr {
@@ -212,6 +217,13 @@ export function IntegracionesPage() {
           nombre_detectado: r.empleado_nombre,
           periodo: r.periodo,
           monto_neto: r.neto,
+          bruto: r.bruto ?? null,
+          aporte_jubilacion: r.aporte_jubilacion ?? null,
+          aporte_obra_social: r.aporte_obra_social ?? null,
+          aporte_pami: r.aporte_pami ?? null,
+          // Si el OCR no trajo el total pero sí bruto y neto, lo derivamos (bruto − neto).
+          total_aportes:
+            r.total_aportes ?? (r.bruto != null && r.neto != null ? r.bruto - r.neto : null),
           archivo_path: paths[i] ?? path,
         }));
         const { error } = await supabase.from('recibos_sueldo').insert(filas);

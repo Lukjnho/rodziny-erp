@@ -38,6 +38,11 @@ Analiza TODO el archivo (todas las paginas) y devolve UNICAMENTE un JSON estrict
       "cuil": string,               // 11 digitos, solo numeros
       "periodo": string,            // periodo de pago, formato YYYY-MM
       "neto": number,               // TOTAL NETO a cobrar (sin signo ni separadores de miles, decimal con punto)
+      "bruto": number | null,       // TOTAL HABERES / bruto antes de descuentos (remunerativo + no remunerativo)
+      "aporte_jubilacion": number | null,  // descuento "Jubilacion" / SIPA (~11%)
+      "aporte_obra_social": number | null, // descuento "Obra Social" (~3%)
+      "aporte_pami": number | null,         // descuento "Ley 19032" / PAMI / INSSJP (~3%)
+      "total_aportes": number | null,       // TOTAL de descuentos al empleado (= bruto - neto)
       "pagina": number              // numero de pagina del PDF (empieza en 1) donde aparece ESTE empleado
     }
   ],
@@ -57,6 +62,7 @@ REGLAS CRITICAS:
 2. DEDUPLICAR: cada recibo suele estar impreso dos veces (copia empleado y copia empleador) en la MISMA pagina. Incluí cada empleado UNA SOLA VEZ (por CUIL). No repitas. Las dos copias cuentan como UNA pagina.
 3. pagina: numero de pagina (base 1) donde figura el recibo de ese empleado. Normalmente empleado 1 = pagina 1, empleado 2 = pagina 2, etc.
 4. neto = el "TOTAL NETO" / "SON PESOS" que efectivamente cobra el empleado, NO el bruto ni los descuentos.
+4b. DESGLOSE: bruto = total de haberes antes de descuentos. aporte_jubilacion/obra_social/pami = los descuentos AL EMPLEADO que figuran en el recibo. total_aportes = suma de descuentos del empleado (bruto - neto). Las CONTRIBUCIONES PATRONALES (lo que paga el empleador) NO figuran en el recibo: NO las inventes. Si algun campo del desglose no aparece, poné null (no estimes).
 5. Montos: numero plano, sin $ ni puntos de miles, decimal con punto. Fechas YYYY-MM-DD, periodos YYYY-MM.
 6. CUIL: 11 digitos sin guiones. El CUIT de la empresa (30-71735236-6) NO es el CUIL del empleado.
 7. Si no estas seguro del tipo o no hay datos extraibles (ej. captura de pantalla, acuse), usa "desconocido". NO inventes montos ni fechas.

@@ -733,22 +733,36 @@ interface ReciboEmpleado {
   id: string;
   periodo: string | null;
   monto_neto: number | null;
+  bruto: number | null;
+  aporte_jubilacion: number | null;
+  aporte_obra_social: number | null;
+  aporte_pami: number | null;
+  total_aportes: number | null;
   archivo_path: string;
   created_at: string;
 }
 
-function SeccionRecibosEmpleado({ empleadoId }: { empleadoId: string }) {
+function SeccionRecibosEmpleado({
+  empleadoId,
+  esEfectivo,
+}: {
+  empleadoId: string;
+  esEfectivo: boolean;
+}) {
   const qc = useQueryClient();
   const fileRef = useRef<HTMLInputElement>(null);
   const [subiendo, setSubiendo] = useState(false);
   const [errorSubida, setErrorSubida] = useState<string | null>(null);
+  const [expandido, setExpandido] = useState<string | null>(null);
 
   const { data: recibos } = useQuery({
     queryKey: ['recibos_empleado', empleadoId],
     queryFn: async (): Promise<ReciboEmpleado[]> => {
       const { data, error } = await supabase
         .from('recibos_sueldo')
-        .select('id, periodo, monto_neto, archivo_path, created_at')
+        .select(
+          'id, periodo, monto_neto, bruto, aporte_jubilacion, aporte_obra_social, aporte_pami, total_aportes, archivo_path, created_at',
+        )
         .eq('empleado_id', empleadoId)
         .order('created_at', { ascending: false });
       if (error) throw error;
@@ -776,26 +790,59 @@ function SeccionRecibosEmpleado({ empleadoId }: { empleadoId: string }) {
         .upload(path, file, { contentType: file.type || 'application/octet-stream' });
       if (upErr) throw new Error(upErr.message);
 
-      // OCR para extraer período y neto (best-effort); el empleado lo forzamos a este.
+      // OCR para extraer período, neto y desglose (best-effort); el empleado lo forzamos a este.
       let periodo: string | null = null;
       let neto: number | null = null;
+      let bruto: number | null = null;
+      let aporteJub: number | null = null;
+      let aporteOS: number | null = null;
+      let aportePami: number | null = null;
+      let totalAportes: number | null = null;
       try {
         const { data: res } = await supabase.functions.invoke<{
           ok: boolean;
-          datos?: { recibos?: { periodo?: string | null; neto?: number | null }[] };
+          datos?: {
+            recibos?: {
+              periodo?: string | null;
+              neto?: number | null;
+              bruto?: number | null;
+              aporte_jubilacion?: number | null;
+              aporte_obra_social?: number | null;
+              aporte_pami?: number | null;
+              total_aportes?: number | null;
+            }[];
+          };
         }>('ocr-contador-doc', { body: { path } });
         const primero = res?.ok ? res.datos?.recibos?.[0] : undefined;
         if (primero) {
           periodo = primero.periodo ?? null;
           neto = typeof primero.neto === 'number' ? primero.neto : null;
+          bruto = typeof primero.bruto === 'number' ? primero.bruto : null;
+          aporteJub = typeof primero.aporte_jubilacion === 'number' ? primero.aporte_jubilacion : null;
+          aporteOS = typeof primero.aporte_obra_social === 'number' ? primero.aporte_obra_social : null;
+          aportePami = typeof primero.aporte_pami === 'number' ? primero.aporte_pami : null;
+          totalAportes =
+            typeof primero.total_aportes === 'number'
+              ? primero.total_aportes
+              : bruto != null && neto != null
+                ? bruto - neto
+                : null;
         }
       } catch {
         /* si el OCR falla igual guardamos el recibo asignado */
       }
 
-      const { error } = await supabase
-        .from('recibos_sueldo')
-        .insert({ empleado_id: empleadoId, periodo, monto_neto: neto, archivo_path: path });
+      const { error } = await supabase.from('recibos_sueldo').insert({
+        empleado_id: empleadoId,
+        periodo,
+        monto_neto: neto,
+        bruto,
+        aporte_jubilacion: aporteJub,
+        aporte_obra_social: aporteOS,
+        aporte_pami: aportePami,
+        total_aportes: totalAportes,
+        archivo_path: path,
+      });
       if (error) throw error;
       qc.invalidateQueries({ queryKey: ['recibos_empleado', empleadoId] });
       qc.invalidateQueries({ queryKey: ['recibos_sueldo'] });
@@ -812,11 +859,22 @@ function SeccionRecibosEmpleado({ empleadoId }: { empleadoId: string }) {
     qc.invalidateQueries({ queryKey: ['recibos_sueldo'] });
   }
 
+  const lista = recibos ?? [];
+  // Aviso: si es efectivo (en blanco) debería tener el recibo del mes en curso.
+  const periodoMes = new Date().toISOString().slice(0, 7);
+  const faltaReciboMes = esEfectivo && lista.length > 0 && !lista.some((r) => r.periodo === periodoMes);
+  const efectivoSinRecibos = esEfectivo && lista.length === 0;
+
   return (
-    <div className="border-t border-gray-100 pt-4">
+    <div className={`rounded-lg pt-4 ${esEfectivo ? 'border-t-2 border-rodziny-200' : 'border-t border-gray-100'}`}>
       <div className="mb-2 flex items-center justify-between">
-        <span className="text-xs font-semibold uppercase tracking-wide text-gray-700">
+        <span className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-gray-700">
           Recibos de sueldo
+          {esEfectivo && (
+            <span className="rounded-full bg-rodziny-100 px-2 py-0.5 text-[9px] font-bold text-rodziny-700">
+              EFECTIVO
+            </span>
+          )}
         </span>
         <button
           type="button"
@@ -838,36 +896,108 @@ function SeccionRecibosEmpleado({ empleadoId }: { empleadoId: string }) {
           }}
         />
       </div>
+      {(efectivoSinRecibos || faltaReciboMes) && (
+        <p className="mb-2 rounded bg-amber-50 px-3 py-1.5 text-[11px] text-amber-700">
+          ⚠ Es efectivo y {efectivoSinRecibos ? 'no tiene recibos cargados' : `falta el recibo de ${periodoMes}`}.
+          Cuando el contador lo mande queda enlazado acá automáticamente.
+        </p>
+      )}
       {errorSubida && <p className="mb-2 text-[11px] text-red-600">{errorSubida}</p>}
       <div className="divide-y divide-gray-100 rounded border border-gray-100">
-        {(recibos ?? []).length === 0 && (
+        {lista.length === 0 && (
           <p className="px-3 py-3 text-center text-[11px] text-gray-400">
             Sin recibos cargados todavía.
           </p>
         )}
-        {(recibos ?? []).map((r) => (
-          <div key={r.id} className="flex items-center gap-3 px-3 py-1.5 text-xs">
-            <span className="flex-1 text-gray-700">{r.periodo ?? formatFecha(r.created_at)}</span>
-            <span className="tabular-nums text-gray-600">
-              {r.monto_neto ? formatARS(r.monto_neto) : '—'}
-            </span>
-            <button
-              type="button"
-              onClick={() => abrir(r.archivo_path)}
-              className="text-blue-600 hover:underline"
-            >
-              ver PDF
-            </button>
-            <button
-              type="button"
-              onClick={() => window.confirm('¿Borrar este recibo?') && borrar(r.id)}
-              className="text-gray-400 hover:text-red-600"
-            >
-              ✕
-            </button>
-          </div>
-        ))}
+        {lista.map((r) => {
+          const abierto = expandido === r.id;
+          const tieneDesglose = r.bruto != null || r.total_aportes != null;
+          return (
+            <div key={r.id} className="text-xs">
+              <div className="flex items-center gap-3 px-3 py-1.5">
+                <button
+                  type="button"
+                  onClick={() => setExpandido(abierto ? null : r.id)}
+                  className="flex flex-1 items-center gap-2 text-left text-gray-700 hover:text-rodziny-700"
+                >
+                  <span className={`text-[9px] text-gray-400 transition-transform ${abierto ? 'rotate-90' : ''}`}>▶</span>
+                  {r.periodo ?? formatFecha(r.created_at)}
+                </button>
+                <span className="tabular-nums text-gray-600">
+                  {r.monto_neto ? formatARS(r.monto_neto) : '—'}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => abrir(r.archivo_path)}
+                  className="text-blue-600 hover:underline"
+                >
+                  ver PDF
+                </button>
+                <button
+                  type="button"
+                  onClick={() => window.confirm('¿Borrar este recibo?') && borrar(r.id)}
+                  className="text-gray-400 hover:text-red-600"
+                >
+                  ✕
+                </button>
+              </div>
+              {abierto && (
+                <div className="bg-gray-50 px-4 pb-3 pt-1">
+                  {tieneDesglose ? (
+                    <div className="space-y-1">
+                      {r.bruto != null && (
+                        <FilaDesglose label="Bruto (haberes)" valor={r.bruto} fuerte />
+                      )}
+                      {r.aporte_jubilacion != null && (
+                        <FilaDesglose label="Jubilación" valor={-r.aporte_jubilacion} />
+                      )}
+                      {r.aporte_obra_social != null && (
+                        <FilaDesglose label="Obra social" valor={-r.aporte_obra_social} />
+                      )}
+                      {r.aporte_pami != null && (
+                        <FilaDesglose label="PAMI (Ley 19032)" valor={-r.aporte_pami} />
+                      )}
+                      {r.total_aportes != null && (
+                        <FilaDesglose label="Total aportes" valor={-r.total_aportes} sutil />
+                      )}
+                      <div className="mt-1 border-t border-gray-200 pt-1">
+                        <FilaDesglose label="Neto en mano" valor={r.monto_neto ?? 0} fuerte />
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-[11px] text-gray-400">
+                      Recibo sin desglose (cargado antes de leer bruto/aportes, o el OCR no lo detectó).
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
+    </div>
+  );
+}
+
+function FilaDesglose({
+  label,
+  valor,
+  fuerte,
+  sutil,
+}: {
+  label: string;
+  valor: number;
+  fuerte?: boolean;
+  sutil?: boolean;
+}) {
+  return (
+    <div
+      className={`flex items-center justify-between ${
+        fuerte ? 'font-semibold text-gray-800' : sutil ? 'text-gray-400' : 'text-gray-600'
+      }`}
+    >
+      <span>{label}</span>
+      <span className="tabular-nums">{formatARS(valor)}</span>
     </div>
   );
 }
@@ -1199,7 +1329,12 @@ function ModalEmpleado({
             />
           </Field>
 
-          {empleado && <SeccionRecibosEmpleado empleadoId={empleado.id} />}
+          {empleado && (
+            <SeccionRecibosEmpleado
+              empleadoId={empleado.id}
+              esEfectivo={form.estado_laboral === 'efectivo'}
+            />
+          )}
 
           {error && <div className="rounded bg-red-50 px-3 py-2 text-sm text-red-600">{error}</div>}
         </div>
