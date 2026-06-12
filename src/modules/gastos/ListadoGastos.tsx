@@ -43,7 +43,7 @@ export interface ResumenListadoGastos {
 }
 
 interface Props {
-  local: 'vedia' | 'saavedra' | 'ambos' | 'sas';
+  local: 'vedia' | 'saavedra' | 'consolidado';
   desde?: string;       // default: primer día del mes
   hasta?: string;       // default: último día del mes
   onEditar?: (g: Gasto) => void; // si no viene, usa modal interno (modo standalone)
@@ -91,7 +91,7 @@ export function ListadoGastos({
         .order('created_at', { ascending: false })
         .order('fecha', { ascending: false })
         .limit(2000);
-      if (local !== 'ambos') q = q.eq('local', local);
+      if (local !== 'consolidado') q = q.eq('local', local);
       const { data, error } = await q;
       if (error) throw error;
       return (data ?? []) as Gasto[];

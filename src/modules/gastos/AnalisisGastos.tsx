@@ -37,26 +37,43 @@ interface CatData {
 }
 
 interface Props {
-  local: 'vedia' | 'saavedra' | 'ambos' | 'sas';
+  local: 'vedia' | 'saavedra' | 'consolidado';
 }
 
 export function AnalisisGastos({ local }: Props) {
-  const localActivo = local === 'ambos' ? null : local;
+  const localActivo = local === 'consolidado' ? null : local;
   const [año, setAño] = useState(() => String(new Date().getFullYear()));
   const [expandidos, setExpandidos] = useState<Set<string>>(new Set());
 
   const { data: rawGastos, isLoading } = useQuery({
     queryKey: ['gastos_vista', año, local],
     queryFn: async () => {
-      let q = supabase
-        .from('gastos')
-        .select('categoria, subcategoria, periodo, importe_total, importe_neto')
-        .gte('periodo', `${año}-01`)
-        .lte('periodo', `${año}-12`)
-        .neq('cancelado', true);
-      if (localActivo) q = q.eq('local', localActivo);
-      const { data } = await q;
-      return data ?? [];
+      const PAGE = 1000;
+      const filas: {
+        categoria: string | null;
+        subcategoria: string | null;
+        periodo: string;
+        importe_total: number | null;
+        importe_neto: number | null;
+      }[] = [];
+      let from = 0;
+      // paginado: sin esto Supabase corta en 1000 filas y la matriz anual subcuenta
+      while (true) {
+        let q = supabase
+          .from('gastos')
+          .select('categoria, subcategoria, periodo, importe_total, importe_neto')
+          .gte('periodo', `${año}-01`)
+          .lte('periodo', `${año}-12`)
+          .neq('cancelado', true)
+          .range(from, from + PAGE - 1);
+        if (localActivo) q = q.eq('local', localActivo);
+        const { data } = await q;
+        if (!data || data.length === 0) break;
+        filas.push(...data);
+        if (data.length < PAGE) break;
+        from += PAGE;
+      }
+      return filas;
     },
   });
 
@@ -88,9 +105,10 @@ export function AnalisisGastos({ local }: Props) {
     },
   });
 
-  const { categorias, mesesConDatos } = useMemo(() => {
+  const { categorias, mesesConDatos, facturas } = useMemo(() => {
     const cats = new Map<string, CatData>();
     const mesesSet = new Set<string>();
+    let cantFacturas = 0;
 
     for (const g of rawGastos ?? []) {
       const cat = g.categoria || 'Sin categoría';
@@ -98,6 +116,7 @@ export function AnalisisGastos({ local }: Props) {
       const mes = g.periodo;
       const monto = Number(g.importe_neto ?? g.importe_total) || 0;
       if (!monto) continue;
+      cantFacturas++;
 
       mesesSet.add(mes);
 
@@ -113,6 +132,7 @@ export function AnalisisGastos({ local }: Props) {
     return {
       categorias: cats,
       mesesConDatos: Array.from(mesesSet).sort(),
+      facturas: cantFacturas,
     };
   }, [rawGastos]);
 
@@ -148,6 +168,7 @@ export function AnalisisGastos({ local }: Props) {
   }
 
   const totalAcum = totalMes(totalGeneral, meses);
+  const promedioFactura = facturas > 0 ? totalAcum / facturas : 0;
 
   // ── KPIs: top categoría del año, último mes y variación ───────────────────
   const mesesOrdenados = meses.filter((m) => (totalGeneral.get(m) ?? 0) > 0);
@@ -197,17 +218,33 @@ export function AnalisisGastos({ local }: Props) {
         </div>
       </div>
 
-      {/* KPIs del año */}
+      {/* KPIs del año — todo en neto (sin IVA), mismo período que la matriz */}
       {!isLoading && categorias.size > 0 && (
-        <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-4">
+        <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
           <div className="rounded-lg border border-gray-200 bg-white p-4">
-            <div className="text-xs text-gray-500">Gasto total del año</div>
+            <div className="text-xs text-gray-500">Total comprado (año)</div>
             <div className="text-lg font-semibold tabular-nums text-gray-900">
               {formatARS(totalAcum)}
             </div>
             <div className="mt-0.5 text-xs text-gray-400">
-              {mesesOrdenados.length} {mesesOrdenados.length === 1 ? 'mes' : 'meses'} con datos
+              {mesesOrdenados.length} {mesesOrdenados.length === 1 ? 'mes' : 'meses'} con datos · neto
             </div>
+          </div>
+
+          <div className="rounded-lg border border-gray-200 bg-white p-4">
+            <div className="text-xs text-gray-500">Facturas</div>
+            <div className="text-lg font-semibold tabular-nums text-gray-900">
+              {facturas.toLocaleString('es-AR')}
+            </div>
+            <div className="mt-0.5 text-xs text-gray-400">en el año</div>
+          </div>
+
+          <div className="rounded-lg border border-gray-200 bg-white p-4">
+            <div className="text-xs text-gray-500">Promedio / factura</div>
+            <div className="text-lg font-semibold tabular-nums text-gray-900">
+              {formatARS(promedioFactura)}
+            </div>
+            <div className="mt-0.5 text-xs text-gray-400">neto</div>
           </div>
 
           <div className="rounded-lg border border-gray-200 bg-white p-4">
@@ -292,41 +329,41 @@ export function AnalisisGastos({ local }: Props) {
           </span>
         </div>
       ) : (
-        <div className="overflow-hidden rounded-lg border border-surface-border bg-white">
+        <div className="overflow-hidden rounded-xl border border-surface-border bg-white shadow-sm">
           <div className="overflow-x-auto">
-            <table className="w-full border-collapse text-xs">
+            <table className="w-full border-collapse text-sm">
               <thead>
-                <tr className="bg-gray-900 text-white">
-                  <th className="sticky left-0 z-10 min-w-[220px] bg-gray-900 px-4 py-3 text-left font-semibold">
-                    CONCEPTO
+                <tr className="border-b-2 border-rodziny-100 bg-rodziny-50">
+                  <th className="sticky left-0 z-10 min-w-[240px] bg-rodziny-50 px-4 py-3.5 text-left text-xs font-bold uppercase tracking-wide text-rodziny-900">
+                    Concepto
                   </th>
                   {meses.map((mes) => (
                     <th
                       key={mes}
                       className={cn(
-                        'min-w-[100px] px-3 py-3 text-right font-semibold',
-                        mesesConDatos.includes(mes) ? 'text-white' : 'text-gray-500',
+                        'min-w-[108px] px-3 py-3.5 text-right text-xs font-bold uppercase tracking-wide',
+                        mesesConDatos.includes(mes) ? 'text-rodziny-900' : 'text-gray-300',
                       )}
                     >
                       {MESES_LABEL[parseInt(mes.substring(5, 7)) - 1]}
                     </th>
                   ))}
-                  <th className="min-w-[115px] border-l border-gray-700 px-3 py-3 text-right font-semibold text-yellow-300">
-                    ACUM
+                  <th className="min-w-[120px] border-l border-rodziny-100 px-3 py-3.5 text-right text-xs font-bold uppercase tracking-wide text-rodziny-700">
+                    Acum
                   </th>
                 </tr>
               </thead>
               <tbody>
-                <tr className="border-b-2 border-rodziny-600 bg-rodziny-800 text-white">
-                  <td className="sticky left-0 z-10 bg-rodziny-800 px-4 py-2.5 font-bold">
-                    RODZINY {localActivo ? `· ${localActivo.toUpperCase()}` : '(CONSOLIDADO)'}
+                <tr className="bg-rodziny-700 text-white">
+                  <td className="sticky left-0 z-10 bg-rodziny-700 px-4 py-3 text-sm font-bold tracking-wide">
+                    RODZINY {localActivo ? `· ${localActivo.toUpperCase()}` : '· CONSOLIDADO'}
                   </td>
                   {meses.map((mes) => (
-                    <td key={mes} className="px-3 py-2.5 text-right font-semibold">
+                    <td key={mes} className="px-3 py-3 text-right font-semibold tabular-nums">
                       {formatCell(totalGeneral.get(mes) ?? 0)}
                     </td>
                   ))}
-                  <td className="border-l border-rodziny-600 px-3 py-2.5 text-right font-bold text-yellow-300">
+                  <td className="border-l border-rodziny-500 bg-rodziny-800 px-3 py-3 text-right font-bold tabular-nums">
                     {formatCell(totalAcum)}
                   </td>
                 </tr>
@@ -338,19 +375,19 @@ export function AnalisisGastos({ local }: Props) {
                   return [
                     <tr
                       key={`cat-${cat.nombre}`}
-                      className="cursor-pointer border-b border-gray-700 bg-gray-800 text-white transition-colors hover:bg-gray-700"
+                      className="cursor-pointer border-b border-rodziny-100 bg-rodziny-50 transition-colors hover:bg-rodziny-100"
                       onClick={() => toggleCat(cat.nombre)}
                     >
-                      <td className="sticky left-0 z-10 bg-gray-800 px-4 py-2 font-semibold hover:bg-gray-700">
-                        <span className="mr-2 text-gray-400">{isOpen ? '▾' : '▸'}</span>
+                      <td className="sticky left-0 z-10 bg-rodziny-50 px-4 py-2.5 font-semibold text-gray-800 transition-colors hover:bg-rodziny-100">
+                        <span className="mr-2 text-rodziny-500">{isOpen ? '▾' : '▸'}</span>
                         {cat.nombre}
                       </td>
                       {meses.map((mes) => (
-                        <td key={mes} className="px-3 py-2 text-right font-medium">
+                        <td key={mes} className="px-3 py-2.5 text-right font-medium tabular-nums text-gray-700">
                           {formatCell(cat.porMes.get(mes) ?? 0)}
                         </td>
                       ))}
-                      <td className="border-l border-gray-700 px-3 py-2 text-right font-semibold text-yellow-300">
+                      <td className="border-l border-rodziny-100 px-3 py-2.5 text-right font-bold tabular-nums text-rodziny-700">
                         {formatCell(acumCat)}
                       </td>
                     </tr>,
@@ -363,17 +400,18 @@ export function AnalisisGastos({ local }: Props) {
                             return (
                               <tr
                                 key={`sub-${cat.nombre}-${sub.nombre}`}
-                                className="border-b border-gray-50 bg-white hover:bg-gray-50"
+                                className="border-b border-gray-100 bg-white transition-colors hover:bg-gray-50"
                               >
-                                <td className="sticky left-0 z-10 bg-white px-4 py-1.5 pl-10 text-gray-700 hover:bg-gray-50">
+                                <td className="sticky left-0 z-10 bg-white px-4 py-2 pl-12 text-gray-600 transition-colors hover:bg-gray-50">
+                                  <span className="mr-2 text-gray-300">•</span>
                                   {sub.nombre}
                                 </td>
                                 {meses.map((mes) => (
-                                  <td key={mes} className="px-3 py-1.5 text-right text-gray-600">
+                                  <td key={mes} className="px-3 py-2 text-right tabular-nums text-gray-600">
                                     {formatCell(sub.porMes.get(mes) ?? 0)}
                                   </td>
                                 ))}
-                                <td className="border-l border-gray-100 px-3 py-1.5 text-right font-medium text-gray-700">
+                                <td className="border-l border-gray-100 px-3 py-2 text-right font-medium tabular-nums text-gray-700">
                                   {formatCell(acumSub)}
                                 </td>
                               </tr>

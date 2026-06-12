@@ -1434,7 +1434,7 @@ export function ComprasPage() {
           </div>
 
           <ListadoGastos
-            local={gastosLocal === 'empresa' ? 'ambos' : gastosLocal}
+            local={gastosLocal === 'empresa' ? 'consolidado' : gastosLocal}
             desde={gastosDesde}
             hasta={gastosHasta}
             onResumen={setGastosKpis}

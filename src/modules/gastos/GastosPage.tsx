@@ -13,7 +13,7 @@ import { NuevoGastoModal } from './NuevoGastoModal';
 import type { Gasto } from './types';
 
 type Tab = 'listado' | 'pagos' | 'analisis' | 'categorias';
-type Local = 'vedia' | 'saavedra' | 'ambos' | 'sas';
+type Local = 'vedia' | 'saavedra' | 'consolidado';
 
 const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: 'listado', label: 'Listado', icon: '📋' },
@@ -78,7 +78,7 @@ export function GastosPage({ embedded = false }: { embedded?: boolean } = {}) {
   const primerMesAnt = ymd(new Date(ahora.getFullYear(), ahora.getMonth() - 1, 1));
   const ultimoMesAnt = ymd(new Date(ahora.getFullYear(), ahora.getMonth(), 0));
 
-  const [local, setLocal] = useState<Local>('vedia');
+  const [local, setLocal] = useState<Local>('consolidado');
   const [desde, setDesde] = useState(primerDelMes);
   const [hasta, setHasta] = useState(hoy);
 
@@ -86,8 +86,11 @@ export function GastosPage({ embedded = false }: { embedded?: boolean } = {}) {
   const [modalOpen, setModalOpen] = useState(false);
   const [gastoEditando, setGastoEditando] = useState<Gasto | null>(null);
 
-  const localActivo: 'vedia' | 'saavedra' | 'sas' | null = local === 'ambos' ? null : local;
+  const localActivo: 'vedia' | 'saavedra' | null = local === 'consolidado' ? null : local;
   const ocultarHeader = tab === 'categorias';
+  // La vista de Análisis es anual (su propio selector de Año) → sin rango de fechas
+  // ni KPIs por rango, para no tener dos relojes contradictorios en la misma pantalla.
+  const mostrarRango = tab === 'listado' || tab === 'pagos';
 
   // Período anterior (mismo nro de días, justo antes)
   const periodoAnt = useMemo(() => periodoAnterior(desde, hasta), [desde, hasta]);
@@ -107,7 +110,7 @@ export function GastosPage({ embedded = false }: { embedded?: boolean } = {}) {
       if (error) throw error;
       return resumir(data ?? []);
     },
-    enabled: !ocultarHeader,
+    enabled: mostrarRango,
   });
 
   // Resumen período anterior — sólo para Δ% de "Total comprado"
@@ -125,7 +128,7 @@ export function GastosPage({ embedded = false }: { embedded?: boolean } = {}) {
       if (error) throw error;
       return resumir(data ?? []);
     },
-    enabled: !ocultarHeader,
+    enabled: mostrarRango,
   });
 
   // Ventas del período (para ratio gasto/venta) — paginado
@@ -155,7 +158,7 @@ export function GastosPage({ embedded = false }: { embedded?: boolean } = {}) {
       }
       return total;
     },
-    enabled: !ocultarHeader,
+    enabled: mostrarRango,
   });
 
   const promedio = resumenActual && resumenActual.cantidad > 0
@@ -182,48 +185,52 @@ export function GastosPage({ embedded = false }: { embedded?: boolean } = {}) {
             <LocalSelector
               value={local}
               onChange={(v) => setLocal(v as Local)}
-              options={['vedia', 'saavedra', 'sas', 'ambos']}
+              options={['consolidado', 'vedia', 'saavedra']}
             />
-            <div className="flex items-center gap-2">
-              <label className="text-xs text-gray-500">Desde</label>
-              <input
-                type="date"
-                value={desde}
-                onChange={(e) => setDesde(e.target.value)}
-                className="rounded border border-gray-300 px-2 py-1 text-sm"
-              />
-            </div>
-            <div className="flex items-center gap-2">
-              <label className="text-xs text-gray-500">Hasta</label>
-              <input
-                type="date"
-                value={hasta}
-                onChange={(e) => setHasta(e.target.value)}
-                className="rounded border border-gray-300 px-2 py-1 text-sm"
-              />
-            </div>
-            <div className="ml-2 flex flex-wrap gap-1">
-              {[
-                { label: 'Hoy', d: hoy, h: hoy },
-                { label: 'Semana', d: hace7, h: hoy },
-                { label: 'Mes', d: primerDelMes, h: hoy },
-                { label: 'Mes anterior', d: primerMesAnt, h: ultimoMesAnt },
-                { label: '30 días', d: hace30, h: hoy },
-              ].map((p) => (
-                <button
-                  key={p.label}
-                  onClick={() => aplicarPreset(p.d, p.h)}
-                  className={cn(
-                    'rounded px-2 py-1 text-xs',
-                    desde === p.d && hasta === p.h
-                      ? 'bg-rodziny-800 text-white'
-                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200',
-                  )}
-                >
-                  {p.label}
-                </button>
-              ))}
-            </div>
+            {mostrarRango && (
+              <>
+                <div className="flex items-center gap-2">
+                  <label className="text-xs text-gray-500">Desde</label>
+                  <input
+                    type="date"
+                    value={desde}
+                    onChange={(e) => setDesde(e.target.value)}
+                    className="rounded border border-gray-300 px-2 py-1 text-sm"
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="text-xs text-gray-500">Hasta</label>
+                  <input
+                    type="date"
+                    value={hasta}
+                    onChange={(e) => setHasta(e.target.value)}
+                    className="rounded border border-gray-300 px-2 py-1 text-sm"
+                  />
+                </div>
+                <div className="ml-2 flex flex-wrap gap-1">
+                  {[
+                    { label: 'Hoy', d: hoy, h: hoy },
+                    { label: 'Semana', d: hace7, h: hoy },
+                    { label: 'Mes', d: primerDelMes, h: hoy },
+                    { label: 'Mes anterior', d: primerMesAnt, h: ultimoMesAnt },
+                    { label: '30 días', d: hace30, h: hoy },
+                  ].map((p) => (
+                    <button
+                      key={p.label}
+                      onClick={() => aplicarPreset(p.d, p.h)}
+                      className={cn(
+                        'rounded px-2 py-1 text-xs',
+                        desde === p.d && hasta === p.h
+                          ? 'bg-rodziny-800 text-white'
+                          : 'bg-gray-100 text-gray-600 hover:bg-gray-200',
+                      )}
+                    >
+                      {p.label}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
             {!embedded && (
               <button
                 onClick={() => {
@@ -237,40 +244,42 @@ export function GastosPage({ embedded = false }: { embedded?: boolean } = {}) {
             )}
           </div>
 
-          {/* KPIs comunes */}
-          <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
-            <KPICard
-              label="Total comprado"
-              value={formatARS(resumenActual?.total ?? 0)}
-              color="blue"
-              change={deltaTotal}
-            />
-            <KPICard
-              label="Facturas"
-              value={(resumenActual?.cantidad ?? 0).toLocaleString('es-AR')}
-              color="neutral"
-            />
-            <KPICard
-              label="Promedio / factura"
-              value={formatARS(promedio)}
-              color="yellow"
-            />
-            <KPICard
-              label="Pagado"
-              value={formatARS(resumenActual?.pagado ?? 0)}
-              color="green"
-            />
-            <KPICard
-              label="Pendiente"
-              value={formatARS(resumenActual?.pendiente ?? 0)}
-              color="red"
-            />
-            <KPICard
-              label="Gasto / Venta"
-              value={ratioGV !== null ? `${ratioGV.toFixed(1)}%` : '—'}
-              color={ratioGV === null ? 'neutral' : ratioGV > 90 ? 'red' : ratioGV > 75 ? 'yellow' : 'green'}
-            />
-          </div>
+          {/* KPIs por rango — sólo Listado/Pagos (la vista Análisis tiene los suyos, anuales) */}
+          {mostrarRango && (
+            <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
+              <KPICard
+                label="Total comprado"
+                value={formatARS(resumenActual?.total ?? 0)}
+                color="blue"
+                change={deltaTotal}
+              />
+              <KPICard
+                label="Facturas"
+                value={(resumenActual?.cantidad ?? 0).toLocaleString('es-AR')}
+                color="neutral"
+              />
+              <KPICard
+                label="Promedio / factura"
+                value={formatARS(promedio)}
+                color="yellow"
+              />
+              <KPICard
+                label="Pagado"
+                value={formatARS(resumenActual?.pagado ?? 0)}
+                color="green"
+              />
+              <KPICard
+                label="Pendiente"
+                value={formatARS(resumenActual?.pendiente ?? 0)}
+                color="red"
+              />
+              <KPICard
+                label="Gasto / Venta"
+                value={ratioGV !== null ? `${ratioGV.toFixed(1)}%` : '—'}
+                color={ratioGV === null ? 'neutral' : ratioGV > 90 ? 'red' : ratioGV > 75 ? 'yellow' : 'green'}
+              />
+            </div>
+          )}
         </>
       )}
 

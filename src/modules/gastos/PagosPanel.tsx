@@ -10,7 +10,7 @@ import { recomputarEstadoGasto } from './recomputarEstadoGasto';
 type Vista = 'pendientes' | 'pagados' | 'todos';
 
 interface Props {
-  local: 'vedia' | 'saavedra' | 'ambos' | 'sas';
+  local: 'vedia' | 'saavedra' | 'consolidado';
   desde: string;
   hasta: string;
 }
@@ -37,7 +37,7 @@ export function PagosPanel({ local, desde, hasta }: Props) {
         .neq('cancelado', true)
         .order('fecha', { ascending: true })
         .limit(3000);
-      if (local !== 'ambos') q = q.eq('local', local);
+      if (local !== 'consolidado') q = q.eq('local', local);
       const { data, error } = await q;
       if (error) throw error;
       return ((data ?? []) as Gasto[]).filter(
@@ -57,7 +57,7 @@ export function PagosPanel({ local, desde, hasta }: Props) {
         .gte('fecha_pago', desde)
         .lte('fecha_pago', hasta)
         .order('fecha_pago', { ascending: false });
-      if (local !== 'ambos') q = q.eq('gasto.local', local);
+      if (local !== 'consolidado') q = q.eq('gasto.local', local);
       const { data, error } = await q;
       if (error) throw error;
       return (data ?? []) as (PagoGasto & { gasto: Gasto })[];
