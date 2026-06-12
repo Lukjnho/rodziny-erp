@@ -11,6 +11,7 @@ import {
   ultimoDiaDelMes,
   normalizarTexto,
   montoPresentismo,
+  TOLERANCIA_MIN,
   type Quincena,
 } from './utils';
 import type {
@@ -77,10 +78,35 @@ interface Fichada {
   fecha: string;
   tipo: 'entrada' | 'salida';
   minutos_diferencia: number | null;
+  timestamp: string;
 }
 
 // ── Presentismo CCT ─────────────────────────────────────────────────────────
-// Regla: 0 ausencias Y (0 tardanzas O exactamente 1 tardanza ≤10min)
+// Regla (definida con Lucas): tardanza = llegar MÁS de 10 min tarde (10 min de
+// tolerancia para todos). Se pierde el presentismo con cualquier falta o con 2
+// tardanzas en la quincena.
+//
+// Filtra fichadas fantasma: una "entrada" de madrugada (0–5h) suele ser la salida
+// del turno nocturno del día anterior (turnos partidos / cruce de medianoche), no
+// una llegada tarde. Sin esto, una salida 00:30 se comparaba contra las 20:00 y
+// daba tardanzas de +200/+300 min que no existen.
+function esSalidaNocturnaLegacy(f: Fichada): boolean {
+  if (f.tipo !== 'entrada') return false;
+  const h = new Date(f.timestamp).getHours();
+  return h >= 0 && h < 5;
+}
+
+// ¿La persona llegó tarde ese día? (alguna entrada real con +10 min)
+function llegoTardeEseDia(fs: Fichada[]): boolean {
+  return fs.some(
+    (f) =>
+      f.tipo === 'entrada' &&
+      !esSalidaNocturnaLegacy(f) &&
+      f.minutos_diferencia !== null &&
+      f.minutos_diferencia > TOLERANCIA_MIN,
+  );
+}
+
 function calcularPresentismoAuto(
   empleado: Empleado,
   rangoFechas: string[],
@@ -89,52 +115,45 @@ function calcularPresentismoAuto(
   hoyYmd: string,
 ): boolean {
   let ausencias = 0;
-  let tardanzasTotales = 0;
-  let tardanzasGraves = 0;
+  let tardanzas = 0;
 
   for (const fecha of rangoFechas) {
     if (fecha > hoyYmd) continue; // ignorar días futuros
     const crono = cronograma.find((c) => c.empleado_id === empleado.id && c.fecha === fecha);
     if (!crono || !crono.publicado || crono.es_franco) continue;
 
-    const fs = fichadas.filter((f) => f.empleado_id === empleado.id && f.fecha === fecha);
+    const fs = fichadas.filter(
+      (f) => f.empleado_id === empleado.id && f.fecha === fecha && !esSalidaNocturnaLegacy(f),
+    );
     if (fs.length === 0) {
       ausencias++;
       continue;
     }
-
-    const entrada = fs.find((f) => f.tipo === 'entrada');
-    if (entrada && entrada.minutos_diferencia !== null && entrada.minutos_diferencia > 0) {
-      tardanzasTotales++;
-      if (entrada.minutos_diferencia > 10) tardanzasGraves++;
-    }
+    if (llegoTardeEseDia(fs)) tardanzas++;
   }
 
   if (ausencias > 0) return false;
-  if (tardanzasTotales === 0) return true;
-  if (tardanzasTotales === 1 && tardanzasGraves === 0) return true;
-  return false;
+  if (tardanzas >= 2) return false;
+  return true;
 }
 
 // Regla a la vista: el presentismo es un PREMIO a la puntualidad y la asistencia.
 export const REGLA_PRESENTISMO =
-  'El presentismo es un premio a la puntualidad y la responsabilidad. Se PIERDE en la quincena si hay: ' +
-  'cualquier falta (con o sin justificación), 2 o más tardanzas, o 1 tardanza de más de 10 minutos.';
+  'El presentismo es un premio a la puntualidad y la responsabilidad. Hay 10 min de tolerancia: ' +
+  'una tardanza es llegar más de 10 minutos tarde. Se PIERDE en la quincena con cualquier falta ' +
+  '(con o sin justificación) o con 2 tardanzas.';
 
 // Veredicto automático legible (mismo criterio exacto que calcularPresentismoAuto), para
 // mostrar POR QUÉ cada persona gana o pierde el presentismo.
 function motivoPresentismoAuto(a: {
   ausencias: number;
   tardanzas: number;
-  tardanzasGraves: number;
 }): { gana: boolean; motivo: string } {
   if (a.ausencias > 0)
     return { gana: false, motivo: `${a.ausencias} falta${a.ausencias > 1 ? 's' : ''}` };
-  if (a.tardanzas === 0) return { gana: true, motivo: 'sin faltas ni tardanzas' };
-  if (a.tardanzas === 1 && a.tardanzasGraves === 0)
-    return { gana: true, motivo: '1 tardanza ≤10min (perdonada)' };
-  if (a.tardanzas === 1) return { gana: false, motivo: '1 tardanza de +10min' };
-  return { gana: false, motivo: `${a.tardanzas} tardanzas` };
+  if (a.tardanzas >= 2) return { gana: false, motivo: `${a.tardanzas} tardanzas (+10min)` };
+  if (a.tardanzas === 1) return { gana: true, motivo: '1 tardanza (perdonada)' };
+  return { gana: true, motivo: 'sin faltas ni tardanzas' };
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -209,7 +228,7 @@ export function SueldosTab() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('fichadas')
-        .select('id, empleado_id, fecha, tipo, minutos_diferencia')
+        .select('id, empleado_id, fecha, tipo, minutos_diferencia, timestamp')
         .gte('fecha', fechaDesdeMes)
         .lte('fecha', fechaHastaMes);
       if (error) throw error;
@@ -506,8 +525,7 @@ export function SueldosTab() {
     diasLaborales: number;
     completos: number;
     ausencias: number;
-    tardanzas: number;
-    tardanzasGraves: number; // >10 min
+    tardanzas: number; // días con entrada de +10 min (fantasma ya filtradas)
     francos: number;
     detalleTardanzas: { fecha: string; minutos: number }[];
     detalleFaltas: string[]; // fechas de ausencia
@@ -639,7 +657,6 @@ export function SueldosTab() {
             : diasQuincenaActual;
       let statsAusencias = 0;
       let statsTardanzas = 0;
-      let statsTardanzasGraves = 0;
       let statsCompletos = 0;
       let statsFrancos = 0;
       let statsLaborales = 0;
@@ -656,23 +673,32 @@ export function SueldosTab() {
         }
         statsLaborales++;
 
-        const fs = fichadas.filter((f) => f.empleado_id === emp.id && f.fecha === fecha);
+        // Filtrar fichadas fantasma de madrugada (salidas nocturnas grabadas como entrada)
+        const fs = fichadas.filter(
+          (f) => f.empleado_id === emp.id && f.fecha === fecha && !esSalidaNocturnaLegacy(f),
+        );
         if (fs.length === 0) {
           statsAusencias++;
           detalleFaltas.push(fecha);
           continue;
         }
 
-        const entrada = fs.find((f) => f.tipo === 'entrada');
-        if (entrada && entrada.minutos_diferencia !== null && entrada.minutos_diferencia > 0) {
+        // Tardanza del día = alguna entrada real con +10 min (10 min de tolerancia)
+        const entradaTarde = fs.find(
+          (f) =>
+            f.tipo === 'entrada' &&
+            f.minutos_diferencia !== null &&
+            f.minutos_diferencia > TOLERANCIA_MIN,
+        );
+        if (entradaTarde) {
           statsTardanzas++;
-          if (entrada.minutos_diferencia > 10) statsTardanzasGraves++;
-          detalleTardanzas.push({ fecha, minutos: entrada.minutos_diferencia });
+          detalleTardanzas.push({ fecha, minutos: entradaTarde.minutos_diferencia as number });
         }
 
         // Si tiene entrada y salida → completo
+        const tieneEntrada = fs.some((f) => f.tipo === 'entrada');
         const tieneSalida = fs.some((f) => f.tipo === 'salida');
-        if (entrada && tieneSalida) statsCompletos++;
+        if (tieneEntrada && tieneSalida) statsCompletos++;
       }
 
       const asistencia: AsistenciaStats = {
@@ -680,7 +706,6 @@ export function SueldosTab() {
         completos: statsCompletos,
         ausencias: statsAusencias,
         tardanzas: statsTardanzas,
-        tardanzasGraves: statsTardanzasGraves,
         francos: statsFrancos,
         detalleTardanzas,
         detalleFaltas,
@@ -917,12 +942,13 @@ export function SueldosTab() {
 
       {/* Regla del presentismo a la vista (premio puntualidad) */}
       <div className="rounded-lg border border-green-100 bg-green-50 px-3 py-2 text-[11px] leading-relaxed text-green-800">
-        <span className="font-semibold">🏅 Presentismo (premio puntualidad):</span> se PIERDE en la
-        quincena con <span className="font-medium">cualquier falta</span> (con o sin justificación),{' '}
-        <span className="font-medium">2 tardanzas</span>, o{' '}
-        <span className="font-medium">1 tardanza de más de 10 min</span>. La tilde se calcula sola
-        según las fichadas; debajo de cada una ves el motivo. Podés destildar/tildar a mano si hace
-        falta (queda marcado con 🖊).
+        <span className="font-semibold">🏅 Presentismo (premio puntualidad):</span> hay{' '}
+        <span className="font-medium">10 min de tolerancia</span> — una tardanza es llegar{' '}
+        <span className="font-medium">más de 10 min</span> tarde. Se PIERDE en la quincena con{' '}
+        <span className="font-medium">cualquier falta</span> (con o sin justificación) o con{' '}
+        <span className="font-medium">2 tardanzas</span>. La tilde se calcula sola según las
+        fichadas; debajo de cada una ves el motivo. Podés destildar/tildar a mano si hace falta
+        (queda marcado con 🖊).
       </div>
 
       {/* ── Tabla de liquidación ──────────────────────────────────────────── */}
@@ -1633,7 +1659,6 @@ function FilaEmpleado({
       completos: number;
       ausencias: number;
       tardanzas: number;
-      tardanzasGraves: number;
       francos: number;
     };
   };
@@ -1668,7 +1693,7 @@ function FilaEmpleado({
     montoTransferenciaPagado,
     asistencia,
   } = fila;
-  const tieneProblemas = asistencia.ausencias > 0 || asistencia.tardanzasGraves > 0;
+  const tieneProblemas = asistencia.ausencias > 0 || asistencia.tardanzas > 0;
   const veredictoPres = motivoPresentismoAuto(asistencia);
 
   return (
@@ -1708,12 +1733,12 @@ function FilaEmpleado({
                       {asistencia.ausencias}F
                     </span>
                   )}
-                  {asistencia.tardanzasGraves > 0 && (
+                  {asistencia.tardanzas > 0 && (
                     <span
                       className="rounded-full bg-amber-100 px-1 py-0.5 text-[9px] font-medium text-amber-700"
-                      title={`${asistencia.tardanzasGraves} tardanza(s) grave(s)`}
+                      title={`${asistencia.tardanzas} tardanza(s) de +10 min`}
                     >
-                      {asistencia.tardanzasGraves}T
+                      {asistencia.tardanzas}T
                     </span>
                   )}
                 </span>
@@ -1960,7 +1985,6 @@ function FilaAsistencia({
     completos: number;
     ausencias: number;
     tardanzas: number;
-    tardanzasGraves: number;
     francos: number;
     detalleTardanzas: { fecha: string; minutos: number }[];
     detalleFaltas: string[];
@@ -2036,9 +2060,7 @@ function FilaAsistencia({
           {asistencia.tardanzas > 0 && (
             <div className="flex items-center gap-1.5 rounded border border-amber-200 bg-amber-50 px-2 py-1">
               <span className="font-medium text-amber-700">
-                {asistencia.tardanzas} tardanza{asistencia.tardanzas > 1 ? 's' : ''}
-                {asistencia.tardanzasGraves > 0 &&
-                  ` (${asistencia.tardanzasGraves} grave${asistencia.tardanzasGraves > 1 ? 's' : ''})`}
+                {asistencia.tardanzas} tardanza{asistencia.tardanzas > 1 ? 's' : ''} (+10min)
               </span>
               <span className="text-amber-500">—</span>
               <span className="text-amber-600">
