@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { supabase } from '@/lib/supabase';
+import { supabaseAnon as supabase } from '@/lib/supabaseAnon';
 import { cn } from '@/lib/utils';
 
 interface Producto {
@@ -72,28 +72,21 @@ export function DepositoForm({ local }: { local: 'vedia' | 'saavedra' }) {
       const cant = parseFloat(cantidad.replace(',', '.'));
       if (!cant || cant <= 0) throw new Error('Cantidad inválida');
 
-      // Insertar movimiento
-      const { error } = await supabase.from('movimientos_stock').insert({
-        local,
-        producto_id: seleccionado.id,
-        producto_nombre: seleccionado.nombre,
-        tipo: 'salida',
-        cantidad: cant,
-        unidad: seleccionado.unidad,
-        motivo,
-        observacion: obs || null,
-        registrado_por: registradoPor || null,
+      // Resta de stock + movimiento de salida en una sola transacción atómica.
+      // Vía RPC SECURITY DEFINER (mig 106) porque el QR /deposito corre como anon
+      // y anon no puede hacer UPDATE directo sobre productos: el update se
+      // descartaba en silencio y el stock no se movía (mismo bug que mig 102
+      // arregló para entradas). La RPC lee el stock vivo (for update), así que
+      // tampoco pisa cambios concurrentes con un snapshot viejo del cliente.
+      const { error } = await supabase.rpc('registrar_salida_deposito', {
+        p_local: local,
+        p_producto_id: seleccionado.id,
+        p_cantidad: cant,
+        p_motivo: motivo,
+        p_observacion: obs || null,
+        p_registrado_por: registradoPor || null,
       });
       if (error) throw error;
-
-      // Actualizar stock
-      await supabase
-        .from('productos')
-        .update({
-          stock_actual: Math.max(0, seleccionado.stock_actual - cant),
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', seleccionado.id);
     },
     onSuccess: () => {
       setExito(true);
