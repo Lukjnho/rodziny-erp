@@ -76,7 +76,8 @@ export function EvaluacionesTab() {
   const hoyYmd = useMemo(() => ymd(new Date()), []);
 
   const { data: empleados } = useQuery({
-    queryKey: ['empleados'],
+    // Trae TODOS los empleados. Key propia para no chocar con los tabs que filtran activos.
+    queryKey: ['empleados', 'todos'],
     queryFn: async () => {
       const { data, error } = await supabase.from('empleados').select('*').order('apellido');
       if (error) throw error;

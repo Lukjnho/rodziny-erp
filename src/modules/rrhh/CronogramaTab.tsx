@@ -53,7 +53,9 @@ export function CronogramaTab() {
 
   // Empleados
   const { data: empleados } = useQuery({
-    queryKey: ['empleados'],
+    // Key propia por filtro (activos sin baja). Ver nota en SueldosTab: no compartir
+    // 'empleados' a secas con los tabs que traen TODOS los empleados.
+    queryKey: ['empleados', 'activos-sin-baja'],
     queryFn: async () => {
       const { data, error } = await supabase
         .from('empleados')

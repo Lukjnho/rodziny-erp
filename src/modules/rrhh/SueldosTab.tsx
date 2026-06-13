@@ -206,7 +206,9 @@ export function SueldosTab() {
 
   // ── Queries ──────────────────────────────────────────────────────────────
   const { data: empleados } = useQuery({
-    queryKey: ['empleados'],
+    // Key propia por filtro: trae solo activos. NO compartir 'empleados' a secas con
+    // los tabs que traen TODOS (Aguinaldo/Horas/etc.) o el primero que cargue gana el cache.
+    queryKey: ['empleados', 'activos'],
     queryFn: async () => {
       const { data, error } = await supabase
         .from('empleados')
@@ -475,11 +477,11 @@ export function SueldosTab() {
       }
     },
     onMutate: async (payload) => {
-      await qc.cancelQueries({ queryKey: ['empleados'] });
-      const previo = qc.getQueryData<Empleado[]>(['empleados']);
+      await qc.cancelQueries({ queryKey: ['empleados', 'activos'] });
+      const previo = qc.getQueryData<Empleado[]>(['empleados', 'activos']);
       if (previo) {
         qc.setQueryData<Empleado[]>(
-          ['empleados'],
+          ['empleados', 'activos'],
           previo.map((e) =>
             e.id === payload.id ? { ...e, modalidad_cobro: payload.modalidad } : e,
           ),
@@ -488,7 +490,7 @@ export function SueldosTab() {
       return { previo };
     },
     onError: (e: Error, _v, ctx) => {
-      if (ctx?.previo) qc.setQueryData(['empleados'], ctx.previo);
+      if (ctx?.previo) qc.setQueryData(['empleados', 'activos'], ctx.previo);
       window.alert(`Error al cambiar modalidad: ${e.message}`);
     },
     onSettled: () => {

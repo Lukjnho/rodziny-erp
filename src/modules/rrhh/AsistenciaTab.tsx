@@ -123,7 +123,9 @@ export function AsistenciaTab() {
 
   // ── Datos ────────────────────────────────────────────────────────────────
   const { data: empleados } = useQuery({
-    queryKey: ['empleados'],
+    // Key propia por filtro (activos sin baja). No compartir 'empleados' a secas con
+    // los tabs que traen TODOS los empleados (el primero que carga gana el cache).
+    queryKey: ['empleados', 'activos-sin-baja'],
     queryFn: async () => {
       const { data, error } = await supabase
         .from('empleados')
@@ -221,11 +223,14 @@ export function AsistenciaTab() {
       let ausencias = 0;
       let tardanzas = 0;
       let francos = 0;
-      const sinTurno =
-        fichadasDelDia.length > 0
-          ? new Set(fichadasDelDia.map((f) => f.empleado_id)).size -
-            new Set(cronoDelDia.filter((c) => !c.es_franco).map((c) => c.empleado_id)).size
-          : 0;
+      // Sin turno = empleados que ficharon pero NO tienen cronograma no-franco ese día.
+      // (Antes restaba dos conjuntos que no son subconjuntos → podía dar negativo o cancelarse.)
+      const conTurnoIds = new Set(
+        cronoDelDia.filter((c) => !c.es_franco).map((c) => c.empleado_id),
+      );
+      const sinTurno = new Set(
+        fichadasDelDia.filter((f) => !conTurnoIds.has(f.empleado_id)).map((f) => f.empleado_id),
+      ).size;
       const nombresAnomalias: string[] = [];
 
       // Por cada empleado del filtro, calcular su estado
@@ -257,12 +262,16 @@ export function AsistenciaTab() {
           return;
         }
 
+        // Jornada cerrada = la última fichada del día (cronológica) es una salida.
+        // Más robusto que la paridad: tolera un fichaje duplicado (E,E,S = completo) y
+        // sigue detectando una salida olvidada (E,S,E = incompleto).
         const tieneEntrada = fs.some((f) => f.tipo === 'entrada');
-        const tieneSalida = fs.some((f) => f.tipo === 'salida');
-        if (tieneEntrada && tieneSalida && fs.length % 2 === 0) {
+        const ultima = [...fs].sort((a, b) => a.timestamp.localeCompare(b.timestamp)).at(-1);
+        const cerroJornada = ultima?.tipo === 'salida';
+        if (tieneEntrada && cerroJornada) {
           completos++;
-        } else if (tieneEntrada && !tieneSalida && fecha === hoyYmd) {
-          // Hoy y tiene entrada sin salida → está trabajando
+        } else if (tieneEntrada && fecha === hoyYmd) {
+          // Hoy y la jornada sigue abierta → está trabajando
           enTurno++;
         } else {
           incompletos++;
@@ -645,14 +654,16 @@ function calcularEstadoEmpleado(
     return { estado: 'sin_turno', tarde: false };
   }
 
+  // Jornada cerrada = la última fichada (cronológica) es salida. Tolera duplicados
+  // (E,E,S = completa) y detecta salida olvidada (E,S,E = incompleta).
   const tieneEntrada = fs.some((f) => f.tipo === 'entrada');
-  const tieneSalida = fs.some((f) => f.tipo === 'salida');
-  if (tieneEntrada && tieneSalida && fs.length % 2 === 0) {
+  const ultima = [...fs].sort((a, b) => a.timestamp.localeCompare(b.timestamp)).at(-1);
+  if (tieneEntrada && ultima?.tipo === 'salida') {
     return { estado: 'completa', tarde };
   }
 
-  // Si es hoy y tiene entrada sin salida → está trabajando (no "incompleta")
-  if (tieneEntrada && !tieneSalida && fecha === hoyYmd) {
+  // Si es hoy y la jornada sigue abierta → está trabajando (no "incompleta")
+  if (tieneEntrada && fecha === hoyYmd) {
     return { estado: 'en_turno', tarde };
   }
 
@@ -669,20 +680,26 @@ function formatDiferencia(min: number): string {
 }
 
 function calcularHorasTrabajadas(fichadas: Fichada[]): string | null {
-  const entradas = fichadas
-    .filter((f) => f.tipo === 'entrada')
-    .sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-  const salidas = fichadas
-    .filter((f) => f.tipo === 'salida')
-    .sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-  if (entradas.length === 0 || salidas.length === 0) return null;
-
+  // Apareo CRONOLÓGICO: cada entrada con la salida que le sigue (igual que HorasTab).
+  // Antes apareaba entradas[i] con salidas[i] por índice, lo que cruzaba tramos en
+  // turnos partidos con orden E,E,S,S y daba horas infladas/negativas.
+  const ordenadas = [...fichadas].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
   let totalMin = 0;
-  const pares = Math.min(entradas.length, salidas.length);
-  for (let i = 0; i < pares; i++) {
-    const e = new Date(entradas[i].timestamp).getTime();
-    const s = new Date(salidas[i].timestamp).getTime();
-    if (s > e) totalMin += (s - e) / 60000;
+  let i = 0;
+  while (i < ordenadas.length) {
+    if (ordenadas[i].tipo !== 'entrada') {
+      i++;
+      continue;
+    }
+    const next = ordenadas[i + 1];
+    if (next && next.tipo === 'salida') {
+      const e = new Date(ordenadas[i].timestamp).getTime();
+      const s = new Date(next.timestamp).getTime();
+      if (s > e) totalMin += (s - e) / 60000;
+      i += 2;
+    } else {
+      i++; // entrada sin salida que la siga → tramo abierto, no suma
+    }
   }
   if (totalMin === 0) return null;
   const h = Math.floor(totalMin / 60);

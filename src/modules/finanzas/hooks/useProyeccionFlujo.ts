@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
-import { remuneracionConPresentismo } from '@/modules/rrhh/utils';
+import { remuneracionConPresentismo, parseYmd } from '@/modules/rrhh/utils';
 
 // ── Proyección de flujo de caja ────────────────────────────────────────────────
 // Proyecta 12 meses rodantes con DOS saldos en paralelo:
@@ -372,12 +372,11 @@ export function useProyeccionFlujo(): ProyeccionResult {
     return (empleados ?? []).reduce((s, e) => {
       const sueldo = remuneracionConPresentismo(Number(e.sueldo_neto || 0));
       if (sueldo <= 0) return s;
-      const ingreso = e.fecha_ingreso ? new Date(e.fecha_ingreso) : inicioSem;
+      // parseYmd (hora local) para no correr 1 día por UTC, igual que AguinaldoTab.
+      const ingreso = e.fecha_ingreso ? parseYmd(e.fecha_ingreso) : inicioSem;
       const desde = ingreso > inicioSem ? ingreso : inicioSem;
       if (desde > finSem) return s; // ingresó después del semestre → no devenga
-      const dias = Math.floor(
-        (finSem.getTime() - desde.getTime()) / 86_400_000,
-      ) + 1;
+      const dias = Math.round((finSem.getTime() - desde.getTime()) / 86_400_000) + 1;
       const factor = Math.min(dias, 180) / 180;
       return s + sueldo * 0.5 * factor;
     }, 0);

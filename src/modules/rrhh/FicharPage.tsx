@@ -3,6 +3,7 @@ import { supabaseAnon as supabase } from '@/lib/supabaseAnon';
 import { cn } from '@/lib/utils';
 import {
   TOLERANCIA_MIN,
+  esTardanzaReal,
   ymd,
   hhmm,
   diffMinutosVsTurnos,
@@ -1114,26 +1115,31 @@ function MiQuincena({ empleado, onVolver }: { empleado: Empleado; onVolver: () =
 
       const fichArr = (fich as Fichada[]) || [];
       const cronoArr = (crono as Cronograma[]) || [];
+      // Filtrar fichadas fantasma de madrugada (salidas nocturnas grabadas como entrada),
+      // igual que Sueldos/Asistencia, para que el empleado vea lo mismo que se liquida.
+      const fichReales = fichArr.filter((f) => !esSalidaNocturnaLegacy(f));
 
-      // Tardanzas > tolerancia en entradas
-      const tardanzasMayores = fichArr.filter(
-        (f) =>
-          f.tipo === 'entrada' &&
-          f.minutos_diferencia !== null &&
-          f.minutos_diferencia > TOLERANCIA_MIN,
+      // Tardanzas reales (+10min y dentro de lo plausible) contadas POR DÍA, igual que
+      // el cálculo de presentismo de RRHH. Se pierde el presentismo con 2 (no con 1).
+      const entradasPorDia: Record<string, Fichada[]> = {};
+      fichReales.forEach((f) => {
+        if (f.tipo === 'entrada') (entradasPorDia[f.fecha] ||= []).push(f);
+      });
+      const tardanzasMayores = Object.values(entradasPorDia).filter((ents) =>
+        ents.some((f) => esTardanzaReal(f.minutos_diferencia)),
       ).length;
 
-      // Ausencias: días con cronograma no franco y publicado, sin ninguna fichada
+      // Ausencias: días con cronograma no franco y publicado, sin ninguna fichada real
       const ausencias = cronoArr.filter((c) => {
         if (c.es_franco || !c.publicado) return false;
         if (new Date(c.fecha + 'T00:00:00') > hoy) return false;
-        return !fichArr.some((f) => f.fecha === c.fecha);
+        return !fichReales.some((f) => f.fecha === c.fecha);
       }).length;
 
       // Horas trabajadas (pares entrada/salida por día)
       let horasTrabajadas = 0;
       const porDia: Record<string, Fichada[]> = {};
-      fichArr.forEach((f) => {
+      fichReales.forEach((f) => {
         (porDia[f.fecha] ||= []).push(f);
       });
       Object.values(porDia).forEach((arr) => {
@@ -1166,7 +1172,7 @@ function MiQuincena({ empleado, onVolver }: { empleado: Empleado; onVolver: () =
       ? stats.horasRequeridas > 0 &&
         stats.horasTrabajadas >= stats.horasRequeridas &&
         stats.ausencias === 0
-      : stats.ausencias === 0 && stats.tardanzasMayores === 0
+      : stats.ausencias === 0 && stats.tardanzasMayores < 2
     : false;
 
   return (

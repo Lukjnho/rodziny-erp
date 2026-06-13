@@ -94,7 +94,9 @@ export function AguinaldoTab() {
   const [modalFila, setModalFila] = useState<FilaAguinaldo | null>(null);
 
   const { data: empleados } = useQuery({
-    queryKey: ['empleados'],
+    // Trae TODOS (incl. bajas: pueden tener aguinaldo pendiente). Key propia para no
+    // chocar con los tabs que filtran solo activos.
+    queryKey: ['empleados', 'todos'],
     queryFn: async () => {
       const { data, error } = await supabase.from('empleados').select('*').order('apellido');
       if (error) throw error;
