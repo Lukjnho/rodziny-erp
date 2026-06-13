@@ -8,7 +8,7 @@ import { usePagosAlertas } from '@/modules/finanzas/hooks/usePagosAlertas';
 const MODULOS_FINANZAS: Modulo[] = ['finanzas', 'edr', 'gastos', 'amortizaciones'];
 
 const NAV: { to: string; label: string; icon: string; modulo: Modulo | 'finanzas-grupo' }[] = [
-  { to: '/', label: 'Dashboard', icon: '▦', modulo: 'dashboard' },
+  { to: '/', label: 'Inicio', icon: '🏠', modulo: 'dashboard' },
   { to: '/ventas', label: 'Ventas', icon: '📈', modulo: 'ventas' },
   { to: '/finanzas', label: 'Finanzas', icon: '💰', modulo: 'finanzas-grupo' },
   { to: '/rrhh', label: 'RRHH', icon: '👥', modulo: 'rrhh' },
@@ -26,9 +26,12 @@ export function Sidebar() {
   const { perfil, signOut, tienePermiso } = useAuth();
   const { data: alertas } = usePagosAlertas();
   const items = NAV.filter((n) =>
-    n.modulo === 'finanzas-grupo'
-      ? MODULOS_FINANZAS.some((m) => tienePermiso(m))
-      : tienePermiso(n.modulo),
+    // Inicio es universal: lo ve cualquier usuario logueado.
+    n.to === '/'
+      ? true
+      : n.modulo === 'finanzas-grupo'
+        ? MODULOS_FINANZAS.some((m) => tienePermiso(m))
+        : tienePermiso(n.modulo),
   );
 
   const iniciales = (perfil?.nombre || '?').slice(0, 1).toUpperCase();

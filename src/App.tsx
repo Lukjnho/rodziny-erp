@@ -48,8 +48,8 @@ const AlmacenPage = lazy(() =>
 const ProductosPage = lazy(() =>
   import('@/modules/productos/ProductosPage').then((m) => ({ default: m.ProductosPage })),
 );
-const DashboardPage = lazy(() =>
-  import('@/modules/dashboard/DashboardPage').then((m) => ({ default: m.DashboardPage })),
+const InicioPage = lazy(() =>
+  import('@/modules/inicio/InicioPage').then((m) => ({ default: m.InicioPage })),
 );
 const AgendaPage = lazy(() =>
   import('@/modules/agenda/AgendaPage').then((m) => ({ default: m.AgendaPage })),
@@ -103,7 +103,7 @@ function RutaFinanzas({ children }: { children: ReactNode }) {
 }
 
 function AppInterna() {
-  const { user, perfil, cargando, tienePermiso } = useAuth();
+  const { user, perfil, cargando } = useAuth();
 
   if (cargando) return <PantallaCargando />;
   if (!user) return <LoginPage />;
@@ -134,49 +134,15 @@ function AppInterna() {
     );
   }
 
-  const tieneAlgunFinanzas = MODULOS_FINANZAS.some((m) => tienePermiso(m));
-  const primeraRutaPermitida = tienePermiso('dashboard')
-    ? '/'
-    : tienePermiso('ventas')
-      ? '/ventas'
-      : tieneAlgunFinanzas
-      ? '/finanzas'
-      : tienePermiso('rrhh')
-        ? '/rrhh'
-        : tienePermiso('compras')
-          ? '/compras'
-          : tienePermiso('cocina')
-            ? '/cocina'
-            : tienePermiso('almacen')
-              ? '/almacen'
-              : tienePermiso('productos')
-                ? '/productos'
-                : tienePermiso('agenda')
-                  ? '/agenda'
-                  : tienePermiso('convenios')
-                    ? '/convenios'
-                    : tienePermiso('usuarios')
-                      ? '/usuarios'
-                      : null;
-
   return (
     <div className="flex min-h-screen">
       <Sidebar />
       <div className="flex-1">
         <Suspense fallback={<PantallaCargando />}>
           <Routes>
-            <Route
-              path="/"
-              element={
-                tienePermiso('dashboard') ? (
-                  <DashboardPage />
-                ) : primeraRutaPermitida && primeraRutaPermitida !== '/' ? (
-                  <Navigate to={primeraRutaPermitida} replace />
-                ) : (
-                  <SinAcceso />
-                )
-              }
-            />
+            {/* Inicio universal: cualquier usuario logueado abre acá (su agenda
+                del día + alertas que tenga permiso de ver). */}
+            <Route path="/" element={<InicioPage />} />
             <Route
               path="/finanzas"
               element={
@@ -268,7 +234,7 @@ function AppInterna() {
                 </Ruta>
               }
             />
-            <Route path="*" element={<Navigate to={primeraRutaPermitida || '/'} replace />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </Suspense>
       </div>
