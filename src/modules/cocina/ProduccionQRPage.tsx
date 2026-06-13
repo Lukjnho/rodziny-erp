@@ -1548,6 +1548,10 @@ function FormPasta({
         cantidad_cajones: esPastaSinRelleno ? null : cantidad,
         ubicacion: esPastaSinRelleno ? 'camara_congelado' : 'freezer_produccion',
         fecha_porcionado: esPastaSinRelleno ? hoy() : null,
+        // Sin relleno entra directo a cámara: estampamos la hora real para que
+        // el baseline de cámara (v_cocina_stock_pastas) lo cuente como posterior
+        // al último conteo. Con relleno: queda null hasta el paso "Porcionar".
+        porcionado_at: esPastaSinRelleno ? new Date().toISOString() : null,
         responsable_porcionado: esPastaSinRelleno ? responsable.trim() : null,
         responsable: responsable.trim(),
         local,

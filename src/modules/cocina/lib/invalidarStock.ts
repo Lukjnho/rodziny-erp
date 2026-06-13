@@ -20,6 +20,7 @@ const KEYS_STOCK_COCINA = [
   'cocina-stock-merma-hoy',
   'cocina-ajustes-stock',
   'cocina-cierres-pastas',
+  'cocina-cierres-camara',
   // Salsas / postres (catálogo StockTab + Dashboard)
   'cocina-catalogo-lotes',
   'cocina_stock_salsas_postres',

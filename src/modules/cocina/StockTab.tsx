@@ -29,7 +29,17 @@ interface LotePasta {
   ubicacion: 'freezer_produccion' | 'camara_congelado';
   fecha: string; // YYYY-MM-DD — para alertar si una bandeja lleva 3+ días en freezer
   created_at: string; // timestamp — para el indicador "última carga" del header
+  porcionado_at: string | null; // timestamp en que entró a cámara (porcionado); null si sigue fresco
   responsable: string | null; // nombre cargado en el QR de Producción
+}
+// Baseline (conteo físico) de cámara: fija el punto de partida del stock.
+// El stock de cámara = cantidad_real del último cierre + porcionado posterior
+// − traslados posteriores − merma posterior. Reemplaza al viejo delta acumulado.
+interface CierreCamara {
+  producto_id: string;
+  local: string;
+  cantidad_real: number;
+  created_at: string;
 }
 interface Traspaso {
   producto_id: string;
@@ -338,7 +348,7 @@ export function StockTab() {
       const { data, error } = await supabase
         .from('cocina_lotes_pasta')
         .select(
-          'producto_id, porciones, cantidad_cajones, local, ubicacion, fecha, created_at, responsable',
+          'producto_id, porciones, cantidad_cajones, local, ubicacion, fecha, created_at, porcionado_at, responsable',
         );
       if (error) throw error;
       return data as LotePasta[];
@@ -426,6 +436,24 @@ export function StockTab() {
     },
   });
 
+  // Baseline de cámara: el más reciente por (producto_id, local).
+  const { data: cierresCamaraPorProducto } = useQuery({
+    queryKey: ['cocina-cierres-camara'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('cocina_cierre_camara')
+        .select('producto_id, local, cantidad_real, created_at')
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      const m = new Map<string, CierreCamara>();
+      for (const c of (data ?? []) as CierreCamara[]) {
+        const key = `${c.producto_id}|${c.local}`;
+        if (!m.has(key)) m.set(key, c);
+      }
+      return m;
+    },
+  });
+
   const guardarAjuste = useMutation({
     mutationFn: async (payload: {
       producto_id: string;
@@ -449,6 +477,33 @@ export function StockTab() {
       invalidarStockCocina(qc);
     },
     onError: (e: Error) => window.alert(mensajeErrorAmigable(e, 'No se pudo guardar el ajuste')),
+  });
+
+  // Conteo físico de cámara: guarda un BASELINE (punto de partida) en vez de un
+  // delta. El porcionado posterior suma siempre y a la vista, sin que el conteo
+  // se coma la producción.
+  const guardarCierreCamara = useMutation({
+    mutationFn: async (payload: {
+      producto_id: string;
+      local: string;
+      cantidad_real: number;
+      notas: string | null;
+      responsable: string | null;
+    }) => {
+      const { error } = await supabase.from('cocina_cierre_camara').insert({
+        producto_id: payload.producto_id,
+        local: payload.local,
+        cantidad_real: payload.cantidad_real,
+        notas: payload.notas,
+        responsable: payload.responsable,
+      });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['cocina-cierres-camara'] });
+      invalidarStockCocina(qc);
+    },
+    onError: (e: Error) => window.alert(mensajeErrorAmigable(e, 'No se pudo guardar el conteo')),
   });
 
   // Locales en alcance según el filtro. Ambos locales tienen API de Fudo
@@ -560,10 +615,22 @@ export function StockTab() {
         if (prod.local !== loc) continue;
 
         // Producido en cámara = stock disponible. "Pastas en produ" = frescas sin porcionar (no cuentan como stock vendible).
+        // Modelo escalonado: el stock de cámara arranca del último conteo físico
+        // (baseline) y solo suma/resta lo POSTERIOR a ese conteo. Así el
+        // porcionado siempre se ve y el conteo no se come la producción.
+        // Si no hay baseline (ej. producto sin conteo aún), cae al histórico total.
+        const baselineCamara = cierresCamaraPorProducto?.get(`${prod.id}|${loc}`) ?? null;
+        const baseTs = baselineCamara?.created_at ?? null;
+        const despuesDelConteo = (ts: string | null) =>
+          baseTs === null || (ts !== null && ts > baseTs);
+
         const producido = lotesPasta
           .filter(
             (l) =>
-              l.producto_id === prod.id && l.local === loc && l.ubicacion === 'camara_congelado',
+              l.producto_id === prod.id &&
+              l.local === loc &&
+              l.ubicacion === 'camara_congelado' &&
+              despuesDelConteo(l.porcionado_at ?? l.created_at),
           )
           .reduce((s, l) => s + (l.porciones ?? 0), 0);
         // Lotes en freezer de producción = bandejas armadas, todavía sin porcionar.
@@ -588,20 +655,31 @@ export function StockTab() {
                 null,
               )
             : null;
+        // Traslados y merma POSTERIORES al conteo (descuentan del baseline).
         const traspasado = traspasos
-          .filter((t) => t.producto_id === prod.id && t.local === loc)
+          .filter(
+            (t) => t.producto_id === prod.id && t.local === loc && despuesDelConteo(t.created_at),
+          )
           .reduce((s, t) => s + t.porciones, 0);
         const mermaTotal = mermas
-          .filter((m) => m.producto_id === prod.id && m.local === loc)
+          .filter(
+            (m) => m.producto_id === prod.id && m.local === loc && despuesDelConteo(m.created_at),
+          )
           .reduce((s, m) => s + m.porciones, 0);
 
         // Vendido hoy de Fudo: descuenta de "En mostrador" (mostradorRaw).
         const vendidoHoy = ventasFudoDelProducto(prod, fudoHoy?.[loc]?.ranking);
 
-        // Ajustes manuales acumulados por ubicación
+        // Ajustes manuales de cámara POSTERIORES al conteo (los viejos ya están
+        // absorbidos en el baseline). El flujo nuevo usa conteo→baseline, pero se
+        // siguen respetando ajustes-delta sueltos si los hubiera.
         const ajusteCamara = (ajustes ?? [])
           .filter(
-            (a) => a.producto_id === prod.id && a.local === loc && a.ubicacion === 'camara',
+            (a) =>
+              a.producto_id === prod.id &&
+              a.local === loc &&
+              a.ubicacion === 'camara' &&
+              despuesDelConteo(a.created_at),
           )
           .reduce((s, a) => s + Number(a.delta), 0);
         const ajusteMostrador = (ajustes ?? [])
@@ -662,9 +740,12 @@ export function StockTab() {
           mostrador = Math.max(0, mostradorRaw);
         }
 
+        // Stock de cámara = baseline (último conteo) + porcionado posterior
+        // − traslados posteriores − merma posterior + ajustes posteriores.
+        // Espeja exactamente v_cocina_stock_pastas (Dashboard / Traspasos).
         // El stock nunca puede ser negativo (regla de negocio: máximo puede ser 0).
-        // Clamp consistente con v_cocina_stock_pastas (Dashboard) y TraspasosTab.
-        const stockRaw = producido - traspasado - mermaTotal + ajusteCamara;
+        const baseCamara = baselineCamara ? Number(baselineCamara.cantidad_real) : 0;
+        const stockRaw = baseCamara + producido - traspasado - mermaTotal + ajusteCamara;
         const stock = Math.max(0, stockRaw);
 
         // Demanda real: ventas Fudo de los últimos 7 días (vía fudo_nombres).
@@ -713,6 +794,7 @@ export function StockTab() {
     fudoDesdeCierre,
     fudo7d,
     cierresPorProducto,
+    cierresCamaraPorProducto,
     hoy,
     ajustes,
     filtroLocal,
@@ -1088,14 +1170,27 @@ export function StockTab() {
             }
             setAjusteModal((s) => (s ? { ...s, guardando: true } : s));
             try {
-              await guardarAjuste.mutateAsync({
-                producto_id: ajusteModal.producto.id,
-                local: ajusteModal.local,
-                ubicacion: ajusteModal.ubicacion,
-                delta,
-                motivo: ajusteModal.motivo.trim() || null,
-                responsable: perfil?.nombre ?? null,
-              });
+              if (ajusteModal.ubicacion === 'camara') {
+                // Conteo físico de cámara: guarda un BASELINE (el número contado
+                // pasa a ser el punto de partida). El porcionado posterior suma
+                // siempre; el conteo ya no se come la producción.
+                await guardarCierreCamara.mutateAsync({
+                  producto_id: ajusteModal.producto.id,
+                  local: ajusteModal.local,
+                  cantidad_real: real,
+                  notas: ajusteModal.motivo.trim() || null,
+                  responsable: perfil?.nombre ?? null,
+                });
+              } else {
+                await guardarAjuste.mutateAsync({
+                  producto_id: ajusteModal.producto.id,
+                  local: ajusteModal.local,
+                  ubicacion: ajusteModal.ubicacion,
+                  delta,
+                  motivo: ajusteModal.motivo.trim() || null,
+                  responsable: perfil?.nombre ?? null,
+                });
+              }
               setAjusteModal(null);
             } catch {
               setAjusteModal((s) => (s ? { ...s, guardando: false } : s));
@@ -1183,23 +1278,32 @@ function ModalAjusteStock({
             />
           </div>
 
-          {deltaPreview !== null && deltaPreview !== 0 && (
-            <div
-              className={cn(
-                'rounded border p-2 text-xs',
-                deltaPreview > 0
-                  ? 'border-green-200 bg-green-50 text-green-700'
-                  : 'border-red-200 bg-red-50 text-red-700',
+          {state.ubicacion === 'camara'
+            ? !isNaN(realNum) && (
+                <div className="rounded border border-rodziny-200 bg-rodziny-50 p-2 text-xs text-rodziny-700">
+                  Se fija el stock de cámara en{' '}
+                  <span className="font-semibold">{realNum}</span>. De acá en más, lo que se
+                  porcione suma sobre este número y los traslados lo descuentan.
+                </div>
+              )
+            : deltaPreview !== null &&
+              deltaPreview !== 0 && (
+                <div
+                  className={cn(
+                    'rounded border p-2 text-xs',
+                    deltaPreview > 0
+                      ? 'border-green-200 bg-green-50 text-green-700'
+                      : 'border-red-200 bg-red-50 text-red-700',
+                  )}
+                >
+                  Se va a registrar un ajuste de{' '}
+                  <span className="font-semibold">
+                    {deltaPreview > 0 ? '+' : ''}
+                    {deltaPreview}
+                  </span>{' '}
+                  {deltaPreview > 0 ? 'unidades sumadas' : 'unidades restadas'}.
+                </div>
               )}
-            >
-              Se va a registrar un ajuste de{' '}
-              <span className="font-semibold">
-                {deltaPreview > 0 ? '+' : ''}
-                {deltaPreview}
-              </span>{' '}
-              {deltaPreview > 0 ? 'unidades sumadas' : 'unidades restadas'}.
-            </div>
-          )}
 
           <div>
             <label className="mb-1 block text-xs font-medium text-gray-700">
