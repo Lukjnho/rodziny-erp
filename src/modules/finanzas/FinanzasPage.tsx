@@ -35,9 +35,9 @@ interface TabDef {
 const TABS: TabDef[] = [
   {
     id: 'compras',
-    label: 'Resumen de Compras',
+    label: 'Resumen de Egresos',
     icon: '🧾',
-    subtitle: 'Gastos, proveedores y análisis',
+    subtitle: 'Todo lo que salió, por rubro y mes (base devengada)',
     modulo: 'gastos',
   },
   {

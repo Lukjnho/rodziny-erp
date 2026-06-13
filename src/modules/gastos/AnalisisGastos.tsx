@@ -77,6 +77,32 @@ export function AnalisisGastos({ local }: Props) {
     },
   });
 
+  // Sueldos pagados (módulo RRHH) — para completar "Gastos de RRHH → Sueldos".
+  // Desde abr-2026 los sueldos viven acá y no como filas de la tabla gastos.
+  const { data: pagosSueldos } = useQuery({
+    queryKey: ['pagos_sueldos_egresos', año, local],
+    queryFn: async () => {
+      const PAGE = 1000;
+      const filas: { periodo: string; monto: number | null }[] = [];
+      let from = 0;
+      while (true) {
+        let q = supabase
+          .from('pagos_sueldos')
+          .select('periodo, monto, local')
+          // periodo es quincenal ("2026-04-Q1"); like atrapa todas las quincenas del año
+          .like('periodo', `${año}-%`)
+          .range(from, from + PAGE - 1);
+        if (localActivo) q = q.eq('local', localActivo);
+        const { data } = await q;
+        if (!data || data.length === 0) break;
+        filas.push(...data);
+        if (data.length < PAGE) break;
+        from += PAGE;
+      }
+      return filas;
+    },
+  });
+
   // Ventas del año para ratio gastos/ventas
   const { data: ventasAnio } = useQuery({
     queryKey: ['ventas_para_ratio_gastos', año, local],
@@ -110,23 +136,41 @@ export function AnalisisGastos({ local }: Props) {
     const mesesSet = new Set<string>();
     let cantFacturas = 0;
 
+    // Meses que ya tienen sueldos cargados en RRHH (pagos_sueldos). En esos meses
+    // los sueldos salen de ahí y se IGNORAN las filas "Sueldos" de la tabla gastos,
+    // para no contar dos veces (anti doble-conteo entre fuentes).
+    const mesesSueldoRRHH = new Set<string>();
+    for (const p of pagosSueldos ?? []) {
+      if (Number(p.monto) || 0) mesesSueldoRRHH.add(p.periodo.substring(0, 7));
+    }
+
+    const addMonto = (cat: string, sub: string, mes: string, monto: number) => {
+      mesesSet.add(mes);
+      if (!cats.has(cat)) cats.set(cat, { nombre: cat, subcats: new Map(), porMes: new Map() });
+      const catObj = cats.get(cat)!;
+      catObj.porMes.set(mes, (catObj.porMes.get(mes) ?? 0) + monto);
+      if (!catObj.subcats.has(sub)) catObj.subcats.set(sub, { nombre: sub, porMes: new Map() });
+      const subObj = catObj.subcats.get(sub)!;
+      subObj.porMes.set(mes, (subObj.porMes.get(mes) ?? 0) + monto);
+    };
+
     for (const g of rawGastos ?? []) {
       const cat = g.categoria || 'Sin categoría';
       const sub = g.subcategoria || cat;
       const mes = g.periodo;
       const monto = Number(g.importe_neto ?? g.importe_total) || 0;
       if (!monto) continue;
+      // si este mes tiene sueldos en RRHH, descarto las filas "Sueldos" de gastos
+      if (cat === 'Gastos de RRHH' && sub === 'Sueldos' && mesesSueldoRRHH.has(mes)) continue;
       cantFacturas++;
+      addMonto(cat, sub, mes, monto);
+    }
 
-      mesesSet.add(mes);
-
-      if (!cats.has(cat)) cats.set(cat, { nombre: cat, subcats: new Map(), porMes: new Map() });
-      const catObj = cats.get(cat)!;
-      catObj.porMes.set(mes, (catObj.porMes.get(mes) ?? 0) + monto);
-
-      if (!catObj.subcats.has(sub)) catObj.subcats.set(sub, { nombre: sub, porMes: new Map() });
-      const subObj = catObj.subcats.get(sub)!;
-      subObj.porMes.set(mes, (subObj.porMes.get(mes) ?? 0) + monto);
+    // Sueldos pagados desde RRHH → "Gastos de RRHH → Sueldos" (monto efectivamente pagado)
+    for (const p of pagosSueldos ?? []) {
+      const monto = Number(p.monto) || 0;
+      if (!monto) continue;
+      addMonto('Gastos de RRHH', 'Sueldos', p.periodo.substring(0, 7), monto);
     }
 
     return {
@@ -134,7 +178,7 @@ export function AnalisisGastos({ local }: Props) {
       mesesConDatos: Array.from(mesesSet).sort(),
       facturas: cantFacturas,
     };
-  }, [rawGastos]);
+  }, [rawGastos, pagosSueldos]);
 
   const totalGeneral = useMemo(() => {
     const map = new Map<string, number>();
@@ -218,11 +262,18 @@ export function AnalisisGastos({ local }: Props) {
         </div>
       </div>
 
+      {/* Recordatorio de qué muestra este tab */}
+      <div className="mb-4 rounded-lg border border-rodziny-100 bg-rodziny-50 px-4 py-3 text-xs leading-relaxed text-rodziny-900">
+        Resumen de <strong>todos los egresos</strong> de la empresa, ordenados por rubro y mes.
+        Tocá cada rubro para abrir sus subcategorías. Los montos van en <strong>neto</strong> (sin
+        IVA) e imputados al mes de la factura; los <strong>sueldos</strong> se toman de RRHH.
+      </div>
+
       {/* KPIs del año — todo en neto (sin IVA), mismo período que la matriz */}
       {!isLoading && categorias.size > 0 && (
         <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
           <div className="rounded-lg border border-gray-200 bg-white p-4">
-            <div className="text-xs text-gray-500">Total comprado (año)</div>
+            <div className="text-xs text-gray-500">Total egresos (año)</div>
             <div className="text-lg font-semibold tabular-nums text-gray-900">
               {formatARS(totalAcum)}
             </div>
