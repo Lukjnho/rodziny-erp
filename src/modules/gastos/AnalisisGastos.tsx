@@ -52,6 +52,7 @@ export function AnalisisGastos({ local }: Props) {
       const filas: {
         categoria: string | null;
         subcategoria: string | null;
+        categoria_id: string | null;
         periodo: string;
         importe_total: number | null;
         importe_neto: number | null;
@@ -61,7 +62,7 @@ export function AnalisisGastos({ local }: Props) {
       while (true) {
         let q = supabase
           .from('gastos')
-          .select('categoria, subcategoria, periodo, importe_total, importe_neto')
+          .select('categoria, subcategoria, categoria_id, periodo, importe_total, importe_neto')
           .gte('periodo', `${año}-01`)
           .lte('periodo', `${año}-12`)
           .neq('cancelado', true)
@@ -76,6 +77,32 @@ export function AnalisisGastos({ local }: Props) {
       return filas;
     },
   });
+
+  // Catálogo de categorías para resolver el nombre desde la FK categoria_id.
+  // categoria_id apunta a la SUBcategoría (parent_id != null); el padre es el rubro.
+  // Fuente canónica: el form manual guarda categoria_id, no las columnas de texto legacy.
+  const { data: catalogoCategorias } = useQuery({
+    queryKey: ['catalogo_categorias_gasto'],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('categorias_gasto')
+        .select('id, nombre, parent_id');
+      return (data ?? []) as { id: string; nombre: string; parent_id: string | null }[];
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+
+  // Mapa id → { rubro (padre), sub (nombre propio) }
+  const categoriaResolver = useMemo(() => {
+    const byId = new Map((catalogoCategorias ?? []).map((c) => [c.id, c]));
+    const resolver = new Map<string, { cat: string; sub: string }>();
+    for (const c of catalogoCategorias ?? []) {
+      const padre = c.parent_id ? byId.get(c.parent_id) : null;
+      // si tiene padre → rubro = padre, sub = sí mismo; si no → es un rubro raíz
+      resolver.set(c.id, { cat: padre?.nombre ?? c.nombre, sub: c.nombre });
+    }
+    return resolver;
+  }, [catalogoCategorias]);
 
   // Sueldos pagados (módulo RRHH) — para completar "Gastos de RRHH → Sueldos".
   // Desde abr-2026 los sueldos viven acá y no como filas de la tabla gastos.
@@ -155,8 +182,10 @@ export function AnalisisGastos({ local }: Props) {
     };
 
     for (const g of rawGastos ?? []) {
-      const cat = g.categoria || 'Sin categoría';
-      const sub = g.subcategoria || cat;
+      // Fuente canónica = categoria_id (FK). Solo caemos al texto legacy si no hay FK.
+      const resuelto = g.categoria_id ? categoriaResolver.get(g.categoria_id) : undefined;
+      const cat = resuelto?.cat || g.categoria || 'Sin categoría';
+      const sub = resuelto?.sub || g.subcategoria || cat;
       const mes = g.periodo;
       const monto = Number(g.importe_neto ?? g.importe_total) || 0;
       if (!monto) continue;
@@ -178,7 +207,7 @@ export function AnalisisGastos({ local }: Props) {
       mesesConDatos: Array.from(mesesSet).sort(),
       facturas: cantFacturas,
     };
-  }, [rawGastos, pagosSueldos]);
+  }, [rawGastos, pagosSueldos, categoriaResolver]);
 
   const totalGeneral = useMemo(() => {
     const map = new Map<string, number>();

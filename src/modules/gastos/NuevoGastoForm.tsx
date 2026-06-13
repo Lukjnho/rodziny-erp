@@ -1237,12 +1237,21 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
           : null;
         const comentarioBase = comentario.trim();
         const com = [comentarioBase, comentarioExtra].filter(Boolean).join(' · ') || null;
+        // Espejo de texto legacy: el EdR (RPC edr_resumen_gastos) y otros consumidores
+        // agrupan por las columnas categoria/subcategoria TEXTO, no por la FK. Las
+        // escribimos siempre desde el catálogo para no dejar gastos fuera de esos reportes.
+        const subCat = categorias.find((c) => c.id === catId);
+        const padreCat = subCat?.parent_id
+          ? categorias.find((c) => c.id === subCat.parent_id)
+          : null;
         return {
           local,
           fecha,
           proveedor_id: proveedorId,
           proveedor: proveedor?.razon_social ?? null, // legacy mirror
           categoria_id: catId,
+          categoria: padreCat?.nombre ?? subCat?.nombre ?? null, // legacy mirror (rubro padre)
+          subcategoria: subCat?.nombre ?? null, // legacy mirror
           importe_total: total,
           // Si discrimina IVA → guardamos neto/IVA prorrateados según el total del split.
           // Si no → null (el EdR sigue usando importe_total como antes).

@@ -234,6 +234,26 @@ export async function ejecutarReglas(
   let sugeridos = 0;
   const errores: string[] = [];
 
+  // Catálogo para resolver el rubro padre (columna categoria TEXTO) desde la FK
+  // categoria_gasto_id. El EdR (edr_resumen_gastos) y otros reportes agrupan por el
+  // texto legacy, así que un gasto sin categoria texto queda fuera de esos reportes.
+  const { data: catRows } = await supabase
+    .from('categorias_gasto')
+    .select('id, nombre, parent_id');
+  const catById = new Map(
+    (catRows ?? []).map((c: { id: string; nombre: string; parent_id: string | null }) => [
+      c.id,
+      c,
+    ]),
+  );
+  const rubroPadre = (catId: string | null): string | null => {
+    if (!catId) return null;
+    const c = catById.get(catId);
+    if (!c) return null;
+    const padre = c.parent_id ? catById.get(c.parent_id) : null;
+    return padre?.nombre ?? c.nombre;
+  };
+
   // Aplicar sugerencias primero (rápido, no crea gastos): marca el movimiento con
   // texto de sugerencia + regla, pero deja `tipo` como NULL para que el usuario
   // siga decidiendo (vincular gasto, crear gasto, transferencia interna, ignorar).
@@ -292,7 +312,7 @@ export async function ejecutarReglas(
           iva: 0,
           iibb: 0,
           proveedor: item.proveedor,
-          categoria: null,
+          categoria: rubroPadre(item.categoriaGastoId), // espejo de texto legacy (rubro padre)
           subcategoria: item.subcategoria,
           categoria_id: item.categoriaGastoId,
           estado_pago: 'Pagado',
