@@ -38,6 +38,7 @@ export type SubrecetaRol =
   | 'panificado'
   | 'pasteleria_base'
   | 'bebida_base'
+  | 'pizza'
   | 'adicional'
   | 'packaging'
   | 'otros';
@@ -143,6 +144,7 @@ export const ROLES: SubrecetaRol[] = [
   'panificado',
   'pasteleria_base',
   'bebida_base',
+  'pizza',
   'adicional',
   'packaging',
   'otros',
@@ -155,6 +157,7 @@ export const ROL_LABEL: Record<SubrecetaRol, string> = {
   panificado: 'Panificado',
   pasteleria_base: 'Pastelería',
   bebida_base: 'Bebida (base)',
+  pizza: 'Pizza',
   adicional: 'Adicional servicio',
   packaging: 'Packaging',
   otros: 'Otros',
