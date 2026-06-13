@@ -23,6 +23,7 @@ export type RendUnidad = 'kg' | 'l' | 'unidad';
 export type RecetaTipo = 'receta' | 'subreceta';
 export type RecetaCategoria =
   | 'pasta'
+  | 'pizza'
   | 'salsa'
   | 'postre'
   | 'pasteleria'
@@ -38,7 +39,6 @@ export type SubrecetaRol =
   | 'panificado'
   | 'pasteleria_base'
   | 'bebida_base'
-  | 'pizza'
   | 'adicional'
   | 'packaging'
   | 'otros';
@@ -80,6 +80,7 @@ const TIPO_COLOR: Record<RecetaTipo, string> = {
 
 export const CATEGORIAS: RecetaCategoria[] = [
   'pasta',
+  'pizza',
   'salsa',
   'postre',
   'pasteleria',
@@ -90,6 +91,7 @@ export const CATEGORIAS: RecetaCategoria[] = [
 ];
 export const CATEGORIA_LABEL: Record<RecetaCategoria, string> = {
   pasta: 'Pasta',
+  pizza: 'Pizza',
   salsa: 'Salsa',
   postre: 'Postre',
   pasteleria: 'Pastelería',
@@ -100,6 +102,7 @@ export const CATEGORIA_LABEL: Record<RecetaCategoria, string> = {
 };
 export const CATEGORIA_COLOR: Record<RecetaCategoria, string> = {
   pasta: 'bg-red-100 text-red-700',
+  pizza: 'bg-lime-100 text-lime-700',
   salsa: 'bg-orange-100 text-orange-700',
   postre: 'bg-pink-100 text-pink-700',
   pasteleria: 'bg-rose-100 text-rose-700',
@@ -113,6 +116,7 @@ export const CATEGORIA_COLOR: Record<RecetaCategoria, string> = {
 // jerarquía hoy. Si el array está vacío, el editor no muestra select de sub.
 export const SUBCATEGORIAS_POR_CATEGORIA: Record<RecetaCategoria, string[]> = {
   pasta: [],
+  pizza: [],
   salsa: [],
   postre: [],
   pasteleria: [],
@@ -144,7 +148,6 @@ export const ROLES: SubrecetaRol[] = [
   'panificado',
   'pasteleria_base',
   'bebida_base',
-  'pizza',
   'adicional',
   'packaging',
   'otros',
@@ -157,7 +160,6 @@ export const ROL_LABEL: Record<SubrecetaRol, string> = {
   panificado: 'Panificado',
   pasteleria_base: 'Pastelería',
   bebida_base: 'Bebida (base)',
-  pizza: 'Pizza',
   adicional: 'Adicional servicio',
   packaging: 'Packaging',
   otros: 'Otros',
