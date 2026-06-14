@@ -165,7 +165,9 @@ export function InsumosTab() {
             {filtrados.map((i) => {
               const costo = i.costo_unitario ?? 0;
               const merma = i.merma_pct ?? 0;
-              const costoEfectivo = costo * (1 + merma);
+              // Costo efectivo = lo que cuesta el kg/unidad ÚTIL tras descartar la
+              // merma. Igual que el motor de costeo: costo × 1/(1−merma), NO ×(1+merma).
+              const costoEfectivo = merma > 0 && merma < 1 ? costo / (1 - merma) : costo;
               const edCosto = edit?.id === i.id && edit.field === 'costo';
               const edMerma = edit?.id === i.id && edit.field === 'merma';
               return (

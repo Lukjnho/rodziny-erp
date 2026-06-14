@@ -156,10 +156,10 @@ export function useMenuEngineering(opts: MenuEngineeringOptions) {
     },
   });
 
-  const { costos: costosRecetas } = useCostosRecetas();
-  const { config: configGen } = useConfigCosteo();
-  const { data: comisiones } = useComisionMpConfig();
-  const { getConfig } = useProductosCosteoConfig();
+  const { costos: costosRecetas, isLoading: costosLoading } = useCostosRecetas();
+  const { config: configGen, isLoading: configLoading } = useConfigCosteo();
+  const { data: comisiones, isLoading: comisionesLoading } = useComisionMpConfig();
+  const { getConfig, isLoading: costeoConfigLoading } = useProductosCosteoConfig();
 
   return useMemo<{ productos: ProductoME[]; isLoading: boolean; periodos: string[] }>(() => {
     const ventas = ventasQ.data;
@@ -168,7 +168,18 @@ export function useMenuEngineering(opts: MenuEngineeringOptions) {
     // caemos a [] y el matching usa solo cocina_productos. NO incluir en el gate
     // de !ventas o !cocinaProds porque si la query queda undefined bloquea todo.
     const recetasVendibles: RecetaVendibleRow[] = recetasQ.data ?? [];
-    const isLoading = ventasQ.isLoading || productosQ.isLoading;
+    // Esperar TODAS las fuentes que definen costo/margen/cuadrante, no solo
+    // ventas+productos: si no, hay un instante donde costosRecetas/comisiones
+    // están vacíos y todo sale "sin costo" (con isLoading=false → se muestra
+    // como si fuera el resultado final). Eso causaba el "se da vuelta la data".
+    const isLoading =
+      ventasQ.isLoading ||
+      productosQ.isLoading ||
+      recetasQ.isLoading ||
+      costosLoading ||
+      configLoading ||
+      comisionesLoading ||
+      costeoConfigLoading;
     if (!ventas || !cocinaProds) {
       return { productos: [], isLoading, periodos: opts.periodos };
     }
@@ -414,8 +425,12 @@ export function useMenuEngineering(opts: MenuEngineeringOptions) {
     recetasQ.data,
     recetasQ.isLoading,
     costosRecetas,
+    costosLoading,
     configGen,
+    configLoading,
     comisiones,
+    comisionesLoading,
+    costeoConfigLoading,
     opts.periodos,
     opts.categoria,
     getConfig,
