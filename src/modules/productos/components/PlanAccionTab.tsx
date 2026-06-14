@@ -65,6 +65,10 @@ export function PlanAccionTab() {
 
     for (const p of productos) {
       const cfg = getConfig(p.tipo);
+      // Base única por producto para el id de la acción (= key de React). Muchos
+      // productos de Fudo no tienen `codigo` (Vedia ~30%): si usáramos solo el
+      // codigo vacío, las keys colisionarían y React no re-renderiza al filtrar.
+      const idp = p.codigo || `n:${p.nombre}`;
 
       // Acción A — Vaca: subir precio leve si no es ancla
       if (
@@ -78,7 +82,7 @@ export function PlanAccionTab() {
         const incrementoUnit = nuevoPrecio - p.precioPromedio;
         const impactoMes = incrementoUnit * p.unidadesVendidas;
         out.push({
-          id: `vaca-${p.local}-${p.codigo}`,
+          id: `vaca-${p.local}-${idp}`,
           tipo: 'subir_precio_vaca',
           prioridad: Math.abs(impactoMes),
           producto: p,
@@ -98,7 +102,7 @@ export function PlanAccionTab() {
       ) {
         const diff = cfg.margen_min - p.margenPctSobrePrecio;
         out.push({
-          id: `margen-${p.local}-${p.codigo}`,
+          id: `margen-${p.local}-${idp}`,
           tipo: 'subir_precio_margen_bajo',
           prioridad: diff * Math.abs(p.contribucionAbsoluta ?? 0) * 10,
           producto: p,
@@ -111,7 +115,7 @@ export function PlanAccionTab() {
       // Acción C — Perro: candidato a eliminar
       if (p.cuadrante === 'perro' && !p.esAncla && p.unidadesVendidas < 20) {
         out.push({
-          id: `perro-${p.local}-${p.codigo}`,
+          id: `perro-${p.local}-${idp}`,
           tipo: 'eliminar_perro',
           prioridad: 1000 - p.unidadesVendidas, // menos ventas = más urgente
           producto: p,
@@ -124,7 +128,7 @@ export function PlanAccionTab() {
       // Acción D — Puzzle: visibilidad
       if (p.cuadrante === 'puzzle' && p.unidadesVendidas > 0) {
         out.push({
-          id: `puzzle-${p.local}-${p.codigo}`,
+          id: `puzzle-${p.local}-${idp}`,
           tipo: 'dar_visibilidad_puzzle',
           prioridad: (p.margenUnitario ?? 0) * 10,
           producto: p,
@@ -137,7 +141,7 @@ export function PlanAccionTab() {
       // Acción E — Sin costo cargado
       if (p.costoUnitario == null && p.unidadesVendidas > 0) {
         out.push({
-          id: `sincosto-${p.local}-${p.codigo}`,
+          id: `sincosto-${p.local}-${idp}`,
           tipo: 'sin_costo',
           prioridad: p.unidadesVendidas, // más vendido = más urgente
           producto: p,
