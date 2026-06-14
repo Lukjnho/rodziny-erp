@@ -349,15 +349,16 @@ export function useProyeccionFlujo(): ProyeccionResult {
     0,
   );
 
-  // Promedio de pagos fijos de los últimos 3 meses cargados → estimación de
-  // meses futuros que todavía no tienen pagos fijos cargados (ej. 2027).
+  // Promedio de pagos fijos de los últimos `mesesProm` meses cargados → estimación
+  // de meses futuros que todavía no tienen pagos fijos cargados (ej. 2027).
+  // Usa el mismo `mesesProm` configurable que ingresos y CMV, para que toda la
+  // proyección promedie sobre la misma ventana. Divide por la cantidad real de
+  // meses tomados (nunca por cero).
   const pfPeriodosCargados = [...(pagosFijos?.keys() ?? [])].sort();
+  const pfUsados = pfPeriodosCargados.slice(-mesesProm);
   const pfPromedio =
-    pfPeriodosCargados.length > 0
-      ? pfPeriodosCargados
-          .slice(-3)
-          .reduce((s, p) => s + (pagosFijos?.get(p) ?? 0), 0) /
-        Math.min(3, pfPeriodosCargados.length)
+    pfUsados.length > 0
+      ? pfUsados.reduce((s, p) => s + (pagosFijos?.get(p) ?? 0), 0) / pfUsados.length
       : 0;
 
   // Aguinaldo de un mes: solo junio (1er semestre) y diciembre (2do).
