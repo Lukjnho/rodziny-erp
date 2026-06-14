@@ -4,6 +4,7 @@ import { supabase } from '@/lib/supabase';
 import { LocalSelector } from '@/components/ui/LocalSelector';
 import { KPICard } from '@/components/ui/KPICard';
 import { formatARS, cn } from '@/lib/utils';
+import { useCostoPorFudo } from '@/modules/productos/hooks/useCostoPorFudo';
 import {
   BarChart,
   Bar,
@@ -147,6 +148,11 @@ export function FudoLiveTab() {
   const [vistaTendencia, setVistaTendencia] = useState<'año' | 6 | 12>('año');
   const mesesVista = vistaTendencia === 'año' ? ahora.getMonth() + 1 : vistaTendencia;
 
+  // Costo/margen CANÓNICO desde Productos (no del maestro de Fudo). El costo sale
+  // del motor de costeo vía fudo_nombres/fudo_productos; el margen usa el mismo
+  // modelo que Ingeniería de Menú (neto de IVA − comisión).
+  const { getCosto, getMargenPct, costoPorFudo } = useCostoPorFudo(local);
+
   const { data, isLoading, error } = useQuery({
     queryKey: ['fudo-productos', local, fechaDesde, fechaHasta],
     queryFn: async () => {
@@ -276,16 +282,17 @@ export function FudoLiveTab() {
     if (ordenRanking === 'cantidad') items = [...items].sort((a, b) => b.cantidad - a.cantidad);
     else if (ordenRanking === 'margen') {
       items = [...items]
-        .filter((p) => p.costo !== null && p.costo > 0)
+        .filter((p) => getMargenPct(p.nombre, p.precio) !== null)
         .sort((a, b) => {
-          const mA = a.precio > 0 && a.costo ? ((a.precio - a.costo) / a.precio) * 100 : 0;
-          const mB = b.precio > 0 && b.costo ? ((b.precio - b.costo) / b.precio) * 100 : 0;
+          const mA = getMargenPct(a.nombre, a.precio) ?? -Infinity;
+          const mB = getMargenPct(b.nombre, b.precio) ?? -Infinity;
           return mB - mA;
         });
     }
     // facturacion ya viene ordenado por default
     return items.slice(0, limite);
-  }, [data, catFiltro, ordenRanking, limite]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, catFiltro, ordenRanking, limite, costoPorFudo]);
 
   // Datos por hora
   const horaData = useMemo(() => {
@@ -512,6 +519,12 @@ export function FudoLiveTab() {
                 </select>
               </div>
 
+              <p className="text-[11px] text-gray-400">
+                💡 Costo y margen salen del módulo <strong>Productos</strong> (motor de costeo;
+                margen neto de IVA y comisión). Si un producto muestra "—", falta vincular o
+                costear su receta en Productos &gt; Costeo.
+              </p>
+
               {/* Tabla ranking */}
               <div className="overflow-hidden rounded-lg border border-surface-border bg-white">
                 <div className="overflow-x-auto">
@@ -531,8 +544,8 @@ export function FudoLiveTab() {
                     </thead>
                     <tbody className="divide-y divide-gray-50">
                       {rankingFiltrado.map((p, i) => {
-                        const margen =
-                          p.costo && p.precio > 0 ? ((p.precio - p.costo) / p.precio) * 100 : null;
+                        const costoCanon = getCosto(p.nombre);
+                        const margen = getMargenPct(p.nombre, p.precio);
                         return (
                           <tr key={p.productId} className="hover:bg-gray-50">
                             <td className="px-3 py-2 text-xs text-gray-400">{i + 1}</td>
@@ -553,7 +566,7 @@ export function FudoLiveTab() {
                               {formatARS(p.precio)}
                             </td>
                             <td className="px-3 py-2 text-right text-xs tabular-nums text-gray-400">
-                              {p.costo ? formatARS(p.costo) : '—'}
+                              {costoCanon != null ? formatARS(costoCanon) : '—'}
                             </td>
                             <td className="px-3 py-2 text-right">
                               {margen !== null ? (
@@ -582,7 +595,7 @@ export function FudoLiveTab() {
                 {rankingFiltrado.length === 0 && (
                   <div className="p-8 text-center text-sm text-gray-400">
                     {ordenRanking === 'margen'
-                      ? 'No hay productos con costo cargado en Fudo'
+                      ? 'No hay productos con costo cargado en Productos (vinculá la receta/costo en Productos > Costeo)'
                       : 'Sin datos para el período seleccionado'}
                   </div>
                 )}
