@@ -1278,7 +1278,6 @@ export function ComprasPage() {
             onChange={(v) => {
               const l = v as 'vedia' | 'saavedra';
               setLocal(l);
-              if (l === 'vedia' && tab === 'recepcion') setTab('stock');
             }}
           />
         )}
@@ -1289,7 +1288,7 @@ export function ComprasPage() {
               ['stock', '📦 Stock'],
               ['gastos', '🧾 Gastos'],
               ['movimientos', '📋 Movimientos'],
-              ...(local === 'saavedra' ? [['recepcion', '📬 Recepción']] : []),
+              ['recepcion', '📬 Recepción'],
               ['pagos', '💰 Pagos'],
               ['conciliacion', '🔗 Conciliación'],
               ['proveedores', '🏢 Proveedores'],
