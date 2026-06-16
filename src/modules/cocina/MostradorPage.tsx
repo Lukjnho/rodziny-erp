@@ -36,18 +36,16 @@ const UNIDAD_POR_TIPO: Record<TipoSimple, 'kg' | 'unidades'> = {
   milanesa: 'kg',
 };
 
-// Panes que se cuentan en el cierre de panadería de Saavedra (curado por id).
-// El filtro 'panificado' traía 26 ítems (avocado toast, facturas, chipa,
-// tostados, sándwiches, bases varias) → acá se listan SOLO los panes terminados
-// que el panadero cuenta físicamente al cerrar. Se usan las subrecetas-base
-// (lo que se hornea), igual que la milanesa cuenta su base.
-// Focaccia se sumará cuando Tomy cargue su receta (tarea f479fd99).
-const PANES_CIERRE_SAAVEDRA: string[] = [
-  'fb5c147f-abe8-4dea-831f-caa43777d5d4', // Pan Brioche Base
-  '4870a669-bbf7-4678-846b-428cb9c35801', // Pan de Molde Base
-  'c1be7bae-44af-41af-9e8c-4d0639dbb864', // Pan de Campo
-  'ac97bbdd-18ba-4f9c-ad85-bcf6f625a4e5', // Pan Lactal Base
-  '672619ab-9f88-4b24-b25c-9b7c24929192', // Pan para servicio
+// Productos-pan que se cuentan en el cierre de panadería de Saavedra (curado por
+// id de PRODUCTO). El stock vive en cocina_productos, así que el cierre cuenta el
+// producto directo (como las pastas). El resto de 'panificado' (facturas,
+// medialunas, etc.) no entra. Focaccia se suma cuando Tomy cargue su producto.
+const PRODUCTOS_PAN_CIERRE_SAAVEDRA: string[] = [
+  '771d5ccc-6614-4eb4-80c3-3a4a83ddf151', // Pan Brioche
+  '4daa2926-8127-45b1-ae70-5be2d9c1cc11', // Pan de Molde
+  '29d53880-9b1f-4847-9a59-14c84a4e3c07', // Pan de Campo
+  'd8c58792-de2a-492c-8b27-b36fccf37550', // Pan Lactal
+  'a6fb9940-d0f3-4ee2-a01b-ea004a4e80f6', // Pan de Servicio
 ];
 
 interface Producto {
@@ -582,6 +580,17 @@ function CierrePastas({ local }: { local: Local }) {
 // Cierre simple — Salsas (kg) y Postres (unidades). Sin turno (fin de día).
 // ════════════════════════════════════════════════════════════════════════════
 
+// Ítem contable del cierre simple. `recetaId` = receta contra la que se
+// re-baselinea el stock (lote.receta_id); `productoId` ≠ null cuando se cuenta
+// un producto directo (postre/panadería) → además se sella nombre_libre con el
+// nombre del producto para que el StockTab lo matchee aunque receta_id sea null.
+interface ItemCierre {
+  id: string;
+  nombre: string;
+  recetaId: string | null;
+  productoId: string | null;
+}
+
 function CierreSimple({
   local,
   tipo,
@@ -600,43 +609,59 @@ function CierreSimple({
   const [notas, setNotas] = useState<Record<string, string>>({});
   const [mensaje, setMensaje] = useState<string | null>(null);
 
-  // Salsas, postres y panadería viven en cocina_recetas (no en cocina_productos
-  // como las pastas). Tras el refactor de recetas, `tipo` es solo receta/subreceta:
-  // lo que antes era tipo='postre'/'salsa'/'panaderia' ahora está en `categoria`
-  // (recetas vendibles) o `rol` (subrecetas-base).
-  //  · Postres   → solo los VENDIBLES (las porciones que se cuentan al cierre).
-  //  · Salsas    → vendibles + subrecetas-base (al cierre se pesa TODA la salsa).
-  //  · Panadería → vendibles + subrecetas-base (conteo físico de todo).
+  // El stock del tab Producción vive en `cocina_productos`. Para que el cierre
+  // realmente impacte ese stock:
+  //  · Postres / Panadería → se cuentan los PRODUCTOS directos (igual que pastas):
+  //    el re-baseline escribe el lote con receta_id + nombre del producto, así
+  //    el StockTab lo reconcilia siempre (matchea por receta_id o por nombre).
+  //  · Salsas / Milanesa → se cuentan RECETAS-base; sus productos apuntan a esa
+  //    misma receta, así que reconcilian igual (no se tocan).
   const { data: productos, isLoading } = useQuery({
-    queryKey: ['mostrador-simple-recetas', local, tipo],
-    queryFn: async () => {
+    queryKey: ['mostrador-simple-items', local, tipo],
+    queryFn: async (): Promise<ItemCierre[]> => {
+      if (tipo === 'postre' || tipo === 'panaderia') {
+        let pq = supabase
+          .from('cocina_productos')
+          .select('id, nombre, receta_id')
+          .eq('activo', true)
+          .eq('local', local);
+        if (tipo === 'postre') {
+          // Todos los postres-producto (Flan, Tiramisú, y la repostería por
+          // porción: Brownie, Carrot, Cheesecake, Tarta Vasca, Matilda).
+          pq = pq.eq('tipo', 'postre');
+        } else {
+          // Panadería: solo los panes curados (ver PRODUCTOS_PAN_CIERRE_SAAVEDRA).
+          pq = pq.in('id', PRODUCTOS_PAN_CIERRE_SAAVEDRA);
+        }
+        const { data, error } = await pq.order('nombre');
+        if (error) throw error;
+        return (data ?? []).map((p) => ({
+          id: p.id,
+          nombre: p.nombre,
+          recetaId: p.receta_id,
+          productoId: p.id,
+        }));
+      }
+      // Salsa / milanesa: recetas-base (el id ES el receta_id).
       let q = supabase
         .from('cocina_recetas')
         .select('id, nombre')
         .eq('activo', true)
         .eq('local', local);
-      if (tipo === 'postre') {
-        // Postres + pastelería POR PORCIÓN (lo que se cuenta en la heladera del
-        // mostrador). Las tortas enteras "(ALMACEN)" no entran: van por pedido
-        // (módulo Almacén). Saavedra cierra toda la repostería dulce en este tab.
-        q = q
-          .in('categoria', ['postre', 'pasteleria'])
-          .eq('vendible', true)
-          .not('nombre', 'ilike', '%almacen%');
-      } else if (tipo === 'salsa') {
+      if (tipo === 'salsa') {
         q = q.or('categoria.eq.salsa,rol.eq.salsa_base');
-      } else if (tipo === 'milanesa') {
-        // Se cuenta la subreceta base (rol='milanesa_base'): los kg de milanesa
-        // que quedan congelados al cierre re-baselinean el stock contra esa receta.
-        q = q.eq('rol', 'milanesa_base');
       } else {
-        // Panadería: solo los panes curados que se cuentan al cierre (ver
-        // PANES_CIERRE_SAAVEDRA). El resto de 'panificado' no entra al cierre.
-        q = q.in('id', PANES_CIERRE_SAAVEDRA);
+        // milanesa → subreceta base (rol='milanesa_base').
+        q = q.eq('rol', 'milanesa_base');
       }
       const { data, error } = await q.order('nombre');
       if (error) throw error;
-      return (data ?? []).map((r) => ({ id: r.id, nombre: r.nombre, codigo: '' })) as Producto[];
+      return (data ?? []).map((r) => ({
+        id: r.id,
+        nombre: r.nombre,
+        recetaId: r.id,
+        productoId: null,
+      }));
     },
   });
 
@@ -707,19 +732,24 @@ function CierreSimple({
       // Guardamos el nombre del producto para poder apagar también los lotes
       // huérfanos del modelo viejo (con nombre_libre, sin receta_id) que si no
       // se desactivan siguen sumando al stock visible.
-      const cierres = conDatos.map(([recetaId, valor]) => ({
-        recetaId,
-        nombre: productos?.find((p) => p.id === recetaId)?.nombre ?? null,
-        cantidad: Number(valor.trim().replace(/\s/g, '').replace(',', '.')),
-      }));
+      const cierres = conDatos.map(([itemId, valor]) => {
+        const item = productos?.find((p) => p.id === itemId);
+        return {
+          itemId,
+          recetaId: item?.recetaId ?? null,
+          productoId: item?.productoId ?? null,
+          nombre: item?.nombre ?? null,
+          cantidad: Number(valor.trim().replace(/\s/g, '').replace(',', '.')),
+        };
+      });
       const mala = cierres.find(
         (c) => !Number.isFinite(c.cantidad) || c.cantidad < 0,
       );
       if (mala) {
         const nom =
-          productos?.find((p) => p.id === mala.recetaId)?.nombre ?? 'una salsa';
+          productos?.find((p) => p.id === mala.itemId)?.nombre ?? 'un producto';
         throw new Error(
-          `Revisá la cantidad de "${nom}": "${valores[mala.recetaId]}" no es un número válido. Usá coma para los decimales (ej: 8,910).`,
+          `Revisá la cantidad de "${nom}": "${valores[mala.itemId]}" no es un número válido. Usá coma para los decimales (ej: 8,910).`,
         );
       }
 
@@ -730,24 +760,24 @@ function CierreSimple({
       const absurda = cierres.find((c) => c.cantidad > topeSanidad);
       if (absurda) {
         const nom =
-          productos?.find((p) => p.id === absurda.recetaId)?.nombre ?? 'un producto';
+          productos?.find((p) => p.id === absurda.itemId)?.nombre ?? 'un producto';
         const enKg = unidad === 'kg' ? ` (¿cargaste gramos en vez de kilos? serían ${(absurda.cantidad / 1000).toLocaleString('es-AR')} kg)` : '';
         throw new Error(
           `La cantidad de "${nom}" (${absurda.cantidad.toLocaleString('es-AR')} ${unidad}) parece un error.${enKg} Revisala y volvé a guardar.`,
         );
       }
 
-      const payload = cierres.map(({ recetaId, cantidad }) => ({
+      const payload = cierres.map(({ itemId, recetaId, productoId, cantidad }) => ({
         fecha,
         local,
-        producto_id: null as null,
+        producto_id: productoId,
         receta_id: recetaId,
         tipo,
         turno: null as null,
         cantidad_real: cantidad,
         unidad,
         responsable: responsable.trim(),
-        notas: notas[recetaId]?.trim() || null,
+        notas: notas[itemId]?.trim() || null,
       }));
 
       const { error } = await supabase.from('cocina_cierre_dia').insert(payload);
@@ -758,25 +788,26 @@ function CierreSimple({
       // y crea uno nuevo con la cantidad real del cierre. Así Dashboard/Stock
       // arrancan el día siguiente con exactamente lo que se contó al cerrar.
       const unidadLote: 'kg' | 'unid' | 'lt' = unidad === 'kg' ? 'kg' : 'unid';
-      for (const { recetaId, nombre, cantidad } of cierres) {
-        // (a) Apagar lotes con la misma receta vinculada (modelo actual)
-        const { error: errOff } = await supabase
-          .from('cocina_lotes_produccion')
-          .update({ en_stock: false })
-          .eq('local', local)
-          .eq('receta_id', recetaId)
-          .eq('en_stock', true);
-        if (errOff) throw errOff;
+      for (const { recetaId, productoId, nombre, cantidad } of cierres) {
+        // (a) Apagar lotes con la misma receta vinculada (si el ítem tiene receta).
+        if (recetaId) {
+          const { error: errOff } = await supabase
+            .from('cocina_lotes_produccion')
+            .update({ en_stock: false })
+            .eq('local', local)
+            .eq('receta_id', recetaId)
+            .eq('en_stock', true);
+          if (errOff) throw errOff;
+        }
 
-        // (b) Apagar también lotes huérfanos con nombre_libre matching (modelo
-        // viejo). Si no se desactivan, siguen sumando al stock visible junto con
-        // el lote nuevo del cierre y los valores no se actualizan.
+        // (b) Apagar lotes previos identificados por nombre_libre = nombre del
+        // ítem. Cubre los cierres anteriores en modo producto (que sellan
+        // nombre_libre) y los huérfanos del modelo viejo. Sin esto se acumularían.
         if (nombre) {
           const { error: errOff2 } = await supabase
             .from('cocina_lotes_produccion')
             .update({ en_stock: false })
             .eq('local', local)
-            .is('receta_id', null)
             .ilike('nombre_libre', nombre)
             .eq('en_stock', true);
           if (errOff2) throw errOff2;
@@ -786,12 +817,15 @@ function CierreSimple({
           // origen='cierre' evita que el trigger trg_pizarron_lote_produccion
           // marque items del pizarrón como ciclo_completo: el cierre es
           // re-baselining de stock, no producción real.
+          // Modo producto (postre/panadería): sellamos nombre_libre con el nombre
+          // del producto para que el StockTab lo reconcilie aunque el producto
+          // tenga receta_id null. Modo receta (salsa/milanesa): nombre_libre null.
           const { error: errIns } = await supabase.from('cocina_lotes_produccion').insert({
             fecha,
             local,
             categoria: tipo,
             receta_id: recetaId,
-            nombre_libre: null,
+            nombre_libre: productoId ? nombre : null,
             cantidad_producida: cantidad,
             unidad: unidadLote,
             en_stock: true,
