@@ -1,5 +1,8 @@
 // Edge function: envía notificaciones Web Push a uno o varios usuarios.
-// Body: { user_ids: string[], title: string, body?: string, url?: string, tag?: string }
+// Body: { user_ids?: string[], grupo?: string, title, body?, url?, tag? }
+//  - user_ids: lista explícita de destinatarios.
+//  - grupo: alias que se resuelve a user_ids del lado del servidor (service_role),
+//    para no exponer la lista de usuarios al navegador. Soportado: 'almacen_saavedra'.
 import webpush from 'npm:web-push@3.6.7';
 import { createClient } from 'npm:@supabase/supabase-js@2';
 
@@ -31,9 +34,24 @@ Deno.serve(async (req) => {
       throw new Error('Faltan las claves VAPID en los secrets del proyecto.');
     }
 
-    const { user_ids, title, body, url, tag } = await req.json();
-    if (!Array.isArray(user_ids) || user_ids.length === 0) {
-      return new Response(JSON.stringify({ error: 'user_ids requerido' }), {
+    const { user_ids, grupo, title, body, url, tag } = await req.json();
+
+    // Destinatarios: lista explícita y/o un grupo resuelto server-side.
+    let destinatarios: string[] = Array.isArray(user_ids) ? user_ids : [];
+    if (grupo === 'almacen_saavedra') {
+      const { data: perfs, error: perfErr } = await admin
+        .from('perfiles')
+        .select('user_id')
+        .eq('puede_ver_almacen', true)
+        .eq('local_restringido', 'saavedra');
+      if (perfErr) throw perfErr;
+      destinatarios = [
+        ...new Set([...destinatarios, ...(perfs ?? []).map((p) => p.user_id as string)]),
+      ];
+    }
+
+    if (destinatarios.length === 0) {
+      return new Response(JSON.stringify({ error: 'Sin destinatarios' }), {
         status: 400,
         headers: { ...cors, 'Content-Type': 'application/json' },
       });
@@ -42,7 +60,7 @@ Deno.serve(async (req) => {
     const { data: subs, error } = await admin
       .from('push_subscriptions')
       .select('id, endpoint, p256dh, auth')
-      .in('user_id', user_ids);
+      .in('user_id', destinatarios);
     if (error) throw error;
 
     const payload = JSON.stringify({

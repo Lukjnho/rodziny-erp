@@ -570,6 +570,20 @@ function ModalPedido({
         setGuardando(false);
         return;
       }
+      // Avisar por push a la cocina de Saavedra que entró un pedido nuevo.
+      // Best-effort: no bloquea el guardado si el push falla.
+      void supabase.functions
+        .invoke('enviar-push', {
+          body: {
+            grupo: 'almacen_saavedra',
+            title: '📦 Nuevo pedido de almacén',
+            body: `${payload.producto_nombre} x${payload.cantidad} · ${payload.cliente_nombre} · entrega ${payload.fecha_entrega}`,
+            url: '/almacen',
+          },
+        })
+        .catch(() => {
+          /* el push es best-effort */
+        });
     }
 
     setGuardando(false);
