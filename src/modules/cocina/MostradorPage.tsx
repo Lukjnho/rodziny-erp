@@ -602,7 +602,13 @@ function CierreSimple({
         .eq('activo', true)
         .eq('local', local);
       if (tipo === 'postre') {
-        q = q.eq('categoria', 'postre').eq('vendible', true);
+        // Postres + pastelería POR PORCIÓN (lo que se cuenta en la heladera del
+        // mostrador). Las tortas enteras "(ALMACEN)" no entran: van por pedido
+        // (módulo Almacén). Saavedra cierra toda la repostería dulce en este tab.
+        q = q
+          .in('categoria', ['postre', 'pasteleria'])
+          .eq('vendible', true)
+          .not('nombre', 'ilike', '%almacen%');
       } else if (tipo === 'salsa') {
         q = q.or('categoria.eq.salsa,rol.eq.salsa_base');
       } else if (tipo === 'milanesa') {
