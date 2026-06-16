@@ -170,7 +170,7 @@ interface LoteProduccion {
   id: string;
   fecha: string;
   local: string;
-  categoria: 'salsa' | 'postre' | 'pasteleria' | 'panaderia' | 'prueba';
+  categoria: 'salsa' | 'postre' | 'pasteleria' | 'panaderia' | 'milanesa' | 'prueba';
   receta_id: string | null;
   nombre_libre: string | null;
   cantidad_producida: number;
@@ -184,7 +184,15 @@ interface LoteProduccion {
   receta?: { nombre: string } | null;
 }
 
-type TipoLote = 'relleno' | 'masa' | 'salsa' | 'postre' | 'pasteleria' | 'panaderia' | 'prueba';
+type TipoLote =
+  | 'relleno'
+  | 'masa'
+  | 'salsa'
+  | 'postre'
+  | 'pasteleria'
+  | 'panaderia'
+  | 'milanesa'
+  | 'prueba';
 
 const TIPO_LOTE_LABEL: Record<TipoLote, string> = {
   relleno: 'Rellenos',
@@ -193,6 +201,7 @@ const TIPO_LOTE_LABEL: Record<TipoLote, string> = {
   postre: 'Postres',
   pasteleria: 'Pastelería',
   panaderia: 'Panadería',
+  milanesa: 'Milanesas',
   prueba: 'Pruebas',
 };
 
@@ -203,6 +212,7 @@ const TIPO_LOTE_COLOR: Record<TipoLote, string> = {
   postre: 'bg-pink-100 text-pink-700',
   pasteleria: 'bg-rose-100 text-rose-700',
   panaderia: 'bg-yellow-100 text-yellow-700',
+  milanesa: 'bg-red-100 text-red-700',
   prueba: 'bg-purple-100 text-purple-700',
 };
 
@@ -245,6 +255,7 @@ const TIPO_LOTE_SEMANAL_ORDEN: TipoLoteSemanal[] = [
   'postre',
   'pasteleria',
   'panaderia',
+  'milanesa',
   'prueba',
 ];
 
@@ -727,7 +738,8 @@ export function ProduccionTab() {
       postre: 4,
       pasteleria: 5,
       panaderia: 6,
-      prueba: 7,
+      milanesa: 7,
+      prueba: 8,
     };
     return Array.from(gruposMap.values()).sort((a, b) => {
       if (a.tipo !== b.tipo) return ordenTipo[a.tipo] - ordenTipo[b.tipo];
@@ -754,6 +766,7 @@ export function ProduccionTab() {
       postre: 0,
       pasteleria: 0,
       panaderia: 0,
+      milanesa: 0,
       prueba: 0,
     };
     for (const g of lotesSemanalesAgrupados) m[g.tipo] += g.lotesCount;

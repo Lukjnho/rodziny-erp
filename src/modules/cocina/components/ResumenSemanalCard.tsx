@@ -50,9 +50,10 @@ interface FudoResp {
 
 type Estado = 'cubre' | 'ajustado' | 'corto' | 'sobra' | 'sin_demanda';
 
-// Solo pastas y postres entran al resumen, en ambos locales.
+// Pastas y postres en ambos locales; Saavedra suma milanesas (stock en kg, se
+// convierte a milas para comparar contra la demanda Fudo, que viene en platos).
 const TIPOS_POR_LOCAL: Record<LocalCocina, string[]> = {
-  saavedra: ['pasta', 'postre'],
+  saavedra: ['pasta', 'milanesa', 'postre'],
   vedia: ['pasta', 'postre'],
 };
 
@@ -219,6 +220,33 @@ export function ResumenSemanalCard({
     refetchInterval: 60_000,
   });
 
+  // ── Factor milas/kg de las recetas base de milanesa (rol='milanesa_base') ──
+  // El stock de milanesa se guarda en kg, pero la demanda Fudo viene en platos
+  // (1 plato = 1 mila). Convertimos kg→milas con el propio rinde de la receta
+  // (porciones/kg, ej: 6 milas / 1,5 kg = 4 milas/kg). Sin números mágicos.
+  const { data: milanesaFactor } = useQuery({
+    queryKey: ['resumen-semanal-milanesa-factor', local],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('cocina_recetas')
+        .select('id, rendimiento_kg, rendimiento_porciones')
+        .eq('local', local)
+        .eq('rol', 'milanesa_base');
+      if (error) throw error;
+      const m = new Map<string, number>();
+      for (const r of (data ?? []) as Array<{
+        id: string;
+        rendimiento_kg: number | null;
+        rendimiento_porciones: number | null;
+      }>) {
+        const kg = Number(r.rendimiento_kg) || 0;
+        const porc = Number(r.rendimiento_porciones) || 0;
+        m.set(r.id, kg > 0 && porc > 0 ? porc / kg : 4); // fallback 250 g/mila
+      }
+      return m;
+    },
+  });
+
   // ── Pedidos anticipados de Almacén pendientes (congelados / viandas) ──
   // Stock ya comprometido: se descuenta del disponible. Key = producto_id.
   // cantidad = unidades del producto → se convierten a porciones con
@@ -309,6 +337,20 @@ export function ResumenSemanalCard({
     staleTime: 10 * 60 * 1000,
   });
 
+  // Stock por receta para la cobertura: postres tal cual (porciones); milanesas
+  // convertidas de kg → milas con el factor de su receta, para quedar en la misma
+  // unidad que la demanda (platos Fudo).
+  const stockPorReceta = useMemo(() => {
+    const base = stockPostres ?? new Map<string, number>();
+    if (!milanesaFactor || milanesaFactor.size === 0) return base;
+    const m = new Map(base);
+    for (const [recetaId, factor] of milanesaFactor) {
+      const kg = m.get(recetaId);
+      if (kg != null) m.set(recetaId, kg * factor); // kg → milas
+    }
+    return m;
+  }, [stockPostres, milanesaFactor]);
+
   const resumen = useMemo<ResultadoCob[]>(() => {
     if (!productos) return [];
     return calcularCobertura({
@@ -316,7 +358,7 @@ export function ResumenSemanalCard({
       itemsPlan: itemsPlan ?? [],
       fudoData,
       stockPorProducto: stockPastas ?? new Map(),
-      stockPorReceta: stockPostres ?? new Map(),
+      stockPorReceta,
       pedidosPorProducto: pedidosPend ?? new Map(),
       rindePorLote: rindePorLote ?? new Map(),
       tiposIncluidos: tiposLocal,
@@ -326,7 +368,7 @@ export function ResumenSemanalCard({
     itemsPlan,
     fudoData,
     stockPastas,
-    stockPostres,
+    stockPorReceta,
     pedidosPend,
     rindePorLote,
     tiposLocal,
