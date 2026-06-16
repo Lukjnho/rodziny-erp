@@ -10,27 +10,30 @@ import { PRODUCTOS_COCINA, normNombre } from './DashboardTab';
 
 type Local = 'vedia' | 'saavedra';
 type Turno = 'mediodia' | 'noche';
-type TipoTab = 'pasta' | 'salsa' | 'postre' | 'panaderia';
-type TipoSimple = 'salsa' | 'postre' | 'panaderia';
+type TipoTab = 'pasta' | 'salsa' | 'postre' | 'panaderia' | 'milanesa';
+type TipoSimple = 'salsa' | 'postre' | 'panaderia' | 'milanesa';
 
 const TAB_META: Record<TipoTab, { emoji: string; label: string }> = {
   pasta: { emoji: '🍝', label: 'Pastas' },
   salsa: { emoji: '🥫', label: 'Salsas' },
   postre: { emoji: '🍰', label: 'Postres' },
   panaderia: { emoji: '🥐', label: 'Panadería' },
+  milanesa: { emoji: '🍖', label: 'Milanesas' },
 };
 
-// Vedia cierra pasta/salsa/postre. Saavedra suma panadería (no tiene Fudo, pero
-// el cierre es conteo físico manual, así que no depende de ventas automáticas).
+// Vedia cierra pasta/salsa/postre. Saavedra suma panadería + milanesa (no tiene
+// Fudo, pero el cierre es conteo físico manual, así que no depende de ventas
+// automáticas). La milanesa se cuenta en kg de milanesa que quedan congelados.
 const TABS_POR_LOCAL: Record<Local, TipoTab[]> = {
   vedia: ['pasta', 'salsa', 'postre'],
-  saavedra: ['pasta', 'salsa', 'postre', 'panaderia'],
+  saavedra: ['pasta', 'salsa', 'postre', 'panaderia', 'milanesa'],
 };
 
 const UNIDAD_POR_TIPO: Record<TipoSimple, 'kg' | 'unidades'> = {
   salsa: 'kg',
   postre: 'unidades',
   panaderia: 'unidades',
+  milanesa: 'kg',
 };
 
 interface Producto {
@@ -602,6 +605,10 @@ function CierreSimple({
         q = q.eq('categoria', 'postre').eq('vendible', true);
       } else if (tipo === 'salsa') {
         q = q.or('categoria.eq.salsa,rol.eq.salsa_base');
+      } else if (tipo === 'milanesa') {
+        // Se cuenta la subreceta base (rol='milanesa_base'): los kg de milanesa
+        // que quedan congelados al cierre re-baselinean el stock contra esa receta.
+        q = q.eq('rol', 'milanesa_base');
       } else {
         q = q.or('categoria.eq.panificado,rol.eq.panificado');
       }

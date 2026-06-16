@@ -48,6 +48,8 @@ function recetasDelTipoPlan(recetas: Receta[], tipoPlan: TipoItem): Receta[] {
       return recetas.filter((r) => r.rol === 'panificado' || r.categoria === 'panificado');
     case 'pasteleria':
       return recetas.filter((r) => r.rol === 'pasteleria_base');
+    case 'milanesa':
+      return recetas.filter((r) => r.rol === 'milanesa_base');
     case 'pasta_simple':
       return [];
   }
@@ -72,6 +74,7 @@ type TipoItem =
   | 'postre'
   | 'pasteleria'
   | 'panaderia'
+  | 'milanesa'
   | 'pasta_simple';
 
 interface PlanItem {
@@ -102,6 +105,7 @@ const TIPOS_SAAVEDRA: { tipo: TipoItem; label: string; emoji: string }[] = [
   { tipo: 'relleno', label: 'Rellenos', emoji: '🥟' },
   { tipo: 'pasta_simple', label: 'Pastas simples', emoji: '🍝' },
   { tipo: 'salsa', label: 'Salsas', emoji: '🍅' },
+  { tipo: 'milanesa', label: 'Milanesas', emoji: '🍖' },
   { tipo: 'pasteleria', label: 'Pastelería', emoji: '🥐' },
   { tipo: 'panaderia', label: 'Panadería', emoji: '🍞' },
 ];

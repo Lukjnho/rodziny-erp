@@ -669,12 +669,13 @@ export function ProduccionQRPage() {
   // (si hay varios items para la misma receta, se suman). Se usa para
   // filtrar el dropdown y mostrar "N recetas planificadas" en cada opción.
   const planPorTipo = useMemo(() => {
-    const m: Record<'relleno' | 'salsa' | 'postre' | 'pasteleria' | 'panaderia', Map<string, number>> = {
+    const m: Record<'relleno' | 'salsa' | 'postre' | 'pasteleria' | 'panaderia' | 'milanesa', Map<string, number>> = {
       relleno: new Map(),
       salsa: new Map(),
       postre: new Map(),
       pasteleria: new Map(),
       panaderia: new Map(),
+      milanesa: new Map(),
     };
     for (const it of planHoy ?? []) {
       if (!it.receta_id) continue;
@@ -698,12 +699,11 @@ export function ProduccionQRPage() {
         .map((p) => ({ id: p.id, nombre: p.nombre })),
     [productos, local],
   );
-  const milanesaLibres = useMemo(
-    () =>
-      (productos ?? [])
-        .filter((p) => p.tipo === 'milanesa' && p.local === local)
-        .map((p) => ({ id: p.id, nombre: p.nombre })),
-    [productos, local],
+  // Milanesa (Saavedra): se carga por kg de cuadril contra su subreceta base
+  // (rol='milanesa_base'). El form escala la receta y registra kg de milanesa.
+  const recetasMilanesa = useMemo(
+    () => (recetas ?? []).filter((r) => r.rol === 'milanesa_base' && r.local === local),
+    [recetas, local],
   );
 
   function onGuardado(msg: string) {
@@ -843,12 +843,10 @@ export function ProduccionQRPage() {
       )}
 
       {vista === 'milanesa' && (
-        <FormGenerico
+        <FormMila
           local={local}
-          categoria="milanesa"
-          recetas={[]}
-          permitirLibre
-          productosLibres={milanesaLibres}
+          recetasMilanesa={recetasMilanesa}
+          recetaIdsPlan={planPorTipo.milanesa}
           onGuardado={onGuardado}
           onVolver={() => setVista('inicio')}
         />
@@ -2687,6 +2685,231 @@ function Exito({ mensaje, onOtro }: { mensaje: string; onOtro: () => void }) {
       <p className="mt-4 text-[10px] text-gray-400">
         {new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}
       </p>
+    </div>
+  );
+}
+
+// ── FormMila (milanesa por kg de cuadril — Saavedra) ───────────────────────────
+// La subreceta "Milanesa de carne" (rol='milanesa_base') está definida por 1 kg
+// de cuadril. El cocinero ingresa los kg de cuadril a empanar; la grilla escala
+// los ingredientes (multiplicador = kg) como checklist, y se registra la
+// producción en kg de milanesa = kg cuadril × rendimiento. SUMA al stock (no
+// reemplaza). Vinculado al plan vía recetaIdsPlan (tipo 'milanesa' del pizarrón).
+function FormMila({
+  local,
+  recetasMilanesa,
+  recetaIdsPlan,
+  onGuardado,
+  onVolver,
+}: {
+  local: string;
+  recetasMilanesa: Receta[];
+  recetaIdsPlan?: Map<string, number>;
+  onGuardado: (msg: string) => void;
+  onVolver: () => void;
+}) {
+  const [recetaId, setRecetaId] = useState(
+    recetasMilanesa.length === 1 ? recetasMilanesa[0].id : '',
+  );
+  const [kgCuadril, setKgCuadril] = useState('');
+  const [responsable, setResponsable] = useState('');
+  const [notas, setNotas] = useState('');
+  const [ingredientesReales, setIngredientesReales] = useState<IngredienteReal[]>([]);
+  const [ingredientesOk, setIngredientesOk] = useState(true);
+  const [guardando, setGuardando] = useState(false);
+  const [error, setError] = useState('');
+  const onGrillaChange = useCallback((ings: IngredienteReal[]) => setIngredientesReales(ings), []);
+
+  // Auto-seleccionar si hay una sola receta (puede llegar async).
+  useEffect(() => {
+    if (!recetaId && recetasMilanesa.length === 1) setRecetaId(recetasMilanesa[0].id);
+  }, [recetasMilanesa, recetaId]);
+
+  const recetaSel = recetasMilanesa.find((r) => r.id === recetaId);
+  const rinde = recetaSel?.rendimiento_kg ?? null; // kg de milanesa por 1 kg de cuadril
+  const kg = parseDecimal(kgCuadril);
+  const kgMilanesa = rinde && kg > 0 ? kg * rinde : 0;
+  const planCant = recetaId ? recetaIdsPlan?.get(recetaId) : undefined;
+
+  // Cargado hoy (con suma, cargar dos veces duplica → mostrarlo evita duplicar).
+  const { data: cargasHoy } = useQuery({
+    queryKey: ['cocina-lotes-produccion-qr', local, 'milanesa', hoy()],
+    queryFn: async () => {
+      const { data, error: e } = await supabase
+        .from('cocina_lotes_produccion')
+        .select('cantidad_producida, unidad, responsable, created_at')
+        .eq('fecha', hoy())
+        .eq('local', local)
+        .eq('categoria', 'milanesa')
+        .order('created_at', { ascending: false });
+      if (e) throw e;
+      return (data ?? []) as {
+        cantidad_producida: number;
+        unidad: string;
+        responsable: string | null;
+        created_at: string;
+      }[];
+    },
+  });
+  const cargasHoyItems = useMemo<CargaHoyItem[]>(
+    () =>
+      (cargasHoy ?? []).map((c) => ({
+        nombre: 'Milanesa',
+        detalle: `${formatNum(Number(c.cantidad_producida))} ${c.unidad}`,
+        hora: horaDe(c.created_at),
+        responsable: c.responsable,
+      })),
+    [cargasHoy],
+  );
+
+  async function guardar() {
+    if (!recetaId) {
+      setError('Elegí la receta de milanesa');
+      return;
+    }
+    if (!rinde || rinde <= 0) {
+      setError('La receta no tiene rendimiento cargado (kg de milanesa por kg de cuadril).');
+      return;
+    }
+    if (!kg || kg <= 0) {
+      setError('Indicá los kg de cuadril a empanar');
+      return;
+    }
+    if (!responsable.trim()) {
+      setError('Elegí responsable');
+      return;
+    }
+    if (!ingredientesOk) {
+      setError('Tildá todos los ingredientes pesados antes de guardar');
+      return;
+    }
+    setGuardando(true);
+    setError('');
+    const { error: err } = await supabase.from('cocina_lotes_produccion').insert({
+      fecha: hoy(),
+      local,
+      categoria: 'milanesa',
+      receta_id: recetaId,
+      nombre_libre: null,
+      cantidad_producida: kgMilanesa,
+      unidad: 'kg',
+      responsable: responsable.trim(),
+      notas: `${formatNum(kg)} kg de cuadril` + (notas.trim() ? ` — ${notas.trim()}` : ''),
+      ingredientes_reales: ingredientesReales.length > 0 ? ingredientesReales : null,
+      en_stock: true,
+    });
+    if (err) {
+      setError(mensajeErrorAmigable(err, 'No se pudo guardar la producción de milanesa'));
+      setGuardando(false);
+      return;
+    }
+    onGuardado(`Milanesa — ${formatNum(kgMilanesa)} kg (de ${formatNum(kg)} kg de cuadril)`);
+  }
+
+  return (
+    <div className="mt-2 space-y-3">
+      <div className="flex items-center justify-between">
+        <h2 className="text-base font-semibold text-gray-900">Cargar Milanesas</h2>
+        <button onClick={onVolver} className="text-xs text-gray-500 underline">
+          Volver
+        </button>
+      </div>
+
+      <CargasHoyResumen items={cargasHoyItems} />
+
+      <div className="space-y-3 rounded-lg border border-gray-200 bg-white p-4">
+        <ResponsableSelect
+          local={local as 'vedia' | 'saavedra'}
+          value={responsable}
+          onChange={setResponsable}
+        />
+
+        {recetasMilanesa.length === 0 ? (
+          <div className="rounded border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+            No hay receta de milanesa configurada para este local.
+          </div>
+        ) : (
+          <>
+            {recetasMilanesa.length > 1 && (
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-700">
+                  Receta de milanesa
+                </label>
+                <select
+                  value={recetaId}
+                  onChange={(e) => setRecetaId(e.target.value)}
+                  className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm"
+                >
+                  <option value="">Elegí…</option>
+                  {recetasMilanesa.map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {r.nombre}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {planCant != null && planCant > 0 && (
+              <div className="rounded border border-rodziny-200 bg-rodziny-50 px-3 py-2 text-xs text-rodziny-800">
+                📋 Planificado hoy: {formatNum(planCant)} receta{planCant !== 1 ? 's' : ''} (1 receta = 1 kg
+                de cuadril)
+              </div>
+            )}
+
+            <div>
+              <label className="mb-1 block text-xs font-medium text-gray-700">
+                Kg de cuadril a empanar
+              </label>
+              <input
+                inputMode="decimal"
+                value={kgCuadril}
+                onChange={(e) => setKgCuadril(normalizarDecimal(e.target.value))}
+                placeholder="Ej: 5"
+                className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm"
+              />
+              {kg > 0 && rinde != null && (
+                <p className="mt-1 text-xs text-gray-600">
+                  Rinde ≈{' '}
+                  <span className="font-semibold text-gray-800">
+                    {formatNum(kgMilanesa)} kg de milanesa
+                  </span>{' '}
+                  ({formatNum(rinde)} kg por kg de cuadril)
+                </p>
+              )}
+            </div>
+
+            {recetaId && kg > 0 && (
+              <IngredientesGrilla
+                recetaId={recetaId}
+                multiplicador={kg}
+                onChange={onGrillaChange}
+                onValidezChange={setIngredientesOk}
+              />
+            )}
+
+            <div>
+              <label className="mb-1 block text-xs font-medium text-gray-700">Notas (opcional)</label>
+              <input
+                value={notas}
+                onChange={(e) => setNotas(e.target.value)}
+                placeholder="Ej: tanda de la mañana"
+                className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm"
+              />
+            </div>
+
+            {error && <p className="text-xs text-red-600">{error}</p>}
+
+            <button
+              onClick={guardar}
+              disabled={guardando}
+              className="w-full rounded bg-red-700 py-2.5 text-sm font-semibold text-white hover:bg-red-800 disabled:opacity-50"
+            >
+              {guardando ? 'Guardando...' : 'Sumar milanesas al stock'}
+            </button>
+          </>
+        )}
+      </div>
     </div>
   );
 }
