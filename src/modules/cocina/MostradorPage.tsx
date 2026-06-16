@@ -36,6 +36,20 @@ const UNIDAD_POR_TIPO: Record<TipoSimple, 'kg' | 'unidades'> = {
   milanesa: 'kg',
 };
 
+// Panes que se cuentan en el cierre de panadería de Saavedra (curado por id).
+// El filtro 'panificado' traía 26 ítems (avocado toast, facturas, chipa,
+// tostados, sándwiches, bases varias) → acá se listan SOLO los panes terminados
+// que el panadero cuenta físicamente al cerrar. Se usan las subrecetas-base
+// (lo que se hornea), igual que la milanesa cuenta su base.
+// Focaccia se sumará cuando Tomy cargue su receta (tarea f479fd99).
+const PANES_CIERRE_SAAVEDRA: string[] = [
+  'fb5c147f-abe8-4dea-831f-caa43777d5d4', // Pan Brioche Base
+  '4870a669-bbf7-4678-846b-428cb9c35801', // Pan de Molde Base
+  'c1be7bae-44af-41af-9e8c-4d0639dbb864', // Pan de Campo
+  'ac97bbdd-18ba-4f9c-ad85-bcf6f625a4e5', // Pan Lactal Base
+  '672619ab-9f88-4b24-b25c-9b7c24929192', // Pan para servicio
+];
+
 interface Producto {
   id: string;
   nombre: string;
@@ -616,7 +630,9 @@ function CierreSimple({
         // que quedan congelados al cierre re-baselinean el stock contra esa receta.
         q = q.eq('rol', 'milanesa_base');
       } else {
-        q = q.or('categoria.eq.panificado,rol.eq.panificado');
+        // Panadería: solo los panes curados que se cuentan al cierre (ver
+        // PANES_CIERRE_SAAVEDRA). El resto de 'panificado' no entra al cierre.
+        q = q.in('id', PANES_CIERRE_SAAVEDRA);
       }
       const { data, error } = await q.order('nombre');
       if (error) throw error;
