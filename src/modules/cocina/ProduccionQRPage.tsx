@@ -2870,8 +2870,8 @@ function FormMila({
 
             {planCant != null && planCant > 0 && (
               <div className="rounded border border-rodziny-200 bg-rodziny-50 px-3 py-2 text-xs text-rodziny-800">
-                📋 Planificado hoy: {formatNum(planCant)} receta{planCant !== 1 ? 's' : ''} (1 receta = 1 kg
-                de cuadril)
+                📋 Planificado hoy: {formatNum(planCant * (rinde ?? 1.5))} kg de milanesa (≈{' '}
+                {formatNum(planCant)} kg de cuadril a empanar)
               </div>
             )}
 

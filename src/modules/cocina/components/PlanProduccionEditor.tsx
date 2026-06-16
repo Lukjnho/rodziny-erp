@@ -29,6 +29,7 @@ interface Receta {
   categoria: string | null;
   local: string | null;
   rendimiento_porciones: number | null;
+  rendimiento_kg: number | null;
 }
 
 // Mapea el TipoItem del pizarrón (relleno/masa/salsa/postre/pasteleria/panaderia)
@@ -54,6 +55,15 @@ function recetasDelTipoPlan(recetas: Receta[], tipoPlan: TipoItem): Receta[] {
       return [];
   }
 }
+
+// Formatea kg con coma decimal, sin ceros sobrantes ("3" / "7,5").
+function fmtKg(n: number): string {
+  return n.toFixed(1).replace(/\.0$/, '').replace('.', ',');
+}
+
+// Rinde de milanesa (kg de milanesa por kg de cuadril) cuando no hay receta
+// vinculada o la receta no tiene rinde cargado. Provisorio hasta calibrar.
+const RINDE_MILANESA_DEFAULT = 1.5;
 
 interface Sugerencia {
   key: string;
@@ -192,7 +202,7 @@ export function PlanProduccionEditor({
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cocina_recetas')
-        .select('id, nombre, tipo, rol, categoria, local, rendimiento_porciones')
+        .select('id, nombre, tipo, rol, categoria, local, rendimiento_porciones, rendimiento_kg')
         .eq('activo', true)
         .or(`local.eq.${local},local.is.null`)
         .order('nombre');
@@ -200,6 +210,17 @@ export function PlanProduccionEditor({
       return (data ?? []) as Receta[];
     },
   });
+
+  // receta_id → rinde en kg (kg de milanesa por kg de cuadril). Usado para
+  // mostrar/editar el plan de milanesa en kg de milanesa terminada, no en
+  // "recetas". El dato guardado sigue siendo recetas (= kg de cuadril).
+  const rindeKgPorReceta = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const r of recetas ?? []) {
+      if (r.rendimiento_kg && r.rendimiento_kg > 0) m.set(r.id, r.rendimiento_kg);
+    }
+    return m;
+  }, [recetas]);
 
   // Mapa receta → vendibles que la usan (cocina_pasta_recetas). Habilita el
   // selector "Destino" cuando un relleno alimenta a VARIOS vendibles (ej: pure
@@ -1098,9 +1119,50 @@ export function PlanProduccionEditor({
                           </div>
 
                           {/* Cantidad: pasta simple va por porciones (paso de 50, mínimo 50);
+                              milanesa va por kg de milanesa terminada (paso 0.5 kg);
                               el resto por recetas (paso de 0.5, mínimo 0.5). */}
                           <div className="col-span-2">
                             {(() => {
+                              // Milanesa: se planifica en kg de milanesa terminada. Por dentro
+                              // guardamos recetas (= kg de cuadril); convertimos con el rinde.
+                              if (it.tipo === 'milanesa') {
+                                const rinde =
+                                  (it.receta_id ? rindeKgPorReceta.get(it.receta_id) : null) ??
+                                  RINDE_MILANESA_DEFAULT;
+                                const kgActual = it.cantidad_recetas * rinde;
+                                const pasoKg = 0.5;
+                                const minKg = 0.5;
+                                return (
+                                  <div className="flex items-center rounded border border-gray-300 bg-white">
+                                    <button
+                                      onClick={() =>
+                                        actualizarItem(fechaActiva, it.id, {
+                                          cantidad_recetas:
+                                            Math.max(minKg, kgActual - pasoKg) / rinde,
+                                        })
+                                      }
+                                      disabled={bloqueado}
+                                      className="px-2 py-1 text-gray-500 hover:bg-gray-100 disabled:opacity-30"
+                                    >
+                                      −
+                                    </button>
+                                    <span className="flex-1 text-center text-sm font-semibold tabular-nums">
+                                      {fmtKg(kgActual)} kg
+                                    </span>
+                                    <button
+                                      onClick={() =>
+                                        actualizarItem(fechaActiva, it.id, {
+                                          cantidad_recetas: (kgActual + pasoKg) / rinde,
+                                        })
+                                      }
+                                      disabled={bloqueado}
+                                      className="px-2 py-1 text-gray-500 hover:bg-gray-100 disabled:opacity-30"
+                                    >
+                                      +
+                                    </button>
+                                  </div>
+                                );
+                              }
                               const esPastaSimple = it.tipo === 'pasta_simple';
                               const paso = esPastaSimple ? 50 : 0.5;
                               const minimo = esPastaSimple ? 50 : 0.5;
