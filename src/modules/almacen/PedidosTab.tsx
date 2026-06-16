@@ -492,6 +492,32 @@ function ModalPedido({
   const [guardando, setGuardando] = useState(false);
   const [sugerenciasCliente, setSugerenciasCliente] = useState(false);
 
+  // Productos del Almacén: salen de los productos reales marcados "disponible en
+  // almacén" (vinculados a Costeo). Fallback a la lista vieja si todavía no se
+  // tildó ninguno, para no dejar el desplegable vacío en la transición.
+  const { data: productosAlmacen } = useQuery({
+    queryKey: ['productos-almacen-saavedra'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('cocina_productos')
+        .select('nombre')
+        .eq('local', 'saavedra')
+        .eq('activo', true)
+        .eq('disponible_almacen', true)
+        .order('nombre');
+      if (error) throw error;
+      return (data ?? []).map((p) => p.nombre as string);
+    },
+  });
+  const baseOpciones =
+    productosAlmacen && productosAlmacen.length > 0 ? productosAlmacen : PRODUCTOS_ALMACEN;
+  // Si el pedido que se edita tiene un producto que ya no está en la lista, lo
+  // sumamos igual para que el desplegable lo muestre.
+  const opcionesProducto =
+    form.producto_nombre && !baseOpciones.includes(form.producto_nombre)
+      ? [form.producto_nombre, ...baseOpciones]
+      : baseOpciones;
+
   const clientesFiltrados = clientesPrevios.filter(
     (c) =>
       form.cliente_nombre.length >= 2 &&
@@ -578,7 +604,7 @@ function ModalPedido({
                 className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm"
               >
                 <option value="">Seleccionar...</option>
-                {PRODUCTOS_ALMACEN.map((p) => (
+                {opcionesProducto.map((p) => (
                   <option key={p} value={p}>
                     {p}
                   </option>

@@ -97,6 +97,7 @@ interface ProductoRow {
   unidad: string;
   minimo_produccion: number | null;
   controla_stock: boolean;
+  disponible_almacen: boolean;
   local: string;
   activo: boolean;
   receta_id: string | null;
@@ -131,7 +132,7 @@ export function ProductoFormPanel({
     queryFn: async (): Promise<ProductoRow | null> => {
       const { data, error } = await supabase
         .from('cocina_productos')
-        .select('id, nombre, codigo, tipo, unidad, minimo_produccion, controla_stock, local, activo, receta_id, insumo_reventa_id, ml_por_venta, fudo_nombres')
+        .select('id, nombre, codigo, tipo, unidad, minimo_produccion, controla_stock, disponible_almacen, local, activo, receta_id, insumo_reventa_id, ml_por_venta, fudo_nombres')
         .eq('id', productoId)
         .maybeSingle();
       if (error) throw error;
@@ -220,6 +221,9 @@ function FormInterno({
   const [minimo, setMinimo] = useState<string>(
     producto?.minimo_produccion != null ? String(producto.minimo_produccion) : '',
   );
+  const [disponibleAlmacen, setDisponibleAlmacen] = useState<boolean>(
+    producto?.disponible_almacen ?? false,
+  );
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState('');
 
@@ -281,6 +285,7 @@ function FormInterno({
       activo,
       controla_stock: controlaStock,
       minimo_produccion: minimoNum,
+      disponible_almacen: disponibleAlmacen,
       receta_id: recetaId || null,
       // Reventa y receta son excluyentes: si hay receta, manda receta.
       insumo_reventa_id: recetaId ? null : insumoReventaId || null,
@@ -527,6 +532,22 @@ function FormInterno({
               </p>
             </div>
           )}
+        </div>
+
+        <div className="border-t border-gray-100 pt-4">
+          <label className="flex items-center gap-2 text-sm text-gray-700">
+            <input
+              type="checkbox"
+              checked={disponibleAlmacen}
+              onChange={(e) => setDisponibleAlmacen(e.target.checked)}
+              className="h-4 w-4"
+            />
+            Disponible en almacén
+          </label>
+          <p className="mt-1 text-[10px] italic text-gray-400">
+            Si está tildado, el producto se puede elegir en los pedidos del módulo Almacén (para
+            llevar / pedido anticipado).
+          </p>
         </div>
 
         <label className="flex items-center gap-2 border-t border-gray-100 pt-4 text-sm text-gray-700">
