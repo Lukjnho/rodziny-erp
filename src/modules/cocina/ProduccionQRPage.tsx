@@ -2712,6 +2712,7 @@ function FormMila({
     recetasMilanesa.length === 1 ? recetasMilanesa[0].id : '',
   );
   const [kgCuadril, setKgCuadril] = useState('');
+  const [kgMilanesa, setKgMilanesa] = useState('');
   const [responsable, setResponsable] = useState('');
   const [notas, setNotas] = useState('');
   const [ingredientesReales, setIngredientesReales] = useState<IngredienteReal[]>([]);
@@ -2726,10 +2727,20 @@ function FormMila({
   }, [recetasMilanesa, recetaId]);
 
   const recetaSel = recetasMilanesa.find((r) => r.id === recetaId);
-  const rinde = recetaSel?.rendimiento_kg ?? null; // kg de milanesa por 1 kg de cuadril
+  const rinde = recetaSel?.rendimiento_kg ?? null; // kg de milanesa por kg de cuadril (teórico)
   const kg = parseDecimal(kgCuadril);
-  const kgMilanesa = rinde && kg > 0 ? kg * rinde : 0;
+  const kgMilanesaTeorico = rinde && kg > 0 ? kg * rinde : 0;
+  const kgMilanesaNum = parseDecimal(kgMilanesa);
+  const rindeReal = kg > 0 && kgMilanesaNum > 0 ? kgMilanesaNum / kg : null;
   const planCant = recetaId ? recetaIdsPlan?.get(recetaId) : undefined;
+
+  // Prefill editable: arranca en el teórico (kg cuadril × rinde) y el cocinero lo
+  // ajusta al peso REAL que salió. Ese peso real es el que va al stock; comparado
+  // con los kg de cuadril, sirve para calibrar el rinde de a poco.
+  useEffect(() => {
+    if (rinde && kg > 0) setKgMilanesa(String(+(kg * rinde).toFixed(3)).replace('.', ','));
+    else setKgMilanesa('');
+  }, [kg, rinde]);
 
   // Cargado hoy (con suma, cargar dos veces duplica → mostrarlo evita duplicar).
   const { data: cargasHoy } = useQuery({
@@ -2775,6 +2786,10 @@ function FormMila({
       setError('Indicá los kg de cuadril a empanar');
       return;
     }
+    if (!kgMilanesaNum || kgMilanesaNum <= 0) {
+      setError('Indicá los kg de milanesa que salieron');
+      return;
+    }
     if (!responsable.trim()) {
       setError('Elegí responsable');
       return;
@@ -2791,10 +2806,13 @@ function FormMila({
       categoria: 'milanesa',
       receta_id: recetaId,
       nombre_libre: null,
-      cantidad_producida: kgMilanesa,
+      cantidad_producida: kgMilanesaNum,
       unidad: 'kg',
       responsable: responsable.trim(),
-      notas: `${formatNum(kg)} kg de cuadril` + (notas.trim() ? ` — ${notas.trim()}` : ''),
+      notas:
+        `${formatNum(kg)} kg de cuadril` +
+        (rindeReal != null ? ` · rinde ${formatNum(rindeReal)} kg/kg` : '') +
+        (notas.trim() ? ` — ${notas.trim()}` : ''),
       ingredientes_reales: ingredientesReales.length > 0 ? ingredientesReales : null,
       en_stock: true,
     });
@@ -2803,7 +2821,7 @@ function FormMila({
       setGuardando(false);
       return;
     }
-    onGuardado(`Milanesa — ${formatNum(kgMilanesa)} kg (de ${formatNum(kg)} kg de cuadril)`);
+    onGuardado(`Milanesa — ${formatNum(kgMilanesaNum)} kg (de ${formatNum(kg)} kg de cuadril)`);
   }
 
   return (
@@ -2869,12 +2887,31 @@ function FormMila({
                 className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm"
               />
               {kg > 0 && rinde != null && (
+                <p className="mt-1 text-xs text-gray-500">
+                  Teórico ≈ {formatNum(kgMilanesaTeorico)} kg ({formatNum(rinde)} kg por kg de cuadril)
+                </p>
+              )}
+            </div>
+
+            <div>
+              <label className="mb-1 block text-xs font-medium text-gray-700">
+                Kg de milanesa que salieron
+              </label>
+              <input
+                inputMode="decimal"
+                value={kgMilanesa}
+                onChange={(e) => setKgMilanesa(normalizarDecimal(e.target.value))}
+                placeholder="Ej: 7,5"
+                className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm"
+              />
+              {rindeReal != null && (
                 <p className="mt-1 text-xs text-gray-600">
-                  Rinde ≈{' '}
-                  <span className="font-semibold text-gray-800">
-                    {formatNum(kgMilanesa)} kg de milanesa
-                  </span>{' '}
-                  ({formatNum(rinde)} kg por kg de cuadril)
+                  Rinde real:{' '}
+                  <span className="font-semibold text-gray-800">{formatNum(rindeReal)} kg</span> por kg de
+                  cuadril
+                  {rinde != null && Math.abs(rindeReal - rinde) > 0.01 && (
+                    <span className="text-amber-600"> · teórico {formatNum(rinde)}</span>
+                  )}
                 </p>
               )}
             </div>
