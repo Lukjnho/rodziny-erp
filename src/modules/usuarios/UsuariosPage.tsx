@@ -145,6 +145,12 @@ export function UsuariosPage() {
                 <tr className="text-[10px] uppercase tracking-wide text-gray-500">
                   <th className="px-3 py-2 text-left font-semibold">Usuario</th>
                   <th className="px-2 py-2 text-center font-semibold">Admin</th>
+                  <th
+                    className="whitespace-nowrap px-2 py-2 text-center font-semibold"
+                    title="Ve las alertas financieras de supervisión en el Inicio (extractos, gastos/pagos fijos vencidos, conciliación). Independiente de cargar gastos."
+                  >
+                    Alertas finanzas
+                  </th>
                   {MODULOS.map((m) => (
                     <th
                       key={m.key}
@@ -185,6 +191,19 @@ export function UsuariosPage() {
                             actualizar.mutate({
                               user_id: p.user_id,
                               patch: { es_admin: e.target.checked },
+                            })
+                          }
+                          className="h-4 w-4"
+                        />
+                      </td>
+                      <td className="px-2 py-2 text-center">
+                        <input
+                          type="checkbox"
+                          checked={p.puede_ver_alertas_finanzas}
+                          onChange={(e) =>
+                            actualizar.mutate({
+                              user_id: p.user_id,
+                              patch: { puede_ver_alertas_finanzas: e.target.checked },
                             })
                           }
                           className="h-4 w-4"

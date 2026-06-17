@@ -41,6 +41,10 @@ export interface Perfil {
   puede_ver_agenda: boolean;
   puede_ver_convenios: boolean;
   puede_ver_integraciones: boolean;
+  // Gate de UI (no es módulo del sidebar): controla si el usuario ve las alertas
+  // financieras de supervisión en el Inicio (extractos atrasados, gastos/pagos
+  // fijos vencidos, conciliación). Independiente de poder cargar gastos.
+  puede_ver_alertas_finanzas: boolean;
   // Si está seteado, el usuario solo ve datos de ese local en módulos
   // multilocal (Cocina, etc.). NULL = sin restricción.
   local_restringido: 'vedia' | 'saavedra' | null;

@@ -72,11 +72,19 @@ export function InicioPage() {
   const { perfil, tienePermiso } = useAuth();
 
   // Alertas: agrupo permisos para no renderizar cards que el usuario no puede ver.
-  const verFinanzas =
-    tienePermiso('finanzas') || tienePermiso('gastos') || tienePermiso('flujo_caja');
-  const verCierres = tienePermiso('edr') || verFinanzas;
+  // Las alertas financieras de supervisión (extractos, gastos/pagos fijos vencidos,
+  // conciliación) NO se gobiernan por "puede cargar gastos": tienen su propio flag
+  // dedicado que se asigna a mano (no hay override de admin a propósito, para que
+  // el CEO decida exactamente quién las ve). Cargar gastos sigue intacto para todos.
+  const verAlertasFinanzas = !!perfil?.puede_ver_alertas_finanzas;
+  // Cierres de inventario queda con su criterio original (Martín hace el cierre).
+  const verCierres =
+    tienePermiso('edr') ||
+    tienePermiso('finanzas') ||
+    tienePermiso('gastos') ||
+    tienePermiso('flujo_caja');
   const verEfemerides = tienePermiso('cocina');
-  const hayAlertas = verCierres || verFinanzas || verEfemerides;
+  const hayAlertas = verCierres || verAlertasFinanzas || verEfemerides;
 
   const primerNombre = (perfil?.nombre || '').split(' ')[0];
 
@@ -101,8 +109,8 @@ export function InicioPage() {
               </h3>
             )}
             {verCierres && <CierresInventarioPendientesCard />}
-            {verFinanzas && <AlertasOperativasCard />}
-            {verFinanzas && <ExtractosAlerta variant="card" />}
+            {verAlertasFinanzas && <AlertasOperativasCard />}
+            {verAlertasFinanzas && <ExtractosAlerta variant="card" />}
             {verEfemerides && <ProximasEfemeridesCard diasAdelante={15} />}
           </div>
         )}
