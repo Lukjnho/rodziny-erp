@@ -637,9 +637,12 @@ export function ProduccionQRPage() {
   );
   const recetasSalsa = useMemo(
     () =>
-      (recetas ?? []).filter(
-        (r) => (r.rol === 'salsa_base' || r.categoria === 'salsa') && r.local === local,
-      ),
+      // QR de producción: el cocinero carga la salsa que realmente produce, que es
+      // la subreceta Base (la que tiene la receta cargada). Las recetas vendibles
+      // (categoria='salsa') son solo referencia de costeo —1 ingrediente = la base—
+      // y NO se muestran acá para no duplicar cada salsa. Mismo criterio en ambos
+      // locales. Si hay Bases duplicadas/legacy, se desactivan desde Costeo.
+      (recetas ?? []).filter((r) => r.rol === 'salsa_base' && r.local === local),
     [recetas, local],
   );
   const recetasPostre = useMemo(
