@@ -1118,7 +1118,7 @@ export function PlanProduccionEditor({
                             })()}
                           </div>
 
-                          {/* Cantidad: pasta simple va por porciones (paso de 50, mínimo 50);
+                          {/* Cantidad: pasta simple va por porciones (paso de 10, mínimo 10);
                               milanesa va por kg de milanesa terminada (paso 0.5 kg);
                               el resto por recetas (paso de 0.5, mínimo 0.5). */}
                           <div className="col-span-2">
@@ -1164,8 +1164,8 @@ export function PlanProduccionEditor({
                                 );
                               }
                               const esPastaSimple = it.tipo === 'pasta_simple';
-                              const paso = esPastaSimple ? 50 : 0.5;
-                              const minimo = esPastaSimple ? 50 : 0.5;
+                              const paso = esPastaSimple ? 10 : 0.5;
+                              const minimo = esPastaSimple ? 10 : 0.5;
                               return (
                                 <div className="flex items-center rounded border border-gray-300 bg-white">
                                   <button
