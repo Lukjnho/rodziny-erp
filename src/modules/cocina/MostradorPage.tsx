@@ -650,7 +650,10 @@ function CierreSimple({
         .eq('activo', true)
         .eq('local', local);
       if (tipo === 'salsa') {
-        q = q.or('categoria.eq.salsa,rol.eq.salsa_base');
+        // Solo las subrecetas Base (la que tiene la receta cargada), igual que el
+        // QR de producción. Los vendibles (categoria='salsa') son referencia de
+        // costeo y NO se cuentan: duplicarían cada salsa y partirían el stock.
+        q = q.eq('rol', 'salsa_base');
       } else {
         // milanesa → subreceta base (rol='milanesa_base').
         q = q.eq('rol', 'milanesa_base');
