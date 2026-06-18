@@ -46,6 +46,7 @@ const PRODUCTOS_PAN_CIERRE_SAAVEDRA: string[] = [
   '29d53880-9b1f-4847-9a59-14c84a4e3c07', // Pan de Campo
   'd8c58792-de2a-492c-8b27-b36fccf37550', // Pan Lactal
   'a6fb9940-d0f3-4ee2-a01b-ea004a4e80f6', // Pan de Servicio
+  'd81fc5ee-fac9-4e1a-b0a5-1dca6d84344b', // Prepizza
 ];
 
 interface Producto {
