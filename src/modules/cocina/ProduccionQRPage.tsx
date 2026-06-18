@@ -656,11 +656,14 @@ export function ProduccionQRPage() {
     () => (recetas ?? []).filter((r) => r.rol === 'pasteleria_base' && r.local === local),
     [recetas, local],
   );
+  // Panadería = masas de panadería (rol='masa_panaderia'). A diferencia de las
+  // masas de pasta (rol='masa', que cubren el relleno), estas rinden productos
+  // terminados (panes/medialunas/facturas). El panadero carga la masa producida;
+  // se marca el rol desde Productos>Costeo. NO se incluye categoria='panificado'
+  // (recetas vendibles) ni el viejo rol='panificado' (panes terminados): el flujo
+  // ahora trackea la masa, no el pan armado.
   const recetasPanaderia = useMemo(
-    () =>
-      (recetas ?? []).filter(
-        (r) => (r.rol === 'panificado' || r.categoria === 'panificado') && r.local === local,
-      ),
+    () => (recetas ?? []).filter((r) => r.rol === 'masa_panaderia' && r.local === local),
     [recetas, local],
   );
   const recetasLocal = useMemo(
@@ -944,7 +947,7 @@ function Inicio({
     });
     botones.push({
       vista: 'panaderia',
-      label: 'Cargar Panadería Terminada',
+      label: 'Cargar Panadería',
       color: 'bg-yellow-600 hover:bg-yellow-700',
     });
   }
@@ -3019,7 +3022,7 @@ function FormGenerico({
   const [nombreLibre, setNombreLibre] = useState('');
   const [cantidad, setCantidad] = useState('');
   const [unidad, setUnidad] = useState<'kg' | 'unid' | 'lt'>(
-    categoria === 'salsa' ? 'kg' : 'unid',
+    categoria === 'salsa' || categoria === 'panaderia' ? 'kg' : 'unid',
   );
   const [merma, setMerma] = useState('');
   const [mermaMotivo, setMermaMotivo] = useState('');

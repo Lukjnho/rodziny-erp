@@ -517,6 +517,10 @@ export function RecetaEditorInline({
                   </option>
                 ))}
               </select>
+              <p className="mt-1 text-[10px] leading-tight text-gray-400">
+                El rol define en qué botón del QR de Cocina aparece para cargar
+                (Relleno, Masa, Masa de panadería, Salsa, Postre, Pastelería).
+              </p>
             </div>
           )}
           <div>
@@ -668,6 +672,10 @@ export function RecetaEditorInline({
                     </option>
                   ))}
                 </select>
+                <p className="mt-1 text-[10px] leading-tight text-gray-400">
+                  El rol define en qué botón del QR de Cocina aparece para cargar
+                  (Relleno, Masa, Masa de panadería, Salsa, Postre, Pastelería).
+                </p>
               </div>
             )}
           </>

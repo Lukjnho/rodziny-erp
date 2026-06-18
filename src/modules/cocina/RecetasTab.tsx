@@ -34,6 +34,7 @@ export type RecetaCategoria =
 export type SubrecetaRol =
   | 'relleno'
   | 'masa'
+  | 'masa_panaderia'
   | 'salsa_base'
   | 'postre_base'
   | 'panificado'
@@ -143,6 +144,7 @@ export const SUBCATEGORIA_LABEL: Record<string, string> = {
 export const ROLES: SubrecetaRol[] = [
   'relleno',
   'masa',
+  'masa_panaderia',
   'salsa_base',
   'postre_base',
   'panificado',
@@ -154,7 +156,8 @@ export const ROLES: SubrecetaRol[] = [
 ];
 export const ROL_LABEL: Record<SubrecetaRol, string> = {
   relleno: 'Relleno',
-  masa: 'Masa',
+  masa: 'Masa (pasta)',
+  masa_panaderia: 'Masa de panadería',
   salsa_base: 'Salsa (base)',
   postre_base: 'Postre (base)',
   panificado: 'Panificado',
