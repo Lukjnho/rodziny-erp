@@ -116,6 +116,7 @@ const TIPOS_SAAVEDRA: { tipo: TipoItem; label: string; emoji: string }[] = [
   { tipo: 'pasta_simple', label: 'Pastas simples', emoji: '🍝' },
   { tipo: 'salsa', label: 'Salsas', emoji: '🍅' },
   { tipo: 'milanesa', label: 'Milanesas', emoji: '🍖' },
+  { tipo: 'postre', label: 'Postres', emoji: '🍰' },
   { tipo: 'pasteleria', label: 'Pastelería', emoji: '🥐' },
   { tipo: 'panaderia', label: 'Panadería', emoji: '🍞' },
 ];
