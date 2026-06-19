@@ -926,12 +926,19 @@ function Inicio({
       color: 'bg-pink-500 hover:bg-pink-600',
     });
   } else {
-    // Saavedra: sin mostrador. Stock por overwrite ("último pesaje manda"): pasta y
-    // milanesa se cargan directo como stock final, igual que salsa/postre.
+    // Saavedra: espejo del flujo de Vedia para pasta (cámara + porcionado), pero sin
+    // mostrador. Se arma juntando relleno+masa (da código de lote → freezer), se
+    // porciona al día siguiente (→ cámara) y el recuento se hace por conteo de cámara
+    // en el StockTab. Salsa/postre/milanesa/panadería siguen overwrite.
     botones.push({
-      vista: 'pasta-stock',
-      label: 'Cargar Pasta',
+      vista: 'pasta',
+      label: 'Armar Pasta (bandejas)',
       color: 'bg-rodziny-700 hover:bg-rodziny-800',
+    });
+    botones.push({
+      vista: 'porcionar-pasta',
+      label: frescosPendientes > 0 ? `Porcionar Pasta (${frescosPendientes})` : 'Porcionar Pasta',
+      color: 'bg-blue-600 hover:bg-blue-700',
     });
     botones.push({
       vista: 'milanesa',

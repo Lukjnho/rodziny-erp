@@ -869,12 +869,14 @@ export function StockTab() {
           color="green"
           loading={isLoading}
         />
-        <KPICard
-          label="En mostrador"
-          value={String(kpis.totalMostrador)}
-          color={kpis.totalMostrador > 0 ? 'green' : 'neutral'}
-          loading={isLoading}
-        />
+        {filtroLocal === 'vedia' && (
+          <KPICard
+            label="En mostrador"
+            value={String(kpis.totalMostrador)}
+            color={kpis.totalMostrador > 0 ? 'green' : 'neutral'}
+            loading={isLoading}
+          />
+        )}
         <KPICard
           label="Pastas en produ"
           value={String(kpis.totalFrescos)}
@@ -902,13 +904,14 @@ export function StockTab() {
           </select>
         )}
         <span className="ml-auto text-xs text-gray-400">
-          En cámara (depósito) = histórico − traspasos − merma · En mostrador = traspasos hoy −
-          ventas Fudo − merma hoy · Pastas en produ = frescas sin porcionar
+          En cámara (depósito) = histórico − traspasos − merma
+          {filtroLocal === 'vedia' && ' · En mostrador = traspasos hoy − ventas Fudo − merma hoy'} ·
+          Pastas en produ = frescas sin porcionar
         </span>
       </div>
 
-      {/* Saavedra controla TODO el stock con overwrite ("último pesaje manda"):
-          catálogo único por tipo, sin flujo cámara/mostrador. Ver project_modelo_salsas. */}
+      {/* Saavedra: salsa/postre/panificado/milanesa van por overwrite ("último pesaje
+          manda"). Pasta NO: usa el flujo cámara (tabla de abajo), espejo de Vedia. */}
       {filtroLocal === 'saavedra' && (
         <CatalogoStock
           productos={productos ?? []}
@@ -920,10 +923,9 @@ export function StockTab() {
         />
       )}
 
-      {/* Tabla de pastas (Vedia) — flujo cámara/mostrador/porcionado.
-          Saavedra no usa este flujo (sin mostrador). */}
-      {filtroLocal === 'vedia' &&
-        localesScope.map((locKey) => {
+      {/* Tabla de pastas — flujo cámara/porcionado (ambos locales).
+          La columna "En mostrador" solo aplica a Vedia (Saavedra no tiene mostrador). */}
+      {localesScope.map((locKey) => {
         const filasLocal = stockRowsFiltrados.filter(
           (r) => r.local === locKey && r.producto.controla_stock !== false,
         );
@@ -942,7 +944,7 @@ export function StockTab() {
                     <th className="px-4 py-2">Código</th>
                     <th className="px-4 py-2 text-right">Pastas en produ</th>
                     <th className="px-4 py-2 text-right">En cámara</th>
-                    <th className="px-4 py-2 text-right">En mostrador</th>
+                    {locKey === 'vedia' && <th className="px-4 py-2 text-right">En mostrador</th>}
                     <th className="px-4 py-2 text-right">Merma</th>
                     <th className="px-4 py-2 text-right">Demanda 7d</th>
                     <th className="px-4 py-2">Estado</th>
@@ -1015,36 +1017,38 @@ export function StockTab() {
                       </span>
                     </button>
                   </td>
-                  <td className="px-4 py-2 text-right">
-                    <button
-                      onClick={() =>
-                        setAjusteModal({
-                          producto: r.producto,
-                          local: r.local,
-                          ubicacion: 'mostrador',
-                          // Pasamos el valor "raw" (sin clamp) para que el delta cuadre
-                          // con lo que el usuario contó físicamente, aunque las ventas
-                          // ya hayan llevado la cuenta interna a negativo.
-                          actual: r.mostradorRaw,
-                          actualMostrado: Math.max(0, r.mostrador),
-                          real: String(Math.max(0, r.mostrador)),
-                          motivo: '',
-                          guardando: false,
-                        })
-                      }
-                      className="group inline-flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-rodziny-50"
-                      title="Ajustar stock de mostrador (conteo físico)"
-                    >
-                      {r.mostrador > 0 ? (
-                        <span className="font-medium text-green-700">{r.mostrador}</span>
-                      ) : (
-                        <span className="text-gray-400">—</span>
-                      )}
-                      <span className="text-[10px] text-gray-400 opacity-0 transition-opacity group-hover:opacity-100">
-                        ✎
-                      </span>
-                    </button>
-                  </td>
+                  {r.local === 'vedia' && (
+                    <td className="px-4 py-2 text-right">
+                      <button
+                        onClick={() =>
+                          setAjusteModal({
+                            producto: r.producto,
+                            local: r.local,
+                            ubicacion: 'mostrador',
+                            // Pasamos el valor "raw" (sin clamp) para que el delta cuadre
+                            // con lo que el usuario contó físicamente, aunque las ventas
+                            // ya hayan llevado la cuenta interna a negativo.
+                            actual: r.mostradorRaw,
+                            actualMostrado: Math.max(0, r.mostrador),
+                            real: String(Math.max(0, r.mostrador)),
+                            motivo: '',
+                            guardando: false,
+                          })
+                        }
+                        className="group inline-flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-rodziny-50"
+                        title="Ajustar stock de mostrador (conteo físico)"
+                      >
+                        {r.mostrador > 0 ? (
+                          <span className="font-medium text-green-700">{r.mostrador}</span>
+                        ) : (
+                          <span className="text-gray-400">—</span>
+                        )}
+                        <span className="text-[10px] text-gray-400 opacity-0 transition-opacity group-hover:opacity-100">
+                          ✎
+                        </span>
+                      </button>
+                    </td>
+                  )}
                   <td className="px-4 py-2 text-right">{r.merma}</td>
                   <td className="px-4 py-2 text-right">
                     {r.objetivoSemanal > 0 ? (
@@ -1096,7 +1100,7 @@ export function StockTab() {
                   {filasLocal.length === 0 && (
                     <tr>
                       <td
-                        colSpan={esAdmin ? 10 : 9}
+                        colSpan={(esAdmin ? 10 : 9) - (locKey === 'vedia' ? 0 : 1)}
                         className="px-4 py-8 text-center text-gray-400"
                       >
                         {isLoading || productos === undefined || lotesPasta === undefined ? (
@@ -1359,7 +1363,7 @@ interface LoteProdCatalogo {
 }
 
 const CATALOGO_TIPOS_SAAVEDRA: { tipo: string; titulo: string }[] = [
-  { tipo: 'pasta', titulo: '🍝 Pastas' },
+  // Pasta NO va acá: Saavedra usa el flujo cámara (tabla 🍝 Pastas abajo), espejo de Vedia.
   { tipo: 'milanesa', titulo: '🍖 Milanesas' },
   { tipo: 'postre', titulo: '🍰 Postres' },
   { tipo: 'panificado', titulo: '🥖 Panes' },

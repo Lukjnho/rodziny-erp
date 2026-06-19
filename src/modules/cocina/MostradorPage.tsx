@@ -21,12 +21,13 @@ const TAB_META: Record<TipoTab, { emoji: string; label: string }> = {
   milanesa: { emoji: '🍖', label: 'Milanesas' },
 };
 
-// Vedia cierra pasta/salsa/postre. Saavedra suma panadería + milanesa (no tiene
-// Fudo, pero el cierre es conteo físico manual, así que no depende de ventas
-// automáticas). La milanesa se cuenta en kg de milanesa que quedan congelados.
+// Vedia cierra pasta (mostrador) / salsa / postre. Saavedra NO cierra pasta acá:
+// usa el flujo cámara (espejo de Vedia, sin mostrador) y el recuento de pasta se
+// hace por conteo de cámara en el StockTab. Saavedra suma panadería + milanesa
+// (conteo físico manual). La milanesa se cuenta en kg que quedan congelados.
 const TABS_POR_LOCAL: Record<Local, TipoTab[]> = {
   vedia: ['pasta', 'salsa', 'postre'],
-  saavedra: ['pasta', 'salsa', 'postre', 'panaderia', 'milanesa'],
+  saavedra: ['salsa', 'postre', 'panaderia', 'milanesa'],
 };
 
 const UNIDAD_POR_TIPO: Record<TipoSimple, 'kg' | 'unidades'> = {
@@ -115,7 +116,9 @@ function hoyAR(): string {
 export function MostradorPage() {
   const [params] = useSearchParams();
   const local = (params.get('local') === 'saavedra' ? 'saavedra' : 'vedia') as Local;
-  const [tab, setTab] = useState<TipoTab>('pasta');
+  // Default = primera tab del local. Saavedra ya no cierra pasta acá (flujo cámara),
+  // así que no puede arrancar en 'pasta' o renderizaría un cierre que no le aplica.
+  const [tab, setTab] = useState<TipoTab>(TABS_POR_LOCAL[local][0]);
 
   return (
     <div className="min-h-screen bg-gray-50">
