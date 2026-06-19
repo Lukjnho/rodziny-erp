@@ -53,7 +53,7 @@ type Estado = 'cubre' | 'ajustado' | 'corto' | 'sobra' | 'sin_demanda';
 // Pastas y postres en ambos locales; Saavedra suma milanesas (stock en kg, se
 // convierte a milas para comparar contra la demanda Fudo, que viene en platos).
 const TIPOS_POR_LOCAL: Record<LocalCocina, string[]> = {
-  saavedra: ['pasta', 'milanesa', 'postre'],
+  saavedra: ['pasta', 'milanesa', 'postre', 'panificado'],
   vedia: ['pasta', 'postre'],
 };
 
