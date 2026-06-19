@@ -918,6 +918,7 @@ export function StockTab() {
           local="saavedra"
           tipos={CATALOGO_TIPOS_SAAVEDRA}
           esAdmin={esAdmin}
+          responsable={perfil?.nombre ?? null}
           onQuitarControl={(id) => toggleControlaStock.mutate({ id, valor: false })}
           toggleDisabled={toggleControlaStock.isPending}
         />
@@ -1003,7 +1004,9 @@ export function StockTab() {
                           // aunque la cuenta interna esté en negativos por ventas/traspasos.
                           actual: r.stockRaw,
                           actualMostrado: Math.max(0, r.stock),
-                          real: String(Math.max(0, r.stock)),
+                          // En 0 (primer conteo) abrimos vacío para que el botón no quede
+                          // gris por delta=0; el cocinero escribe el número y se habilita.
+                          real: r.stock > 0 ? String(Math.max(0, r.stock)) : '',
                           motivo: '',
                           guardando: false,
                         })
@@ -1140,6 +1143,7 @@ export function StockTab() {
             local="vedia"
             tipos={CATALOGO_TIPOS_VEDIA}
             esAdmin={esAdmin}
+            responsable={perfil?.nombre ?? null}
             onQuitarControl={(id) => toggleControlaStock.mutate({ id, valor: false })}
             toggleDisabled={toggleControlaStock.isPending}
           />
@@ -1392,6 +1396,7 @@ function CatalogoStock({
   local,
   tipos,
   esAdmin,
+  responsable,
   onQuitarControl,
   toggleDisabled,
 }: {
@@ -1399,9 +1404,67 @@ function CatalogoStock({
   local: FiltroLocal;
   tipos: { tipo: string; titulo: string }[];
   esAdmin: boolean;
+  responsable: string | null;
   onQuitarControl: (id: string) => void;
   toggleDisabled: boolean;
 }) {
+  const qc = useQueryClient();
+  // Edición manual del stock overwrite ("poner stock en X"). Reemplaza el valor
+  // actual (último pesaje manda), igual que un cierre físico pero desde el tab Stock.
+  const [editar, setEditar] = useState<{
+    producto: Producto;
+    tipo: string;
+    valor: string;
+    guardando: boolean;
+  } | null>(null);
+
+  const guardarStockManual = useMutation({
+    mutationFn: async (payload: { producto: Producto; tipo: string; valor: number }) => {
+      const { producto, tipo, valor } = payload;
+      const fechaHoy = new Date().toISOString().slice(0, 10);
+      // Apagar lotes activos previos que matcheen este producto (por receta y por
+      // nombre_libre) y cargar uno nuevo con el valor contado. Espeja el cierre
+      // product-mode (receta_id + nombre_libre) para que el stock reconcilie siempre.
+      if (producto.receta_id) {
+        const { error } = await supabase
+          .from('cocina_lotes_produccion')
+          .update({ en_stock: false })
+          .eq('local', local)
+          .eq('en_stock', true)
+          .eq('receta_id', producto.receta_id);
+        if (error) throw error;
+      }
+      const { error: e2 } = await supabase
+        .from('cocina_lotes_produccion')
+        .update({ en_stock: false })
+        .eq('local', local)
+        .eq('en_stock', true)
+        .eq('nombre_libre', producto.nombre);
+      if (e2) throw e2;
+      const { error: e3 } = await supabase.from('cocina_lotes_produccion').insert({
+        fecha: fechaHoy,
+        local,
+        categoria: tipo,
+        receta_id: producto.receta_id ?? null,
+        nombre_libre: producto.nombre,
+        cantidad_producida: valor,
+        unidad: producto.unidad,
+        responsable: responsable ?? 'Ajuste manual',
+        notas: 'Ajuste manual de stock (tab Stock)',
+        en_stock: true,
+      });
+      if (e3) throw e3;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['cocina-catalogo-lotes', local] });
+      setEditar(null);
+    },
+    onError: (e: Error) => {
+      window.alert(mensajeErrorAmigable(e, 'No se pudo guardar el stock'));
+      setEditar((s) => (s ? { ...s, guardando: false } : s));
+    },
+  });
+
   const { data: lotes, isLoading } = useQuery({
     queryKey: ['cocina-catalogo-lotes', local],
     queryFn: async () => {
@@ -1513,7 +1576,23 @@ function CatalogoStock({
                         <td className="px-4 py-2 font-medium">{p.nombre}</td>
                         <td className="px-4 py-2 font-mono text-xs">{p.codigo}</td>
                         <td className="px-4 py-2 text-right font-semibold tabular-nums">
-                          {formatStock(stock, p.unidad)}
+                          <button
+                            onClick={() =>
+                              setEditar({
+                                producto: p,
+                                tipo,
+                                valor: stock > 0 ? String(stock) : '',
+                                guardando: false,
+                              })
+                            }
+                            className="group inline-flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-rodziny-50"
+                            title="Editar stock a mano (poner stock en X)"
+                          >
+                            <span>{formatStock(stock, p.unidad)}</span>
+                            <span className="text-[10px] text-gray-400 opacity-0 transition-opacity group-hover:opacity-100">
+                              ✎
+                            </span>
+                          </button>
                         </td>
                         <td className="px-4 py-2 text-gray-500">{p.unidad}</td>
                         <td className="px-4 py-2">{min || '—'}</td>
@@ -1557,10 +1636,93 @@ function CatalogoStock({
       )}
       <p className="text-[11px] text-gray-400">
         Stock = última carga en Producción ("último pesaje manda"), sin descuento
-        automático por venta.
+        automático por venta. Tocá el número para editarlo a mano.
         {local === 'saavedra' &&
           ' Saavedra produce y almacena en la misma cámara.'}
       </p>
+
+      {editar && (
+        <ModalStockManual
+          state={editar}
+          onChange={(v) => setEditar((s) => (s ? { ...s, valor: v } : s))}
+          onCancel={() => setEditar(null)}
+          onConfirmar={() => {
+            const val = parseFloat(editar.valor.replace(',', '.'));
+            if (isNaN(val) || val < 0) {
+              window.alert('Ingresá un número válido (>= 0).');
+              return;
+            }
+            setEditar((s) => (s ? { ...s, guardando: true } : s));
+            guardarStockManual.mutate({ producto: editar.producto, tipo: editar.tipo, valor: val });
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── Modal de edición manual de stock overwrite ("poner stock en X") ────────────
+function ModalStockManual({
+  state,
+  onChange,
+  onCancel,
+  onConfirmar,
+}: {
+  state: { producto: Producto; tipo: string; valor: string; guardando: boolean };
+  onChange: (v: string) => void;
+  onCancel: () => void;
+  onConfirmar: () => void;
+}) {
+  const num = parseFloat(state.valor.replace(',', '.'));
+  const valido = !isNaN(num) && num >= 0;
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      onClick={onCancel}
+    >
+      <div
+        className="w-full max-w-sm rounded-lg bg-white p-5 shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h3 className="text-base font-semibold text-gray-900">Editar stock a mano</h3>
+        <p className="mt-0.5 text-xs text-gray-500">
+          <span className="font-medium text-gray-800">{state.producto.nombre}</span>{' '}
+          <span className="capitalize">· {state.producto.local}</span>
+        </p>
+        <div className="mt-4">
+          <label className="mb-1 block text-xs font-medium text-gray-700">
+            Stock real ({state.producto.unidad})
+          </label>
+          <input
+            type="text"
+            inputMode="decimal"
+            value={state.valor}
+            onChange={(e) => onChange(e.target.value)}
+            placeholder="0"
+            autoFocus
+            className="w-full rounded border border-gray-300 px-2 py-1.5 text-right text-base tabular-nums focus:border-rodziny-500 focus:outline-none"
+          />
+          <p className="mt-1 text-[11px] text-gray-500">
+            Fija el stock en este valor (reemplaza el actual — "último pesaje manda").
+          </p>
+        </div>
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            onClick={onCancel}
+            disabled={state.guardando}
+            className="rounded border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+          >
+            Cancelar
+          </button>
+          <button
+            onClick={onConfirmar}
+            disabled={state.guardando || !valido}
+            className="rounded bg-rodziny-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-rodziny-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {state.guardando ? 'Guardando…' : 'Guardar'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
