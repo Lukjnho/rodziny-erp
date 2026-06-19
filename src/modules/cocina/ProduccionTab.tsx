@@ -180,6 +180,7 @@ interface LoteProduccion {
   responsable: string | null;
   notas: string | null;
   created_at: string;
+  origen: string | null;
   ingredientes_reales: IngredienteRealRow[] | null;
   receta?: { nombre: string } | null;
 }
@@ -649,6 +650,9 @@ export function ProduccionTab() {
 
     // Producción (salsa/postre/pasteleria/panaderia/prueba)
     for (const l of lotesProduccionSemana ?? []) {
+      // Los lotes de cierre (origen='cierre') son re-baselining de stock, no
+      // producción real: viven en el Stock y en el apartado de Cierre, no acá.
+      if (l.origen === 'cierre') continue;
       if (!matchLocal(l.local, filtroLocal)) continue;
       const nombre = l.receta?.nombre ?? l.nombre_libre ?? 'Sin nombre';
       const g = getGrupo(l.categoria as TipoLoteSemanal, nombre);
