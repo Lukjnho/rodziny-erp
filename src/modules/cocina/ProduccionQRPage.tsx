@@ -659,10 +659,8 @@ export function ProduccionQRPage() {
       ),
     [recetas, local],
   );
-  const recetasPasteleria = useMemo(
-    () => (recetas ?? []).filter((r) => r.rol === 'pasteleria_base' && r.local === local),
-    [recetas, local],
-  );
+  // Pastelería (Saavedra): FormPasteleria es product-driven (lista los postres y
+  // carga "cuántas recetas hiciste" → porciones × rinde). No usa lista de recetas acá.
   // Panadería = flujo de 2 etapas: la masa (rol='masa_panaderia') se carga desde
   // "Cargar Masa" (kg); luego "Cargar Panadería" (FormPanaderia) la convierte en
   // panes terminados, sumando al stock del producto y descontando la masa. Por eso
@@ -817,11 +815,8 @@ export function ProduccionQRPage() {
       )}
 
       {vista === 'pasteleria' && (
-        <FormGenerico
+        <FormPasteleria
           local={local}
-          categoria="pasteleria"
-          recetas={recetasPasteleria}
-          recetaIdsPlan={planPorTipo.pasteleria}
           onGuardado={onGuardado}
           onVolver={() => setVista('inicio')}
         />
@@ -2981,6 +2976,203 @@ function Exito({ mensaje, onOtro }: { mensaje: string; onOtro: () => void }) {
       <p className="mt-4 text-[10px] text-gray-400">
         {new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}
       </p>
+    </div>
+  );
+}
+
+// ── FormPasteleria (postres por "cuántas recetas" — Saavedra) ──────────────────
+// Product-driven: lista los productos tipo='postre' (Flan, Tiramisú, Carrot, etc.).
+// El cocinero elige el postre e ingresa cuántas RECETAS (tandas) hizo; se convierte
+// a porciones (× rendimiento_porciones de la receta vinculada) y SUMA al stock
+// (aditivo, igual que el resto de postres; el cierre re-baselinea). El lote se sella
+// con receta_id + nombre_libre del producto para que el stock reconcilie siempre.
+interface ProductoPasteleria {
+  id: string;
+  nombre: string;
+  codigo: string;
+  receta_id: string | null;
+  unidad: string;
+  receta:
+    | { rendimiento_porciones: number | null }
+    | { rendimiento_porciones: number | null }[]
+    | null;
+}
+
+function FormPasteleria({
+  local,
+  onGuardado,
+  onVolver,
+}: {
+  local: string;
+  onGuardado: (msg: string) => void;
+  onVolver: () => void;
+}) {
+  const qc = useQueryClient();
+
+  const { data: productos } = useQuery({
+    queryKey: ['pasteleria-productos', local],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('cocina_productos')
+        .select('id, nombre, codigo, receta_id, unidad, receta:cocina_recetas(rendimiento_porciones)')
+        .eq('local', local)
+        .eq('tipo', 'postre')
+        .eq('activo', true)
+        .eq('controla_stock', true)
+        .order('nombre');
+      if (error) throw error;
+      return (data ?? []) as ProductoPasteleria[];
+    },
+  });
+
+  const [responsable, setResponsable] = useState('');
+  const [productoId, setProductoId] = useState('');
+  const [recetasHechas, setRecetasHechas] = useState('');
+  const [guardando, setGuardando] = useState(false);
+  const [error, setError] = useState('');
+
+  const productoSel = useMemo(
+    () => (productos ?? []).find((p) => p.id === productoId) ?? null,
+    [productos, productoId],
+  );
+  const rinde = useMemo(() => {
+    if (!productoSel) return 0;
+    const r = Array.isArray(productoSel.receta) ? productoSel.receta[0] : productoSel.receta;
+    return Number(r?.rendimiento_porciones) || 0;
+  }, [productoSel]);
+  const nRecetas = parseDecimal(recetasHechas);
+  const porciones = rinde > 0 ? Math.round(nRecetas * rinde) : 0;
+
+  async function guardar() {
+    if (!responsable.trim()) {
+      setError('Elegí responsable');
+      return;
+    }
+    if (!productoSel) {
+      setError('Elegí el postre que hiciste');
+      return;
+    }
+    if (!recetasHechas || nRecetas <= 0) {
+      setError('Indicá cuántas recetas hiciste');
+      return;
+    }
+    if (rinde <= 0) {
+      setError(
+        `"${productoSel.nombre}" no tiene rendimiento por receta cargado. Cargalo en Productos > Costeo.`,
+      );
+      return;
+    }
+    setGuardando(true);
+    setError('');
+
+    const { error: err } = await supabase.from('cocina_lotes_produccion').insert({
+      fecha: hoy(),
+      local,
+      categoria: 'postre',
+      receta_id: productoSel.receta_id,
+      nombre_libre: productoSel.nombre,
+      cantidad_producida: porciones,
+      unidad: 'unid',
+      responsable: responsable.trim(),
+      notas: `${formatNum(nRecetas)} receta${nRecetas === 1 ? '' : 's'} × ${formatNum(rinde)} porc.`,
+      en_stock: true,
+    });
+    if (err) {
+      setError(mensajeErrorAmigable(err, 'No se pudo cargar la pastelería'));
+      setGuardando(false);
+      return;
+    }
+
+    invalidarStockCocina(qc);
+    onGuardado(
+      `${productoSel.nombre} — +${porciones} porciones (${formatNum(nRecetas)} receta${nRecetas === 1 ? '' : 's'})`,
+    );
+  }
+
+  return (
+    <div className="mt-2 space-y-3">
+      <div className="flex items-center justify-between">
+        <h2 className="text-base font-semibold text-gray-900">Cargar Pastelería</h2>
+        <button onClick={onVolver} className="text-xs text-gray-500 underline">
+          Volver
+        </button>
+      </div>
+
+      <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs text-blue-700">
+        Elegí el <strong>postre</strong> y anotá <strong>cuántas recetas (tandas)</strong> hiciste.
+        Se convierte a porciones (× rinde de la receta) y se suma al stock.
+      </div>
+
+      <div className="space-y-3 rounded-lg border border-gray-200 bg-white p-4">
+        <ResponsableSelect
+          local={local as 'vedia' | 'saavedra'}
+          value={responsable}
+          onChange={setResponsable}
+        />
+
+        <div>
+          <label className="mb-1 block text-xs font-medium text-gray-700">Postre</label>
+          <select
+            value={productoId}
+            onChange={(e) => {
+              setProductoId(e.target.value);
+              setError('');
+            }}
+            className="w-full rounded border border-gray-300 px-3 py-2.5 text-sm"
+          >
+            <option value="">— Elegí el postre —</option>
+            {(productos ?? []).map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.nombre}
+              </option>
+            ))}
+          </select>
+          {productos && productos.length === 0 && (
+            <p className="mt-1 text-[11px] text-amber-600">
+              No hay postres con control de stock en este local.
+            </p>
+          )}
+        </div>
+
+        {productoSel && (
+          <div>
+            <label className="mb-1 block text-xs font-medium text-gray-700">
+              ¿Cuántas recetas hiciste?
+            </label>
+            <input
+              type="text"
+              inputMode="decimal"
+              value={recetasHechas}
+              onChange={(e) => setRecetasHechas(normalizarDecimal(e.target.value))}
+              placeholder="ej: 2"
+              className="w-full rounded border border-gray-300 px-3 py-2.5 text-right text-base tabular-nums"
+            />
+            {rinde > 0 ? (
+              nRecetas > 0 && (
+                <p className="mt-1 text-[11px] text-gray-600">
+                  = <strong>{porciones} porciones</strong> ({formatNum(nRecetas)} ×{' '}
+                  {formatNum(rinde)} por receta) — se suma al stock.
+                </p>
+              )
+            ) : (
+              <p className="mt-1 text-[11px] text-amber-600">
+                "{productoSel.nombre}" no tiene rendimiento por receta cargado. Cargalo en Productos
+                &gt; Costeo para poder convertir a porciones.
+              </p>
+            )}
+          </div>
+        )}
+
+        {error && <p className="text-xs font-medium text-red-600">{error}</p>}
+
+        <button
+          onClick={guardar}
+          disabled={guardando}
+          className="w-full rounded bg-pink-600 py-2.5 text-sm font-semibold text-white hover:bg-pink-700 disabled:opacity-50"
+        >
+          {guardando ? 'Guardando…' : 'Guardar pastelería'}
+        </button>
+      </div>
     </div>
   );
 }
