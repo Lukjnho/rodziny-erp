@@ -1444,7 +1444,9 @@ function CatalogoStock({
       const { error: e3 } = await supabase.from('cocina_lotes_produccion').insert({
         fecha: fechaHoy,
         local,
-        categoria: tipo,
+        // El tipo de PRODUCTO 'panificado' va como categoria 'panaderia' en el lote
+        // (el CHECK de cocina_lotes_produccion no admite 'panificado'; igual que el QR).
+        categoria: tipo === 'panificado' ? 'panaderia' : tipo,
         receta_id: producto.receta_id ?? null,
         nombre_libre: producto.nombre,
         cantidad_producida: valor,
