@@ -2992,10 +2992,6 @@ interface ProductoPasteleria {
   codigo: string;
   receta_id: string | null;
   unidad: string;
-  receta:
-    | { rendimiento_porciones: number | null }
-    | { rendimiento_porciones: number | null }[]
-    | null;
 }
 
 function FormPasteleria({
@@ -3014,7 +3010,7 @@ function FormPasteleria({
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cocina_productos')
-        .select('id, nombre, codigo, receta_id, unidad, receta:cocina_recetas(rendimiento_porciones)')
+        .select('id, nombre, codigo, receta_id, unidad')
         .eq('local', local)
         .eq('tipo', 'postre')
         .eq('activo', true)
@@ -3022,6 +3018,24 @@ function FormPasteleria({
         .order('nombre');
       if (error) throw error;
       return (data ?? []) as ProductoPasteleria[];
+    },
+  });
+
+  // Rinde por receta en query aparte (NO embed): cocina_productos tiene 2 FKs a
+  // cocina_recetas —receta_id y masa_id— y el embed ambiguo deja la lista vacía.
+  const { data: rindePorReceta } = useQuery({
+    queryKey: ['pasteleria-rindes', local],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('cocina_recetas')
+        .select('id, rendimiento_porciones')
+        .eq('local', local);
+      if (error) throw error;
+      const m = new Map<string, number>();
+      for (const r of (data ?? []) as { id: string; rendimiento_porciones: number | null }[]) {
+        m.set(r.id, Number(r.rendimiento_porciones) || 0);
+      }
+      return m;
     },
   });
 
@@ -3035,11 +3049,10 @@ function FormPasteleria({
     () => (productos ?? []).find((p) => p.id === productoId) ?? null,
     [productos, productoId],
   );
-  const rinde = useMemo(() => {
-    if (!productoSel) return 0;
-    const r = Array.isArray(productoSel.receta) ? productoSel.receta[0] : productoSel.receta;
-    return Number(r?.rendimiento_porciones) || 0;
-  }, [productoSel]);
+  const rinde = useMemo(
+    () => (productoSel?.receta_id ? rindePorReceta?.get(productoSel.receta_id) ?? 0 : 0),
+    [productoSel, rindePorReceta],
+  );
   const nRecetas = parseDecimal(recetasHechas);
   const porciones = rinde > 0 ? Math.round(nRecetas * rinde) : 0;
 
