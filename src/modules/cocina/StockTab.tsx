@@ -1391,6 +1391,15 @@ function formatStock(valor: number, unidad: string): string {
   return Math.round(valor).toLocaleString('es-AR');
 }
 
+// El CHECK de cocina_lotes_produccion.unidad solo admite 'kg' | 'unid' | 'lt'.
+// Los productos guardan etiquetas más libres ("unidades", "unidad", "litros"...).
+function unidadLote(u: string): 'kg' | 'unid' | 'lt' {
+  const x = (u || '').toLowerCase().trim();
+  if (x.startsWith('kg') || x.startsWith('kilo')) return 'kg';
+  if (x.startsWith('lt') || x.startsWith('lit')) return 'lt';
+  return 'unid';
+}
+
 function CatalogoStock({
   productos,
   local,
@@ -1450,7 +1459,9 @@ function CatalogoStock({
         receta_id: producto.receta_id ?? null,
         nombre_libre: producto.nombre,
         cantidad_producida: valor,
-        unidad: producto.unidad,
+        // El CHECK de cocina_lotes_produccion.unidad solo admite kg/unid/lt; el
+        // producto puede decir "unidades"/"unidad" → normalizamos a 'unid'.
+        unidad: unidadLote(producto.unidad),
         responsable: responsable ?? 'Ajuste manual',
         notas: 'Ajuste manual de stock (tab Stock)',
         en_stock: true,
