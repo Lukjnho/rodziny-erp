@@ -2980,12 +2980,14 @@ function Exito({ mensaje, onOtro }: { mensaje: string; onOtro: () => void }) {
   );
 }
 
-// ── FormPasteleria (postres por "cuántas recetas" — Saavedra) ──────────────────
+// ── FormPasteleria (postres como Relleno/Masa — Saavedra) ──────────────────────
 // Product-driven: lista los productos tipo='postre' (Flan, Tiramisú, Carrot, etc.).
-// El cocinero elige el postre e ingresa cuántas RECETAS (tandas) hizo; se convierte
-// a porciones (× rendimiento_porciones de la receta vinculada) y SUMA al stock
-// (aditivo, igual que el resto de postres; el cierre re-baselinea). El lote se sella
-// con receta_id + nombre_libre del producto para que el stock reconcilie siempre.
+// Patrón igual a Relleno/Masa: el cocinero elige el postre, pone cuántas RECETAS
+// (tandas) hizo → la IngredientesGrilla escala los insumos por ese multiplicador
+// (checklist de pesaje), y aparte anota cuántas PORCIONES salieron → ESO suma al
+// stock (aditivo; el cierre re-baselinea). El rinde de la receta es solo sugerencia.
+// El lote se sella con receta_id + nombre_libre del producto para que el stock
+// reconcilie siempre.
 interface ProductoPasteleria {
   id: string;
   nombre: string;
@@ -3041,20 +3043,27 @@ function FormPasteleria({
 
   const [responsable, setResponsable] = useState('');
   const [productoId, setProductoId] = useState('');
-  const [recetasHechas, setRecetasHechas] = useState('');
+  const [cantRecetas, setCantRecetas] = useState('1');
+  const [porcionesOut, setPorcionesOut] = useState('');
+  const [ingredientesReales, setIngredientesReales] = useState<IngredienteReal[]>([]);
+  const [ingredientesOk, setIngredientesOk] = useState(true);
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState('');
+  const onGrillaChange = useCallback((ings: IngredienteReal[]) => setIngredientesReales(ings), []);
 
   const productoSel = useMemo(
     () => (productos ?? []).find((p) => p.id === productoId) ?? null,
     [productos, productoId],
   );
+  const recetaId = productoSel?.receta_id ?? null;
+  // Rinde solo de referencia (sugerencia de porciones): el stock = lo que el
+  // cocinero anota que SALIÓ realmente, no el cálculo teórico.
   const rinde = useMemo(
     () => (productoSel?.receta_id ? rindePorReceta?.get(productoSel.receta_id) ?? 0 : 0),
     [productoSel, rindePorReceta],
   );
-  const nRecetas = parseDecimal(recetasHechas);
-  const porciones = rinde > 0 ? Math.round(nRecetas * rinde) : 0;
+  const nRecetas = Math.max(1, Number(cantRecetas) || 1);
+  const porcOut = parseDecimal(porcionesOut);
 
   async function guardar() {
     if (!responsable.trim()) {
@@ -3065,14 +3074,12 @@ function FormPasteleria({
       setError('Elegí el postre que hiciste');
       return;
     }
-    if (!recetasHechas || nRecetas <= 0) {
-      setError('Indicá cuántas recetas hiciste');
+    if (!porcionesOut || porcOut <= 0) {
+      setError('Indicá cuántas porciones salieron');
       return;
     }
-    if (rinde <= 0) {
-      setError(
-        `"${productoSel.nombre}" no tiene rendimiento por receta cargado. Cargalo en Productos > Costeo.`,
-      );
+    if (!ingredientesOk) {
+      setError('Tildá todos los ingredientes pesados antes de guardar');
       return;
     }
     setGuardando(true);
@@ -3084,10 +3091,11 @@ function FormPasteleria({
       categoria: 'postre',
       receta_id: productoSel.receta_id,
       nombre_libre: productoSel.nombre,
-      cantidad_producida: porciones,
+      cantidad_producida: porcOut,
       unidad: 'unid',
       responsable: responsable.trim(),
-      notas: `${formatNum(nRecetas)} receta${nRecetas === 1 ? '' : 's'} × ${formatNum(rinde)} porc.`,
+      notas: `${nRecetas} receta${nRecetas === 1 ? '' : 's'}`,
+      ingredientes_reales: ingredientesReales.length > 0 ? ingredientesReales : null,
       en_stock: true,
     });
     if (err) {
@@ -3098,7 +3106,7 @@ function FormPasteleria({
 
     invalidarStockCocina(qc);
     onGuardado(
-      `${productoSel.nombre} — +${porciones} porciones (${formatNum(nRecetas)} receta${nRecetas === 1 ? '' : 's'})`,
+      `${productoSel.nombre} — +${formatNum(porcOut)} porciones (${nRecetas} receta${nRecetas === 1 ? '' : 's'})`,
     );
   }
 
@@ -3112,8 +3120,9 @@ function FormPasteleria({
       </div>
 
       <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs text-blue-700">
-        Elegí el <strong>postre</strong> y anotá <strong>cuántas recetas (tandas)</strong> hiciste.
-        Se convierte a porciones (× rinde de la receta) y se suma al stock.
+        Elegí el <strong>postre</strong>, poné <strong>cuántas recetas (tandas)</strong> hiciste — eso
+        escala los insumos del checklist — y anotá <strong>cuántas porciones salieron</strong>. Las
+        porciones se suman al stock.
       </div>
 
       <div className="space-y-3 rounded-lg border border-gray-200 bg-white p-4">
@@ -3148,32 +3157,47 @@ function FormPasteleria({
         </div>
 
         {productoSel && (
-          <div>
-            <label className="mb-1 block text-xs font-medium text-gray-700">
-              ¿Cuántas recetas hiciste?
-            </label>
-            <input
-              type="text"
-              inputMode="decimal"
-              value={recetasHechas}
-              onChange={(e) => setRecetasHechas(normalizarDecimal(e.target.value))}
-              placeholder="ej: 2"
-              className="w-full rounded border border-gray-300 px-3 py-2.5 text-right text-base tabular-nums"
-            />
-            {rinde > 0 ? (
-              nRecetas > 0 && (
-                <p className="mt-1 text-[11px] text-gray-600">
-                  = <strong>{porciones} porciones</strong> ({formatNum(nRecetas)} ×{' '}
-                  {formatNum(rinde)} por receta) — se suma al stock.
-                </p>
-              )
-            ) : (
-              <p className="mt-1 text-[11px] text-amber-600">
-                "{productoSel.nombre}" no tiene rendimiento por receta cargado. Cargalo en Productos
-                &gt; Costeo para poder convertir a porciones.
+          <>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-700">Cant. recetas</label>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min={1}
+                  value={cantRecetas}
+                  onChange={(e) => setCantRecetas(e.target.value)}
+                  className="w-full rounded border border-gray-300 px-3 py-2.5 text-sm"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-700">
+                  Porciones que salieron
+                </label>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={porcionesOut}
+                  onChange={(e) => setPorcionesOut(normalizarDecimal(e.target.value))}
+                  placeholder={rinde > 0 ? `ej: ${Math.round(nRecetas * rinde)}` : 'ej: 16'}
+                  className="w-full rounded border border-gray-300 px-3 py-2.5 text-right text-sm tabular-nums"
+                />
+              </div>
+            </div>
+            {rinde > 0 && (
+              <p className="text-[11px] text-gray-500">
+                Referencia: ~{formatNum(rinde)} porciones por receta × {nRecetas} = ~
+                {Math.round(nRecetas * rinde)}. Anotá lo que realmente salió.
               </p>
             )}
-          </div>
+
+            <IngredientesGrilla
+              recetaId={recetaId}
+              onChange={onGrillaChange}
+              multiplicador={nRecetas}
+              onValidezChange={setIngredientesOk}
+            />
+          </>
         )}
 
         {error && <p className="text-xs font-medium text-red-600">{error}</p>}
