@@ -1781,9 +1781,11 @@ function FormPasta({
           </div>
         )}
 
-        {/* Paso 3 — Masa (oculto cuando el relleno es puré: los ñoquis no llevan masa).
+        {/* Paso 3 — Masa (oculto cuando el relleno es puré: los ñoquis no llevan masa,
+            tanto Vedia —semolín/huevo— como Saavedra —ingredientes_armado—).
             Pastas mixtas (es_mixto): lista de varias masas con sus kg. */}
         {!requiereSemolinHuevo &&
+          !usaArmadoItemizado &&
           (esMixto ? (
             <div>
               <label className="mb-1 block text-xs font-medium text-gray-700">
