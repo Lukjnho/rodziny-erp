@@ -111,6 +111,13 @@ function AvisoPosibleGramos({
   );
 }
 
+// Un ingrediente que se agrega al armar la pasta, definido por kg de papa.
+interface IngredienteArmado {
+  nombre: string;
+  por_kg: number;
+  unidad: string;
+}
+
 interface LoteRelleno {
   id: string;
   receta_id: string;
@@ -124,6 +131,9 @@ interface LoteRelleno {
     nombre: string;
     g_semolin_por_kg: number | null;
     g_huevo_por_kg: number | null;
+    // Ingredientes que se agregan al armar (ej: ñoqui SG = harinas GF + huevo),
+    // por kg de papa. Generaliza el semolin/huevo de Vedia.
+    ingredientes_armado: IngredienteArmado[] | null;
   } | null;
   // Campos calculados en memoria a partir de las pastas que consumieron este lote.
   consumido_kg?: number;
@@ -356,7 +366,7 @@ export function ProduccionQRPage() {
       const { data, error } = await supabase
         .from('cocina_lotes_relleno')
         .select(
-          'id, receta_id, peso_total_kg, fecha, local, created_at, responsable, excluido_analisis, receta:cocina_recetas(nombre, g_semolin_por_kg, g_huevo_por_kg)',
+          'id, receta_id, peso_total_kg, fecha, local, created_at, responsable, excluido_analisis, receta:cocina_recetas(nombre, g_semolin_por_kg, g_huevo_por_kg, ingredientes_armado)',
         )
         .gte('fecha', desdeLotes)
         .eq('local', local)
@@ -1321,6 +1331,10 @@ function FormPasta({
   const [muzzarellaGramos, setMuzzarellaGramos] = useState('');
   const [semolinGramos, setSemolinGramos] = useState('');
   const [huevoGramos, setHuevoGramos] = useState('');
+  // Armado itemizado (ñoqui SG): kg de papa a usar + cantidad real por ingrediente
+  // (key = nombre del ingrediente). La sugerencia = por_kg × kgPapa, editable.
+  const [kgPapa, setKgPapa] = useState('');
+  const [armadoReales, setArmadoReales] = useState<Record<string, string>>({});
   const [cantidadCajones, setCantidadCajones] = useState('');
   const [responsable, setResponsable] = useState('');
   const [notas, setNotas] = useState('');
@@ -1447,6 +1461,28 @@ function FormPasta({
   const ratioHuevoPorKg = rellenoSel?.receta?.g_huevo_por_kg ?? null;
   const requiereSemolinHuevo = ratioSemolinPorKg != null && ratioHuevoPorKg != null;
 
+  // Armado itemizado (ej: ñoqui SG): la receta del relleno define la lista de
+  // ingredientes que se agregan por kg de papa. Tiene prioridad sobre el bloque
+  // semolín/huevo (Vedia). Cada ingrediente sugiere por_kg × kgPapa, editable.
+  const ingredientesArmado = rellenoSel?.receta?.ingredientes_armado ?? null;
+  const usaArmadoItemizado = (ingredientesArmado?.length ?? 0) > 0;
+  const kgPapaNum = parseDecimal(kgPapa);
+  useEffect(() => {
+    if (!usaArmadoItemizado || kgPapaNum <= 0) {
+      setArmadoReales({});
+      return;
+    }
+    const sug: Record<string, string> = {};
+    for (const ing of ingredientesArmado ?? []) {
+      const cant = kgPapaNum * (Number(ing.por_kg) || 0);
+      // kg con hasta 3 decimales, unidades enteras.
+      sug[ing.nombre] =
+        ing.unidad === 'kg' ? String(+cant.toFixed(3)) : String(Math.round(cant));
+    }
+    setArmadoReales(sug);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [usaArmadoItemizado, kgPapa, loteRellenoId]);
+
   useEffect(() => {
     if (!requiereSemolinHuevo) {
       setSemolinGramos('');
@@ -1475,6 +1511,19 @@ function FormPasta({
       }
       if (!huevoGramos || Number(huevoGramos) <= 0) {
         setError('Cargá los gramos de huevo agregados al puré');
+        return;
+      }
+    }
+    if (usaArmadoItemizado) {
+      if (kgPapaNum <= 0) {
+        setError('Indicá los kg de papa que vas a usar');
+        return;
+      }
+      const faltante = (ingredientesArmado ?? []).find(
+        (ing) => !armadoReales[ing.nombre] || Number(armadoReales[ing.nombre]) <= 0,
+      );
+      if (faltante) {
+        setError(`Cargá la cantidad de ${faltante.nombre}`);
         return;
       }
     }
@@ -1527,6 +1576,18 @@ function FormPasta({
     setGuardando(true);
     setError('');
 
+    // Detalle del armado itemizado (ñoqui SG) → se registra en notas para trazabilidad.
+    const notasArmado = usaArmadoItemizado
+      ? `Armado (${formatNum(kgPapaNum)} kg papa): ` +
+        (ingredientesArmado ?? [])
+          .map(
+            (ing) =>
+              `${ing.nombre} ${armadoReales[ing.nombre]}${ing.unidad === 'kg' ? ' kg' : ' u'}`,
+          )
+          .join(', ')
+      : '';
+    const notasFinal = [notas.trim(), notasArmado].filter(Boolean).join(' — ') || null;
+
     const cantidad = cantidadCajones ? Number(cantidadCajones) : null;
     const { data: loteCreado, error: err } = await supabase
       .from('cocina_lotes_pasta')
@@ -1542,7 +1603,14 @@ function FormPasta({
           ? null
           : (lotesMasa.find((m) => m.id === loteMasaId)?.receta_id ?? null),
         masa_kg: esMixto ? masaKgTotalMix : masaKg ? parseDecimal(masaKg) : null,
-        relleno_kg: rellenoKg ? parseDecimal(rellenoKg) : null,
+        // Armado itemizado: el "kg de papa" hace de consumo del puré (proxy).
+        relleno_kg: usaArmadoItemizado
+          ? kgPapaNum > 0
+            ? kgPapaNum
+            : null
+          : rellenoKg
+            ? parseDecimal(rellenoKg)
+            : null,
         muzzarella_gramos: esConMuzzarella && muzzarellaGramos ? Number(muzzarellaGramos) : null,
         semolin_gramos: requiereSemolinHuevo && semolinGramos ? Number(semolinGramos) : null,
         huevo_gramos: requiereSemolinHuevo && huevoGramos ? Number(huevoGramos) : null,
@@ -1560,7 +1628,7 @@ function FormPasta({
         responsable_porcionado: esPastaSinRelleno ? responsable.trim() : null,
         responsable: responsable.trim(),
         local,
-        notas: notas.trim() || null,
+        notas: notasFinal,
       })
       .select('id')
       .single();
@@ -1898,6 +1966,62 @@ function FormPasta({
             </div>
             </>
           ))}
+
+        {/* Armado itemizado (ñoqui SG): kg de papa → cada harina/huevo escala por
+            su ratio. Reemplaza al bloque semolín/huevo cuando la receta lo define. */}
+        {usaArmadoItemizado && (
+          <div className="rounded border border-amber-200 bg-amber-50 p-3">
+            <div className="mb-2">
+              <label className="mb-1 block text-xs font-medium text-amber-900">
+                Kg de papa a usar
+              </label>
+              <input
+                type="text"
+                inputMode="decimal"
+                pattern="[0-9]*[.,]?[0-9]*"
+                value={kgPapa}
+                onChange={(e) => setKgPapa(normalizarDecimal(e.target.value))}
+                className="w-full rounded border border-amber-300 bg-white px-3 py-2.5 text-sm"
+                placeholder="Ej: 5"
+              />
+              <p className="mt-1 text-[11px] text-amber-800">
+                Poné los kg de papa y se calcula cuánto de cada harina y huevo agregar (editable).
+              </p>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              {(ingredientesArmado ?? []).map((ing) => {
+                const esKg = ing.unidad === 'kg';
+                const sug = kgPapaNum > 0 ? kgPapaNum * (Number(ing.por_kg) || 0) : null;
+                return (
+                  <div key={ing.nombre}>
+                    <label className="mb-1 block text-xs font-medium text-amber-900">
+                      {ing.nombre} ({esKg ? 'kg' : 'u'})
+                    </label>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={armadoReales[ing.nombre] ?? ''}
+                      onChange={(e) =>
+                        setArmadoReales((prev) => ({
+                          ...prev,
+                          [ing.nombre]: normalizarDecimal(e.target.value),
+                        }))
+                      }
+                      className="w-full rounded border border-amber-300 bg-white px-3 py-2.5 text-sm"
+                      placeholder="0"
+                    />
+                    {sug != null && (
+                      <p className="mt-0.5 text-[10px] text-amber-700">
+                        Sugerido ~{esKg ? formatNum(+sug.toFixed(3)) : Math.round(sug)}{' '}
+                        {esKg ? 'kg' : 'u'}
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* Para ñoquis: un único campo "Puré a usar". El semolín y huevo se calculan
             sobre este valor (ver panel ámbar más abajo). */}
