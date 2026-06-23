@@ -3,6 +3,7 @@ import { formatARS, cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
 import { useMenuEngineering, type ProductoME } from '../hooks/useMenuEngineering';
 import { useProductosCosteoConfig } from '../hooks/useProductosCosteoConfig';
+import { useAccionesEstado, type AccionEstado } from '../hooks/useAccionesEstado';
 
 function ultimosMeses(n: number): string[] {
   const out: string[] = [];
@@ -56,9 +57,11 @@ export function PlanAccionTab() {
   const meses = useMemo(() => ultimosMeses(1), []);
   const [local, setLocal] = useState<'vedia' | 'saavedra'>(localRestringido ?? 'vedia');
   const [tipoFiltro, setTipoFiltro] = useState<TipoAccion | 'todas'>('todas');
+  const [vista, setVista] = useState<'pendientes' | 'resueltas'>('pendientes');
 
   const { productos, isLoading } = useMenuEngineering({ periodos: meses, local });
   const { getConfig } = useProductosCosteoConfig();
+  const { estados, marcar, deshacer } = useAccionesEstado(local);
 
   const acciones = useMemo<AccionSugerida[]>(() => {
     const out: AccionSugerida[] = [];
@@ -156,10 +159,28 @@ export function PlanAccionTab() {
     return out;
   }, [productos, getConfig]);
 
+  // Una acción está resuelta si el usuario la marcó. Para subas de precio,
+  // sigue resuelta solo mientras el objetivo sugerido no supere al que marcó
+  // como hecho (así reaparece cuando el motor pide subir aún más).
+  const estaResuelta = (a: AccionSugerida): boolean => {
+    const e = estados?.get(a.id);
+    if (!e) return false;
+    if (e.estado === 'descartada') return true;
+    if (a.precioSugerido != null && e.precio_objetivo != null) {
+      return a.precioSugerido <= e.precio_objetivo;
+    }
+    return true; // 'hecha' en acciones sin precio
+  };
+
+  const pendientes = useMemo(
+    () => acciones.filter((a) => !estaResuelta(a)),
+    [acciones, estados],
+  );
+
   const accionesVisibles = useMemo(() => {
-    if (tipoFiltro === 'todas') return acciones;
-    return acciones.filter((a) => a.tipo === tipoFiltro);
-  }, [acciones, tipoFiltro]);
+    if (tipoFiltro === 'todas') return pendientes;
+    return pendientes.filter((a) => a.tipo === tipoFiltro);
+  }, [pendientes, tipoFiltro]);
 
   const conteoPorTipo = useMemo(() => {
     const out: Record<TipoAccion, number> = {
@@ -170,15 +191,20 @@ export function PlanAccionTab() {
       sin_costo: 0,
       sin_venta: 0,
     };
-    for (const a of acciones) out[a.tipo]++;
+    for (const a of pendientes) out[a.tipo]++;
     return out;
-  }, [acciones]);
+  }, [pendientes]);
 
   const impactoTotal = useMemo(() => {
-    return acciones
+    return pendientes
       .filter((a) => a.impactoEstimadoMes != null && a.tipo === 'subir_precio_vaca')
       .reduce((s, a) => s + (a.impactoEstimadoMes ?? 0), 0);
-  }, [acciones]);
+  }, [pendientes]);
+
+  const resueltas = useMemo(
+    () => (estados ? Array.from(estados.values()).sort((a, b) => b.updated_at.localeCompare(a.updated_at)) : []),
+    [estados],
+  );
 
   return (
     <div className="space-y-4">
@@ -209,64 +235,136 @@ export function PlanAccionTab() {
             ))}
           </div>
         </div>
-        <div className="ml-auto rounded border border-green-200 bg-green-50 p-2 text-xs text-green-800">
-          Impacto potencial subas vacas: <strong>{formatARS(impactoTotal)}/mes</strong>
-        </div>
+        {vista === 'pendientes' && (
+          <div className="ml-auto rounded border border-green-200 bg-green-50 p-2 text-xs text-green-800">
+            Impacto potencial subas vacas: <strong>{formatARS(impactoTotal)}/mes</strong>
+          </div>
+        )}
       </div>
 
-      {/* Filtro por tipo */}
-      <div className="flex flex-wrap gap-2">
+      {/* Toggle Pendientes / Resueltas */}
+      <div className="flex gap-2">
         <button
-          onClick={() => setTipoFiltro('todas')}
+          onClick={() => setVista('pendientes')}
           className={cn(
-            'rounded border-2 px-3 py-1 text-xs',
-            tipoFiltro === 'todas' ? 'border-rodziny-500 bg-rodziny-50' : 'border-gray-200 bg-white',
+            'rounded border-2 px-3 py-1 text-xs font-medium',
+            vista === 'pendientes' ? 'border-rodziny-500 bg-rodziny-50' : 'border-gray-200 bg-white',
           )}
         >
-          Todas ({acciones.length})
+          Pendientes ({pendientes.length})
         </button>
-        {(Object.keys(TIPO_LABEL) as TipoAccion[])
-          .filter((t) => conteoPorTipo[t] > 0)
-          .map((t) => {
-            const cfg = TIPO_LABEL[t];
-            const activo = tipoFiltro === t;
-            return (
-              <button
-                key={t}
-                onClick={() => setTipoFiltro(activo ? 'todas' : t)}
-                className={cn(
-                  'rounded border-2 px-3 py-1 text-xs',
-                  cfg.color,
-                  activo && 'ring-2 ring-rodziny-500',
-                )}
-              >
-                {cfg.icon} {cfg.label} ({conteoPorTipo[t]})
-              </button>
-            );
-          })}
+        <button
+          onClick={() => setVista('resueltas')}
+          className={cn(
+            'rounded border-2 px-3 py-1 text-xs font-medium',
+            vista === 'resueltas' ? 'border-rodziny-500 bg-rodziny-50' : 'border-gray-200 bg-white',
+          )}
+        >
+          ✅ Resueltas ({resueltas.length})
+        </button>
       </div>
 
-      {isLoading ? (
-        <div className="rounded-lg border border-gray-200 bg-gray-50 p-8 text-center text-sm text-gray-400">
-          Calculando acciones…
-        </div>
-      ) : accionesVisibles.length === 0 ? (
-        <div className="rounded-lg border border-green-200 bg-green-50 p-8 text-center text-sm text-green-800">
-          🎉 Sin acciones pendientes según los filtros
-        </div>
+      {vista === 'resueltas' ? (
+        resueltas.length === 0 ? (
+          <div className="rounded-lg border border-gray-200 bg-gray-50 p-8 text-center text-sm text-gray-400">
+            Todavía no marcaste ninguna acción como hecha o descartada.
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {resueltas.map((e) => (
+              <ResueltaCard
+                key={e.accion_key}
+                estado={e}
+                onDeshacer={() => deshacer.mutate(e.accion_key)}
+                deshaciendo={deshacer.isPending}
+              />
+            ))}
+          </div>
+        )
       ) : (
-        <div className="space-y-2">
-          {accionesVisibles.map((a) => (
-            <AccionCard key={a.id} accion={a} />
-          ))}
-        </div>
+        <>
+          {/* Filtro por tipo */}
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => setTipoFiltro('todas')}
+              className={cn(
+                'rounded border-2 px-3 py-1 text-xs',
+                tipoFiltro === 'todas' ? 'border-rodziny-500 bg-rodziny-50' : 'border-gray-200 bg-white',
+              )}
+            >
+              Todas ({pendientes.length})
+            </button>
+            {(Object.keys(TIPO_LABEL) as TipoAccion[])
+              .filter((t) => conteoPorTipo[t] > 0)
+              .map((t) => {
+                const cfg = TIPO_LABEL[t];
+                const activo = tipoFiltro === t;
+                return (
+                  <button
+                    key={t}
+                    onClick={() => setTipoFiltro(activo ? 'todas' : t)}
+                    className={cn(
+                      'rounded border-2 px-3 py-1 text-xs',
+                      cfg.color,
+                      activo && 'ring-2 ring-rodziny-500',
+                    )}
+                  >
+                    {cfg.icon} {cfg.label} ({conteoPorTipo[t]})
+                  </button>
+                );
+              })}
+          </div>
+
+          {isLoading ? (
+            <div className="rounded-lg border border-gray-200 bg-gray-50 p-8 text-center text-sm text-gray-400">
+              Calculando acciones…
+            </div>
+          ) : accionesVisibles.length === 0 ? (
+            <div className="rounded-lg border border-green-200 bg-green-50 p-8 text-center text-sm text-green-800">
+              🎉 Sin acciones pendientes según los filtros
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {accionesVisibles.map((a) => (
+                <AccionCard
+                  key={a.id}
+                  accion={a}
+                  onMarcar={(estado, nota) =>
+                    marcar.mutate({
+                      accion_key: a.id,
+                      tipo: a.tipo,
+                      local: a.producto.local,
+                      producto_codigo: a.producto.codigo ?? null,
+                      producto_nombre: a.producto.nombre,
+                      estado,
+                      precio_objetivo: a.precioSugerido ?? null,
+                      nota: nota || null,
+                    })
+                  }
+                  guardando={marcar.isPending}
+                />
+              ))}
+            </div>
+          )}
+        </>
       )}
     </div>
   );
 }
 
-function AccionCard({ accion }: { accion: AccionSugerida }) {
+function AccionCard({
+  accion,
+  onMarcar,
+  guardando,
+}: {
+  accion: AccionSugerida;
+  onMarcar: (estado: 'hecha' | 'descartada', nota: string) => void;
+  guardando: boolean;
+}) {
   const cfg = TIPO_LABEL[accion.tipo];
+  const [modo, setModo] = useState<null | 'hecha' | 'descartada'>(null);
+  const [nota, setNota] = useState('');
+
   return (
     <div className={cn('rounded-lg border-l-4 bg-white p-3 shadow-sm', cfg.color)}>
       <div className="flex items-start justify-between gap-3">
@@ -303,6 +401,115 @@ function AccionCard({ accion }: { accion: AccionSugerida }) {
           </div>
         )}
       </div>
+
+      {/* Acciones del usuario */}
+      <div className="mt-3 border-t border-black/5 pt-2">
+        {modo === null ? (
+          <div className="flex gap-2">
+            <button
+              onClick={() => setModo('hecha')}
+              className="rounded bg-green-600 px-3 py-1 text-xs font-medium text-white hover:bg-green-700"
+            >
+              ✅ Hecho
+            </button>
+            <button
+              onClick={() => setModo('descartada')}
+              className="rounded border border-gray-300 bg-white px-3 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50"
+            >
+              🚫 Descartar
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <div className="text-[11px] font-medium">
+              {modo === 'hecha' ? '✅ Marcar como hecho' : '🚫 Descartar acción'}
+            </div>
+            <textarea
+              value={nota}
+              onChange={(e) => setNota(e.target.value)}
+              rows={2}
+              placeholder={
+                modo === 'hecha'
+                  ? 'Nota opcional (ej: subido en Fudo el 23/6)'
+                  : 'Nota opcional (ej: lo dejo por celíacos)'
+              }
+              className="w-full rounded border border-gray-300 px-2 py-1 text-xs"
+            />
+            <div className="flex gap-2">
+              <button
+                disabled={guardando}
+                onClick={() => onMarcar(modo, nota.trim())}
+                className={cn(
+                  'rounded px-3 py-1 text-xs font-medium text-white disabled:opacity-50',
+                  modo === 'hecha' ? 'bg-green-600 hover:bg-green-700' : 'bg-gray-700 hover:bg-gray-800',
+                )}
+              >
+                {guardando ? 'Guardando…' : 'Confirmar'}
+              </button>
+              <button
+                onClick={() => {
+                  setModo(null);
+                  setNota('');
+                }}
+                className="rounded border border-gray-300 bg-white px-3 py-1 text-xs text-gray-600 hover:bg-gray-50"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ResueltaCard({
+  estado,
+  onDeshacer,
+  deshaciendo,
+}: {
+  estado: AccionEstado;
+  onDeshacer: () => void;
+  deshaciendo: boolean;
+}) {
+  const esHecha = estado.estado === 'hecha';
+  const fecha = new Date(estado.updated_at).toLocaleDateString('es-AR', {
+    day: '2-digit',
+    month: '2-digit',
+  });
+  return (
+    <div className="flex items-start justify-between gap-3 rounded-lg border border-gray-200 bg-gray-50 p-3 opacity-90">
+      <div className="flex-1">
+        <div className="mb-1 flex items-center gap-2">
+          <span
+            className={cn(
+              'rounded px-1.5 py-0.5 text-[9px] font-medium',
+              esHecha ? 'bg-green-100 text-green-800' : 'bg-gray-200 text-gray-700',
+            )}
+          >
+            {esHecha ? '✅ Hecho' : '🚫 Descartada'}
+          </span>
+          <span className="text-[10px] opacity-60">
+            {estado.local} · {estado.tipo.replace(/_/g, ' ')} · {fecha}
+          </span>
+        </div>
+        <div className="text-sm font-semibold text-gray-700">
+          {estado.producto_nombre ?? estado.accion_key}
+          {estado.precio_objetivo != null && (
+            <span className="ml-1 text-[11px] font-normal text-gray-500">
+              (objetivo {formatARS(estado.precio_objetivo)})
+            </span>
+          )}
+        </div>
+        {estado.nota && <div className="mt-1 text-[11px] italic text-gray-500">“{estado.nota}”</div>}
+      </div>
+      <button
+        disabled={deshaciendo}
+        onClick={onDeshacer}
+        className="rounded border border-gray-300 bg-white px-2 py-1 text-[11px] text-gray-600 hover:bg-gray-100 disabled:opacity-50"
+      >
+        Deshacer
+      </button>
     </div>
   );
 }
