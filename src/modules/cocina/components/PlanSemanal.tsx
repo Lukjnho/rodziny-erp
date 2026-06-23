@@ -360,8 +360,12 @@ export function PlanSemanal({
     //    en mostrador se ve en tab Stock, no acá.
     for (const it of items ?? []) {
       if (!TIPOS_VISIBLES.includes(it.tipo)) continue;
+      // Saavedra: los postres se planifican dentro de "Pastelería" → se agrupan
+      // ahí visualmente (el tipo real del item no cambia, es solo presentación).
+      const tipoVista: TipoPlan =
+        local === 'saavedra' && it.tipo === 'postre' ? 'pasteleria' : it.tipo;
       const nombre = it.receta?.nombre ?? it.texto_libre ?? '(sin receta)';
-      const g = getGrupo(it.fecha_objetivo, it.tipo, nombre, it.receta_id);
+      const g = getGrupo(it.fecha_objetivo, tipoVista, nombre, it.receta_id);
       if (!g) continue;
       if (it.destino?.nombre && !g.destinoNombre) g.destinoNombre = it.destino.nombre;
       const estado: EstadoItem = it.estado === 'cancelado' ? 'pendiente' : it.estado;
@@ -445,7 +449,7 @@ export function PlanSemanal({
     }
 
     return map;
-  }, [items, lotesMasa, lotesPasta, fechas, maps]);
+  }, [items, lotesMasa, lotesPasta, fechas, maps, local]);
 
   const kpi = useMemo(() => {
     let hechos = 0;

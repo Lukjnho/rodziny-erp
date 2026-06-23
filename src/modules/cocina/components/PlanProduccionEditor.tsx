@@ -48,12 +48,34 @@ function recetasDelTipoPlan(recetas: Receta[], tipoPlan: TipoItem): Receta[] {
     case 'panaderia':
       return recetas.filter((r) => r.rol === 'panificado' || r.categoria === 'panificado');
     case 'pasteleria':
-      return recetas.filter((r) => r.rol === 'pasteleria_base');
+      // Saavedra agrupa pastelería y postres en una sola sección: el dropdown
+      // ofrece ambos, pero cada receta conserva su tipo real (ver
+      // tipoRealDeReceta) para que el tachado del QR matchee.
+      return recetas.filter(
+        (r) =>
+          r.rol === 'pasteleria_base' || r.rol === 'postre_base' || r.categoria === 'postre',
+      );
     case 'milanesa':
       return recetas.filter((r) => r.rol === 'milanesa_base');
     case 'pasta_simple':
       return [];
   }
+}
+
+// En la sección "Pastelería" de Saavedra conviven pastelería (pasteleria_base) y
+// postres (postre_base / categoria='postre'). Cada ítem del plan guarda su tipo
+// REAL para que el tachado del QR funcione (el QR escribe categoria 'pasteleria'
+// o 'postre' según el rol de la receta). En el resto de secciones el tipo del
+// ítem es el de la sección.
+function tipoRealDeReceta(
+  recetas: Receta[],
+  recetaId: string | null,
+  tipoSeccion: TipoItem,
+): TipoItem {
+  if (tipoSeccion !== 'pasteleria' || !recetaId) return tipoSeccion;
+  const r = recetas.find((x) => x.id === recetaId);
+  if (!r) return tipoSeccion;
+  return r.rol === 'pasteleria_base' ? 'pasteleria' : 'postre';
 }
 
 // Formatea kg con coma decimal, sin ceros sobrantes ("3" / "7,5").
@@ -111,12 +133,14 @@ const TIPOS_VEDIA: { tipo: TipoItem; label: string; emoji: string }[] = [
   { tipo: 'postre', label: 'Postres', emoji: '🍰' },
 ];
 
+// Saavedra no tiene sección "Postres" propia: los postres (tiramisú, flan, etc.)
+// se planifican dentro de "Pastelería" (se producen y cargan por el mismo QR).
+// Cada ítem igual guarda su tipo real (postre/pasteleria) — ver tipoRealDeReceta.
 const TIPOS_SAAVEDRA: { tipo: TipoItem; label: string; emoji: string }[] = [
   { tipo: 'relleno', label: 'Rellenos', emoji: '🥟' },
   { tipo: 'pasta_simple', label: 'Pastas simples', emoji: '🍝' },
   { tipo: 'salsa', label: 'Salsas', emoji: '🍅' },
   { tipo: 'milanesa', label: 'Milanesas', emoji: '🍖' },
-  { tipo: 'postre', label: 'Postres', emoji: '🍰' },
   { tipo: 'pasteleria', label: 'Pastelería', emoji: '🥐' },
   { tipo: 'panaderia', label: 'Panadería', emoji: '🍞' },
 ];
@@ -537,7 +561,13 @@ export function PlanProduccionEditor({
 
   // ── Sugerencias derivadas (estilo dashboard pero simplificado) ──
   const PISO_PORCIONES_PASTA = 100;
-  const tiposPlan = useMemo(() => new Set(tipos.map((t) => t.tipo)), [tipos]);
+  const tiposPlan = useMemo(() => {
+    const s = new Set(tipos.map((t) => t.tipo));
+    // Saavedra: los postres se planifican dentro de Pastelería pero siguen siendo
+    // tipo 'postre' por dentro → hay que aceptarlos en las sugerencias.
+    if (local === 'saavedra') s.add('postre');
+    return s;
+  }, [tipos, local]);
 
   // Total de recetas ya agregadas a la pizarra en toda la semana, por receta_id.
   // Usado para descontar de la sugerencia: si ya planificaste lo suficiente, no
@@ -1004,7 +1034,11 @@ export function PlanProduccionEditor({
           )}
 
           {tipos.map(({ tipo, label, emoji }) => {
-            const itemsTipo = itemsDelDia.filter((it) => it.tipo === tipo);
+            // La sección Pastelería agrupa pastelería + postres (cada ítem conserva
+            // su tipo real). El resto de secciones es 1:1 con su tipo.
+            const tiposSeccion: TipoItem[] =
+              tipo === 'pasteleria' ? ['pasteleria', 'postre'] : [tipo];
+            const itemsTipo = itemsDelDia.filter((it) => tiposSeccion.includes(it.tipo));
             const recetasTipo = recetasDelTipoPlan(recetas ?? [], tipo);
             return (
               <section key={tipo} className="mb-5">
@@ -1080,6 +1114,13 @@ export function PlanProduccionEditor({
                                 onChange={(e) =>
                                   actualizarItem(fechaActiva, it.id, {
                                     receta_id: e.target.value || null,
+                                    // En Pastelería, fijar el tipo real según la
+                                    // receta (postre vs pastelería) para el tachado.
+                                    tipo: tipoRealDeReceta(
+                                      recetas ?? [],
+                                      e.target.value || null,
+                                      tipo,
+                                    ),
                                     destino_producto_id: null,
                                   })
                                 }
