@@ -26,9 +26,9 @@ interface Requisito {
 // Cierres obligatorios por local. El día anterior se exige siempre (sin importar
 // la hora); el día actual solo a partir de `horaMin`.
 //   - Vedia: Pastas mediodía (16h) / noche (23h) · Salsas (23h) · Postres (23h).
-//   - Saavedra: Salsas (23h) · Postres (23h) · Panadería (23h). NO exige cierre de
-//     pasta: usa el flujo cámara (espejo de Vedia, sin mostrador) y el recuento de
-//     pasta se hace por conteo de cámara en el StockTab, no por cierre de turno.
+//   - Saavedra: Pastas mediodía (16h) / noche (23h) · Salsas (23h) · Postres (23h) ·
+//     Panadería (23h). El cierre de pasta por turno es independiente del conteo de
+//     cámara del StockTab (no se duplica stock).
 //   - Los domingos no se exige el cierre de pastas de mediodía (se cuenta solo a la noche).
 const REQUISITOS: Record<Local, Requisito[]> = {
   vedia: [
@@ -38,6 +38,8 @@ const REQUISITOS: Record<Local, Requisito[]> = {
     { tipo: 'postre', turno: null, horaMin: 23, label: 'Postres' },
   ],
   saavedra: [
+    { tipo: 'pasta', turno: 'mediodia', horaMin: 16, label: 'Pastas · mediodía', omitirDomingo: true },
+    { tipo: 'pasta', turno: 'noche', horaMin: 23, label: 'Pastas · noche' },
     { tipo: 'salsa', turno: null, horaMin: 23, label: 'Salsas' },
     { tipo: 'postre', turno: null, horaMin: 23, label: 'Postres' },
     { tipo: 'panaderia', turno: null, horaMin: 23, label: 'Panadería' },
