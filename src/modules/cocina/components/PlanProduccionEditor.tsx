@@ -30,6 +30,9 @@ interface Receta {
   local: string | null;
   rendimiento_porciones: number | null;
   rendimiento_kg: number | null;
+  // Si está seteado (ej: puré de papa = 17), el relleno se planifica por BOLSA.
+  // 1 bolsa = kg_por_bolsa recetas (la receta del puré es 1 receta = 1 kg de papa).
+  kg_por_bolsa: number | null;
 }
 
 // Mapea el TipoItem del pizarrón (relleno/masa/salsa/postre/pasteleria/panaderia)
@@ -81,6 +84,15 @@ function tipoRealDeReceta(
 // Formatea kg con coma decimal, sin ceros sobrantes ("3" / "7,5").
 function fmtKg(n: number): string {
   return n.toFixed(1).replace(/\.0$/, '').replace('.', ',');
+}
+
+// Muestra una cantidad de bolsas con ½: 0,5 → "½ bolsa", 1 → "1 bolsa",
+// 1,5 → "1½ bolsas", 2 → "2 bolsas".
+function fmtBolsas(n: number): string {
+  const ent = Math.floor(n + 1e-9);
+  const tieneMedio = n - ent >= 0.5 - 1e-9;
+  const txt = ent === 0 ? '½' : tieneMedio ? `${ent}½` : `${ent}`;
+  return `${txt} bolsa${n <= 1 + 1e-9 ? '' : 's'}`;
 }
 
 // Rinde de milanesa (kg de milanesa por kg de cuadril) cuando no hay receta
@@ -227,7 +239,9 @@ export function PlanProduccionEditor({
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cocina_recetas')
-        .select('id, nombre, tipo, rol, categoria, local, rendimiento_porciones, rendimiento_kg')
+        .select(
+          'id, nombre, tipo, rol, categoria, local, rendimiento_porciones, rendimiento_kg, kg_por_bolsa',
+        )
         .eq('activo', true)
         .or(`local.eq.${local},local.is.null`)
         .order('nombre');
@@ -1111,19 +1125,30 @@ export function PlanProduccionEditor({
                             ) : (
                               <select
                                 value={it.receta_id ?? ''}
-                                onChange={(e) =>
+                                onChange={(e) => {
+                                  const nuevaReceta = e.target.value || null;
+                                  const rNueva = nuevaReceta
+                                    ? (recetas ?? []).find((x) => x.id === nuevaReceta)
+                                    : null;
+                                  const rPrev = it.receta_id
+                                    ? (recetas ?? []).find((x) => x.id === it.receta_id)
+                                    : null;
+                                  const kgBNueva = rNueva?.kg_por_bolsa ?? 0;
+                                  const kgBPrev = rPrev?.kg_por_bolsa ?? 0;
+                                  // Al pasar a un relleno por bolsa, arrancar en 1 bolsa
+                                  // (= kg_por_bolsa recetas). Al salir, volver a 1 receta.
+                                  let nuevaCant = it.cantidad_recetas;
+                                  if (kgBNueva > 0 && kgBPrev <= 0) nuevaCant = kgBNueva;
+                                  else if (kgBNueva <= 0 && kgBPrev > 0) nuevaCant = 1;
                                   actualizarItem(fechaActiva, it.id, {
-                                    receta_id: e.target.value || null,
+                                    receta_id: nuevaReceta,
                                     // En Pastelería, fijar el tipo real según la
                                     // receta (postre vs pastelería) para el tachado.
-                                    tipo: tipoRealDeReceta(
-                                      recetas ?? [],
-                                      e.target.value || null,
-                                      tipo,
-                                    ),
+                                    tipo: tipoRealDeReceta(recetas ?? [], nuevaReceta, tipo),
+                                    cantidad_recetas: nuevaCant,
                                     destino_producto_id: null,
-                                  })
-                                }
+                                  });
+                                }}
                                 disabled={bloqueado}
                                 className="w-full rounded border border-gray-300 bg-white px-2 py-1 text-sm disabled:bg-gray-100"
                               >
@@ -1195,6 +1220,47 @@ export function PlanProduccionEditor({
                                       onClick={() =>
                                         actualizarItem(fechaActiva, it.id, {
                                           cantidad_recetas: (kgActual + pasoKg) / rinde,
+                                        })
+                                      }
+                                      disabled={bloqueado}
+                                      className="px-2 py-1 text-gray-500 hover:bg-gray-100 disabled:opacity-30"
+                                    >
+                                      +
+                                    </button>
+                                  </div>
+                                );
+                              }
+                              // Puré por bolsa: se planifica en bolsas (½ paso). Por
+                              // dentro guardamos recetas (1 bolsa = kg_por_bolsa recetas,
+                              // = kg de papa) para que la cobertura siga exacta.
+                              const recetaItem = it.receta_id
+                                ? (recetas ?? []).find((r) => r.id === it.receta_id)
+                                : null;
+                              const kgBolsa = recetaItem?.kg_por_bolsa ?? 0;
+                              if (kgBolsa > 0) {
+                                const bolsasActual = it.cantidad_recetas / kgBolsa;
+                                const pasoB = 0.5;
+                                return (
+                                  <div className="flex items-center rounded border border-gray-300 bg-white">
+                                    <button
+                                      onClick={() =>
+                                        actualizarItem(fechaActiva, it.id, {
+                                          cantidad_recetas:
+                                            Math.max(pasoB, bolsasActual - pasoB) * kgBolsa,
+                                        })
+                                      }
+                                      disabled={bloqueado}
+                                      className="px-2 py-1 text-gray-500 hover:bg-gray-100 disabled:opacity-30"
+                                    >
+                                      −
+                                    </button>
+                                    <span className="flex-1 text-center text-sm font-semibold tabular-nums">
+                                      {fmtBolsas(bolsasActual)}
+                                    </span>
+                                    <button
+                                      onClick={() =>
+                                        actualizarItem(fechaActiva, it.id, {
+                                          cantidad_recetas: (bolsasActual + pasoB) * kgBolsa,
                                         })
                                       }
                                       disabled={bloqueado}
