@@ -1493,6 +1493,30 @@ function CatalogoStock({
     },
   });
 
+  // Demanda 7d (ventas Fudo de los últimos 7 días) para guiar el stock. Mismo
+  // queryKey/parámetros que la tabla de pastas → comparte caché (sin llamada
+  // extra). Solo aplica a productos de venta directa (postres/panadería/milanesa
+  // con fudo_nombres); las salsas no se venden directo y van con "—".
+  const hoyDem = HOY();
+  const hace7 = useMemo(() => {
+    const d = new Date(hoyDem + 'T12:00:00');
+    d.setDate(d.getDate() - 7);
+    return d.toISOString().slice(0, 10);
+  }, [hoyDem]);
+  const { data: fudo7d } = useQuery({
+    queryKey: ['cocina-stock-fudo-7d', [local], hace7, hoyDem],
+    queryFn: async () => {
+      const res: Record<string, FudoData | null> = {};
+      const { data, error } = await supabase.functions.invoke('fudo-productos', {
+        body: { local, fechaDesde: hace7, fechaHasta: hoyDem },
+      });
+      res[local] = !error && data?.ok ? (data.data as FudoData) : null;
+      return res;
+    },
+    staleTime: 10 * 60 * 1000,
+  });
+  const rankingDem = fudo7d?.[local]?.ranking;
+
   // Stock por producto = Σ (producido − merma) de lotes activos que matchean por
   // nombre (nombre_libre) o por receta vinculada. Overwrite ⇒ normalmente 1 lote.
   const stockPorProducto = useMemo(() => {
@@ -1567,6 +1591,7 @@ function CatalogoStock({
                     <th className="px-4 py-2 text-right">Stock</th>
                     <th className="px-4 py-2">Unidad</th>
                     <th className="px-4 py-2">Mín.</th>
+                    <th className="px-4 py-2 text-right">Demanda 7d</th>
                     <th className="px-4 py-2">Estado</th>
                     {esAdmin && <th className="px-4 py-2 text-center">Control</th>}
                   </tr>
@@ -1577,6 +1602,14 @@ function CatalogoStock({
                     const min = p.minimo_produccion ?? 0;
                     const estado =
                       stock <= 0 ? 'sin-stock' : min && stock < min ? 'bajo' : 'ok';
+                    // Demanda 7d: solo para productos de venta directa. Si no tiene
+                    // mapeo Fudo y no registró ventas, mostramos "—" (ej: salsas).
+                    const demanda = ventasFudoDelProducto(p, rankingDem);
+                    const tieneMapeoFudo = (p.fudo_nombres?.length ?? 0) > 0;
+                    const demandaLabel =
+                      tieneMapeoFudo || demanda > 0
+                        ? Math.round(demanda).toLocaleString('es-AR')
+                        : '—';
                     return (
                       <tr
                         key={p.id}
@@ -1609,6 +1642,9 @@ function CatalogoStock({
                         </td>
                         <td className="px-4 py-2 text-gray-500">{p.unidad}</td>
                         <td className="px-4 py-2">{min || '—'}</td>
+                        <td className="px-4 py-2 text-right tabular-nums text-gray-700">
+                          {demandaLabel}
+                        </td>
                         <td className="px-4 py-2">
                           {estado === 'ok' && (
                             <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs text-green-700">
