@@ -35,6 +35,9 @@ interface Receta {
   rendimiento_kg: number | null;
   rendimiento_unidad: 'kg' | 'l' | 'unidad' | null;
   local: string | null;
+  // Si está seteado, el relleno se gestiona por bolsa (ej: puré de papa): el cocinero
+  // carga ½/1 bolsa + kg de papa + kg de puré que salió, en vez de "recetas".
+  kg_por_bolsa: number | null;
 }
 
 const RECETA_UNIDAD_LABEL: Record<'kg' | 'l' | 'unidad', string> = {
@@ -310,7 +313,9 @@ export function ProduccionQRPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cocina_recetas')
-        .select('id, nombre, tipo, rol, categoria, rendimiento_kg, rendimiento_unidad, local')
+        .select(
+          'id, nombre, tipo, rol, categoria, rendimiento_kg, rendimiento_unidad, local, kg_por_bolsa',
+        )
         .eq('activo', true)
         .order('nombre');
       if (error) throw error;
@@ -1092,9 +1097,12 @@ function FormRelleno({
     const planeada = id ? recetaIdsPlan?.get(id) : undefined;
     return planeada ? String(planeada) : '1';
   });
-  const [pesoKg, setPesoKg] = useState('');
+  const [pesoKg, setPesoKg] = useState(''); // en modo bolsa = kg de puré que salió
   const [responsable, setResponsable] = useState('');
   const [notas, setNotas] = useState('');
+  // Modo bolsa (puré de papa): bolsas procesadas + kg de papa pesada.
+  const [bolsas, setBolsas] = useState('1');
+  const [kgPapa, setKgPapa] = useState('');
   const [ingredientesReales, setIngredientesReales] = useState<IngredienteReal[]>([]);
   const [ingredientesOk, setIngredientesOk] = useState(true);
   const [guardando, setGuardando] = useState(false);
@@ -1117,11 +1125,66 @@ function FormRelleno({
   }, [recetaId, recetaIdsPlan]);
 
   const recetaSel = recetas.find((r) => r.id === recetaId);
+  // Modo bolsa: el relleno (puré de papa) se carga por bolsa + kg de papa + kg de puré.
+  const esPorBolsa = (recetaSel?.kg_por_bolsa ?? 0) > 0;
   const onGrillaChange = useCallback((ings: IngredienteReal[]) => setIngredientesReales(ings), []);
 
   async function guardar() {
     if (!recetaId) {
       setError('Seleccioná una receta');
+      return;
+    }
+    // ── Modo bolsa (puré de papa): bolsas + kg papa + kg puré ──────────────────
+    if (esPorBolsa) {
+      const pure = parseDecimal(pesoKg);
+      const papa = parseDecimal(kgPapa);
+      const nBolsas = parseDecimal(bolsas);
+      if (!nBolsas || nBolsas <= 0) {
+        setError('Indicá cuántas bolsas usaste (½ = 0,5)');
+        return;
+      }
+      if (!papa || papa <= 0) {
+        setError('Indicá los kg de papa que pesaste');
+        return;
+      }
+      if (!pure || pure <= 0) {
+        setError('Indicá los kg de puré que salió');
+        return;
+      }
+      if (!responsable.trim()) {
+        setError('Elegí responsable');
+        return;
+      }
+      if (pure > papa) {
+        const ok = window.confirm(
+          `El puré (${formatNum(pure)} kg) pesa más que la papa (${formatNum(papa)} kg). ¿Es correcto?`,
+        );
+        if (!ok) return;
+      }
+      setGuardando(true);
+      setError('');
+      // peso_total_kg = kg de puré (stock del relleno). bolsas/kg_papa registran el
+      // rinde real papa→puré. excluido_analisis: el rinde no es "por receta teórica".
+      const { error: errB } = await supabase.from('cocina_lotes_relleno').insert({
+        receta_id: recetaId,
+        fecha: hoy(),
+        cantidad_recetas: nBolsas,
+        peso_total_kg: pure,
+        bolsas: nBolsas,
+        kg_papa: papa,
+        responsable: responsable.trim(),
+        local,
+        notas: notas.trim() || null,
+        excluido_analisis: true,
+      });
+      if (errB) {
+        setError(mensajeErrorAmigable(errB, 'No se pudo guardar el puré'));
+        setGuardando(false);
+        return;
+      }
+      onGuardado(
+        `Puré "${recetaSel?.nombre ?? ''}" — ${formatNum(pure)} kg (de ${formatNum(papa)} kg de papa)`,
+      );
       return;
     }
     if (!pesoKg || parseDecimal(pesoKg) <= 0) {
@@ -1235,43 +1298,124 @@ function FormRelleno({
           </select>
         </div>
 
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="mb-1 block text-xs font-medium text-gray-700">Cant. recetas</label>
-            <input
-              type="number"
-              inputMode="numeric"
-              min={1}
-              value={cantRecetas}
-              onChange={(e) => setCantRecetas(e.target.value)}
-              className="w-full rounded border border-gray-300 px-3 py-2.5 text-sm"
-            />
-          </div>
-          <div>
-            <label className="mb-1 block text-xs font-medium text-gray-700">Peso total (kg)</label>
-            <input
-              type="text"
-              inputMode="decimal"
-              pattern="[0-9]*[.,]?[0-9]*"
-              value={pesoKg}
-              onChange={(e) => setPesoKg(normalizarDecimal(e.target.value))}
-              className="w-full rounded border border-gray-300 px-3 py-2.5 text-sm"
-              placeholder="Ej: 5,2"
-            />
-            {parseDecimal(pesoKg) > 0 && equivalenteKgGramos(parseDecimal(pesoKg)) && (
-              <p className="mt-1 text-[11px] text-gray-500">
-                = {equivalenteKgGramos(parseDecimal(pesoKg))}
+        {esPorBolsa ? (
+          <div className="space-y-3">
+            <div className="rounded border border-amber-200 bg-amber-50 px-2.5 py-2 text-[11px] text-amber-800">
+              🥔 Este relleno se carga <strong>por bolsa</strong>. Anotá cuántas bolsas usaste,
+              cuántos kg de papa pesaron y cuántos kg de <strong>puré</strong> salieron. Los demás
+              ingredientes (harina, huevo, condimentos) se agregan después al armar el ñoqui.
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-gray-700">Bolsas de papa</label>
+              <div className="flex gap-2">
+                {[
+                  ['0.5', '½ bolsa'],
+                  ['1', '1 bolsa'],
+                  ['1.5', '1½'],
+                  ['2', '2 bolsas'],
+                ].map(([v, l]) => (
+                  <button
+                    key={v}
+                    type="button"
+                    onClick={() => setBolsas(v)}
+                    className={cn(
+                      'flex-1 rounded border px-2 py-2 text-sm font-medium transition',
+                      bolsas === v
+                        ? 'border-rodziny-600 bg-rodziny-50 text-rodziny-700'
+                        : 'border-gray-300 bg-white text-gray-600',
+                    )}
+                  >
+                    {l}
+                  </button>
+                ))}
+              </div>
+              {recetaSel?.kg_por_bolsa ? (
+                <p className="mt-1 text-[11px] text-gray-500">
+                  1 bolsa ≈ {formatNum(recetaSel.kg_por_bolsa)} kg de papa
+                </p>
+              ) : null}
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-700">
+                  Kg de papa pesada
+                </label>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  pattern="[0-9]*[.,]?[0-9]*"
+                  value={kgPapa}
+                  onChange={(e) => setKgPapa(normalizarDecimal(e.target.value))}
+                  className="w-full rounded border border-gray-300 px-3 py-2.5 text-sm"
+                  placeholder="Ej: 8,5"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-700">
+                  Kg de puré que salió
+                </label>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  pattern="[0-9]*[.,]?[0-9]*"
+                  value={pesoKg}
+                  onChange={(e) => setPesoKg(normalizarDecimal(e.target.value))}
+                  className="w-full rounded border border-gray-300 px-3 py-2.5 text-sm"
+                  placeholder="Ej: 6"
+                />
+              </div>
+            </div>
+            {parseDecimal(kgPapa) > 0 && parseDecimal(pesoKg) > 0 && (
+              <p className="text-[11px] text-gray-600">
+                Rinde:{' '}
+                <span className="font-semibold text-gray-800">
+                  {((parseDecimal(pesoKg) / parseDecimal(kgPapa)) * 100).toFixed(0)}%
+                </span>{' '}
+                (de papa a puré)
               </p>
             )}
           </div>
-        </div>
+        ) : (
+          <>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-700">Cant. recetas</label>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min={1}
+                  value={cantRecetas}
+                  onChange={(e) => setCantRecetas(e.target.value)}
+                  className="w-full rounded border border-gray-300 px-3 py-2.5 text-sm"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-700">Peso total (kg)</label>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  pattern="[0-9]*[.,]?[0-9]*"
+                  value={pesoKg}
+                  onChange={(e) => setPesoKg(normalizarDecimal(e.target.value))}
+                  className="w-full rounded border border-gray-300 px-3 py-2.5 text-sm"
+                  placeholder="Ej: 5,2"
+                />
+                {parseDecimal(pesoKg) > 0 && equivalenteKgGramos(parseDecimal(pesoKg)) && (
+                  <p className="mt-1 text-[11px] text-gray-500">
+                    = {equivalenteKgGramos(parseDecimal(pesoKg))}
+                  </p>
+                )}
+              </div>
+            </div>
 
-        <IngredientesGrilla
-          recetaId={recetaId || null}
-          onChange={onGrillaChange}
-          multiplicador={Number(cantRecetas) || 1}
-          onValidezChange={setIngredientesOk}
-        />
+            <IngredientesGrilla
+              recetaId={recetaId || null}
+              onChange={onGrillaChange}
+              multiplicador={Number(cantRecetas) || 1}
+              onValidezChange={setIngredientesOk}
+            />
+          </>
+        )}
 
         <div>
           <label className="mb-1 block text-xs font-medium text-gray-700">Notas (opcional)</label>
