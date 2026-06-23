@@ -827,6 +827,8 @@ export function ProduccionQRPage() {
       {vista === 'pasteleria' && (
         <FormPasteleria
           local={local}
+          recetaIdsPlan={planPorTipo.pasteleria}
+          recetaIdsPlanPostre={planPorTipo.postre}
           onGuardado={onGuardado}
           onVolver={() => setVista('inicio')}
         />
@@ -3124,10 +3126,17 @@ interface ProductoPasteleria {
 
 function FormPasteleria({
   local,
+  recetaIdsPlan,
+  recetaIdsPlanPostre,
   onGuardado,
   onVolver,
 }: {
   local: string;
+  // Plan del pizarrón keyado por receta_id. En Saavedra este form carga tanto
+  // pastelería (tipo='pasteleria') como postres reales (tipo='postre'), así que
+  // recibe ambos planes y los une para mostrar/priorizar lo planificado.
+  recetaIdsPlan?: Map<string, number>;
+  recetaIdsPlanPostre?: Map<string, number>;
   onGuardado: (msg: string) => void;
   onVolver: () => void;
 }) {
@@ -3149,23 +3158,39 @@ function FormPasteleria({
     },
   });
 
-  // Rinde por receta en query aparte (NO embed): cocina_productos tiene 2 FKs a
-  // cocina_recetas —receta_id y masa_id— y el embed ambiguo deja la lista vacía.
-  const { data: rindePorReceta } = useQuery({
-    queryKey: ['pasteleria-rindes', local],
+  // Rinde + rol por receta en query aparte (NO embed): cocina_productos tiene 2
+  // FKs a cocina_recetas —receta_id y masa_id— y el embed ambiguo deja la lista
+  // vacía. El `rol` define con qué categoría se guarda el lote (ver guardar()).
+  const { data: metaPorReceta } = useQuery({
+    queryKey: ['pasteleria-meta-recetas', local],
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cocina_recetas')
-        .select('id, rendimiento_porciones')
+        .select('id, rendimiento_porciones, rol')
         .eq('local', local);
       if (error) throw error;
-      const m = new Map<string, number>();
-      for (const r of (data ?? []) as { id: string; rendimiento_porciones: number | null }[]) {
-        m.set(r.id, Number(r.rendimiento_porciones) || 0);
+      const m = new Map<string, { rinde: number; rol: string | null }>();
+      for (const r of (data ?? []) as {
+        id: string;
+        rendimiento_porciones: number | null;
+        rol: string | null;
+      }[]) {
+        m.set(r.id, { rinde: Number(r.rendimiento_porciones) || 0, rol: r.rol });
       }
       return m;
     },
   });
+
+  // Plan unificado (pastelería + postre) keyado por receta_id. El postre pisa solo
+  // si una misma receta estuviera en ambos (no debería pasar).
+  const planTodos = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const [k, v] of recetaIdsPlanPostre ?? []) m.set(k, v);
+    for (const [k, v] of recetaIdsPlan ?? []) m.set(k, v);
+    return m;
+  }, [recetaIdsPlan, recetaIdsPlanPostre]);
+  const hayPlan = planTodos.size > 0;
+  const [verTodas, setVerTodas] = useState(false);
 
   const [responsable, setResponsable] = useState('');
   const [productoId, setProductoId] = useState('');
@@ -3177,6 +3202,13 @@ function FormPasteleria({
   const [error, setError] = useState('');
   const onGrillaChange = useCallback((ings: IngredienteReal[]) => setIngredientesReales(ings), []);
 
+  // Productos visibles en el dropdown: por defecto solo lo planificado (si hay
+  // plan); el toggle "Ver todas" muestra el catálogo completo.
+  const productosVisibles = useMemo(() => {
+    if (verTodas || planTodos.size === 0) return productos ?? [];
+    return (productos ?? []).filter((p) => p.receta_id && planTodos.has(p.receta_id));
+  }, [productos, planTodos, verTodas]);
+
   const productoSel = useMemo(
     () => (productos ?? []).find((p) => p.id === productoId) ?? null,
     [productos, productoId],
@@ -3185,9 +3217,15 @@ function FormPasteleria({
   // Rinde solo de referencia (sugerencia de porciones): el stock = lo que el
   // cocinero anota que SALIÓ realmente, no el cálculo teórico.
   const rinde = useMemo(
-    () => (productoSel?.receta_id ? rindePorReceta?.get(productoSel.receta_id) ?? 0 : 0),
-    [productoSel, rindePorReceta],
+    () => (productoSel?.receta_id ? metaPorReceta?.get(productoSel.receta_id)?.rinde ?? 0 : 0),
+    [productoSel, metaPorReceta],
   );
+  // Al elegir un producto planificado, pre-cargar la cantidad de recetas del plan.
+  useEffect(() => {
+    if (!productoSel?.receta_id) return;
+    const planeada = planTodos.get(productoSel.receta_id);
+    if (planeada) setCantRecetas(String(planeada));
+  }, [productoId]); // eslint-disable-line react-hooks/exhaustive-deps
   const nRecetas = Math.max(1, Number(cantRecetas) || 1);
   const porcOut = parseDecimal(porcionesOut);
 
@@ -3211,10 +3249,19 @@ function FormPasteleria({
     setGuardando(true);
     setError('');
 
+    // La categoría del lote define contra qué tipo de ítem del pizarrón tacha el
+    // trigger trg_pizarron_lote_produccion: las recetas rol='pasteleria_base' se
+    // planifican como tipo='pasteleria', el resto (postre real) como 'postre'.
+    // El stock y el cierre matchean por receta_id/nombre, no por categoría.
+    const rolReceta = productoSel.receta_id
+      ? metaPorReceta?.get(productoSel.receta_id)?.rol ?? null
+      : null;
+    const categoriaLote = rolReceta === 'pasteleria_base' ? 'pasteleria' : 'postre';
+
     const { error: err } = await supabase.from('cocina_lotes_produccion').insert({
       fecha: hoy(),
       local,
-      categoria: 'postre',
+      categoria: categoriaLote,
       receta_id: productoSel.receta_id,
       nombre_libre: productoSel.nombre,
       cantidad_producida: porcOut,
@@ -3258,6 +3305,24 @@ function FormPasteleria({
           onChange={setResponsable}
         />
 
+        {hayPlan ? (
+          <div className="flex items-center justify-between rounded border border-rodziny-200 bg-rodziny-50 px-2.5 py-1.5 text-[11px]">
+            <span className="font-medium text-rodziny-800">
+              📋 {verTodas ? 'Catálogo completo' : `Plan de hoy · ${planTodos.size} receta${planTodos.size === 1 ? '' : 's'}`}
+            </span>
+            <button
+              onClick={() => setVerTodas((v) => !v)}
+              className="text-[11px] text-rodziny-700 underline"
+            >
+              {verTodas ? 'Volver al plan' : '¿No está? Ver todas'}
+            </button>
+          </div>
+        ) : (
+          <div className="rounded border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[11px] font-medium text-amber-800">
+            ⚠️ Sin plan cargado para hoy · mostrando catálogo completo
+          </div>
+        )}
+
         <div>
           <label className="mb-1 block text-xs font-medium text-gray-700">Postre</label>
           <select
@@ -3269,11 +3334,18 @@ function FormPasteleria({
             className="w-full rounded border border-gray-300 px-3 py-2.5 text-sm"
           >
             <option value="">— Elegí el postre —</option>
-            {(productos ?? []).map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.nombre}
-              </option>
-            ))}
+            {productosVisibles.map((p) => {
+              const planeada = p.receta_id ? planTodos.get(p.receta_id) : undefined;
+              return (
+                <option key={p.id} value={p.id}>
+                  {planeada ? '📋 ' : ''}
+                  {p.nombre}
+                  {planeada
+                    ? ` · ${planeada} receta${planeada === 1 ? '' : 's'} planificada${planeada === 1 ? '' : 's'}`
+                    : ''}
+                </option>
+              );
+            })}
           </select>
           {productos && productos.length === 0 && (
             <p className="mt-1 text-[11px] text-amber-600">
