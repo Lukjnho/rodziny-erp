@@ -3454,6 +3454,7 @@ function FormMila({
   const [recetaId, setRecetaId] = useState(
     recetasMilanesa.length === 1 ? recetasMilanesa[0].id : '',
   );
+  const [kgBruta, setKgBruta] = useState('');
   const [kgCuadril, setKgCuadril] = useState('');
   const [kgMilanesa, setKgMilanesa] = useState('');
   const [responsable, setResponsable] = useState('');
@@ -3471,7 +3472,11 @@ function FormMila({
 
   const recetaSel = recetasMilanesa.find((r) => r.id === recetaId);
   const rinde = recetaSel?.rendimiento_kg ?? null; // kg de milanesa por kg de cuadril (teórico)
-  const kg = parseDecimal(kgCuadril);
+  const kg = parseDecimal(kgCuadril); // carne lista para empanar (cuadril limpio)
+  // Carne bruta (como viene) − carne lista = desperdicio de la limpieza (venas/grasa).
+  const bruta = parseDecimal(kgBruta);
+  const desperdicio = bruta > 0 && kg > 0 ? +(bruta - kg).toFixed(3) : null;
+  const desperdicioPct = desperdicio != null && bruta > 0 ? (desperdicio / bruta) * 100 : null;
   const kgMilanesaTeorico = rinde && kg > 0 ? kg * rinde : 0;
   const kgMilanesaNum = parseDecimal(kgMilanesa);
   const rindeReal = kg > 0 && kgMilanesaNum > 0 ? kgMilanesaNum / kg : null;
@@ -3526,7 +3531,11 @@ function FormMila({
       return;
     }
     if (!kg || kg <= 0) {
-      setError('Indicá los kg de cuadril a empanar');
+      setError('Indicá los kg de carne lista para empanar');
+      return;
+    }
+    if (bruta > 0 && bruta < kg) {
+      setError('La carne bruta no puede ser menor que la carne lista para empanar.');
       return;
     }
     if (!kgMilanesaNum || kgMilanesaNum <= 0) {
@@ -3553,7 +3562,11 @@ function FormMila({
       unidad: 'kg',
       responsable: responsable.trim(),
       notas:
-        `${formatNum(kg)} kg de cuadril` +
+        (bruta > 0 ? `Bruta ${formatNum(bruta)} kg · ` : '') +
+        `Lista ${formatNum(kg)} kg de cuadril` +
+        (desperdicio != null && desperdicio > 0
+          ? ` · desperdicio ${formatNum(desperdicio)} kg${desperdicioPct != null ? ` (${desperdicioPct.toFixed(1).replace('.', ',')}%)` : ''}`
+          : '') +
         (rindeReal != null ? ` · rinde ${formatNum(rindeReal)} kg/kg` : '') +
         (notas.trim() ? ` — ${notas.trim()}` : ''),
       ingredientes_reales: ingredientesReales.length > 0 ? ingredientesReales : null,
@@ -3620,7 +3633,22 @@ function FormMila({
 
             <div>
               <label className="mb-1 block text-xs font-medium text-gray-700">
-                Kg de cuadril a empanar
+                Carne bruta (kg){' '}
+                <span className="font-normal text-gray-400">— cuadril como viene</span>
+              </label>
+              <input
+                inputMode="decimal"
+                value={kgBruta}
+                onChange={(e) => setKgBruta(normalizarDecimal(e.target.value))}
+                placeholder="Ej: 6"
+                className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm"
+              />
+            </div>
+
+            <div>
+              <label className="mb-1 block text-xs font-medium text-gray-700">
+                Carne lista para empanar (kg){' '}
+                <span className="font-normal text-gray-400">— ya limpio, sin venas/grasa</span>
               </label>
               <input
                 inputMode="decimal"
@@ -3629,6 +3657,14 @@ function FormMila({
                 placeholder="Ej: 5"
                 className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm"
               />
+              {desperdicio != null && desperdicio > 0 && (
+                <p className="mt-1 text-xs text-amber-700">
+                  Desperdicio (limpieza): {formatNum(desperdicio)} kg
+                  {desperdicioPct != null
+                    ? ` · ${desperdicioPct.toFixed(1).replace('.', ',')}%`
+                    : ''}
+                </p>
+              )}
               {kg > 0 && rinde != null && (
                 <p className="mt-1 text-xs text-gray-500">
                   Teórico ≈ {formatNum(kgMilanesaTeorico)} kg ({formatNum(rinde)} kg por kg de cuadril)
