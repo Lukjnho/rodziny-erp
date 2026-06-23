@@ -2548,17 +2548,19 @@ function FormPanaderia({
 
   const [responsable, setResponsable] = useState('');
   const [loteId, setLoteId] = useState('');
-  const [panes, setPanes] = useState('');
+  // Una masa puede dar varios productos (ej: factura/medialuna salen de la misma
+  // masa). Guardamos las unidades por producto_id.
+  const [panesPorProducto, setPanesPorProducto] = useState<Record<string, string>>({});
   const [kgUsados, setKgUsados] = useState('');
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState('');
 
   const loteSel = masasDisp.find((l) => l.id === loteId);
-  const productoSel = useMemo(
+  // TODOS los productos vinculados a esta masa (no solo el primero): así una masa
+  // de factura/medialuna muestra un campo de unidades por cada producto.
+  const productosDeMasa = useMemo(
     () =>
-      loteSel
-        ? (productos ?? []).find((p) => p.masa_id === loteSel.receta_id) ?? null
-        : null,
+      loteSel ? (productos ?? []).filter((p) => p.masa_id === loteSel.receta_id) : [],
     [loteSel, productos],
   );
   const masaNombre = (() => {
@@ -2568,10 +2570,12 @@ function FormPanaderia({
   })();
 
   // Al elegir la masa, prefijar kg usados = todo el disponible (lo más común:
-  // se hornea toda la masa amasada). El panadero lo ajusta si sobró.
+  // se hornea toda la masa amasada). El panadero lo ajusta si sobró. Y limpiar
+  // las unidades cargadas de la masa anterior.
   useEffect(() => {
     if (loteSel) setKgUsados(String(loteSel.kg_producidos).replace('.', ','));
     else setKgUsados('');
+    setPanesPorProducto({});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loteId]);
 
@@ -2584,13 +2588,16 @@ function FormPanaderia({
       setError('Elegí la masa producida');
       return;
     }
-    if (!productoSel) {
-      setError('Esa masa no tiene un pan vinculado. Vinculalo en Productos > Costeo.');
+    if (productosDeMasa.length === 0) {
+      setError('Esa masa no tiene un producto vinculado. Vinculalo en Productos > Costeo.');
       return;
     }
-    const nPanes = parseDecimal(panes);
-    if (!panes || nPanes <= 0) {
-      setError('Indicá cuántos panes salieron');
+    // Productos con unidades cargadas (> 0). Al menos uno.
+    const items = productosDeMasa
+      .map((p) => ({ producto: p, n: parseDecimal(panesPorProducto[p.id] ?? '') }))
+      .filter((it) => it.n > 0);
+    if (items.length === 0) {
+      setError('Indicá cuántas unidades salieron de al menos un producto');
       return;
     }
     const usados = parseDecimal(kgUsados);
@@ -2607,7 +2614,7 @@ function FormPanaderia({
     setGuardando(true);
     setError('');
 
-    // 1) Descontar la masa: cerrar el lote con el sobrante (disponible − usados).
+    // 1) Descontar la masa UNA sola vez: cerrar el lote con el sobrante.
     const sobrante = +(loteSel.kg_producidos - usados).toFixed(3);
     const { error: errMasa } = await supabase
       .from('cocina_lotes_masa')
@@ -2619,28 +2626,30 @@ function FormPanaderia({
       return;
     }
 
-    // 2) Sumar los panes al stock del producto (aditivo: cada horneada suma).
-    const { error: errPan } = await supabase.from('cocina_lotes_produccion').insert({
+    // 2) Un lote por producto con unidades (aditivo: cada horneada suma al stock).
+    const payload = items.map((it) => ({
       fecha: hoy(),
       local,
-      categoria: 'panaderia',
-      receta_id: productoSel.receta_id,
-      nombre_libre: productoSel.nombre,
-      cantidad_producida: nPanes,
-      unidad: 'unid',
+      categoria: 'panaderia' as const,
+      receta_id: it.producto.receta_id,
+      nombre_libre: it.producto.nombre,
+      cantidad_producida: it.n,
+      unidad: 'unid' as const,
       responsable: responsable.trim(),
       notas: `De ${formatNum(usados)} kg de ${masaNombre}`,
       en_stock: true,
-    });
+    }));
+    const { error: errPan } = await supabase.from('cocina_lotes_produccion').insert(payload);
     if (errPan) {
-      setError(mensajeErrorAmigable(errPan, 'No se pudo cargar los panes'));
+      setError(mensajeErrorAmigable(errPan, 'No se pudo cargar la panadería'));
       setGuardando(false);
       return;
     }
 
     invalidarStockCocina(qc);
     qc.invalidateQueries({ queryKey: ['panaderia-lotes-masa-disp', local] });
-    onGuardado(`${productoSel.nombre} — ${panes} u (de ${formatNum(usados)} kg de masa)`);
+    const resumen = items.map((it) => `${it.producto.nombre}: ${it.n}`).join(' · ');
+    onGuardado(`${resumen} (de ${formatNum(usados)} kg de ${masaNombre})`);
   }
 
   return (
@@ -2654,8 +2663,8 @@ function FormPanaderia({
 
       <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs text-blue-700">
         Elegí la <strong>masa que produjiste</strong> y anotá{' '}
-        <strong>cuántos panes salieron</strong>. Se suma al stock del pan y se
-        descuenta la masa usada.
+        <strong>cuántas unidades salieron</strong> de cada producto. Se suma al
+        stock y se descuenta la masa usada.
       </div>
 
       <div className="space-y-3 rounded-lg border border-gray-200 bg-white p-4">
@@ -2691,54 +2700,65 @@ function FormPanaderia({
 
         {loteSel && (
           <div className="rounded border border-gray-200 bg-gray-50 px-3 py-2 text-sm">
-            {productoSel ? (
+            {productosDeMasa.length > 0 ? (
               <span>
-                Pan: <strong>{productoSel.nombre}</strong> · hay{' '}
-                {formatNum(loteSel.kg_producidos)} kg de masa
+                Hay <strong>{formatNum(loteSel.kg_producidos)} kg</strong> de {masaNombre}.
+                Anotá cuántas unidades salieron de cada producto.
               </span>
             ) : (
               <span className="text-amber-700">
-                Esta masa no tiene un pan vinculado (vinculalo en Productos &gt; Costeo).
+                Esta masa no tiene un producto vinculado (vinculalo en Productos &gt; Costeo).
               </span>
             )}
           </div>
         )}
 
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="mb-1 block text-xs font-medium text-gray-700">
-              ¿Cuántos panes salieron?
-            </label>
-            <input
-              type="text"
-              inputMode="numeric"
-              pattern="[0-9]*"
-              value={panes}
-              onChange={(e) => setPanes(e.target.value.replace(/[^0-9]/g, ''))}
-              className="w-full rounded border border-gray-300 px-3 py-2.5 text-sm"
-              placeholder="0"
-            />
-          </div>
-          <div>
-            <label className="mb-1 block text-xs font-medium text-gray-700">
-              Kg de masa usados
-            </label>
-            <input
-              type="text"
-              inputMode="decimal"
-              pattern="[0-9]*[.,]?[0-9]*"
-              value={kgUsados}
-              onChange={(e) => setKgUsados(normalizarDecimal(e.target.value))}
-              className="w-full rounded border border-gray-300 px-3 py-2.5 text-sm"
-              placeholder="0"
-            />
-            {loteSel && (
-              <p className="mt-1 text-[10px] text-gray-400">
-                Disponible: {formatNum(loteSel.kg_producidos)} kg
-              </p>
-            )}
-          </div>
-        </div>
+        {productosDeMasa.length > 0 && (
+          <>
+            <div className="space-y-2">
+              {productosDeMasa.map((p) => (
+                <div key={p.id}>
+                  <label className="mb-1 block text-xs font-medium text-gray-700">
+                    {p.nombre} — ¿cuántas unidades salieron?
+                  </label>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    value={panesPorProducto[p.id] ?? ''}
+                    onChange={(e) =>
+                      setPanesPorProducto((prev) => ({
+                        ...prev,
+                        [p.id]: e.target.value.replace(/[^0-9]/g, ''),
+                      }))
+                    }
+                    className="w-full rounded border border-gray-300 px-3 py-2.5 text-sm"
+                    placeholder="0"
+                  />
+                </div>
+              ))}
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-gray-700">
+                Kg de masa usados
+              </label>
+              <input
+                type="text"
+                inputMode="decimal"
+                pattern="[0-9]*[.,]?[0-9]*"
+                value={kgUsados}
+                onChange={(e) => setKgUsados(normalizarDecimal(e.target.value))}
+                className="w-full rounded border border-gray-300 px-3 py-2.5 text-sm"
+                placeholder="0"
+              />
+              {loteSel && (
+                <p className="mt-1 text-[10px] text-gray-400">
+                  Disponible: {formatNum(loteSel.kg_producidos)} kg
+                </p>
+              )}
+            </div>
+          </>
+        )}
 
         {error && <p className="text-xs text-red-600">{error}</p>}
 
