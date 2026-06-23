@@ -2536,6 +2536,38 @@ function FormPanaderia({
     },
   });
 
+  // Cargado hoy (panadería): evita recargar dos veces lo mismo.
+  const { data: cargasHoyPan } = useQuery({
+    queryKey: ['cocina-lotes-produccion-qr', local, 'panaderia', hoy()],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('cocina_lotes_produccion')
+        .select('nombre_libre, cantidad_producida, unidad, responsable, created_at')
+        .eq('fecha', hoy())
+        .eq('local', local)
+        .eq('categoria', 'panaderia')
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      return (data ?? []) as {
+        nombre_libre: string | null;
+        cantidad_producida: number;
+        unidad: string;
+        responsable: string | null;
+        created_at: string;
+      }[];
+    },
+  });
+  const cargasHoyItems = useMemo<CargaHoyItem[]>(
+    () =>
+      (cargasHoyPan ?? []).map((c) => ({
+        nombre: c.nombre_libre ?? 'Pan',
+        detalle: `${formatNum(Number(c.cantidad_producida))} ${c.unidad === 'unid' ? 'u' : c.unidad}`,
+        hora: horaDe(c.created_at),
+        responsable: c.responsable,
+      })),
+    [cargasHoyPan],
+  );
+
   // Solo masas de panadería (las de pasta también están sin kg_sobrante).
   const masasDisp = useMemo(
     () =>
@@ -2660,6 +2692,8 @@ function FormPanaderia({
           Volver
         </button>
       </div>
+
+      <CargasHoyResumen items={cargasHoyItems} />
 
       <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs text-blue-700">
         Elegí la <strong>masa que produjiste</strong> y anotá{' '}
@@ -3178,6 +3212,38 @@ function FormPasteleria({
     },
   });
 
+  // Cargado hoy (postre + pastelería): evita recargar dos veces lo mismo.
+  const { data: cargasHoyPast } = useQuery({
+    queryKey: ['cocina-lotes-produccion-qr', local, 'pasteleria-postre', hoy()],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('cocina_lotes_produccion')
+        .select('nombre_libre, cantidad_producida, unidad, responsable, created_at')
+        .eq('fecha', hoy())
+        .eq('local', local)
+        .in('categoria', ['postre', 'pasteleria'])
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      return (data ?? []) as {
+        nombre_libre: string | null;
+        cantidad_producida: number;
+        unidad: string;
+        responsable: string | null;
+        created_at: string;
+      }[];
+    },
+  });
+  const cargasHoyItems = useMemo<CargaHoyItem[]>(
+    () =>
+      (cargasHoyPast ?? []).map((c) => ({
+        nombre: c.nombre_libre ?? 'Postre',
+        detalle: `${formatNum(Number(c.cantidad_producida))} ${c.unidad === 'unid' ? 'u' : c.unidad}`,
+        hora: horaDe(c.created_at),
+        responsable: c.responsable,
+      })),
+    [cargasHoyPast],
+  );
+
   // Rinde + rol por receta en query aparte (NO embed): cocina_productos tiene 2
   // FKs a cocina_recetas —receta_id y masa_id— y el embed ambiguo deja la lista
   // vacía. El `rol` define con qué categoría se guarda el lote (ver guardar()).
@@ -3311,6 +3377,8 @@ function FormPasteleria({
           Volver
         </button>
       </div>
+
+      <CargasHoyResumen items={cargasHoyItems} />
 
       <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs text-blue-700">
         Elegí el <strong>postre</strong>, poné <strong>cuántas recetas (tandas)</strong> hiciste — eso
