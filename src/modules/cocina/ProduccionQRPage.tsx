@@ -1100,8 +1100,7 @@ function FormRelleno({
   const [pesoKg, setPesoKg] = useState(''); // en modo bolsa = kg de puré que salió
   const [responsable, setResponsable] = useState('');
   const [notas, setNotas] = useState('');
-  // Modo bolsa (puré de papa): bolsas procesadas + kg de papa pesada.
-  const [bolsas, setBolsas] = useState('1');
+  // Modo bolsa (puré de papa): kg de papa pesada (las bolsas se derivan solas).
   const [kgPapa, setKgPapa] = useState('');
   const [ingredientesReales, setIngredientesReales] = useState<IngredienteReal[]>([]);
   const [ingredientesOk, setIngredientesOk] = useState(true);
@@ -1138,15 +1137,14 @@ function FormRelleno({
     if (esPorBolsa) {
       const pure = parseDecimal(pesoKg);
       const papa = parseDecimal(kgPapa);
-      const nBolsas = parseDecimal(bolsas);
-      if (!nBolsas || nBolsas <= 0) {
-        setError('Indicá cuántas bolsas usaste (½ = 0,5)');
-        return;
-      }
       if (!papa || papa <= 0) {
         setError('Indicá los kg de papa que pesaste');
         return;
       }
+      // Bolsas = derivado de los kg de papa (1 bolsa = kg_por_bolsa). Solo para
+      // comparar contra lo planificado; no se lo pedimos al cocinero.
+      const kgBolsa = recetaSel?.kg_por_bolsa ?? 0;
+      const nBolsas = kgBolsa > 0 ? +(papa / kgBolsa).toFixed(3) : null;
       if (!pure || pure <= 0) {
         setError('Indicá los kg de puré que salió');
         return;
@@ -1168,7 +1166,7 @@ function FormRelleno({
       const { error: errB } = await supabase.from('cocina_lotes_relleno').insert({
         receta_id: recetaId,
         fecha: hoy(),
-        cantidad_recetas: nBolsas,
+        cantidad_recetas: nBolsas ?? 1,
         peso_total_kg: pure,
         bolsas: nBolsas,
         kg_papa: papa,
@@ -1301,39 +1299,9 @@ function FormRelleno({
         {esPorBolsa ? (
           <div className="space-y-3">
             <div className="rounded border border-amber-200 bg-amber-50 px-2.5 py-2 text-[11px] text-amber-800">
-              🥔 Este relleno se carga <strong>por bolsa</strong>. Anotá cuántas bolsas usaste,
-              cuántos kg de papa pesaron y cuántos kg de <strong>puré</strong> salieron. Los demás
-              ingredientes (harina, huevo, condimentos) se agregan después al armar el ñoqui.
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-medium text-gray-700">Bolsas de papa</label>
-              <div className="flex gap-2">
-                {[
-                  ['0.5', '½ bolsa'],
-                  ['1', '1 bolsa'],
-                  ['1.5', '1½'],
-                  ['2', '2 bolsas'],
-                ].map(([v, l]) => (
-                  <button
-                    key={v}
-                    type="button"
-                    onClick={() => setBolsas(v)}
-                    className={cn(
-                      'flex-1 rounded border px-2 py-2 text-sm font-medium transition',
-                      bolsas === v
-                        ? 'border-rodziny-600 bg-rodziny-50 text-rodziny-700'
-                        : 'border-gray-300 bg-white text-gray-600',
-                    )}
-                  >
-                    {l}
-                  </button>
-                ))}
-              </div>
-              {recetaSel?.kg_por_bolsa ? (
-                <p className="mt-1 text-[11px] text-gray-500">
-                  1 bolsa ≈ {formatNum(recetaSel.kg_por_bolsa)} kg de papa
-                </p>
-              ) : null}
+              🥔 Pesá los <strong>kg de papa</strong> y anotá cuántos kg de <strong>puré</strong>{' '}
+              salieron. Los demás ingredientes (harina, huevo, condimentos) se agregan después al
+              armar el ñoqui.
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
