@@ -511,31 +511,12 @@ function CierrePastas({ local }: { local: Local }) {
           <div className="rounded-lg border border-gray-200 bg-white">
             {visibles.map((p, idx) => {
               const f = filas[p.id] ?? { inicial: '', entrega: '', vendido: '', real: '' };
-              const ini = Number(f.inicial) || 0;
-              const ent = Number(f.entrega) || 0;
-              const ven = Number(f.vendido) || 0;
-              const esperado = ini + ent - ven; // referencia para el cocinero
               return (
                 <div
                   key={p.id}
                   className={cn('p-3', idx < visibles.length - 1 && 'border-b border-gray-100')}
                 >
-                  <div className="flex items-center justify-between">
-                    <p className="text-sm font-medium text-gray-800">{p.nombre}</p>
-                    {(ini > 0 || ent > 0 || ven > 0) && (
-                      <p className="text-[10px] text-gray-500">
-                        ini <span className="font-medium text-gray-700">{ini}</span>
-                        {' · '}
-                        ent <span className="font-medium text-gray-700">{ent}</span>
-                        {' · '}
-                        vend <span className="font-medium text-gray-700">{ven}</span>
-                        {' = '}
-                        <span className="font-semibold text-gray-800">
-                          {Math.max(0, esperado)}
-                        </span>
-                      </p>
-                    )}
-                  </div>
+                  <p className="text-sm font-medium text-gray-800">{p.nombre}</p>
                   <div className="mt-2 flex items-center gap-2">
                     <input
                       type="number"
