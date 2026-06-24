@@ -5,6 +5,7 @@ import { supabase } from '@/lib/supabase';
 import { PageContainer } from '@/components/layout/PageContainer';
 import { LocalSelector } from '@/components/ui/LocalSelector';
 import { formatARS, cn } from '@/lib/utils';
+import { parseDecimal, normalizarDecimal, equivalenteKgGramos } from '@/lib/numero';
 import {
   parseFudoGastos,
   type DetalleRow,
@@ -1632,7 +1633,7 @@ export function ComprasPage() {
               const conDiferencia = listaConteo.filter((p) => {
                 const v = conteos[p.id];
                 if (v === undefined || v === '') return false;
-                return Number(v) !== p.stock_actual;
+                return parseDecimal(v) !== p.stock_actual;
               }).length;
 
               return (
@@ -1731,7 +1732,11 @@ export function ComprasPage() {
                         <tbody>
                           {listaConteo.map((p) => {
                             const val = conteos[p.id] ?? '';
-                            const diff = val !== '' ? Number(val) - p.stock_actual : null;
+                            const diff = val !== '' ? parseDecimal(val) - p.stock_actual : null;
+                            const equiv =
+                              val !== '' && /kg|gr|gramo|kilo/i.test(p.unidad ?? '')
+                                ? equivalenteKgGramos(parseDecimal(val))
+                                : null;
                             return (
                               <tr
                                 key={p.id}
@@ -1750,15 +1755,23 @@ export function ComprasPage() {
                                 </td>
                                 <td className="px-4 py-1.5 text-center">
                                   <input
-                                    type="number"
-                                    step="any"
+                                    type="text"
+                                    inputMode="decimal"
                                     value={val}
                                     onChange={(e) =>
-                                      setConteos((prev) => ({ ...prev, [p.id]: e.target.value }))
+                                      setConteos((prev) => ({
+                                        ...prev,
+                                        [p.id]: normalizarDecimal(e.target.value),
+                                      }))
                                     }
                                     className="w-24 rounded border border-gray-300 px-2 py-1 text-center text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                                     placeholder="—"
                                   />
+                                  {equiv && (
+                                    <div className="mt-0.5 text-[10px] leading-tight text-gray-400">
+                                      {equiv}
+                                    </div>
+                                  )}
                                 </td>
                                 <td className="px-4 py-1.5 text-xs text-gray-500">{p.unidad}</td>
                                 <td className="px-4 py-1.5 text-center">
@@ -1804,10 +1817,14 @@ export function ComprasPage() {
                       </button>
                       <button
                         onClick={async () => {
+                          // Solo ajusta los productos cuyo conteo difiere del stock.
+                          // parseDecimal acepta coma decimal (es-AR) y un valor
+                          // inválido NUNCA se interpreta como 0: se descarta para no
+                          // pisar el stock real con basura.
                           const itemsAjustar = listaConteo.filter((p) => {
                             const v = conteos[p.id];
                             if (v === undefined || v === '') return false;
-                            return Number(v) !== p.stock_actual;
+                            return parseDecimal(v) !== p.stock_actual;
                           });
                           if (!itemsAjustar.length) {
                             setConteoResultado('No hay diferencias para ajustar');
@@ -1822,43 +1839,58 @@ export function ComprasPage() {
 
                           setConteoGuardando(true);
                           setConteoResultado(null);
-                          try {
-                            for (const p of itemsAjustar) {
-                              const nuevoStock = Number(conteos[p.id]);
+                          // No cortar todo si un producto falla: se siguen los demás
+                          // y al final se reporta cuáles no se pudieron guardar.
+                          const fallidos: string[] = [];
+                          let okCount = 0;
+                          for (const p of itemsAjustar) {
+                            try {
+                              const nuevoStock = parseDecimal(conteos[p.id]);
                               const diferencia = nuevoStock - p.stock_actual;
-                              await supabase.from('movimientos_stock').insert({
-                                local,
-                                producto_id: p.id,
-                                producto_nombre: p.nombre,
-                                tipo: diferencia >= 0 ? 'entrada' : 'salida',
-                                cantidad: Math.abs(diferencia),
-                                unidad: p.unidad,
-                                motivo: 'Inventario físico',
-                                observacion: `Conteo: ${p.stock_actual} → ${nuevoStock} (dif: ${diferencia > 0 ? '+' : ''}${diferencia})`,
-                                registrado_por: conteoResponsable.trim(),
-                              });
-                              await supabase
+                              const { error: errMov } = await supabase
+                                .from('movimientos_stock')
+                                .insert({
+                                  local,
+                                  producto_id: p.id,
+                                  producto_nombre: p.nombre,
+                                  tipo: diferencia >= 0 ? 'entrada' : 'salida',
+                                  cantidad: Math.abs(diferencia),
+                                  unidad: p.unidad,
+                                  motivo: 'Inventario físico',
+                                  observacion: `Conteo: ${p.stock_actual} → ${nuevoStock} (dif: ${diferencia > 0 ? '+' : ''}${diferencia})`,
+                                  registrado_por: conteoResponsable.trim(),
+                                });
+                              if (errMov) throw errMov;
+                              const { error: errProd } = await supabase
                                 .from('productos')
                                 .update({
                                   stock_actual: nuevoStock,
                                   updated_at: new Date().toISOString(),
                                 })
                                 .eq('id', p.id);
+                              if (errProd) throw errProd;
+                              okCount++;
+                            } catch {
+                              fallidos.push(p.nombre);
                             }
+                          }
+                          qc.invalidateQueries({ queryKey: ['productos_stock'] });
+                          qc.invalidateQueries({ queryKey: ['movimientos_stock'] });
+                          setConteoGuardando(false);
+                          if (fallidos.length) {
+                            // Conservar los conteos para reintentar; no cerrar el modo.
                             setConteoResultado(
-                              `${itemsAjustar.length} productos ajustados correctamente`,
+                              `Error: se guardaron ${okCount} de ${itemsAjustar.length}. ` +
+                                `NO se pudieron guardar (${fallidos.length}): ${fallidos.join(', ')}. ` +
+                                `Revisá esos productos y volvé a confirmar.`,
                             );
-                            qc.invalidateQueries({ queryKey: ['productos_stock'] });
-                            qc.invalidateQueries({ queryKey: ['movimientos_stock'] });
+                          } else {
+                            setConteoResultado(`${okCount} productos ajustados correctamente`);
                             setConteos({});
                             setTimeout(() => {
                               setModoConteo(false);
                               setConteoResultado(null);
                             }, 2000);
-                          } catch (e: any) {
-                            setConteoResultado(`Error: ${e.message}`);
-                          } finally {
-                            setConteoGuardando(false);
                           }
                         }}
                         disabled={conteoGuardando || conDiferencia === 0}
