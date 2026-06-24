@@ -29,6 +29,7 @@ import {
   type ItemGastoStock,
   type CondicionIVA,
 } from './types';
+import type { PrefillGasto } from './NuevoGastoModal';
 
 // ----- Props -----
 
@@ -36,6 +37,10 @@ interface NuevoGastoFormProps {
   open: boolean;
   onClose: () => void;
   onCreated?: (gastoId: string) => void;
+  // Prefill desde una recepción pendiente (botón "Cargar gasto" del remito).
+  // Trae local, proveedor, items y recepcion_id. El usuario igual elige el tipo
+  // de pago en el chooser; al guardar se marca la recepción como validada.
+  prefill?: PrefillGasto;
 }
 
 // ----- Tipos internos -----
@@ -175,8 +180,8 @@ function mapOcrMedioPago(ocrMedio: string | null): MedioPago {
 
 // ----- Componente principal -----
 
-export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoFormProps) {
-  const { user } = useAuth();
+export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: NuevoGastoFormProps) {
+  const { user, perfil } = useAuth();
   const qc = useQueryClient();
 
   const [step, setStep] = useState<Step>('tipo');
@@ -265,6 +270,10 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
   // Drafts de texto para inputs numéricos (cantidad/subtotal): si no, React machaca la coma al re-render
   const [itemDrafts, setItemDrafts] = useState<Record<string, string>>({});
 
+  // Recepción de origen (cuando se entra por "Cargar gasto" de un remito pendiente).
+  // Al guardar el gasto se marca esa recepción como validada para sacarla de la lista.
+  const [recepcionIdPrefill, setRecepcionIdPrefill] = useState<string | null>(null);
+
   // Reset al abrir/cerrar
   useEffect(() => {
     if (!open) {
@@ -312,6 +321,7 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
       setItems([]);
       setBusquedaProducto('');
       setItemDrafts({});
+      setRecepcionIdPrefill(null);
     }
   }, [open]);
 
@@ -440,19 +450,24 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
 
   // Solo permitimos vincular a stock si la subcategoría elegida tiene productos asociados.
   // Lucas: "que aparezcan 'vincular stock' a las categorias que tienen asociados productos unicamente"
+  // Si viene de una recepción (botón "Cargar gasto"), siempre se detallan productos:
+  // los items traen su propia subcategoría (split), sin necesidad de elegir una global.
   const puedeVincularStock = useMemo(
-    () => Boolean(categoriaId && subcategoriasConProductosSet.has(categoriaId)),
-    [categoriaId, subcategoriasConProductosSet],
+    () =>
+      Boolean(recepcionIdPrefill) ||
+      Boolean(categoriaId && subcategoriasConProductosSet.has(categoriaId)),
+    [recepcionIdPrefill, categoriaId, subcategoriasConProductosSet],
   );
 
-  // Si la categoría elegida ya no permite vincular stock, apagamos el checkbox y limpiamos items
+  // Si la categoría elegida ya no permite vincular stock, apagamos el checkbox y limpiamos items.
+  // No aplica en el flujo de recepción, donde el detalle de productos es obligatorio.
   useEffect(() => {
-    if (!puedeVincularStock && vincularStock) {
+    if (!recepcionIdPrefill && !puedeVincularStock && vincularStock) {
       setVincularStock(false);
       setItems([]);
       setItemDrafts({});
     }
-  }, [puedeVincularStock, vincularStock]);
+  }, [recepcionIdPrefill, puedeVincularStock, vincularStock]);
 
   // Productos del local (carga lazy: solo cuando se activa "Vincular a stock")
   type ProductoLite = {
@@ -495,6 +510,51 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
       })
       .slice(0, 8);
   }, [productosLocal, busquedaProducto, items]);
+
+  // ── Prefill desde recepción pendiente ("Cargar gasto" del remito) ──────────
+  // Setea local/comentario/recepcion_id y enciende "vincular stock". El usuario
+  // igual pasa por el chooser (tipo de pago) y completa importe/N° comprobante.
+  useEffect(() => {
+    if (!open || !prefill) return;
+    setRecepcionIdPrefill(prefill.recepcion_id ?? null);
+    if (prefill.local) setLocal(prefill.local);
+    if (prefill.comentario) setComentario(prefill.comentario);
+    if (prefill.items && prefill.items.length > 0) setVincularStock(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, prefill]);
+
+  // Match de proveedor por nombre (best-effort) una vez cargada la lista.
+  useEffect(() => {
+    if (!open || !prefill?.proveedor_nombre || proveedorId) return;
+    const target = prefill.proveedor_nombre.trim().toLowerCase();
+    const match = proveedores.find(
+      (p) => (p.razon_social ?? '').trim().toLowerCase() === target,
+    );
+    if (match) setProveedorId(match.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, prefill, proveedores]);
+
+  // Construir los items del gasto a partir del remito, una vez que cargaron los
+  // productos del local (para tomar costo y subcategoría del catálogo).
+  useEffect(() => {
+    if (!open || !prefill?.items?.length) return;
+    if (!vincularStock || productosLocal.length === 0 || items.length > 0) return;
+    const construidos: ItemGastoStock[] = prefill.items.map((pi) => {
+      const prod = productosLocal.find((p) => p.id === pi.producto_id);
+      const precio = prod?.costo_unitario ?? 0;
+      return {
+        producto_id: pi.producto_id,
+        producto_nombre: pi.producto_nombre ?? prod?.nombre ?? '',
+        cantidad: pi.cantidad,
+        unidad: pi.unidad ?? prod?.unidad ?? '',
+        precio_unitario: precio,
+        subtotal: +(precio * (pi.cantidad || 0)).toFixed(2),
+        categoria_gasto_id: prod?.categoria_gasto_id ?? null,
+      };
+    });
+    setItems(construidos);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, prefill, vincularStock, productosLocal]);
 
   // Total de items y validación de subcategoría por item
   const totalItems = useMemo(
@@ -1274,6 +1334,7 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
           comprobante_id: comprobanteId, // null en flujo fisico
           factura_path: facturaPath,
           comentario: com,
+          recepcion_id: recepcionIdPrefill, // vínculo al remito si vino de "Cargar gasto"
           creado_por: user?.id ?? null,
           creado_manual: true,
           cancelado: false,
@@ -1418,6 +1479,21 @@ export default function NuevoGastoForm({ open, onClose, onCreated }: NuevoGastoF
             });
           }
         }
+      }
+
+      // 4.b) Si vino de una recepción pendiente ("Cargar gasto"), marcarla validada
+      //      y linkearla al primer gasto para que salga de la lista de pendientes.
+      if (recepcionIdPrefill && gastosCreados.length > 0) {
+        await supabase
+          .from('recepciones_pendientes')
+          .update({
+            estado: 'validada',
+            gasto_id: gastosCreados[0],
+            validada_en: new Date().toISOString(),
+            validada_por: perfil?.nombre ?? null,
+          })
+          .eq('id', recepcionIdPrefill);
+        qc.invalidateQueries({ queryKey: ['recepciones_pendientes'] });
       }
 
       // 5) Invalidar caches

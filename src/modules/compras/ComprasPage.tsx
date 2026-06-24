@@ -11,7 +11,7 @@ import {
   type DetalleRow,
   type GastoRow,
 } from '@/modules/finanzas/parsers/parseFudoGastos';
-import { NuevoGastoModal, type PrefillGasto } from '@/modules/gastos/NuevoGastoModal';
+import { type PrefillGasto } from '@/modules/gastos/NuevoGastoModal';
 import NuevoGastoForm from '@/modules/gastos/NuevoGastoForm';
 import { ProveedoresPanel } from '@/modules/gastos/ProveedoresPanel';
 import { ListadoGastos, type ResumenListadoGastos } from '@/modules/gastos/ListadoGastos';
@@ -427,8 +427,7 @@ export function ComprasPage() {
     },
   });
 
-  // Modal de Nuevo Gasto desde recepción pendiente (modo avanzado, factura A con items)
-  const [modalGastoOpen, setModalGastoOpen] = useState(false);
+  // Prefill del gasto cuando se entra por "Cargar gasto" de un remito pendiente.
   const [prefillGasto, setPrefillGasto] = useState<PrefillGasto | undefined>(undefined);
 
   // Pantalla nueva: Nuevo gasto con OCR (flujo simple, mobile-first)
@@ -460,7 +459,9 @@ export function ComprasPage() {
         ? `Recepción del ${new Date(r.created_at).toLocaleDateString('es-AR')} · ${r.notas}`
         : null,
     });
-    setModalGastoOpen(true);
+    // Abre el chooser (Gasto digital / Efectivo / Cuenta corriente / Plan de pagos)
+    // con los datos del remito ya cargados, en vez del modal de Factura A directo.
+    setNuevoGastoFormOpen(true);
   }
 
   async function descartarRecepcion(id: string) {
@@ -1367,7 +1368,10 @@ export function ComprasPage() {
                 className="rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500"
               />
               <button
-                onClick={() => setNuevoGastoFormOpen(true)}
+                onClick={() => {
+                  setPrefillGasto(undefined);
+                  setNuevoGastoFormOpen(true);
+                }}
                 className="rounded-lg bg-rodziny-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-rodziny-700"
               >
                 + Nuevo gasto
@@ -3377,20 +3381,16 @@ export function ComprasPage() {
 
       {tab === 'proveedores' && <ProveedoresPanel />}
 
-      {/* Modal de Nuevo Gasto desde una recepción pendiente */}
-      <NuevoGastoModal
-        open={modalGastoOpen}
-        onClose={() => {
-          setModalGastoOpen(false);
-          setPrefillGasto(undefined);
-        }}
-        prefill={prefillGasto}
-      />
-
-      {/* Pantalla nueva: Nuevo gasto con OCR (flujo simple para los 3 admins) */}
+      {/* Pantalla nueva: Nuevo gasto con OCR (flujo simple para los 3 admins).
+          Sirve también para "Cargar gasto" de un remito: recibe el prefill con
+          local/proveedor/items/recepcion_id y muestra el chooser de tipo de pago. */}
       <NuevoGastoForm
         open={nuevoGastoFormOpen}
-        onClose={() => setNuevoGastoFormOpen(false)}
+        prefill={prefillGasto}
+        onClose={() => {
+          setNuevoGastoFormOpen(false);
+          setPrefillGasto(undefined);
+        }}
         onCreated={() => {
           // Invalidar la query del listado para refrescar después de crear
           // (no necesita acción extra: el modal se queda en step="done" y el usuario cierra)
