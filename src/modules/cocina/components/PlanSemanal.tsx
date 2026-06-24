@@ -28,7 +28,7 @@ interface PlanItem {
   estado: 'pendiente' | 'en_produccion' | 'en_bandejas' | 'ciclo_completo' | 'cancelado';
   lote_tabla: string | null;
   lote_id: string | null;
-  receta?: { nombre: string } | null;
+  receta?: { nombre: string; kg_por_bolsa: number | null } | null;
   destino_producto_id: string | null;
   destino?: { nombre: string } | null;
 }
@@ -92,6 +92,14 @@ const TIPOS_VISIBLES: TipoPlan[] = [
 ];
 
 const DIAS_CORTOS = ['DOM', 'LUN', 'MAR', 'MIE', 'JUE', 'VIE', 'SAB'];
+
+// Display de bolsas de papa (planificación del puré). 0,5 → "½ bolsa".
+function fmtBolsas(n: number): string {
+  const ent = Math.floor(n + 1e-9);
+  const tieneMedio = n - ent >= 0.5 - 1e-9;
+  const txt = ent === 0 ? '½' : tieneMedio ? `${ent}½` : `${ent}`;
+  return `${txt} bolsa${n <= 1 + 1e-9 ? '' : 's'}`;
+}
 
 function lunesDeLaSemana(fecha: string): string {
   const d = new Date(fecha + 'T12:00:00');
@@ -207,6 +215,7 @@ export interface ItemAgrupado {
   destinoNombre: string | null; // vendible al que se imputa (ej: pure → Ñoquis rellenos)
   fechaObjetivo: string;
   totalCantidad: number;
+  kgPorBolsa: number | null; // si la receta se planifica por bolsa (puré), display en bolsas
   cuentaPlan: number;
   hechosPlan: number;
   estado: EstadoItem;
@@ -236,7 +245,7 @@ export function PlanSemanal({
       const { data, error } = await supabase
         .from('cocina_pizarron_items')
         .select(
-          'id, fecha_objetivo, local, turno, tipo, receta_id, texto_libre, cantidad_recetas, cantidad_hecha, estado, lote_tabla, lote_id, destino_producto_id, receta:cocina_recetas(nombre), destino:cocina_productos(nombre)',
+          'id, fecha_objetivo, local, turno, tipo, receta_id, texto_libre, cantidad_recetas, cantidad_hecha, estado, lote_tabla, lote_id, destino_producto_id, receta:cocina_recetas(nombre, kg_por_bolsa), destino:cocina_productos(nombre)',
         )
         .eq('local', local)
         .gte('fecha_objetivo', desde)
@@ -342,6 +351,7 @@ export function PlanSemanal({
           destinoNombre: null,
           fechaObjetivo: fecha,
           totalCantidad: 0,
+          kgPorBolsa: null,
           cuentaPlan: 0,
           hechosPlan: 0,
           estado: 'pendiente',
@@ -368,6 +378,8 @@ export function PlanSemanal({
       const g = getGrupo(it.fecha_objetivo, tipoVista, nombre, it.receta_id);
       if (!g) continue;
       if (it.destino?.nombre && !g.destinoNombre) g.destinoNombre = it.destino.nombre;
+      const kgB = it.receta?.kg_por_bolsa ?? 0;
+      if (kgB > 0 && g.kgPorBolsa == null) g.kgPorBolsa = kgB;
       const estado: EstadoItem = it.estado === 'cancelado' ? 'pendiente' : it.estado;
       g.totalCantidad += Number(it.cantidad_recetas ?? 0);
       g.cuentaPlan += 1;
@@ -590,7 +602,16 @@ function ItemAgrupadoCard({
   grupo: ItemAgrupado;
   onAbrir: () => void;
 }) {
-  const cantidadLabel = grupo.totalCantidad > 0 ? grupo.totalCantidad : null;
+  // Puré por bolsa: el plan guarda cantidad_recetas (1 bolsa = kg_por_bolsa
+  // recetas), pero se muestra en bolsas para que coincida con el editor.
+  const cantidadLabel =
+    grupo.totalCantidad > 0
+      ? grupo.kgPorBolsa && grupo.kgPorBolsa > 0
+        ? fmtBolsas(grupo.totalCantidad / grupo.kgPorBolsa)
+        : grupo.tipo === 'pasta_simple'
+          ? `${grupo.totalCantidad} porc.`
+          : `×${grupo.totalCantidad}`
+      : null;
   const masasCargadas = grupo.masasUsadas.length > 0;
   const falta = calcularFalta(grupo.tipo, grupo.estado, masasCargadas);
   const completo = grupo.estado === 'ciclo_completo';
@@ -615,11 +636,7 @@ function ItemAgrupadoCard({
         <span className="flex-1 truncate" title={grupo.nombre}>
           {grupo.nombre}
           {cantidadLabel != null && (
-            <span className="ml-1 text-gray-400">
-              {grupo.tipo === 'pasta_simple'
-                ? `${cantidadLabel} porc.`
-                : `×${cantidadLabel}`}
-            </span>
+            <span className="ml-1 text-gray-400">{cantidadLabel}</span>
           )}
         </span>
       </div>
