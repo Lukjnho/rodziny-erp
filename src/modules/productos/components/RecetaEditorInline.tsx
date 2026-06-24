@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { cn, formatARS } from '@/lib/utils';
@@ -37,6 +37,18 @@ interface IngredienteForm {
   unidad: string;
   observaciones: string;
   producto_id: string | null;
+}
+
+// Producto de cocina_productos enganchado a esta receta (cocina_productos.receta_id).
+// El control de stock vive en el producto, no en la receta; lo exponemos acá para
+// editarlo sin ir al ABM aparte. Una receta puede tener 0, 1 o varios productos.
+interface ProductoVinculado {
+  id: string;
+  nombre: string;
+  tipo: string;
+  local: string;
+  controla_stock: boolean | null;
+  minimo_produccion: number | null;
 }
 
 const TIPOS_RECETA: RecetaTipo[] = ['receta', 'subreceta'];
@@ -128,7 +140,50 @@ export function RecetaEditorInline({
   // Solo aplica si tipo === 'receta'. Subrecetas no se venden directamente.
   const [fudoProductos, setFudoProductos] = useState<string[]>(receta?.fudo_productos ?? []);
 
+  // Control de stock de los productos vinculados (solo al editar). Mapa por id de
+  // producto → { controla, minimo (string para el input) }. Se sincroniza cuando
+  // llega la query; se persiste en cocina_productos al guardar.
+  const [controlStock, setControlStock] = useState<
+    Record<string, { controla: boolean; minimo: string }>
+  >({});
+
   const local = creando ? localState : (receta?.local ?? localRestringido ?? 'vedia');
+
+  // Productos enganchados a esta receta (cocina_productos.receta_id). El control de
+  // stock (controla_stock + minimo_produccion) vive en el producto; lo traemos para
+  // poder editarlo desde acá. Solo en edición (una receta nueva todavía no tiene
+  // productos vinculados).
+  const { data: productosVinculados } = useQuery({
+    queryKey: ['receta-productos-vinculados', receta?.id],
+    enabled: !creando && !!receta,
+    queryFn: async (): Promise<ProductoVinculado[]> => {
+      const { data, error } = await supabase
+        .from('cocina_productos')
+        .select('id, nombre, tipo, local, controla_stock, minimo_produccion')
+        .eq('receta_id', receta!.id)
+        .order('nombre');
+      if (error) throw error;
+      return (data ?? []) as ProductoVinculado[];
+    },
+  });
+
+  // Inicializa el estado editable la primera vez que llega cada producto (sin pisar
+  // ediciones en curso del usuario).
+  useEffect(() => {
+    if (!productosVinculados) return;
+    setControlStock((prev) => {
+      const next = { ...prev };
+      for (const p of productosVinculados) {
+        if (!(p.id in next)) {
+          next[p.id] = {
+            controla: p.controla_stock ?? true,
+            minimo: p.minimo_produccion != null ? String(p.minimo_produccion) : '',
+          };
+        }
+      }
+      return next;
+    });
+  }, [productosVinculados]);
 
   // Pastas del local sin receta vinculada (candidatas a enganchar la nueva).
   const { data: pastasSinReceta } = useQuery({
@@ -401,6 +456,30 @@ export function RecetaEditorInline({
         qc.invalidateQueries({ queryKey: ['cocina-productos-sugerencias-plan'] });
         qc.invalidateQueries({ queryKey: ['cocina_productos_dashboard'] });
         qc.invalidateQueries({ queryKey: ['producto-form'] });
+      }
+
+      // Persistir el control de stock de los productos vinculados (editado desde
+      // este editor). Solo aplica al editar una receta existente.
+      if (!creando && productosVinculados && productosVinculados.length > 0) {
+        for (const p of productosVinculados) {
+          const edit = controlStock[p.id];
+          if (!edit) continue;
+          const minimoCtrl =
+            edit.minimo.trim() === '' ? null : Number(edit.minimo.replace(',', '.'));
+          if (minimoCtrl != null && (Number.isNaN(minimoCtrl) || minimoCtrl < 0)) {
+            throw new Error(`El mínimo de "${p.nombre}" debe ser un número válido`);
+          }
+          const { error: errCtrl } = await supabase
+            .from('cocina_productos')
+            .update({ controla_stock: edit.controla, minimo_produccion: minimoCtrl })
+            .eq('id', p.id);
+          if (errCtrl) throw errCtrl;
+        }
+        // Refresca catálogo de stock, plan de producción y ABM del producto.
+        qc.invalidateQueries({ queryKey: ['cocina-productos'] });
+        qc.invalidateQueries({ queryKey: ['cocina-catalogo-lotes'] });
+        qc.invalidateQueries({ queryKey: ['producto-form'] });
+        qc.invalidateQueries({ queryKey: ['receta-productos-vinculados', receta?.id] });
       }
 
       onSaved();
@@ -736,6 +815,69 @@ export function RecetaEditorInline({
           )}
         </div>
       </div>
+
+      {/* Control de stock de los productos vinculados — solo al editar. El
+          checkbox vive en cocina_productos; lo exponemos acá por comodidad. */}
+      {!creando && productosVinculados && productosVinculados.length > 0 && (
+        <div className="rounded-lg border border-rodziny-200 bg-white p-3">
+          <label className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-gray-500">
+            Control de stock {productosVinculados.length > 1 && '(productos vinculados)'}
+          </label>
+          <div className="space-y-3">
+            {productosVinculados.map((p) => {
+              const edit = controlStock[p.id] ?? { controla: true, minimo: '' };
+              return (
+                <div key={p.id} className="rounded border border-gray-100 bg-gray-50/60 p-2">
+                  {productosVinculados.length > 1 && (
+                    <p className="mb-1 text-xs font-medium text-gray-700">
+                      {p.nombre}{' '}
+                      <span className="text-[10px] capitalize text-gray-400">({p.local})</span>
+                    </p>
+                  )}
+                  <label className="flex items-center gap-2 text-sm text-gray-700">
+                    <input
+                      type="checkbox"
+                      checked={edit.controla}
+                      onChange={(e) =>
+                        setControlStock((prev) => ({
+                          ...prev,
+                          [p.id]: { ...edit, controla: e.target.checked },
+                        }))
+                      }
+                      className="h-4 w-4"
+                    />
+                    Controlar stock
+                  </label>
+                  {edit.controla && (
+                    <div className="mt-2 max-w-[12rem]">
+                      <label className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-gray-500">
+                        Mínimo (alerta de faltante)
+                      </label>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={edit.minimo}
+                        onChange={(e) =>
+                          setControlStock((prev) => ({
+                            ...prev,
+                            [p.id]: { ...edit, minimo: e.target.value },
+                          }))
+                        }
+                        placeholder="Ej. 30"
+                        className="w-full rounded border border-gray-300 px-2 py-1.5 text-right text-sm tabular-nums"
+                      />
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          <p className="mt-2 text-[10px] italic text-gray-400">
+            Si está tildado, el producto aparece en Cocina › Stock y entra en el plan de
+            producción. (También editable desde el ABM del producto.)
+          </p>
+        </div>
+      )}
 
       {/* Vinculación con Fudo — solo para recetas vendibles */}
       {tipo === 'receta' && (local === 'vedia' || local === 'saavedra') && (
