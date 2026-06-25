@@ -1126,17 +1126,28 @@ function FilaPago({
 
   const urg: UrgenciaPago = pago.pagado ? 'ok' : urgenciaPago(pago.fecha_vencimiento);
 
+  // Campo "fantasma": se ve como texto plano y solo muestra caja al hover/foco.
+  const ghost =
+    'w-full rounded border border-transparent bg-transparent px-1.5 py-1 hover:border-gray-200 focus:border-rodziny-500 focus:bg-white focus:outline-none';
+
+  // Acento de urgencia: barrita de color a la izquierda en vez de pintar la fila.
+  const acento =
+    !pago.pagado && urg === 'vencido'
+      ? 'border-l-[3px] border-l-red-400'
+      : !pago.pagado && urg === 'hoy'
+        ? 'border-l-[3px] border-l-amber-400'
+        : !pago.pagado && urg === 'semana'
+          ? 'border-l-[3px] border-l-orange-300'
+          : 'border-l-[3px] border-l-transparent';
+
   return (
     <tr
       className={cn(
-        'border-b border-gray-50 hover:bg-gray-50/50',
-        pago.pagado && 'bg-green-50/30',
-        !pago.pagado && urg === 'vencido' && 'bg-red-50',
-        !pago.pagado && urg === 'hoy' && 'bg-amber-50',
-        !pago.pagado && urg === 'semana' && 'bg-orange-50/60',
+        'group border-b border-gray-50 hover:bg-gray-50/50',
+        pago.pagado && 'bg-green-50/20',
       )}
     >
-      <td className="px-4 py-2">
+      <td className={cn('px-4 py-2', acento)}>
         <input
           type="text"
           value={conceptoLocal}
@@ -1147,12 +1158,13 @@ function FilaPago({
             else if (!t) setConceptoLocal(pago.concepto);
           }}
           className={cn(
-            'w-full max-w-[200px] rounded border border-transparent bg-transparent px-1.5 py-1 text-sm text-gray-700 hover:border-gray-200 focus:border-rodziny-500 focus:bg-white focus:outline-none',
+            ghost,
+            'max-w-[200px] text-sm font-medium text-gray-800',
             pago.pagado && 'text-gray-400 line-through',
           )}
         />
         <select
-          className="mt-0.5 max-w-[200px] rounded border border-transparent bg-transparent px-1.5 py-0.5 text-[10px] text-gray-500 hover:border-gray-200 focus:border-rodziny-500 focus:bg-white focus:outline-none"
+          className="mt-0.5 max-w-[200px] rounded border border-transparent bg-transparent px-1.5 py-0.5 text-[10px] text-gray-400 opacity-0 transition-opacity hover:border-gray-200 focus:border-rodziny-500 focus:bg-white focus:opacity-100 focus:outline-none group-hover:opacity-100"
           value={pago.categoria}
           onChange={(e) => onUpdate({ categoria: e.target.value })}
         >
@@ -1168,7 +1180,7 @@ function FilaPago({
       </td>
       <td className="px-4 py-2">
         <select
-          className="max-w-[140px] rounded border border-gray-200 px-1.5 py-1 text-xs focus:border-rodziny-500 focus:outline-none"
+          className={cn(ghost, 'max-w-[150px] text-xs text-gray-500')}
           value={pago.categoria_gasto_id ?? ''}
           onChange={(e) => onUpdate({ categoria_gasto_id: e.target.value || null })}
         >
@@ -1188,7 +1200,10 @@ function FilaPago({
       </td>
       <td className="px-4 py-2">
         <MontoInput
-          className="w-full max-w-[120px] rounded border border-gray-200 px-2 py-1 text-right text-sm focus:border-rodziny-500 focus:outline-none"
+          className={cn(
+            ghost,
+            'max-w-[130px] text-right text-sm font-medium tabular-nums text-gray-800',
+          )}
           value={pago.monto}
           onChange={() => {}}
           onCommit={(num) => {
@@ -1201,7 +1216,7 @@ function FilaPago({
         <div className="flex items-center justify-center gap-1.5">
           <input
             type="date"
-            className="rounded border border-gray-200 px-1.5 py-1 text-xs focus:border-rodziny-500 focus:outline-none"
+            className={cn(ghost, 'w-auto text-xs text-gray-600')}
             value={pago.fecha_vencimiento ?? ''}
             onChange={(e) => onUpdate({ fecha_vencimiento: e.target.value || null })}
           />
@@ -1232,7 +1247,7 @@ function FilaPago({
       </td>
       <td className="px-4 py-2">
         <select
-          className="rounded border border-gray-200 bg-white px-1.5 py-1 text-xs focus:border-rodziny-500 focus:outline-none"
+          className={cn(ghost, 'text-xs text-gray-500')}
           value={pago.medio_pago ?? ''}
           onChange={(e) => onUpdate({ medio_pago: e.target.value || null })}
         >
@@ -1247,7 +1262,7 @@ function FilaPago({
       <td className="px-4 py-2">
         <input
           type="text"
-          className="w-full max-w-[140px] rounded border border-gray-200 px-2 py-1 text-sm focus:border-rodziny-500 focus:outline-none"
+          className={cn(ghost, 'max-w-[150px] text-sm text-gray-500')}
           value={notasLocal}
           onChange={(e) => setNotasLocal(e.target.value)}
           onBlur={() => {
@@ -1274,7 +1289,7 @@ function FilaPago({
           )}
           <button
             onClick={onDelete}
-            className="text-sm text-gray-300 transition-colors hover:text-red-500"
+            className="text-sm text-gray-300 opacity-0 transition-opacity hover:text-red-500 focus:opacity-100 group-hover:opacity-100"
             title="Eliminar"
           >
             🗑
