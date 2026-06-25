@@ -19,6 +19,7 @@ import { ExtractosAlerta } from '@/modules/finanzas/components/ExtractosAlerta';
 import { CierreInventarioBanner } from './components/CierreInventarioBanner';
 import { CierreInventarioModal } from './components/CierreInventarioModal';
 import { PastasTerminadasPanel } from './components/PastasTerminadasPanel';
+import { CalendarioPagosCtaCte } from './components/CalendarioPagosCtaCte';
 import { ConciliacionTab } from './ConciliacionTab';
 import type { MedioPago, Gasto } from '@/modules/gastos/types';
 import { MEDIO_PAGO_LABEL, medioRequiereComprobante } from '@/modules/gastos/types';
@@ -443,6 +444,19 @@ export function ComprasPage() {
     setGastoAPagar(g);
   }
 
+  // Click en un proveedor del calendario consolidado → saltar a su fila en la
+  // lista de abajo: cambia de local si hace falta, filtra por el proveedor y lo
+  // marca como objetivo (la lista lo auto-expande y resalta; el scroll lo hace
+  // un effect cuando la fila ya existe en el DOM tras el refetch del local).
+  function irAProveedor(proveedor: string, localProv: 'vedia' | 'saavedra' | 'sas') {
+    if ((localProv === 'vedia' || localProv === 'saavedra') && localProv !== local) {
+      setLocal(localProv);
+    }
+    setFiltroProveedor(proveedor);
+    setProveedorObjetivo(proveedor.toLowerCase());
+    scrollObjetivoPendiente.current = true;
+  }
+
   function abrirGastoDesdeRecepcion(r: RecepcionPendiente) {
     setPrefillGasto({
       recepcion_id: r.id,
@@ -500,14 +514,24 @@ export function ComprasPage() {
   // Modal fusión de productos duplicados
   const [fusionando, setFusionando] = useState<Producto | null>(null);
 
-  const [filtroPagos, setFiltroPagos] = useState<
+  // El calendario consolidado de arriba ya ordena qué pagar y cuándo, así que la
+  // lista de proveedores se muestra siempre completa (todos los pendientes). Se
+  // mantiene la unión de tipos por compatibilidad con el resto de los useMemo.
+  const [filtroPagos] = useState<
     'todos' | 'pendientes' | 'pagados' | 'vencidos' | 'hoy' | 'semana'
   >('todos');
   const [filtroProveedor, setFiltroProveedor] = useState('');
+  // Proveedor al que se "saltó" desde el calendario: se resalta y auto-expande en
+  // la lista. scrollObjetivoPendiente difiere el scroll hasta que el cambio de
+  // local refetchee y la fila exista en el DOM.
+  const [proveedorObjetivo, setProveedorObjetivo] = useState<string | null>(null);
+  const scrollObjetivoPendiente = useRef(false);
 
   // Vista agrupada por proveedor: selección de gastos para pago bulk
   const [seleccionados, setSeleccionados] = useState<Set<string>>(new Set());
   const [proveedoresExpandidos, setProveedoresExpandidos] = useState<Set<string>>(new Set());
+  // Sección colapsable de proveedores que solo tienen pagos del mes (saldo $0).
+  const [pagadosExpandido, setPagadosExpandido] = useState(false);
 
   // Modal de pago bulk
   const [bulkPagoOpen, setBulkPagoOpen] = useState(false);
@@ -788,6 +812,37 @@ export function ComprasPage() {
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gastosPagos, filtroPagos, filtroProveedor, pagosGastosMap, mesPagos, proveedoresMap]);
+
+  // Proveedores con deuda viva vs. los que solo tienen pagos del mes (saldo $0).
+  // Estos últimos se colapsan en una sola sección "✓ Pagados en el mes" al final
+  // para no inflar la lista con filas de saldo cero.
+  const gruposPendientes = useMemo(
+    () => pendientesPorProveedor.filter((g) => g.cantPendientes > 0),
+    [pendientesPorProveedor],
+  );
+  const gruposSoloPagados = useMemo(
+    () => pendientesPorProveedor.filter((g) => g.cantPendientes === 0),
+    [pendientesPorProveedor],
+  );
+  const resumenSoloPagados = useMemo(
+    () => ({
+      cantPagos: gruposSoloPagados.reduce((s, g) => s + g.cantPagadosMes, 0),
+      total: gruposSoloPagados.reduce((s, g) => s + g.totalPagadoMes, 0),
+    }),
+    [gruposSoloPagados],
+  );
+
+  // Scroll a la fila del proveedor objetivo cuando aparece (tras cambiar de local
+  // el listado refetchea, por eso esperamos a que el nodo exista en vez de hacer
+  // scroll inmediato). Una sola vez por salto (lo apaga el ref).
+  useEffect(() => {
+    if (!scrollObjetivoPendiente.current || !proveedorObjetivo) return;
+    const el = document.getElementById('lista-pagos-objetivo');
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      scrollObjetivoPendiente.current = false;
+    }
+  }, [proveedorObjetivo, local, gruposPendientes]);
 
   // Selección bulk: cálculos derivados
   const seleccionInfo = useMemo(() => {
@@ -2664,137 +2719,46 @@ export function ComprasPage() {
       {/* ═══ TAB: PAGOS ═══ */}
       {tab === 'pagos' && (
         <div>
-          {/* Resumen mensual */}
-          <div className="mb-4 rounded-lg border border-surface-border bg-white p-4">
-            <div className="mb-3 flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-gray-700">
-                Resumen mensual — {local === 'vedia' ? 'Rodziny Vedia' : 'Rodziny Saavedra'}
-              </h3>
-              <input
-                type="month"
-                value={mesPagos}
-                onChange={(e) => setMesPagos(e.target.value)}
-                className="rounded-md border border-gray-300 px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500"
-              />
-            </div>
-            <div className="grid grid-cols-3 gap-4">
-              <div>
-                <p className="mb-0.5 text-xs text-gray-500">Total comprado ({pagosKpis.cantMes})</p>
-                <p className="text-xl font-bold text-gray-900">{formatARS(pagosKpis.totalMes)}</p>
-              </div>
-              <div>
-                <p className="mb-0.5 text-xs text-gray-500">Pagado ({pagosKpis.cantPagadoMes})</p>
-                <p className="text-xl font-bold text-green-600">{formatARS(pagosKpis.pagadoMes)}</p>
-              </div>
-              <div>
-                <p className="mb-0.5 text-xs text-gray-500">Resta pagar</p>
-                <p
+          {/* Calendario consolidado de cuenta corriente: qué hay que abonar
+              atrasado + cuánto cae cada uno de los próximos 7 días, sumando
+              ambos locales. Self-contained: ignora el selector de local. */}
+          <CalendarioPagosCtaCte onIrAProveedor={irAProveedor} />
+
+          {/* Resumen mensual — compacto (1 línea). El detalle de qué pagar y
+              cuándo ya vive en el calendario de arriba; esto es solo el pulso
+              del mes de compra del local seleccionado. */}
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-surface-border bg-white px-4 py-2.5">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+              <span className="font-semibold text-gray-700">
+                {local === 'vedia' ? 'Rodziny Vedia' : 'Rodziny Saavedra'}
+              </span>
+              <span className="text-gray-500">
+                Comprado{' '}
+                <strong className="text-gray-900">{formatARS(pagosKpis.totalMes)}</strong>{' '}
+                <span className="text-gray-400">({pagosKpis.cantMes})</span>
+              </span>
+              <span className="text-gray-500">
+                Pagado <strong className="text-green-600">{formatARS(pagosKpis.pagadoMes)}</strong>
+              </span>
+              <span className="text-gray-500">
+                Resta{' '}
+                <strong
                   className={cn(
-                    'text-xl font-bold',
                     pagosKpis.totalMes - pagosKpis.pagadoMes > 0
                       ? 'text-red-600'
                       : 'text-green-600',
                   )}
                 >
                   {formatARS(pagosKpis.totalMes - pagosKpis.pagadoMes)}
-                </p>
-              </div>
+                </strong>
+              </span>
             </div>
-          </div>
-
-          {/* KPIs de estado */}
-          <div className="mb-4 grid grid-cols-5 gap-3">
-            <button
-              onClick={() => setFiltroPagos(filtroPagos === 'pendientes' ? 'todos' : 'pendientes')}
-              className={cn(
-                'rounded-lg border bg-white p-4 text-left transition-colors',
-                filtroPagos === 'pendientes'
-                  ? 'border-blue-500 ring-1 ring-blue-200'
-                  : 'border-surface-border hover:border-gray-300',
-              )}
-            >
-              <p className="mb-1 text-xs text-gray-500">
-                Pendiente total ({pagosKpis.cantPendientes})
-              </p>
-              <p className="text-lg font-semibold text-gray-900">
-                {formatARS(pagosKpis.totalPendiente)}
-              </p>
-            </button>
-            <button
-              onClick={() => setFiltroPagos(filtroPagos === 'vencidos' ? 'todos' : 'vencidos')}
-              className={cn(
-                'rounded-lg border bg-white p-4 text-left transition-colors',
-                filtroPagos === 'vencidos'
-                  ? 'border-red-500 bg-red-50 ring-1 ring-red-200'
-                  : 'border-surface-border hover:border-gray-300',
-              )}
-            >
-              <p className="mb-1 text-xs text-gray-500">Vencido ({pagosKpis.cantVencidos})</p>
-              <p
-                className={cn(
-                  'text-lg font-semibold',
-                  pagosKpis.cantVencidos > 0 ? 'text-red-600' : 'text-green-600',
-                )}
-              >
-                {formatARS(pagosKpis.totalVencido)}
-              </p>
-            </button>
-            <button
-              onClick={() => setFiltroPagos(filtroPagos === 'hoy' ? 'todos' : 'hoy')}
-              className={cn(
-                'rounded-lg border bg-white p-4 text-left transition-colors',
-                filtroPagos === 'hoy'
-                  ? 'border-amber-500 bg-amber-50 ring-1 ring-amber-200'
-                  : 'border-surface-border hover:border-gray-300',
-              )}
-              title="Lo que vence hoy. Al hacer click el listado muestra también los vencidos: todo lo que hay que pagar ya."
-            >
-              <p className="mb-1 text-xs text-gray-500">Vence hoy ({pagosKpis.cantHoy})</p>
-              <p
-                className={cn(
-                  'text-lg font-semibold',
-                  pagosKpis.cantHoy > 0 ? 'text-amber-600' : 'text-green-600',
-                )}
-              >
-                {formatARS(pagosKpis.totalHoy)}
-              </p>
-            </button>
-            <button
-              onClick={() => setFiltroPagos(filtroPagos === 'semana' ? 'todos' : 'semana')}
-              className={cn(
-                'rounded-lg border bg-white p-4 text-left transition-colors',
-                filtroPagos === 'semana'
-                  ? 'border-orange-500 bg-orange-50 ring-1 ring-orange-200'
-                  : 'border-surface-border hover:border-gray-300',
-              )}
-            >
-              <p className="mb-1 text-xs text-gray-500">Próximos 7 días ({pagosKpis.cantSemana})</p>
-              <p
-                className={cn(
-                  'text-lg font-semibold',
-                  pagosKpis.cantSemana > 0 ? 'text-orange-600' : 'text-green-600',
-                )}
-              >
-                {formatARS(pagosKpis.totalSemana)}
-              </p>
-            </button>
-            <button
-              onClick={() => setFiltroPagos(filtroPagos === 'pagados' ? 'todos' : 'pagados')}
-              className={cn(
-                'rounded-lg border bg-white p-4 text-left transition-colors',
-                filtroPagos === 'pagados'
-                  ? 'border-green-500 bg-green-50 ring-1 ring-green-200'
-                  : 'border-surface-border hover:border-gray-300',
-              )}
-              title="Solo pagos a proveedores con cuenta corriente (fecha_pago posterior al gasto). Excluye pagos fijos y compras al contado."
-            >
-              <p className="mb-1 text-xs text-gray-500">
-                Pagados cta cte ({pagosKpis.cantPagadoCtaCteMes})
-              </p>
-              <p className="text-lg font-semibold text-green-600">
-                {formatARS(pagosKpis.pagadoCtaCteMes)}
-              </p>
-            </button>
+            <input
+              type="month"
+              value={mesPagos}
+              onChange={(e) => setMesPagos(e.target.value)}
+              className="rounded-md border border-gray-300 px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-rodziny-500"
+            />
           </div>
 
           {/* Buscador por proveedor */}
@@ -2804,7 +2768,10 @@ export function ComprasPage() {
                 type="text"
                 placeholder="Buscar proveedor..."
                 value={filtroProveedor}
-                onChange={(e) => setFiltroProveedor(e.target.value)}
+                onChange={(e) => {
+                  setFiltroProveedor(e.target.value);
+                  setProveedorObjetivo(null);
+                }}
                 list="proveedores-pagos-list"
                 className="w-full rounded-md border border-gray-300 py-2 pl-8 pr-8 text-sm focus:border-rodziny-500 focus:outline-none focus:ring-1 focus:ring-rodziny-500"
               />
@@ -2813,7 +2780,10 @@ export function ComprasPage() {
               </span>
               {filtroProveedor && (
                 <button
-                  onClick={() => setFiltroProveedor('')}
+                  onClick={() => {
+                    setFiltroProveedor('');
+                    setProveedorObjetivo(null);
+                  }}
                   className="absolute right-2.5 top-1/2 -translate-y-1/2 text-sm text-gray-400 hover:text-gray-600"
                 >
                   &times;
@@ -2829,6 +2799,18 @@ export function ComprasPage() {
               <p className="text-xs text-gray-500">
                 {pagosFiltrados.length} resultado{pagosFiltrados.length !== 1 ? 's' : ''}
               </p>
+            )}
+            {/* Volver a ver toda la lista tras filtrar/saltar desde el calendario */}
+            {filtroProveedor && (
+              <button
+                onClick={() => {
+                  setFiltroProveedor('');
+                  setProveedorObjetivo(null);
+                }}
+                className="flex items-center gap-1 whitespace-nowrap rounded-full border border-rodziny-300 bg-rodziny-50 px-3 py-1.5 text-xs font-medium text-rodziny-700 transition-colors hover:bg-rodziny-100"
+              >
+                ← Ver todos
+              </button>
             )}
           </div>
 
@@ -3080,7 +3062,7 @@ export function ComprasPage() {
               </table>
             </div>
           </div>
-          ) : pendientesPorProveedor.length === 0 ? (
+          ) : gruposPendientes.length === 0 && gruposSoloPagados.length === 0 ? (
             <div className="rounded-lg border border-surface-border bg-white p-8 text-center text-sm text-gray-400">
               {filtroPagos === 'vencidos'
                 ? 'Sin gastos vencidos 🎉'
@@ -3094,17 +3076,29 @@ export function ComprasPage() {
             </div>
           ) : (
             <div className="space-y-2">
-              {pendientesPorProveedor.map((grupo) => {
-                const expandido = proveedoresExpandidos.has(grupo.proveedor);
+              {gruposPendientes.map((grupo) => {
+                // Grupo "objetivo": al que se saltó desde el calendario. Se matchea
+                // por el nombre crudo del gasto (mismo string que usa el calendario).
+                const esObjetivo =
+                  !!proveedorObjetivo &&
+                  grupo.gastos.some(
+                    (g) => (g.proveedor ?? '').trim().toLowerCase() === proveedorObjetivo,
+                  );
+                const expandido = proveedoresExpandidos.has(grupo.proveedor) || esObjetivo;
                 const idsGrupo = grupo.gastos.map((g) => g.id);
                 const todosTildados = idsGrupo.every((id) => seleccionados.has(id));
                 const algunoTildado = idsGrupo.some((id) => seleccionados.has(id));
                 return (
                   <div
                     key={grupo.proveedor}
+                    id={esObjetivo ? 'lista-pagos-objetivo' : undefined}
                     className={cn(
                       'overflow-hidden rounded-lg border bg-white transition-colors',
-                      grupo.cantVencidos > 0 ? 'border-red-200' : 'border-surface-border',
+                      esObjetivo
+                        ? 'border-rodziny-400 ring-2 ring-rodziny-300'
+                        : grupo.cantVencidos > 0
+                          ? 'border-red-200'
+                          : 'border-surface-border',
                     )}
                   >
                     <div className="flex items-center gap-3 px-4 py-3">
@@ -3340,6 +3334,54 @@ export function ComprasPage() {
                   </div>
                 );
               })}
+
+              {/* Proveedores con saldo $0 (solo pagados del mes) — colapsados en
+                  una sola línea para no ensuciar la lista de deuda viva. */}
+              {gruposSoloPagados.length > 0 && (
+                <div className="overflow-hidden rounded-lg border border-green-200 bg-white">
+                  <button
+                    onClick={() => setPagadosExpandido((v) => !v)}
+                    className="flex w-full items-center justify-between gap-3 bg-green-50/60 px-4 py-3 text-left transition-colors hover:bg-green-50"
+                  >
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-gray-400">{pagadosExpandido ? '▼' : '▶'}</span>
+                      <span className="font-medium text-green-900">✓ Pagados en el mes</span>
+                      <span className="rounded bg-green-100 px-1.5 py-0.5 text-xs font-medium text-green-700">
+                        {gruposSoloPagados.length} proveedor
+                        {gruposSoloPagados.length !== 1 ? 'es' : ''} · {resumenSoloPagados.cantPagos}{' '}
+                        pago{resumenSoloPagados.cantPagos !== 1 ? 's' : ''}
+                      </span>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-[10px] text-gray-500">Total pagado</p>
+                      <p className="text-base font-bold text-green-700">
+                        {formatARS(resumenSoloPagados.total)}
+                      </p>
+                    </div>
+                  </button>
+
+                  {pagadosExpandido && (
+                    <div className="divide-y divide-gray-100 border-t border-gray-100">
+                      {gruposSoloPagados.map((grupo) => (
+                        <div
+                          key={grupo.proveedor}
+                          className="flex items-center justify-between gap-3 px-4 py-2"
+                        >
+                          <span className="font-medium text-gray-800">{grupo.proveedor}</span>
+                          <span className="flex items-center gap-3">
+                            <span className="text-xs text-gray-400">
+                              {grupo.cantPagadosMes} pago{grupo.cantPagadosMes !== 1 ? 's' : ''}
+                            </span>
+                            <span className="tabular-nums font-semibold text-gray-700">
+                              {formatARS(grupo.totalPagadoMes)}
+                            </span>
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
