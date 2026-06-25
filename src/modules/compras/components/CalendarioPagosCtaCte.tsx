@@ -103,6 +103,71 @@ function resolverDetalle(g: { gastos: GastoPend[]; total: number; cantidad: numb
   };
 }
 
+// "Junio 2026" a partir de un YYYY-MM
+function nombreMes(ym: string): string {
+  const [y, m] = ym.split('-').map(Number);
+  const d = new Date(y, m - 1, 1);
+  return capitalizar(d.toLocaleDateString('es-AR', { month: 'long', year: 'numeric' }));
+}
+
+// Mueve un YYYY-MM `delta` meses (±1).
+function mesShift(ym: string, delta: number): string {
+  const [y, m] = ym.split('-').map(Number);
+  const d = new Date(y, m - 1 + delta, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+// Cuerpo del detalle (split por local + lista de proveedores clickeable). Se usa
+// tanto en el panel inline del calendario como en el modal de mes completo.
+function DetalleProveedoresBody({
+  detalle,
+  onIrAProveedor,
+}: {
+  detalle: BucketDetalle;
+  onIrAProveedor?: (proveedor: string, local: LocalKey) => void;
+}) {
+  return (
+    <>
+      <div className="flex flex-wrap gap-x-4 gap-y-1 border-b border-gray-50 px-4 py-2 text-[11px]">
+        {(['vedia', 'saavedra', 'sas'] as LocalKey[])
+          .filter((l) => detalle.porLocal[l] > 0)
+          .map((l) => (
+            <span key={l} className="inline-flex items-center gap-1 text-gray-600">
+              <span className={cn('h-2 w-2 rounded-full', LOCAL_DOT[l])} />
+              {LOCAL_LABEL[l]}:{' '}
+              <strong className="text-gray-800">{formatARS(detalle.porLocal[l])}</strong>
+            </span>
+          ))}
+      </div>
+      <div className="max-h-72 overflow-y-auto text-xs">
+        {detalle.porProveedor.map((p) => (
+          <button
+            key={p.key}
+            onClick={() => onIrAProveedor?.(p.proveedor, p.local)}
+            title={`Ver ${p.proveedor} en el listado`}
+            className="group flex w-full items-center justify-between gap-2 border-b border-gray-50 px-4 py-1.5 text-left last:border-0 hover:bg-rodziny-50/60"
+          >
+            <span className="inline-flex items-center gap-1.5">
+              <span
+                className={cn('h-2 w-2 rounded-full', LOCAL_DOT[p.local])}
+                title={LOCAL_LABEL[p.local]}
+              />
+              <span className="font-medium text-gray-800 group-hover:text-rodziny-700">
+                {p.proveedor}
+              </span>
+              {p.cantidad > 1 && <span className="text-[10px] text-gray-400">×{p.cantidad}</span>}
+              <span className="text-[10px] text-rodziny-500 opacity-0 transition-opacity group-hover:opacity-100">
+                ver en lista ↓
+              </span>
+            </span>
+            <span className="font-semibold tabular-nums text-gray-900">{formatARS(p.total)}</span>
+          </button>
+        ))}
+      </div>
+    </>
+  );
+}
+
 export function CalendarioPagosCtaCte({
   onIrAProveedor,
 }: {
@@ -114,8 +179,24 @@ export function CalendarioPagosCtaCte({
   // o un YYYY-MM-DD de los próximos 7). null = ninguno abierto.
   const [abierto, setAbierto] = useState<string | null>(null);
 
+  // Modal de mes completo: ver más allá de los 7 días, mes a mes.
+  const [mesModalAbierto, setMesModalAbierto] = useState(false);
+  const [mesVista, setMesVista] = useState(() => ymdLocal(new Date()).slice(0, 7));
+  const [diaModalSel, setDiaModalSel] = useState<string | null>(null);
+
   function seleccionarBucket(key: string) {
     setAbierto((prev) => (prev === key ? null : key));
+  }
+
+  function abrirModalMes() {
+    setMesVista(ymdLocal(new Date()).slice(0, 7));
+    setDiaModalSel(null);
+    setMesModalAbierto(true);
+  }
+
+  function navegarMes(delta: number) {
+    setMesVista((prev) => mesShift(prev, delta));
+    setDiaModalSel(null);
   }
 
   const { data: gastos, isLoading } = useQuery({
@@ -194,6 +275,55 @@ export function CalendarioPagosCtaCte({
     const b = porDia.get(abierto);
     return b ? resolverDetalle(b) : null;
   }, [abierto, atrasado, porDia]);
+
+  // Todos los vencimientos agrupados por fecha exacta — alimenta el modal de mes
+  // completo (cualquier mes, sin otra query: usamos los mismos gastos ya traídos).
+  const porFecha = useMemo(() => {
+    const map = new Map<string, ReturnType<typeof bucketVacio>>();
+    for (const g of gastos ?? []) {
+      if (!g.fecha_vencimiento) continue;
+      let b = map.get(g.fecha_vencimiento);
+      if (!b) {
+        b = bucketVacio();
+        map.set(g.fecha_vencimiento, b);
+      }
+      const local = (g.local as LocalKey) ?? 'sas';
+      const monto = Number(g.importe_total);
+      b.total += monto;
+      b.cantidad += 1;
+      if (local in b.porLocal) b.porLocal[local] += monto;
+      b.gastos.push(g);
+    }
+    return map;
+  }, [gastos]);
+
+  // Grilla del mes en vista (semana arranca lunes) + total del mes.
+  const mesGrid = useMemo(() => {
+    const [yy, mm] = mesVista.split('-').map(Number);
+    const primero = new Date(yy, mm - 1, 1);
+    const diasEnMes = new Date(yy, mm, 0).getDate();
+    const offset = (primero.getDay() + 6) % 7; // lunes = 0
+    const celdas: (string | null)[] = [];
+    for (let i = 0; i < offset; i++) celdas.push(null);
+    let totalMes = 0;
+    let cantMes = 0;
+    for (let d = 1; d <= diasEnMes; d++) {
+      const fecha = `${mesVista}-${String(d).padStart(2, '0')}`;
+      celdas.push(fecha);
+      const b = porFecha.get(fecha);
+      if (b) {
+        totalMes += b.total;
+        cantMes += b.cantidad;
+      }
+    }
+    return { celdas, totalMes, cantMes };
+  }, [mesVista, porFecha]);
+
+  const detalleMesSel = useMemo(() => {
+    if (!diaModalSel) return null;
+    const b = porFecha.get(diaModalSel);
+    return b ? resolverDetalle(b) : null;
+  }, [diaModalSel, porFecha]);
 
   if (isLoading) {
     return (
@@ -314,16 +444,24 @@ export function CalendarioPagosCtaCte({
 
         {/* Resumen pie del calendario */}
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-gray-50 px-3 py-2 text-xs text-gray-600">
-          <span>
-            Próximos 7 días: <strong className="text-gray-900">{formatARS(totalProx7)}</strong>
-          </span>
-          {masAdelante.total > 0 && (
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
             <span>
-              Después de los 7 días:{' '}
-              <strong className="text-gray-700">{formatARS(masAdelante.total)}</strong> (
-              {masAdelante.cantidad})
+              Próximos 7 días: <strong className="text-gray-900">{formatARS(totalProx7)}</strong>
             </span>
-          )}
+            {masAdelante.total > 0 && (
+              <span>
+                Después de los 7 días:{' '}
+                <strong className="text-gray-700">{formatARS(masAdelante.total)}</strong> (
+                {masAdelante.cantidad})
+              </span>
+            )}
+          </div>
+          <button
+            onClick={abrirModalMes}
+            className="whitespace-nowrap rounded-md border border-rodziny-300 bg-white px-2.5 py-1 text-xs font-medium text-rodziny-700 transition-colors hover:bg-rodziny-50"
+          >
+            🗓 Ver mes completo
+          </button>
         </div>
 
         {/* Panel de detalle del día/bucket seleccionado */}
@@ -343,52 +481,147 @@ export function CalendarioPagosCtaCte({
               </button>
             </div>
 
-            {/* Split por local */}
-            <div className="flex flex-wrap gap-x-4 gap-y-1 border-b border-gray-50 px-4 py-2 text-[11px]">
-              {(['vedia', 'saavedra', 'sas'] as LocalKey[])
-                .filter((l) => detalleAbierto.porLocal[l] > 0)
-                .map((l) => (
-                  <span key={l} className="inline-flex items-center gap-1 text-gray-600">
-                    <span className={cn('h-2 w-2 rounded-full', LOCAL_DOT[l])} />
-                    {LOCAL_LABEL[l]}:{' '}
-                    <strong className="text-gray-800">{formatARS(detalleAbierto.porLocal[l])}</strong>
-                  </span>
-                ))}
-            </div>
-
-            {/* Lista por proveedor — clic lleva a su fila en el listado de abajo */}
-            <div className="max-h-72 overflow-y-auto text-xs">
-              {detalleAbierto.porProveedor.map((p) => (
-                <button
-                  key={p.key}
-                  onClick={() => onIrAProveedor?.(p.proveedor, p.local)}
-                  title={`Ver ${p.proveedor} en el listado`}
-                  className="group flex w-full items-center justify-between gap-2 border-b border-gray-50 px-4 py-1.5 text-left last:border-0 hover:bg-rodziny-50/60"
-                >
-                  <span className="inline-flex items-center gap-1.5">
-                    <span
-                      className={cn('h-2 w-2 rounded-full', LOCAL_DOT[p.local])}
-                      title={LOCAL_LABEL[p.local]}
-                    />
-                    <span className="font-medium text-gray-800 group-hover:text-rodziny-700">
-                      {p.proveedor}
-                    </span>
-                    {p.cantidad > 1 && (
-                      <span className="text-[10px] text-gray-400">×{p.cantidad}</span>
-                    )}
-                    <span className="text-[10px] text-rodziny-500 opacity-0 transition-opacity group-hover:opacity-100">
-                      ver en lista ↓
-                    </span>
-                  </span>
-                  <span className="font-semibold tabular-nums text-gray-900">
-                    {formatARS(p.total)}
-                  </span>
-                </button>
-              ))}
-            </div>
+            <DetalleProveedoresBody detalle={detalleAbierto} onIrAProveedor={onIrAProveedor} />
           </div>
         )}
       </div>
+
+      {/* Modal de mes completo */}
+      {mesModalAbierto && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          onClick={() => setMesModalAbierto(false)}
+        >
+          <div
+            className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-xl bg-white shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header: navegación de mes + total */}
+            <div className="flex items-center justify-between gap-3 border-b border-gray-100 px-4 py-3">
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => navegarMes(-1)}
+                  className="rounded px-2 py-1 text-gray-500 hover:bg-gray-100"
+                >
+                  ←
+                </button>
+                <h3 className="min-w-[150px] text-center text-sm font-semibold text-gray-800">
+                  {nombreMes(mesVista)}
+                </h3>
+                <button
+                  onClick={() => navegarMes(1)}
+                  className="rounded px-2 py-1 text-gray-500 hover:bg-gray-100"
+                >
+                  →
+                </button>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-gray-500">
+                  A pagar en el mes:{' '}
+                  <strong className="text-gray-900">{formatARS(mesGrid.totalMes)}</strong>{' '}
+                  <span className="text-gray-400">({mesGrid.cantMes})</span>
+                </span>
+                <button
+                  onClick={() => setMesModalAbierto(false)}
+                  className="text-lg leading-none text-gray-400 hover:text-gray-600"
+                >
+                  &times;
+                </button>
+              </div>
+            </div>
+
+            {/* Cuerpo scrolleable: grilla + detalle del día */}
+            <div className="overflow-y-auto p-4">
+              {/* Encabezado de días de la semana */}
+              <div className="mb-1 grid grid-cols-7 gap-1 text-center text-[10px] font-medium uppercase tracking-wide text-gray-400">
+                {['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'].map((d) => (
+                  <div key={d}>{d}</div>
+                ))}
+              </div>
+
+              {/* Grilla del mes */}
+              <div className="grid grid-cols-7 gap-1">
+                {mesGrid.celdas.map((fecha, idx) => {
+                  if (!fecha) return <div key={`v${idx}`} />;
+                  const b = porFecha.get(fecha);
+                  const conMonto = !!b && b.total > 0;
+                  const dia = Number(fecha.slice(8, 10));
+                  const esHoy = fecha === hoy;
+                  const pasado = fecha < hoy;
+                  const sel = diaModalSel === fecha;
+                  return (
+                    <button
+                      key={fecha}
+                      onClick={() => conMonto && setDiaModalSel(sel ? null : fecha)}
+                      disabled={!conMonto}
+                      className={cn(
+                        'flex min-h-[58px] flex-col rounded-md border p-1.5 text-left transition-colors',
+                        sel
+                          ? 'border-rodziny-500 bg-rodziny-50 ring-1 ring-rodziny-200'
+                          : conMonto
+                            ? pasado
+                              ? 'border-red-200 bg-red-50/60 hover:bg-red-50'
+                              : 'border-gray-200 bg-white hover:border-rodziny-300 hover:bg-rodziny-50/40'
+                            : 'border-gray-100 bg-gray-50/40',
+                        esHoy && !sel && 'border-rodziny-400',
+                      )}
+                    >
+                      <span
+                        className={cn(
+                          'text-[11px] font-semibold',
+                          esHoy ? 'text-rodziny-700' : 'text-gray-500',
+                        )}
+                      >
+                        {dia}
+                      </span>
+                      {conMonto && (
+                        <>
+                          <span
+                            className={cn(
+                              'mt-auto text-[11px] font-bold tabular-nums',
+                              pasado ? 'text-red-700' : 'text-gray-900',
+                            )}
+                          >
+                            {formatARS(b!.total, 0)}
+                          </span>
+                          <span className="text-[9px] text-gray-400">
+                            {b!.cantidad} pago{b!.cantidad !== 1 ? 's' : ''}
+                          </span>
+                        </>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Detalle del día seleccionado dentro del modal */}
+              {detalleMesSel && diaModalSel && (
+                <div className="mt-3 rounded-lg border border-gray-200">
+                  <div className="flex items-center justify-between border-b border-gray-100 px-4 py-2">
+                    <p className="text-xs font-semibold text-gray-700">
+                      Detalle — {capitalizar(etiquetaDia(diaModalSel).dia)}{' '}
+                      {etiquetaDia(diaModalSel).fecha}
+                    </p>
+                    <button
+                      onClick={() => setDiaModalSel(null)}
+                      className="text-sm leading-none text-gray-400 hover:text-gray-600"
+                    >
+                      &times;
+                    </button>
+                  </div>
+                  <DetalleProveedoresBody
+                    detalle={detalleMesSel}
+                    onIrAProveedor={(p, l) => {
+                      setMesModalAbierto(false);
+                      onIrAProveedor?.(p, l);
+                    }}
+                  />
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
