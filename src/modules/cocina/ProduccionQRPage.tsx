@@ -1167,7 +1167,9 @@ function FormRelleno({
       const { error: errB } = await supabase.from('cocina_lotes_relleno').insert({
         receta_id: recetaId,
         fecha: hoy(),
-        cantidad_recetas: nBolsas ?? 1,
+        // cantidad_recetas es integer NOT NULL: en modo bolsa el dato fino del rinde
+        // vive en `bolsas` (numeric) y kg_papa; acá solo va un entero >= 1 de placeholder.
+        cantidad_recetas: nBolsas != null ? Math.max(1, Math.round(nBolsas)) : 1,
         peso_total_kg: pure,
         bolsas: nBolsas,
         kg_papa: papa,
