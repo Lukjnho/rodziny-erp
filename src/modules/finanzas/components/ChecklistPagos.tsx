@@ -6,6 +6,7 @@ import { formatARS, cn } from '@/lib/utils';
 import { MontoInput } from '@/components/ui/MontoInput';
 import { type MedioPago, MEDIO_PAGO_LABEL, medioRequiereComprobante } from '@/modules/gastos/types';
 import { urgenciaPago, usePagosAlertas, type UrgenciaPago } from '@/modules/finanzas/hooks/usePagosAlertas';
+import { recomputarEstadoGasto } from '@/modules/gastos/recomputarEstadoGasto';
 
 // ── tipos ────────────────────────────────────────────────────────────────────
 interface PagoFijo {
@@ -30,6 +31,18 @@ interface CategoriaGasto {
   parent_id: string | null;
   tipo_edr: string | null;
   activo: boolean;
+}
+
+// Echeq / cheque programado proveniente de pagos_gastos (modal de gasto o plan de pagos).
+interface PagoProgramado {
+  id: string;
+  gasto_id: string;
+  fecha_pago: string;
+  monto: number;
+  medio_pago: string | null;
+  numero_operacion: string | null;
+  programado: boolean;
+  gastos: { proveedor: string | null; local: string | null } | null;
 }
 
 // ── constantes ───────────────────────────────────────────────────────────────
@@ -183,6 +196,43 @@ export function ChecklistPagos() {
     },
   });
 
+  // ── Echeqs / cheques programados del mes ──────────────────────────────────
+  // Vienen de pagos_gastos.programado (cargados en el modal de gasto o plan de pagos).
+  // Se listan en el mes de su fecha de débito y se pueden marcar como pagados.
+  const rangoMes = useMemo(() => {
+    const [y, m] = periodo.split('-').map(Number);
+    const ultimoDiaNum = new Date(y, m, 0).getDate();
+    return {
+      desde: `${periodo}-01`,
+      hasta: `${periodo}-${String(ultimoDiaNum).padStart(2, '0')}`,
+    };
+  }, [periodo]);
+
+  const { data: programados } = useQuery({
+    queryKey: ['pagos_programados', periodo],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('pagos_gastos')
+        .select(
+          'id, gasto_id, fecha_pago, monto, medio_pago, numero_operacion, programado, gastos(proveedor, local)',
+        )
+        .or('programado.eq.true,medio_pago.eq.cheque_galicia')
+        .gte('fecha_pago', rangoMes.desde)
+        .lte('fecha_pago', rangoMes.hasta)
+        .order('fecha_pago');
+      if (error) throw error;
+      // El embed `gastos` puede venir como objeto o como array de 1 según la versión
+      // de supabase-js: lo normalizamos a objeto.
+      return (data ?? []).map((r) => {
+        const row = r as unknown as Omit<PagoProgramado, 'gastos'> & {
+          gastos: PagoProgramado['gastos'] | PagoProgramado['gastos'][];
+        };
+        const g = Array.isArray(row.gastos) ? (row.gastos[0] ?? null) : row.gastos;
+        return { ...row, gastos: g } as PagoProgramado;
+      });
+    },
+  });
+
   const { data: categoriasGasto } = useQuery({
     queryKey: ['categorias_gasto_checklist'],
     queryFn: async () => {
@@ -217,6 +267,34 @@ export function ChecklistPagos() {
       if (error) throw error;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['pagos_fijos', periodo] }),
+  });
+
+  // Marcar/desmarcar pagado un echeq programado: flipea programado y recalcula el
+  // estado del gasto (Parcial → Pagado cuando el cheque deja de estar "a futuro").
+  const toggleProgramado = useMutation({
+    mutationFn: async ({
+      id,
+      gasto_id,
+      pagar,
+    }: {
+      id: string;
+      gasto_id: string;
+      pagar: boolean;
+    }) => {
+      const { error } = await supabase
+        .from('pagos_gastos')
+        .update({ programado: !pagar })
+        .eq('id', id);
+      if (error) throw error;
+      await recomputarEstadoGasto(gasto_id);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['pagos_programados', periodo] });
+      qc.invalidateQueries({ queryKey: ['proy_echeqs_programados'] });
+      qc.invalidateQueries({ queryKey: ['gastos'] });
+      qc.invalidateQueries({ queryKey: ['gastos_listado'] });
+      qc.invalidateQueries({ queryKey: ['pagos_gastos'] });
+    },
   });
 
   const deletePago = useMutation({
@@ -525,6 +603,16 @@ export function ChecklistPagos() {
         itemsPagados++;
       }
     }
+    // Los echeqs/cheques del mes también suman al checklist: pendiente = programado.
+    for (const pg of programados ?? []) {
+      itemsTotal++;
+      const m = Number(pg.monto ?? 0);
+      totalEstimado += m;
+      if (!pg.programado) {
+        totalPagado += m;
+        itemsPagados++;
+      }
+    }
     return {
       totalEstimado,
       totalPagado,
@@ -532,7 +620,9 @@ export function ChecklistPagos() {
       itemsPagados,
       itemsTotal,
     };
-  }, [pagos]);
+  }, [pagos, programados]);
+
+  const hayProgramados = (programados?.length ?? 0) > 0;
 
   // Alertas por urgencia (solo pagos no pagados del mes actual)
   const alertasUrgencia = useMemo(() => {
@@ -678,7 +768,7 @@ export function ChecklistPagos() {
       </div>
 
       {/* KPIs */}
-      {tieneItems && (
+      {(tieneItems || hayProgramados) && (
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
           <div className="rounded-lg border border-surface-border bg-white p-4">
             <p className="mb-1 text-xs text-gray-500">Total Estimado</p>
@@ -773,13 +863,91 @@ export function ChecklistPagos() {
       )}
 
       {/* Estado vacío */}
-      {!tieneItems && !isLoading && (
+      {!tieneItems && !hayProgramados && !isLoading && (
         <div className="rounded-lg border border-gray-200 bg-white p-12 text-center">
           <div className="mb-3 text-4xl">📋</div>
           <p className="font-medium text-gray-600">No hay pagos fijos para {labelMes(periodo)}</p>
           <p className="mt-1 text-sm text-gray-400">
             Agregá pagos manualmente o copiá desde {labelMes(periodoAnterior(periodo))}
           </p>
+        </div>
+      )}
+
+      {/* Echeqs y pagos programados del mes (de pagos_gastos.programado) */}
+      {hayProgramados && (
+        <div className="overflow-hidden rounded-lg border border-purple-200 bg-white">
+          <div className="flex items-center justify-between bg-purple-50 px-4 py-3">
+            <div className="flex items-center gap-2">
+              <span className="text-sm">📝</span>
+              <span className="text-sm font-semibold text-purple-900">
+                Echeqs y pagos programados
+              </span>
+              <span className="text-xs text-purple-400">
+                ({(programados ?? []).filter((p) => !p.programado).length}/
+                {(programados ?? []).length})
+              </span>
+            </div>
+            <span className="text-sm font-semibold text-purple-800">
+              {formatARS((programados ?? []).reduce((s, p) => s + Number(p.monto ?? 0), 0))}
+            </span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-100 text-xs uppercase text-gray-400">
+                  <th className="px-4 py-2 text-left font-medium">Proveedor</th>
+                  <th className="px-4 py-2 text-center font-medium">Débito</th>
+                  <th className="px-4 py-2 text-left font-medium">Medio</th>
+                  <th className="px-4 py-2 text-left font-medium">N° echeq/op</th>
+                  <th className="px-4 py-2 text-right font-medium">Monto</th>
+                  <th className="px-4 py-2 text-center font-medium">Pagado</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(programados ?? []).map((pg) => {
+                  const pagado = !pg.programado;
+                  return (
+                    <tr
+                      key={pg.id}
+                      className={cn('border-b border-gray-50', pagado && 'bg-green-50/40')}
+                    >
+                      <td className="px-4 py-2 text-gray-800">{pg.gastos?.proveedor ?? '—'}</td>
+                      <td className="px-4 py-2 text-center text-gray-600">
+                        {new Date(pg.fecha_pago + 'T12:00:00').toLocaleDateString('es-AR', {
+                          day: '2-digit',
+                          month: '2-digit',
+                        })}
+                      </td>
+                      <td className="px-4 py-2 text-gray-600">
+                        {pg.medio_pago
+                          ? (MEDIO_PAGO_LABEL[pg.medio_pago as MedioPago] ?? pg.medio_pago)
+                          : '—'}
+                      </td>
+                      <td className="px-4 py-2 text-gray-500">{pg.numero_operacion ?? '—'}</td>
+                      <td className="px-4 py-2 text-right font-medium text-gray-800">
+                        {formatARS(Number(pg.monto ?? 0))}
+                      </td>
+                      <td className="px-4 py-2 text-center">
+                        <input
+                          type="checkbox"
+                          checked={pagado}
+                          disabled={toggleProgramado.isPending}
+                          onChange={(e) =>
+                            toggleProgramado.mutate({
+                              id: pg.id,
+                              gasto_id: pg.gasto_id,
+                              pagar: e.target.checked,
+                            })
+                          }
+                          className="h-4 w-4 cursor-pointer rounded"
+                        />
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 

@@ -44,6 +44,7 @@ export interface ProyeccionMes {
   cmv: number;
   pagosFijos: number;
   pagosFijosEstimado: boolean; // true = no había mes cargado, se usó promedio
+  echeqs: number; // echeqs/cheques programados que debitan ese mes (pagos_gastos.programado)
   sueldos: number;
   aguinaldo: number;
   itemsOperativa: number; // neto manual sobre operativa (egresos restan)
@@ -156,6 +157,28 @@ export function useProyeccionFlujo(): ProyeccionResult {
     },
   });
 
+  // Echeqs / cheques programados (pagos_gastos.programado=true): plata comprometida
+  // a futuro que todavía no debitó. Se agrupan por el mes de su fecha de débito para
+  // restarlos del saldo proyectado del mes que corresponde.
+  const { data: echeqsProg, isLoading: loadEch } = useQuery({
+    queryKey: ['proy_echeqs_programados'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('pagos_gastos')
+        .select('fecha_pago, monto')
+        .eq('programado', true);
+      if (error) throw error;
+      const map = new Map<string, number>();
+      for (const r of data ?? []) {
+        const fp = (r as { fecha_pago: string | null }).fecha_pago;
+        if (!fp) continue;
+        const p = fp.slice(0, 7);
+        map.set(p, (map.get(p) ?? 0) + (Number((r as { monto: number }).monto) || 0));
+      }
+      return map;
+    },
+  });
+
   // Empleados activos: sueldos recurrentes + base para el aguinaldo.
   const { data: empleados, isLoading: loadEmp } = useQuery({
     queryKey: ['proy_empleados'],
@@ -213,7 +236,7 @@ export function useProyeccionFlujo(): ProyeccionResult {
   });
 
   const isLoading =
-    loadVentas || loadGastos || loadPF || loadEmp || loadCfg || loadItems || loadHist;
+    loadVentas || loadGastos || loadPF || loadEmp || loadCfg || loadItems || loadHist || loadEch;
 
   // ── Cálculo ──────────────────────────────────────────────────────────────────
   const mesesProm = config?.meses_promedio ?? 3;
@@ -425,6 +448,7 @@ export function useProyeccionFlujo(): ProyeccionResult {
     const pfCargado = pagosFijos?.get(periodo);
     const pagosFijosMes = pfCargado ?? pfPromedio;
     const pagosFijosEstimado = pfCargado == null;
+    const echeqs = echeqsProg?.get(periodo) ?? 0;
     const sueldos = sueldosMensuales;
     const aguinaldo = aguinaldoDelMes(periodo);
 
@@ -432,7 +456,7 @@ export function useProyeccionFlujo(): ProyeccionResult {
     // Usamos ingresoBase (no `ingreso`) porque it.operativa ya incluye los
     // ingresos manuales; así no se cuentan dos veces.
     const netoOperativo =
-      ingresoBase - cmv - pagosFijosMes - sueldos - aguinaldo + it.operativa;
+      ingresoBase - cmv - pagosFijosMes - echeqs - sueldos - aguinaldo + it.operativa;
     const netoReserva = it.reserva;
 
     saldoOperativa += netoOperativo;
@@ -444,6 +468,7 @@ export function useProyeccionFlujo(): ProyeccionResult {
       cmv,
       pagosFijos: pagosFijosMes,
       pagosFijosEstimado,
+      echeqs,
       sueldos,
       aguinaldo,
       itemsOperativa: it.operativa,

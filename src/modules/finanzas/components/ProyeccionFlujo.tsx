@@ -233,6 +233,17 @@ function MatrizProyeccion({ meses }: { meses: ProyeccionMes[] }) {
             ))}
           </tr>
           <tr className="border-b border-gray-100 hover:bg-gray-50/60">
+            <td className={cn(labelCls, 'text-gray-600')}>Echeqs / cheques</td>
+            {meses.map((m) => (
+              <Celda
+                key={m.periodo}
+                valor={-m.echeqs}
+                clase="font-medium text-purple-600"
+                placeholder={m.echeqs === 0}
+              />
+            ))}
+          </tr>
+          <tr className="border-b border-gray-100 hover:bg-gray-50/60">
             <td className={cn(labelCls, 'text-gray-600')}>Items</td>
             {meses.map((m) => {
               const val = m.itemsOperativa + m.itemsReserva;
