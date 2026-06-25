@@ -896,7 +896,7 @@ export function ChecklistPagos() {
               <thead>
                 <tr className="border-b border-gray-100 text-xs uppercase text-gray-400">
                   <th className="px-4 py-2 text-left font-medium">Proveedor</th>
-                  <th className="px-4 py-2 text-center font-medium">Débito</th>
+                  <th className="px-4 py-2 text-center font-medium">Fecha débito</th>
                   <th className="px-4 py-2 text-left font-medium">Medio</th>
                   <th className="px-4 py-2 text-left font-medium">N° echeq/op</th>
                   <th className="px-4 py-2 text-right font-medium">Monto</th>
