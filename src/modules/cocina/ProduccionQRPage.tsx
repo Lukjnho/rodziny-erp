@@ -1088,10 +1088,13 @@ function CondimentosRellenoPure({
   recetaId,
   kgPure,
   onDetalle,
+  onTotalKg,
 }: {
   recetaId: string | null;
   kgPure: number;
   onDetalle: (detalle: string) => void;
+  // Total de condimentos en kg (para sugerir el puré neto = puré + condimentos).
+  onTotalKg?: (kg: number) => void;
 }) {
   const [reales, setReales] = useState<Record<string, string>>({});
 
@@ -1142,6 +1145,19 @@ function CondimentosRellenoPure({
         condimentos.map((c) => `${c.nombre} ${reales[c.id] ?? '0'} ${c.unidad}`).join(', '),
     );
   }, [condimentos, reales, kgPure, onDetalle]);
+
+  // Sumar los condimentos en kg para sugerir el puré neto final.
+  useEffect(() => {
+    if (!onTotalKg) return;
+    if (!condimentos || kgPure <= 0) {
+      onTotalKg(0);
+      return;
+    }
+    const totalKg = condimentos
+      .filter((c) => c.unidad === 'kg')
+      .reduce((s, c) => s + parseDecimalShared(reales[c.id] ?? ''), 0);
+    onTotalKg(+totalKg.toFixed(3));
+  }, [condimentos, reales, kgPure, onTotalKg]);
 
   if (!recetaId || !condimentos || condimentos.length === 0) return null;
 
@@ -1221,6 +1237,9 @@ function FormRelleno({
   const [kgPapa, setKgPapa] = useState('');
   // Detalle de condimentos del puré (Vedia) para guardar en notas.
   const [condimentosDetalle, setCondimentosDetalle] = useState('');
+  // Puré neto final (con condimentos): lo que realmente queda en el depósito.
+  const [pureNeto, setPureNeto] = useState('');
+  const [condimentosKg, setCondimentosKg] = useState(0);
   const [ingredientesReales, setIngredientesReales] = useState<IngredienteReal[]>([]);
   const [ingredientesOk, setIngredientesOk] = useState(true);
   const [guardando, setGuardando] = useState(false);
@@ -1249,6 +1268,19 @@ function FormRelleno({
   // sin lista itemizada). Saavedra usa ingredientes_armado → carga condimentos al armar.
   const muestraCondimentos = esPorBolsa && (recetaSel?.ingredientes_armado?.length ?? 0) === 0;
   const onGrillaChange = useCallback((ings: IngredienteReal[]) => setIngredientesReales(ings), []);
+
+  // Sugerir el puré neto = puré que salió + condimentos agregados (editable, lo
+  // pisa el operario si lo pesó distinto). Solo en el puré con condimentos (Vedia).
+  useEffect(() => {
+    if (!muestraCondimentos) return;
+    const base = parseDecimal(pesoKg);
+    if (base <= 0) {
+      setPureNeto('');
+      return;
+    }
+    setPureNeto(String(+(base + condimentosKg).toFixed(3)).replace('.', ','));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pesoKg, condimentosKg, muestraCondimentos]);
 
   async function guardar() {
     if (!recetaId) {
@@ -1285,8 +1317,23 @@ function FormRelleno({
       setError('');
       // peso_total_kg = kg de puré (stock del relleno). bolsas/kg_papa registran el
       // rinde real papa→puré. excluido_analisis: el rinde no es "por receta teórica".
+      // Puré neto final (con condimentos) = stock real que va al depósito. Si no
+      // se cargó, se usa el puré que salió (sin condimentos).
+      const netoNum = muestraCondimentos ? parseDecimal(pureNeto) : 0;
+      const stockPure = netoNum > 0 ? netoNum : pure;
+      if (netoNum > 0 && netoNum < pure - 0.001) {
+        const ok = window.confirm(
+          `El puré neto (${formatNum(netoNum)} kg) es menor que el puré que salió (${formatNum(pure)} kg). ` +
+            `Con los condimentos debería pesar más o igual. ¿Es correcto?`,
+        );
+        if (!ok) return;
+      }
       const notasBolsa =
-        [notas.trim(), muestraCondimentos ? condimentosDetalle : '']
+        [
+          notas.trim(),
+          muestraCondimentos ? condimentosDetalle : '',
+          netoNum > 0 ? `Puré que salió ${formatNum(pure)} kg → neto con condimentos ${formatNum(netoNum)} kg` : '',
+        ]
           .filter(Boolean)
           .join(' — ') || null;
       const { error: errB } = await supabase.from('cocina_lotes_relleno').insert({
@@ -1295,7 +1342,7 @@ function FormRelleno({
         // cantidad_recetas es integer NOT NULL: en modo bolsa el dato fino del rinde
         // vive en `bolsas` (numeric) y kg_papa; acá solo va un entero >= 1 de placeholder.
         cantidad_recetas: nBolsas != null ? Math.max(1, Math.round(nBolsas)) : 1,
-        peso_total_kg: pure,
+        peso_total_kg: stockPure,
         bolsas: nBolsas,
         kg_papa: papa,
         responsable: responsable.trim(),
@@ -1309,7 +1356,7 @@ function FormRelleno({
         return;
       }
       onGuardado(
-        `Puré "${recetaSel?.nombre ?? ''}" — ${formatNum(pure)} kg (de ${formatNum(papa)} kg de papa)`,
+        `Puré "${recetaSel?.nombre ?? ''}" — ${formatNum(stockPure)} kg al depósito (de ${formatNum(papa)} kg de papa)`,
       );
       return;
     }
@@ -1473,11 +1520,35 @@ function FormRelleno({
               </p>
             )}
             {muestraCondimentos && parseDecimal(pesoKg) > 0 && (
-              <CondimentosRellenoPure
-                recetaId={recetaId || null}
-                kgPure={parseDecimal(pesoKg)}
-                onDetalle={setCondimentosDetalle}
-              />
+              <>
+                <CondimentosRellenoPure
+                  recetaId={recetaId || null}
+                  kgPure={parseDecimal(pesoKg)}
+                  onDetalle={setCondimentosDetalle}
+                  onTotalKg={setCondimentosKg}
+                />
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-gray-700">
+                    Puré neto final (con condimentos)
+                  </label>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    pattern="[0-9]*[.,]?[0-9]*"
+                    value={pureNeto}
+                    onChange={(e) => setPureNeto(normalizarDecimal(e.target.value))}
+                    className="w-full rounded border border-gray-300 px-3 py-2.5 text-sm"
+                    placeholder="Ej: 7,2"
+                  />
+                  <p className="mt-1 text-[11px] text-gray-500">
+                    Lo que queda después de mezclar todo. Es lo que se suma al depósito.
+                    {condimentosKg > 0 && (
+                      <> Sugerido ~{formatNum(+(parseDecimal(pesoKg) + condimentosKg).toFixed(3))} kg
+                      {' '}(puré + condimentos).</>
+                    )}
+                  </p>
+                </div>
+              </>
             )}
           </div>
         ) : (
