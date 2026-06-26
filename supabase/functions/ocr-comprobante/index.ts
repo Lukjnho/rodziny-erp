@@ -57,7 +57,9 @@ REGLAS — leer con atencion:
 
 3. monto: total final pagado, sin signo de pesos ni separadores.
 
-4. n_operacion CRITICO: buscar "N° operacion", "Numero de operacion", "Op.", "Autorizacion", "Ref.", "Comprobante N°", "transfer_id".
+4. n_operacion CRITICO:
+   - En TRANSFERENCIAS/tickets/vouchers: buscar "N° operacion", "Numero de operacion", "Op.", "Autorizacion", "Ref.", "Comprobante N°", "transfer_id".
+   - En CHEQUES/ECHEQ: usar SIEMPRE el "N° de cheque" / "Numero de cheque" (el numero corto, ej "00000142"). NUNCA usar el "ID del cheque" (alfanumerico largo, ej "V8794WK4EVDNPEY"), ni el "ID Multicheque", ni el "CMC7". Si ves ambos, devolve el "N° de cheque".
 
 5. fecha en formato YYYY-MM-DD. En cheques/ECHEQ es la "Fecha de emision"; en transferencias/tickets es la fecha de la operacion.
 
