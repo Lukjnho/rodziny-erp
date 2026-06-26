@@ -9,6 +9,20 @@
 // 2. Match 1:1: cada N° pagas vs cada mov. Si dos movs distintos contienen
 //    el mismo N° (raro), gana el de fecha más cercana al pago.
 // 3. Sin scoring, sin tolerancia, sin sugerencias parciales. Es match o no.
+//
+// Números cortos (echeqs): el N° de echeq que trae el extracto de Galicia es
+// de 1-3 dígitos (ej "ECHEQ GALICIA NRO: 130"). Un substring tan corto, solo,
+// daría falsos positivos, así que para esos casos exigimos ADEMÁS que coincidan
+// monto (al peso) y fecha (ventana acotada). El N° de echeq es único, y el monto
+// exacto + la fecha confirman el movimiento sin riesgo de cruce.
+
+// Umbral: N° de menos de esta cantidad de dígitos requiere respaldo monto+fecha.
+const LARGO_MIN_SOLO_NUMERO = 4;
+// Tolerancia de monto para números cortos: al peso (el débito del echeq es exacto).
+const TOL_MONTO = 1;
+// Ventana de fecha para números cortos: el débito puede demorar respecto de la
+// fecha de pago del cheque, pero el N° único + monto exacto evitan cruces.
+const TOL_FECHA_MS = 30 * 86400000;
 
 export interface MovimientoParaMatchId {
   id: string;
@@ -68,13 +82,26 @@ export function matchearPorIdOperacion(
 
   for (const pago of pagosCandidatos) {
     const idBuscado = normalizar(pago.numero_operacion);
-    if (idBuscado.length < 4) continue; // evitar matches espurios con números cortos
+    if (idBuscado.length === 0) continue;
+    // Número corto (echeq): el substring solo no alcanza, pedimos monto + fecha.
+    const requiereRespaldo = idBuscado.length < LARGO_MIN_SOLO_NUMERO;
 
     const candidatos = movsCandidatos.filter((m) => {
       if (movsUsados.has(m.id)) return false;
       const ref = normalizar(m.referencia ?? '');
       const desc = normalizar(m.descripcion ?? '');
-      return ref.includes(idBuscado) || desc.includes(idBuscado);
+      if (!(ref.includes(idBuscado) || desc.includes(idBuscado))) return false;
+      if (requiereRespaldo) {
+        // El débito del extracto debe coincidir con el monto del pago (al peso)…
+        if (Math.abs(Number(m.debito) - pago.monto) > TOL_MONTO) return false;
+        // …y la fecha del movimiento debe caer dentro de la ventana del pago.
+        const distFecha = Math.abs(
+          new Date(m.fecha + 'T12:00:00Z').getTime() -
+            new Date(pago.fecha_pago + 'T12:00:00Z').getTime(),
+        );
+        if (distFecha > TOL_FECHA_MS) return false;
+      }
+      return true;
     });
 
     if (candidatos.length === 0) continue;
