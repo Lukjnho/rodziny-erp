@@ -30,6 +30,7 @@ Analiza el archivo y devolve UNICAMENTE un JSON estricto con esta estructura, si
   "proveedor_cuit": string | null,
   "monto": number | null,
   "fecha": string | null,
+  "fecha_pago_cheque": string | null,
   "hora": string | null,
   "n_operacion": string | null,
   "medio_pago": "transferencia" | "tarjeta_credito" | "tarjeta_debito" | "efectivo" | "cheque" | "qr" | "otro" | null,
@@ -58,7 +59,9 @@ REGLAS — leer con atencion:
 
 4. n_operacion CRITICO: buscar "N° operacion", "Numero de operacion", "Op.", "Autorizacion", "Ref.", "Comprobante N°", "transfer_id".
 
-5. fecha en formato YYYY-MM-DD.
+5. fecha en formato YYYY-MM-DD. En cheques/ECHEQ es la "Fecha de emision"; en transferencias/tickets es la fecha de la operacion.
+
+5b. fecha_pago_cheque: SOLO para cheques/ECHEQ. Es la "Fecha de pago" del cheque = la fecha de DEBITO FUTURO en que se cobra/debita (distinta de la "Fecha de emision"). Formato YYYY-MM-DD. Para transferencias, tickets, facturas y vouchers: devolver null.
 
 6. proveedor_cuit: solo digitos (sin guiones, formato XXXXXXXXXXX) o formato XX-XXXXXXXX-X. Verificar que NO sea 30717352366 (CUIT de Rodziny) — si lo es, ignorar y buscar el otro CUIT del documento.
 
@@ -79,6 +82,7 @@ interface OcrExtraido {
   proveedor_cuit: string | null;
   monto: number | null;
   fecha: string | null;
+  fecha_pago_cheque: string | null;
   hora: string | null;
   n_operacion: string | null;
   medio_pago: string | null;

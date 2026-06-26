@@ -21,6 +21,7 @@ interface OcrExtraidoMin {
   medio_pago: string | null;
   monto: number | null;
   fecha: string | null;
+  fecha_pago_cheque?: string | null;
   confianza: number;
   es_transferencia_interna?: boolean;
   proveedor_cuit?: string | null;
@@ -44,8 +45,10 @@ export interface ProcesarComprobantePagoResult {
   medio_pago_detectado: string | null;
   /** Monto detectado por OCR (para advertir si no coincide con el saldo). */
   monto_detectado: number | null;
-  /** Fecha detectada por OCR (YYYY-MM-DD). */
+  /** Fecha detectada por OCR (YYYY-MM-DD). En cheques es la fecha de emisión. */
   fecha_detectada: string | null;
+  /** Fecha de pago / débito futuro del cheque-ECHEQ (YYYY-MM-DD). null si no es cheque. */
+  fecha_pago_cheque_detectada: string | null;
   /** 0..1 — qué tan confiable fue la lectura. */
   confianza: number;
   /** El N° de op ya fue cargado antes (otro pago en el sistema). */
@@ -70,6 +73,7 @@ const RESULT_VACIO: Omit<ProcesarComprobantePagoResult, 'ok' | 'error' | 'file_p
   medio_pago_detectado: null,
   monto_detectado: null,
   fecha_detectada: null,
+  fecha_pago_cheque_detectada: null,
   confianza: 0,
   duplicado_n_operacion: false,
   es_transferencia_interna: false,
@@ -184,6 +188,7 @@ export async function procesarComprobantePago(
       medio_pago_detectado: extraido.medio_pago,
       monto_detectado: extraido.monto,
       fecha_detectada: extraido.fecha,
+      fecha_pago_cheque_detectada: extraido.fecha_pago_cheque ?? null,
       confianza: extraido.confianza ?? 0,
       duplicado_n_operacion: tieneDupOp,
       es_transferencia_interna: !!extraido.es_transferencia_interna,

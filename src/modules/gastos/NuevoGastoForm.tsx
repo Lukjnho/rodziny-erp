@@ -979,15 +979,24 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
         const numero = l.numero.trim() || res.n_operacion || '';
         const montoTexto =
           l.montoTexto.trim() || (res.monto_detectado != null ? formatNumeroAR(res.monto_detectado) : '');
-        // La fecha del comprobante = fecha del pago para transferencias/tarjeta.
-        // En cheque/echeq NO la usamos: ahí la fecha relevante es el débito futuro
-        // (impacta el flujo de caja), no la de emisión del comprobante.
-        const fecha =
-          l.fecha.trim() || (l.medio !== 'cheque_galicia' ? res.fecha_detectada ?? '' : '');
+        // Fecha de la cuota:
+        //  - cheque/ECHEQ → "Fecha de pago" del cheque (débito futuro, lo que mueve
+        //    el flujo de caja). NO la de emisión.
+        //  - resto (transferencia/tarjeta) → fecha de la operación.
+        const fechaDetectada =
+          l.medio === 'cheque_galicia'
+            ? res.fecha_pago_cheque_detectada ?? ''
+            : res.fecha_detectada ?? '';
+        const fecha = l.fecha.trim() || fechaDetectada;
         // Armamos el cartel resumiendo lo que se detectó.
         const detectado: string[] = [];
         if (res.n_operacion) detectado.push(`N° ${res.n_operacion}`);
         if (res.monto_detectado != null) detectado.push(`monto ${formatNumeroAR(res.monto_detectado)}`);
+        if (l.medio === 'cheque_galicia' && res.fecha_pago_cheque_detectada) {
+          // YYYY-MM-DD → DD/MM para el cartelito.
+          const [y, m, d] = res.fecha_pago_cheque_detectada.split('-');
+          detectado.push(`débito ${d}/${m}/${y}`);
+        }
         const ocrInfo =
           detectado.length > 0
             ? `✓ Detectado: ${detectado.join(' · ')}${pct ? ` (${pct}%)` : ''}`
