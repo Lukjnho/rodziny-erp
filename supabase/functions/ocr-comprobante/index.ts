@@ -115,6 +115,9 @@ Deno.serve(async (req) => {
 
     const body = await req.json().catch(() => ({}));
     const comprobanteId: string = body.comprobante_id;
+    // force: re-extraer aunque el comprobante ya esté 'completed' (se usa al
+    // reusar un comprobante existente con el mismo hash para traer campos nuevos).
+    const force: boolean = body.force === true;
     if (!comprobanteId) throw new Error('comprobante_id requerido');
 
     // 1. Leer la fila
@@ -127,7 +130,7 @@ Deno.serve(async (req) => {
     if (compErr || !comp) throw new Error(`Comprobante no encontrado: ${compErr?.message ?? 'null'}`);
     const comprobante = comp as ComprobanteRow;
 
-    if (comprobante.ocr_status === 'completed') {
+    if (comprobante.ocr_status === 'completed' && !force) {
       return new Response(
         JSON.stringify({ ok: true, ya_procesado: true, comprobante_id: comprobanteId }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },

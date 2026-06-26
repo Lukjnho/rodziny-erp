@@ -88,72 +88,78 @@ export async function procesarComprobantePago(
   try {
     const fileHash = await sha256File(archivo);
 
-    // Si ya existe un comprobante con este hash YA VINCULADO a un gasto: avisar
-    // pero NO bloquear — el usuario puede querer cargar el mismo PDF para un pago
-    // distinto del mismo gasto, o estar viendo un duplicado real (lo decide él).
-    const { data: yaVinculado } = await supabase
+    // ¿Ya existe un comprobante con este MISMO archivo (mismo hash)? Reusarlo en
+    // vez de re-subir: subir de nuevo el mismo PDF choca contra UNIQUE(hash_archivo)
+    // y dejaba al usuario con "completá a mano". Reusamos la fila existente y
+    // forzamos un OCR fresco (la edge function corre con service-role). Sirve tanto
+    // para un huérfano de un intento anterior como para un comprobante ya vinculado
+    // a otro gasto (mismo archivo → misma lectura).
+    const { data: existente } = await supabase
       .from('comprobantes')
-      .select('id, gasto_id')
+      .select('id, file_path, gasto_id')
       .eq('hash_archivo', fileHash)
-      .not('gasto_id', 'is', null)
       .maybeSingle();
 
-    // Limpiar huérfanos previos con mismo hash para evitar conflict con UNIQUE(hash_archivo)
-    await supabase
-      .from('comprobantes')
-      .delete()
-      .eq('hash_archivo', fileHash)
-      .is('gasto_id', null);
+    const reusado = !!existente;
+    const yaVinculado = !!existente?.gasto_id;
+    let comprobanteId: string;
+    let path: string;
 
-    // Subir a Storage
-    const ext = archivo.name.split('.').pop()?.toLowerCase() ?? 'bin';
-    const periodo = new Date().toISOString().slice(0, 7);
-    const path = `${subfolder}/${periodo}/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
+    if (existente) {
+      comprobanteId = existente.id;
+      path = existente.file_path;
+    } else {
+      // Subir a Storage
+      const ext = archivo.name.split('.').pop()?.toLowerCase() ?? 'bin';
+      const periodo = new Date().toISOString().slice(0, 7);
+      path = `${subfolder}/${periodo}/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
 
-    const { error: errUp } = await supabase.storage
-      .from('gastos-comprobantes')
-      .upload(path, archivo, { contentType: archivo.type || 'application/octet-stream' });
-    if (errUp) {
-      return {
-        ok: false,
-        file_path: null,
-        comprobante_id: null,
-        ...RESULT_VACIO,
-        error: `Error subiendo archivo: ${errUp.message}`,
-      };
+      const { error: errUp } = await supabase.storage
+        .from('gastos-comprobantes')
+        .upload(path, archivo, { contentType: archivo.type || 'application/octet-stream' });
+      if (errUp) {
+        return {
+          ok: false,
+          file_path: null,
+          comprobante_id: null,
+          ...RESULT_VACIO,
+          error: `Error subiendo archivo: ${errUp.message}`,
+        };
+      }
+
+      // Registrar comprobante
+      const { data: insComp, error: errInsComp } = await supabase
+        .from('comprobantes')
+        .insert({
+          hash_archivo: fileHash,
+          file_path: path,
+          mime_type: archivo.type || null,
+          tamano_bytes: archivo.size,
+          subido_por: userId,
+          ocr_status: 'pending',
+          estado: 'huerfano',
+        })
+        .select('id')
+        .single();
+      if (errInsComp) {
+        // Storage OK pero DB falló: igual devolvemos el path para que el modal pueda
+        // usarlo (la asociación con el pago hace que el archivo no quede huérfano).
+        return {
+          ok: true,
+          file_path: path,
+          comprobante_id: null,
+          ...RESULT_VACIO,
+          warning: `No se pudo registrar el comprobante (${errInsComp.message}). Completá los datos manualmente.`,
+          error: null,
+        };
+      }
+      comprobanteId = insComp.id;
     }
 
-    // Registrar comprobante
-    const { data: insComp, error: errInsComp } = await supabase
-      .from('comprobantes')
-      .insert({
-        hash_archivo: fileHash,
-        file_path: path,
-        mime_type: archivo.type || null,
-        tamano_bytes: archivo.size,
-        subido_por: userId,
-        ocr_status: 'pending',
-        estado: 'huerfano',
-      })
-      .select('id')
-      .single();
-    if (errInsComp) {
-      // Storage OK pero DB falló: igual devolvemos el path para que el modal pueda
-      // usarlo (la asociación con el pago hace que el archivo no quede huérfano).
-      return {
-        ok: true,
-        file_path: path,
-        comprobante_id: null,
-        ...RESULT_VACIO,
-        warning: `No se pudo registrar el comprobante (${errInsComp.message}). Completá los datos manualmente.`,
-        error: null,
-      };
-    }
-
-    // Invocar OCR
+    // Invocar OCR (force cuando reusamos: re-extrae aunque ya estuviera 'completed').
     const { data: ocrRes, error: errOcr } = await supabase.functions.invoke<OcrResponse>(
       'ocr-comprobante',
-      { body: { comprobante_id: insComp.id } },
+      { body: { comprobante_id: comprobanteId, force: reusado } },
     );
 
     if (errOcr || !ocrRes?.ok) {
@@ -161,7 +167,7 @@ export async function procesarComprobantePago(
       return {
         ok: true,
         file_path: path,
-        comprobante_id: insComp.id,
+        comprobante_id: comprobanteId,
         ...RESULT_VACIO,
         warning: `No se pudo leer el comprobante (${msg}). Completá manualmente el N° de operación.`,
         error: null,
@@ -183,7 +189,7 @@ export async function procesarComprobantePago(
     return {
       ok: true,
       file_path: path,
-      comprobante_id: insComp.id,
+      comprobante_id: comprobanteId,
       n_operacion: extraido.n_operacion,
       medio_pago_detectado: extraido.medio_pago,
       monto_detectado: extraido.monto,
