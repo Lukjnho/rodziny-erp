@@ -975,15 +975,31 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
           return { ...l, ocrEjecutando: false, ocrInfo: `⚠ ${res.error}` };
         }
         const pct = Math.round((res.confianza ?? 0) * 100);
+        // Autocompletamos N°, monto y fecha SIN pisar lo que el usuario ya tipeó.
+        const numero = l.numero.trim() || res.n_operacion || '';
+        const montoTexto =
+          l.montoTexto.trim() || (res.monto_detectado != null ? formatNumeroAR(res.monto_detectado) : '');
+        // La fecha del comprobante = fecha del pago para transferencias/tarjeta.
+        // En cheque/echeq NO la usamos: ahí la fecha relevante es el débito futuro
+        // (impacta el flujo de caja), no la de emisión del comprobante.
+        const fecha =
+          l.fecha.trim() || (l.medio !== 'cheque_galicia' ? res.fecha_detectada ?? '' : '');
+        // Armamos el cartel resumiendo lo que se detectó.
+        const detectado: string[] = [];
+        if (res.n_operacion) detectado.push(`N° ${res.n_operacion}`);
+        if (res.monto_detectado != null) detectado.push(`monto ${formatNumeroAR(res.monto_detectado)}`);
+        const ocrInfo =
+          detectado.length > 0
+            ? `✓ Detectado: ${detectado.join(' · ')}${pct ? ` (${pct}%)` : ''}`
+            : 'Archivo subido. Completá los datos manualmente.';
         return {
           ...l,
           ocrEjecutando: false,
           comprobantePath: res.file_path ?? l.comprobantePath,
-          // Solo autocompletamos el N° si el usuario no lo había tipeado
-          numero: l.numero.trim() || res.n_operacion || '',
-          ocrInfo: res.n_operacion
-            ? `✓ N° detectado: ${res.n_operacion}${pct ? ` (${pct}%)` : ''}`
-            : 'Archivo subido. Completá el N° manualmente.',
+          numero,
+          montoTexto,
+          fecha,
+          ocrInfo,
         };
       }),
     );
