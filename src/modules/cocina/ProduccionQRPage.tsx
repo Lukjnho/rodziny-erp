@@ -38,6 +38,14 @@ interface Receta {
   // Si está seteado, el relleno se gestiona por bolsa (ej: puré de papa): el cocinero
   // carga ½/1 bolsa + kg de papa + kg de puré que salió, en vez de "recetas".
   kg_por_bolsa: number | null;
+  // Vedia (puré de papa): ratios de semolín/huevo por kg de puré que se agregan
+  // recién al armar el ñoqui. Sirven para distinguir el puré "estilo Vedia"
+  // (condimentos en el relleno) del de Saavedra (todo itemizado al armar).
+  g_semolin_por_kg: number | null;
+  g_huevo_por_kg: number | null;
+  // Saavedra (puré SG): lista de ingredientes que se agregan al armar el ñoqui.
+  // Cuando está cargada, los condimentos NO se piden en el relleno.
+  ingredientes_armado: IngredienteArmado[] | null;
 }
 
 const RECETA_UNIDAD_LABEL: Record<'kg' | 'l' | 'unidad', string> = {
@@ -315,7 +323,7 @@ export function ProduccionQRPage() {
       const { data, error } = await supabase
         .from('cocina_recetas')
         .select(
-          'id, nombre, tipo, rol, categoria, rendimiento_kg, rendimiento_unidad, local, kg_por_bolsa',
+          'id, nombre, tipo, rol, categoria, rendimiento_kg, rendimiento_unidad, local, kg_por_bolsa, g_semolin_por_kg, g_huevo_por_kg, ingredientes_armado',
         )
         .eq('activo', true)
         .order('nombre');
@@ -1068,6 +1076,114 @@ function Inicio({
   );
 }
 
+// ── Condimentos del puré (Vedia) ─────────────────────────────────────────────
+// El puré de papa para ñoqui de Vedia lleva condimentos (queso sardo, pimienta,
+// nuez moscada, sal) que se mezclan al hacer el puré. En "Cargar Relleno"
+// mostramos cuánto agregar escalado por los kg de puré que salieron. Lee la
+// receta canónica (cocina_receta_ingredientes) y EXCLUYE la papa base y el
+// semolín/huevo: esos se agregan recién al armar el ñoqui (Armar Pasta).
+const EXCLUIR_DE_CONDIMENTOS = /papa|semol[ií]n|huevo/i;
+
+function CondimentosRellenoPure({
+  recetaId,
+  kgPure,
+  onDetalle,
+}: {
+  recetaId: string | null;
+  kgPure: number;
+  onDetalle: (detalle: string) => void;
+}) {
+  const [reales, setReales] = useState<Record<string, string>>({});
+
+  const { data: condimentos } = useQuery({
+    queryKey: ['cocina-condimentos-pure-relleno', recetaId],
+    queryFn: async () => {
+      if (!recetaId) return [] as { id: string; nombre: string; por_kg: number; unidad: string }[];
+      const { data, error } = await supabase
+        .from('cocina_receta_ingredientes')
+        .select('id, nombre, cantidad, unidad')
+        .eq('receta_id', recetaId)
+        .order('orden');
+      if (error) throw error;
+      return (data ?? [])
+        .filter((i) => !EXCLUIR_DE_CONDIMENTOS.test(i.nombre))
+        .map((i) => ({
+          id: i.id as string,
+          nombre: i.nombre as string,
+          por_kg: Number(i.cantidad) || 0,
+          unidad: i.unidad as string,
+        }));
+    },
+    enabled: !!recetaId,
+  });
+
+  // Sugerencia = por_kg × kg de puré. Se rellena sola y queda editable.
+  useEffect(() => {
+    if (!condimentos || kgPure <= 0) {
+      setReales({});
+      return;
+    }
+    const sug: Record<string, string> = {};
+    for (const c of condimentos) {
+      sug[c.id] = String(+(kgPure * c.por_kg).toFixed(3)).replace('.', ',');
+    }
+    setReales(sug);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [condimentos, kgPure]);
+
+  // Reportar el detalle al padre para guardarlo en notas (trazabilidad).
+  useEffect(() => {
+    if (!condimentos || condimentos.length === 0 || kgPure <= 0) {
+      onDetalle('');
+      return;
+    }
+    onDetalle(
+      `Condimentos (${formatNum(kgPure)} kg puré): ` +
+        condimentos.map((c) => `${c.nombre} ${reales[c.id] ?? '0'} ${c.unidad}`).join(', '),
+    );
+  }, [condimentos, reales, kgPure, onDetalle]);
+
+  if (!recetaId || !condimentos || condimentos.length === 0) return null;
+
+  return (
+    <div className="rounded border border-amber-200 bg-amber-50 p-3">
+      <p className="mb-2 text-[11px] text-amber-900">
+        🧂 Condimentos del puré según los <strong>{formatNum(kgPure)} kg de puré</strong>{' '}
+        (editables). El semolín y el huevo se agregan recién al{' '}
+        <strong>armar el ñoqui</strong>.
+      </p>
+      <div className="grid grid-cols-2 gap-2">
+        {condimentos.map((c) => {
+          const sug = kgPure > 0 ? kgPure * c.por_kg : null;
+          return (
+            <div key={c.id}>
+              <label className="mb-1 block text-xs font-medium text-amber-900">
+                {c.nombre} ({c.unidad})
+              </label>
+              <input
+                type="text"
+                inputMode="decimal"
+                pattern="[0-9]*[.,]?[0-9]*"
+                value={reales[c.id] ?? ''}
+                onChange={(e) =>
+                  setReales((prev) => ({ ...prev, [c.id]: normalizarDecimal(e.target.value) }))
+                }
+                className="w-full rounded border border-amber-300 bg-white px-3 py-2.5 text-sm"
+                placeholder="0"
+              />
+              {sug != null && (
+                <p className="mt-0.5 text-[10px] text-amber-700">
+                  Sugerido ~{formatNum(+sug.toFixed(3))} {c.unidad}
+                </p>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ── Formulario Relleno ─────────────────────────────────────────────────────────
 
 function FormRelleno({
@@ -1103,6 +1219,8 @@ function FormRelleno({
   const [notas, setNotas] = useState('');
   // Modo bolsa (puré de papa): kg de papa pesada (las bolsas se derivan solas).
   const [kgPapa, setKgPapa] = useState('');
+  // Detalle de condimentos del puré (Vedia) para guardar en notas.
+  const [condimentosDetalle, setCondimentosDetalle] = useState('');
   const [ingredientesReales, setIngredientesReales] = useState<IngredienteReal[]>([]);
   const [ingredientesOk, setIngredientesOk] = useState(true);
   const [guardando, setGuardando] = useState(false);
@@ -1127,6 +1245,9 @@ function FormRelleno({
   const recetaSel = recetas.find((r) => r.id === recetaId);
   // Modo bolsa: el relleno (puré de papa) se carga por bolsa + kg de papa + kg de puré.
   const esPorBolsa = (recetaSel?.kg_por_bolsa ?? 0) > 0;
+  // Condimentos en el relleno: solo el puré "estilo Vedia" (semolín/huevo al armar,
+  // sin lista itemizada). Saavedra usa ingredientes_armado → carga condimentos al armar.
+  const muestraCondimentos = esPorBolsa && (recetaSel?.ingredientes_armado?.length ?? 0) === 0;
   const onGrillaChange = useCallback((ings: IngredienteReal[]) => setIngredientesReales(ings), []);
 
   async function guardar() {
@@ -1164,6 +1285,10 @@ function FormRelleno({
       setError('');
       // peso_total_kg = kg de puré (stock del relleno). bolsas/kg_papa registran el
       // rinde real papa→puré. excluido_analisis: el rinde no es "por receta teórica".
+      const notasBolsa =
+        [notas.trim(), muestraCondimentos ? condimentosDetalle : '']
+          .filter(Boolean)
+          .join(' — ') || null;
       const { error: errB } = await supabase.from('cocina_lotes_relleno').insert({
         receta_id: recetaId,
         fecha: hoy(),
@@ -1175,7 +1300,7 @@ function FormRelleno({
         kg_papa: papa,
         responsable: responsable.trim(),
         local,
-        notas: notas.trim() || null,
+        notas: notasBolsa,
         excluido_analisis: true,
       });
       if (errB) {
@@ -1303,8 +1428,10 @@ function FormRelleno({
           <div className="space-y-3">
             <div className="rounded border border-amber-200 bg-amber-50 px-2.5 py-2 text-[11px] text-amber-800">
               🥔 Pesá los <strong>kg de papa</strong> y anotá cuántos kg de <strong>puré</strong>{' '}
-              salieron. Los demás ingredientes (harina, huevo, condimentos) se agregan después al
-              armar el ñoqui.
+              salieron.{' '}
+              {muestraCondimentos
+                ? 'Abajo te calculo los condimentos según el puré. El semolín y el huevo se agregan recién al armar el ñoqui.'
+                : 'Los demás ingredientes (harina, huevo, condimentos) se agregan después al armar el ñoqui.'}
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
@@ -1344,6 +1471,13 @@ function FormRelleno({
                 </span>{' '}
                 (de papa a puré)
               </p>
+            )}
+            {muestraCondimentos && parseDecimal(pesoKg) > 0 && (
+              <CondimentosRellenoPure
+                recetaId={recetaId || null}
+                kgPure={parseDecimal(pesoKg)}
+                onDetalle={setCondimentosDetalle}
+              />
             )}
           </div>
         ) : (
