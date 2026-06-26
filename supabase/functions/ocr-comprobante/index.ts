@@ -33,6 +33,7 @@ Analiza el archivo y devolve UNICAMENTE un JSON estricto con esta estructura, si
   "fecha_pago_cheque": string | null,
   "hora": string | null,
   "n_operacion": string | null,
+  "id_cheque": string | null,
   "medio_pago": "transferencia" | "tarjeta_credito" | "tarjeta_debito" | "efectivo" | "cheque" | "qr" | "otro" | null,
   "banco_origen": string | null,
   "banco_destino": string | null,
@@ -59,7 +60,9 @@ REGLAS — leer con atencion:
 
 4. n_operacion CRITICO:
    - En TRANSFERENCIAS/tickets/vouchers: buscar "N° operacion", "Numero de operacion", "Op.", "Autorizacion", "Ref.", "Comprobante N°", "transfer_id".
-   - En CHEQUES/ECHEQ: usar SIEMPRE el "N° de cheque" / "Numero de cheque" (el numero corto, ej "00000142"). NUNCA usar el "ID del cheque" (alfanumerico largo, ej "V8794WK4EVDNPEY"), ni el "ID Multicheque", ni el "CMC7". Si ves ambos, devolve el "N° de cheque".
+   - En CHEQUES/ECHEQ: usar SIEMPRE el "N° de cheque" / "Numero de cheque" (el numero corto) pero SIN ceros a la izquierda (ej: si el cheque dice "00000142", devolver "142"; si dice "00000130", devolver "130"). El extracto bancario referencia el echeq por ese numero sin ceros. NUNCA usar el "ID del cheque" (alfanumerico largo, ej "V8794WK4EVDNPEY"), ni el "ID Multicheque", ni el "CMC7".
+
+4b. id_cheque: SOLO para cheques/ECHEQ. Es el "ID del cheque" alfanumerico largo (ej "V8794WK4EVDNPEY"). Se guarda solo como referencia. Para transferencias, tickets, facturas y vouchers: devolver null.
 
 5. fecha en formato YYYY-MM-DD. En cheques/ECHEQ es la "Fecha de emision"; en transferencias/tickets es la fecha de la operacion.
 
@@ -87,6 +90,7 @@ interface OcrExtraido {
   fecha_pago_cheque: string | null;
   hora: string | null;
   n_operacion: string | null;
+  id_cheque: string | null;
   medio_pago: string | null;
   banco_origen: string | null;
   banco_destino: string | null;

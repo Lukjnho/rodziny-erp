@@ -178,6 +178,11 @@ function mapOcrMedioPago(ocrMedio: string | null): MedioPago {
   }
 }
 
+// Tolerancia al cuadrar el plan de pagos contra el total de la factura.
+// Las facturas a veces traen 5-10 centavos de diferencia por redondeo, así que
+// no exigimos calce exacto al centavo: hasta $1 de diferencia se considera cuadrado.
+const TOLERANCIA_PLAN_PAGOS = 1;
+
 // ----- Componente principal -----
 
 export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: NuevoGastoFormProps) {
@@ -382,7 +387,7 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
     () => Math.round((importeTotal - totalPlan) * 100) / 100,
     [importeTotal, totalPlan],
   );
-  const planCuadra = Math.abs(faltaAsignar) < 0.01 && lineasPago.length > 0;
+  const planCuadra = Math.abs(faltaAsignar) <= TOLERANCIA_PLAN_PAGOS && lineasPago.length > 0;
 
   // Neto/IVA derivados del Total + alícuota cuando está activa la discriminación.
   // Neto = Total / (1 + alícuota/100); IVA = Total - Neto.
@@ -976,7 +981,13 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
         }
         const pct = Math.round((res.confianza ?? 0) * 100);
         // Autocompletamos N°, monto y fecha SIN pisar lo que el usuario ya tipeó.
-        const numero = l.numero.trim() || res.n_operacion || '';
+        // En cheque/ECHEQ sacamos los ceros a la izquierda (el extracto de Galicia
+        // referencia el echeq como "142", no "00000142" → así matchea la conciliación).
+        const nOpDetectado =
+          res.n_operacion && l.medio === 'cheque_galicia'
+            ? res.n_operacion.replace(/^0+(?=\d)/, '')
+            : res.n_operacion;
+        const numero = l.numero.trim() || nOpDetectado || '';
         const montoTexto =
           l.montoTexto.trim() || (res.monto_detectado != null ? formatNumeroAR(res.monto_detectado) : '');
         // Fecha de la cuota:
@@ -990,7 +1001,7 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
         const fecha = l.fecha.trim() || fechaDetectada;
         // Armamos el cartel resumiendo lo que se detectó.
         const detectado: string[] = [];
-        if (res.n_operacion) detectado.push(`N° ${res.n_operacion}`);
+        if (nOpDetectado) detectado.push(`N° ${nOpDetectado}`);
         if (res.monto_detectado != null) detectado.push(`monto ${formatNumeroAR(res.monto_detectado)}`);
         if (l.medio === 'cheque_galicia' && res.fecha_pago_cheque_detectada) {
           // YYYY-MM-DD → DD/MM para el cartelito.
