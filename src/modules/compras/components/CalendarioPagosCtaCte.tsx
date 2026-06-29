@@ -2,6 +2,11 @@ import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { formatARS, cn } from '@/lib/utils';
+import {
+  useProveedoresMap,
+  nombreProveedor,
+  type ProveedoresMap,
+} from '@/modules/gastos/proveedorDisplay';
 
 // Vista consolidada (ambos locales + SAS) de la deuda de cuenta corriente con
 // proveedores: cuánto hay que abonar atrasado y cuánto cae cada uno de los
@@ -13,6 +18,7 @@ interface GastoPend {
   id: string;
   local: string;
   proveedor: string | null;
+  proveedor_id: string | null;
   importe_total: number;
   fecha: string;
   fecha_vencimiento: string | null;
@@ -80,11 +86,15 @@ function bucketVacio(): { total: number; cantidad: number; porLocal: Record<Loca
   };
 }
 
-function resolverDetalle(g: { gastos: GastoPend[]; total: number; cantidad: number; porLocal: Record<LocalKey, number> }): BucketDetalle {
+function resolverDetalle(
+  g: { gastos: GastoPend[]; total: number; cantidad: number; porLocal: Record<LocalKey, number> },
+  proveedoresMap?: ProveedoresMap | null,
+): BucketDetalle {
   const map = new Map<string, ProveedorDetalle>();
   for (const x of g.gastos) {
     const local = (x.local as LocalKey) ?? 'sas';
-    const nombre = x.proveedor?.trim() || '(Sin proveedor)';
+    // Nombre canónico del maestro (agrupa "FRESH" + "FRESH Dist." en uno solo).
+    const nombre = nombreProveedor(x, proveedoresMap);
     const key = `${local}|${nombre.toLowerCase()}`;
     const prev = map.get(key);
     if (prev) {
@@ -184,6 +194,9 @@ export function CalendarioPagosCtaCte({
   const [mesVista, setMesVista] = useState(() => ymdLocal(new Date()).slice(0, 7));
   const [diaModalSel, setDiaModalSel] = useState<string | null>(null);
 
+  // Mapa proveedor_id → display canónico (mismo que el resto del ERP).
+  const { data: proveedoresMap } = useProveedoresMap();
+
   function seleccionarBucket(key: string) {
     setAbierto((prev) => (prev === key ? null : key));
   }
@@ -204,7 +217,7 @@ export function CalendarioPagosCtaCte({
     queryFn: async () => {
       const { data, error } = await supabase
         .from('gastos')
-        .select('id, local, proveedor, importe_total, fecha, fecha_vencimiento, comentario, estado_pago')
+        .select('id, local, proveedor, proveedor_id, importe_total, fecha, fecha_vencimiento, comentario, estado_pago')
         .eq('cancelado', false)
         .order('fecha_vencimiento', { ascending: true, nullsFirst: false })
         .limit(5000);
@@ -271,10 +284,10 @@ export function CalendarioPagosCtaCte({
 
   const detalleAbierto = useMemo(() => {
     if (!abierto) return null;
-    if (abierto === 'atrasado') return resolverDetalle(atrasado);
+    if (abierto === 'atrasado') return resolverDetalle(atrasado, proveedoresMap);
     const b = porDia.get(abierto);
-    return b ? resolverDetalle(b) : null;
-  }, [abierto, atrasado, porDia]);
+    return b ? resolverDetalle(b, proveedoresMap) : null;
+  }, [abierto, atrasado, porDia, proveedoresMap]);
 
   // Todos los vencimientos agrupados por fecha exacta — alimenta el modal de mes
   // completo (cualquier mes, sin otra query: usamos los mismos gastos ya traídos).
@@ -322,8 +335,8 @@ export function CalendarioPagosCtaCte({
   const detalleMesSel = useMemo(() => {
     if (!diaModalSel) return null;
     const b = porFecha.get(diaModalSel);
-    return b ? resolverDetalle(b) : null;
-  }, [diaModalSel, porFecha]);
+    return b ? resolverDetalle(b, proveedoresMap) : null;
+  }, [diaModalSel, porFecha, proveedoresMap]);
 
   if (isLoading) {
     return (

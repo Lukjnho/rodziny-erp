@@ -4,6 +4,7 @@ import { supabase } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
 import type { Proveedor, CategoriaGasto, CondicionIVA, MedioPago } from './types';
 import { MEDIO_PAGO_LABEL } from './types';
+import { displayProveedor, ProveedorLabel } from './proveedorDisplay';
 
 const CONDICIONES: { value: CondicionIVA; label: string }[] = [
   { value: 'responsable_inscripto', label: 'Responsable Inscripto' },
@@ -109,6 +110,13 @@ export function ProveedoresPanel() {
   const [importando, setImportando] = useState(false);
   const [mensajeImport, setMensajeImport] = useState<string | null>(null);
 
+  // Fusión de duplicados
+  const [fusionAbierta, setFusionAbierta] = useState(false);
+  const [idMantener, setIdMantener] = useState('');
+  const [idEliminar, setIdEliminar] = useState('');
+  const [fusionando, setFusionando] = useState(false);
+  const [errorFusion, setErrorFusion] = useState<string | null>(null);
+
   async function importarDesdeHistorico() {
     setImportando(true);
     setMensajeImport(null);
@@ -164,6 +172,7 @@ export function ProveedoresPanel() {
       if (errIns) throw errIns;
 
       qc.invalidateQueries({ queryKey: ['proveedores'] });
+      qc.invalidateQueries({ queryKey: ['proveedores_display_map'] });
       setMensajeImport(
         `✓ Se importaron ${rows.length} proveedor${rows.length !== 1 ? 'es' : ''} nuevos. Editalos para completar CUIT, condición IVA, etc.`,
       );
@@ -195,6 +204,69 @@ export function ProveedoresPanel() {
       return (data ?? []) as CategoriaGasto[];
     },
   });
+
+  // Cuántos gastos quedarían re-apuntados al fusionar (preview de la fusión).
+  const { data: gastosAEliminar } = useQuery({
+    queryKey: ['proveedor_gastos_count', idEliminar],
+    enabled: fusionAbierta && !!idEliminar,
+    queryFn: async () => {
+      const { count, error } = await supabase
+        .from('gastos')
+        .select('id', { count: 'exact', head: true })
+        .eq('proveedor_id', idEliminar);
+      if (error) throw error;
+      return count ?? 0;
+    },
+  });
+
+  const provMantener = (proveedores ?? []).find((p) => p.id === idMantener) ?? null;
+  const provEliminar = (proveedores ?? []).find((p) => p.id === idEliminar) ?? null;
+
+  function abrirFusion() {
+    setIdMantener('');
+    setIdEliminar('');
+    setErrorFusion(null);
+    setFusionAbierta(true);
+  }
+
+  async function fusionar() {
+    setErrorFusion(null);
+    if (!idMantener || !idEliminar) {
+      setErrorFusion('Elegí los dos proveedores a fusionar.');
+      return;
+    }
+    if (idMantener === idEliminar) {
+      setErrorFusion('No se puede fusionar un proveedor consigo mismo.');
+      return;
+    }
+    if (
+      !window.confirm(
+        `Vas a fusionar:\n\n` +
+          `• Se MANTIENE: ${provMantener?.razon_social}\n` +
+          `• Se ELIMINA: ${provEliminar?.razon_social}\n\n` +
+          `${gastosAEliminar ?? 0} gasto(s) pasarán al proveedor que se mantiene y el duplicado se borrará. Esta acción no se puede deshacer.\n\n¿Confirmás?`,
+      )
+    )
+      return;
+    setFusionando(true);
+    try {
+      const { error } = await supabase.rpc('fusionar_proveedores', {
+        p_mantener: idMantener,
+        p_eliminar: idEliminar,
+      });
+      if (error) throw error;
+      qc.invalidateQueries({ queryKey: ['proveedores'] });
+      qc.invalidateQueries({ queryKey: ['proveedores_display_map'] });
+      setFusionAbierta(false);
+      setMensajeImport(
+        `✓ Proveedores fusionados: "${provEliminar?.razon_social}" se unió a "${provMantener?.razon_social}".`,
+      );
+    } catch (e: any) {
+      setErrorFusion(e.message ?? 'Error al fusionar');
+    } finally {
+      setFusionando(false);
+    }
+  }
 
   const filtrados = useMemo(() => {
     let lista = proveedores ?? [];
@@ -250,6 +322,7 @@ export function ProveedoresPanel() {
       }
       if (res.error) throw res.error;
       qc.invalidateQueries({ queryKey: ['proveedores'] });
+      qc.invalidateQueries({ queryKey: ['proveedores_display_map'] });
       setEditando(null);
     } catch (e: any) {
       setError(e.message ?? 'Error al guardar');
@@ -286,9 +359,16 @@ export function ProveedoresPanel() {
           Ver inactivos
         </label>
         <button
+          onClick={abrirFusion}
+          className="ml-auto rounded-md border border-gray-300 bg-gray-100 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-200"
+          title="Combinar dos registros que son el mismo proveedor en uno solo"
+        >
+          🔗 Fusionar duplicados
+        </button>
+        <button
           onClick={importarDesdeHistorico}
           disabled={importando}
-          className="ml-auto rounded-md border border-gray-300 bg-gray-100 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-200 disabled:opacity-50"
+          className="rounded-md border border-gray-300 bg-gray-100 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-200 disabled:opacity-50"
           title="Crea proveedores a partir de los nombres que aparecen en gastos y productos"
         >
           {importando ? 'Importando…' : '📥 Importar desde histórico'}
@@ -322,7 +402,7 @@ export function ProveedoresPanel() {
         <table className="w-full text-xs">
           <thead className="border-b border-gray-200 bg-gray-50">
             <tr className="uppercase text-gray-500">
-              <th className="px-3 py-2 text-left font-semibold">Razón social</th>
+              <th className="px-3 py-2 text-left font-semibold">Proveedor</th>
               <th className="px-3 py-2 text-left font-semibold">CUIT</th>
               <th className="px-3 py-2 text-left font-semibold">Condición IVA</th>
               <th className="px-3 py-2 text-left font-semibold">Medio pago</th>
@@ -342,7 +422,9 @@ export function ProveedoresPanel() {
             )}
             {filtrados.map((p) => (
               <tr key={p.id} className="border-b border-gray-100 hover:bg-gray-50">
-                <td className="px-3 py-2 font-medium text-gray-900">{p.razon_social}</td>
+                <td className="px-3 py-2 font-medium text-gray-900">
+                  <ProveedorLabel value={displayProveedor(p) ?? { principal: '—', secundario: null }} />
+                </td>
                 <td className="px-3 py-2 text-gray-600">{p.cuit || '—'}</td>
                 <td className="px-3 py-2 text-gray-600">
                   {CONDICIONES.find((c) => c.value === p.condicion_iva)?.label || '—'}
@@ -381,6 +463,92 @@ export function ProveedoresPanel() {
           </tbody>
         </table>
       </div>
+
+      {/* Modal fusión de duplicados */}
+      {fusionAbierta && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-lg overflow-hidden rounded-lg bg-white">
+            <div className="flex items-center justify-between border-b border-gray-200 px-5 py-4">
+              <h3 className="font-semibold text-gray-900">🔗 Fusionar proveedores duplicados</h3>
+              <button
+                onClick={() => setFusionAbierta(false)}
+                className="text-xl leading-none text-gray-400 hover:text-gray-600"
+              >
+                ×
+              </button>
+            </div>
+            <div className="space-y-4 p-5">
+              <p className="text-xs text-gray-500">
+                Combiná dos registros que son el mismo proveedor. Los gastos del que se elimina
+                pasan al que se mantiene, y sus CUITs/aliases se conservan para la conciliación.
+              </p>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-600">
+                  Proveedor que se MANTIENE
+                </label>
+                <select
+                  value={idMantener}
+                  onChange={(e) => setIdMantener(e.target.value)}
+                  className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm"
+                >
+                  <option value="">— Elegir —</option>
+                  {(proveedores ?? []).map((p) => (
+                    <option key={p.id} value={p.id} disabled={p.id === idEliminar}>
+                      {displayProveedor(p)?.principal ?? p.razon_social}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-600">
+                  Proveedor que se ELIMINA (se fusiona en el de arriba)
+                </label>
+                <select
+                  value={idEliminar}
+                  onChange={(e) => setIdEliminar(e.target.value)}
+                  className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm"
+                >
+                  <option value="">— Elegir —</option>
+                  {(proveedores ?? []).map((p) => (
+                    <option key={p.id} value={p.id} disabled={p.id === idMantener}>
+                      {displayProveedor(p)?.principal ?? p.razon_social}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              {provMantener && provEliminar && (
+                <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                  <strong>{gastosAEliminar ?? '…'}</strong> gasto(s) de “
+                  {displayProveedor(provEliminar)?.principal}” pasarán a “
+                  {displayProveedor(provMantener)?.principal}”. El registro “
+                  {provEliminar.razon_social}” se eliminará. <strong>No se puede deshacer.</strong>
+                </div>
+              )}
+              {errorFusion && (
+                <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                  {errorFusion}
+                </div>
+              )}
+            </div>
+            <div className="flex justify-end gap-2 border-t border-gray-200 px-5 py-3">
+              <button
+                onClick={() => setFusionAbierta(false)}
+                disabled={fusionando}
+                className="rounded border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={fusionar}
+                disabled={fusionando || !idMantener || !idEliminar}
+                className="rounded bg-rodziny-700 px-4 py-2 text-sm font-medium text-white hover:bg-rodziny-800 disabled:bg-gray-300"
+              >
+                {fusionando ? 'Fusionando…' : 'Fusionar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal edición */}
       {editando && (

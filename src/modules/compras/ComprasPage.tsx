@@ -15,6 +15,11 @@ import { type PrefillGasto } from '@/modules/gastos/NuevoGastoModal';
 import NuevoGastoForm from '@/modules/gastos/NuevoGastoForm';
 import { ProveedoresPanel } from '@/modules/gastos/ProveedoresPanel';
 import { ListadoGastos, type ResumenListadoGastos } from '@/modules/gastos/ListadoGastos';
+import {
+  useProveedoresMap,
+  nombreProveedor,
+  proveedorSearchSpace as proveedorSearchSpaceShared,
+} from '@/modules/gastos/proveedorDisplay';
 import { ExtractosAlerta } from '@/modules/finanzas/components/ExtractosAlerta';
 import { CierreInventarioBanner } from './components/CierreInventarioBanner';
 import { CierreInventarioModal } from './components/CierreInventarioModal';
@@ -337,53 +342,19 @@ export function ComprasPage() {
     return m;
   }, [pagosGastosData]);
 
-  // Mapa proveedor_id → datos del registro maestro (display + nombres alternativos).
-  // - `display` = nombre_comercial ?? razon_social → lo que mostramos en la fila/agrupación.
-  // - `nombres` = todos los nombres en minúsculas concatenados, para .includes().
-  // Esto agrupa "FRESH", "FRESH Dist." y "MACLAR SRL" como una sola fila
-  // "FRESH Distribuidora" cuando comparten proveedor_id.
-  const { data: proveedoresMap } = useQuery({
-    queryKey: ['compras_proveedores_display'],
-    queryFn: async () => {
-      const { data } = await supabase
-        .from('proveedores')
-        .select('id, razon_social, nombre_comercial, aliases');
-      const map = new Map<string, { display: string; nombres: string }>();
-      for (const p of data ?? []) {
-        const display = (p.nombre_comercial?.trim() || p.razon_social?.trim() || '').trim();
-        if (!display) continue;
-        const nombres = [p.razon_social, p.nombre_comercial, ...((p.aliases as string[] | null) ?? [])]
-          .filter(Boolean)
-          .map((s) => (s as string).toLowerCase())
-          .join(' | ');
-        map.set(p.id as string, { display, nombres });
-      }
-      return map;
-    },
-    staleTime: 5 * 60 * 1000,
-    enabled: tab === 'pagos',
-  });
+  // Mapa proveedor_id → display canónico + espacio de búsqueda (hook compartido).
+  // Agrupa "FRESH", "FRESH Dist." y "MACLAR SRL" en una sola fila "FRESH Distribuidora"
+  // cuando comparten proveedor_id.
+  const { data: proveedoresMap } = useProveedoresMap({ enabled: tab === 'pagos' });
 
-  // Display canónico: nombre del registro maestro si el gasto tiene proveedor_id,
-  // si no, el texto crudo.
+  // Nombre canónico (string) del proveedor — para agrupar/filtrar.
   function proveedorDisplay(g: Gasto): string {
-    if (g.proveedor_id) {
-      const canon = proveedoresMap?.get(g.proveedor_id);
-      if (canon) return canon.display;
-    }
-    return g.proveedor ?? '(Sin proveedor)';
+    return nombreProveedor(g, proveedoresMap);
   }
 
-  // Espacio de búsqueda: nombre crudo + todos los nombres del registro maestro
-  // (razón social, comercial, aliases). Buscar "MACLAR" o "fresh" matchea igual.
+  // Espacio de búsqueda: texto crudo + razón + comercial + aliases del maestro.
   function proveedorSearchSpace(g: Gasto): string {
-    const partes: string[] = [];
-    if (g.proveedor) partes.push(g.proveedor.toLowerCase());
-    if (g.proveedor_id) {
-      const canon = proveedoresMap?.get(g.proveedor_id);
-      if (canon) partes.push(canon.nombres);
-    }
-    return partes.join(' | ');
+    return proveedorSearchSpaceShared(g, proveedoresMap);
   }
 
   interface ItemRecepcion {

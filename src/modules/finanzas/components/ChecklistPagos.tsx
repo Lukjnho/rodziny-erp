@@ -7,6 +7,11 @@ import { MontoInput } from '@/components/ui/MontoInput';
 import { type MedioPago, MEDIO_PAGO_LABEL, medioRequiereComprobante } from '@/modules/gastos/types';
 import { urgenciaPago, usePagosAlertas, type UrgenciaPago } from '@/modules/finanzas/hooks/usePagosAlertas';
 import { recomputarEstadoGasto } from '@/modules/gastos/recomputarEstadoGasto';
+import {
+  useProveedoresMap,
+  resolverProveedor,
+  ProveedorLabel,
+} from '@/modules/gastos/proveedorDisplay';
 
 // ── tipos ────────────────────────────────────────────────────────────────────
 interface PagoFijo {
@@ -42,7 +47,7 @@ interface PagoProgramado {
   medio_pago: string | null;
   numero_operacion: string | null;
   programado: boolean;
-  gastos: { proveedor: string | null; local: string | null } | null;
+  gastos: { proveedor: string | null; proveedor_id: string | null; local: string | null } | null;
 }
 
 // ── constantes ───────────────────────────────────────────────────────────────
@@ -142,6 +147,7 @@ function derivarLocal(concepto: string): 'vedia' | 'saavedra' {
 // ── componente ───────────────────────────────────────────────────────────────
 export function ChecklistPagos() {
   const qc = useQueryClient();
+  const { data: proveedoresMap } = useProveedoresMap();
   const [periodo, setPeriodo] = useState(() => {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
@@ -214,7 +220,7 @@ export function ChecklistPagos() {
       const { data, error } = await supabase
         .from('pagos_gastos')
         .select(
-          'id, gasto_id, fecha_pago, monto, medio_pago, numero_operacion, programado, gastos(proveedor, local)',
+          'id, gasto_id, fecha_pago, monto, medio_pago, numero_operacion, programado, gastos(proveedor, proveedor_id, local)',
         )
         .or('programado.eq.true,medio_pago.eq.cheque_galicia')
         .gte('fecha_pago', rangoMes.desde)
@@ -911,7 +917,11 @@ export function ChecklistPagos() {
                       key={pg.id}
                       className={cn('border-b border-gray-50', pagado && 'bg-green-50/40')}
                     >
-                      <td className="px-4 py-2 text-gray-800">{pg.gastos?.proveedor ?? '—'}</td>
+                      <td className="px-4 py-2 text-gray-800">
+                        <ProveedorLabel
+                          value={resolverProveedor(pg.gastos ?? {}, proveedoresMap, '—')}
+                        />
+                      </td>
                       <td className="px-4 py-2 text-center text-gray-600">
                         {new Date(pg.fecha_pago + 'T12:00:00').toLocaleDateString('es-AR', {
                           day: '2-digit',

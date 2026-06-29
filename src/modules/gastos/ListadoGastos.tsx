@@ -5,6 +5,13 @@ import { formatARS, formatFecha, cn } from '@/lib/utils';
 import type { Gasto } from './types';
 import { TIPO_COMPROBANTE_LABEL, MEDIO_PAGO_LABEL } from './types';
 import { NuevoGastoModal } from './NuevoGastoModal';
+import {
+  useProveedoresMap,
+  resolverProveedor,
+  nombreProveedor,
+  proveedorSearchSpace as proveedorSearchSpaceShared,
+  ProveedorLabel,
+} from './proveedorDisplay';
 
 // Normaliza el estado_pago para evitar mismatches por capitalización
 // (datos viejos: "Pagado", "pagado", "Pendiente", "A pagar", "Parcial")
@@ -98,58 +105,13 @@ export function ListadoGastos({
     },
   });
 
-  // Mapa proveedor_id → datos del proveedor maestro (display + todos los nombres alternativos).
-  // - `display` = nombre_comercial ?? razon_social → lo que mostramos en la columna.
-  // - `nombres` = razón social + nombre comercial + aliases → espacio de búsqueda.
-  //   Así buscar "MACLAR" devuelve también los gastos cargados como "FRESH Dist.".
-  interface ProveedorInfo {
-    display: string;
-    nombres: string;  // todos los nombres concatenados en minúsculas, para .includes()
-  }
-  const { data: proveedoresMap } = useQuery({
-    queryKey: ['gastos_proveedores_display'],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('proveedores')
-        .select('id, razon_social, nombre_comercial, aliases');
-      if (error) throw error;
-      const map = new Map<string, ProveedorInfo>();
-      for (const p of data ?? []) {
-        const display = (p.nombre_comercial?.trim() || p.razon_social?.trim() || '').trim();
-        if (!display) continue;
-        const nombres = [p.razon_social, p.nombre_comercial, ...((p.aliases as string[] | null) ?? [])]
-          .filter(Boolean)
-          .map((s) => (s as string).toLowerCase())
-          .join(' | ');
-        map.set(p.id as string, { display, nombres });
-      }
-      return map;
-    },
-    staleTime: 5 * 60 * 1000,
-  });
+  // Mapa proveedor_id → display canónico + espacio de búsqueda (hook compartido).
+  const { data: proveedoresMap } = useProveedoresMap();
 
-  // Display canónico del proveedor: nombre del registro maestro si está vinculado,
-  // si no, el texto crudo del campo `gastos.proveedor`.
-  const proveedorDisplay = (g: Gasto): string => {
-    if (g.proveedor_id) {
-      const canon = proveedoresMap?.get(g.proveedor_id);
-      if (canon) return canon.display;
-    }
-    return g.proveedor ?? '';
-  };
-
-  // Espacio de búsqueda del proveedor para un gasto: todos sus nombres alternativos.
-  // Si tiene proveedor_id → incluye razón social + nombre comercial + aliases del maestro.
-  // Si no → solo el texto crudo del campo.
-  const proveedorSearchSpace = (g: Gasto): string => {
-    const partes: string[] = [];
-    if (g.proveedor) partes.push(g.proveedor.toLowerCase());
-    if (g.proveedor_id) {
-      const canon = proveedoresMap?.get(g.proveedor_id);
-      if (canon) partes.push(canon.nombres);
-    }
-    return partes.join(' | ');
-  };
+  // Nombre canónico (string) del proveedor de un gasto — para filtro/dropdown/agrupar.
+  const proveedorDisplay = (g: Gasto): string => nombreProveedor(g, proveedoresMap, '');
+  // Espacio de búsqueda: texto crudo + razón + comercial + aliases del maestro.
+  const proveedorSearchSpace = (g: Gasto): string => proveedorSearchSpaceShared(g, proveedoresMap);
 
   // IDs de gastos conciliados con el extracto. Dos formas válidas:
   //  1) movimientos_bancarios.gasto_id (link 1:1 directo), o
@@ -517,7 +479,9 @@ export function ListadoGastos({
                       g.proveedor_id && g.proveedor && g.proveedor !== proveedorDisplay(g)
                         ? `Cargado como: ${g.proveedor}`
                         : undefined
-                    }>{proveedorDisplay(g) || '—'}</td>
+                    }>
+                      <ProveedorLabel value={resolverProveedor(g, proveedoresMap, '—')} />
+                    </td>
                     <td className="px-3 py-2 text-gray-600">{g.categoria || '—'}</td>
                     <td className="px-3 py-2 text-gray-600">
                       <span className="text-[10px] text-gray-400">{tipoLabel}</span>

@@ -16,6 +16,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth';
 import { formatARS, cn } from '@/lib/utils';
+import { displayProveedor } from '@/modules/gastos/proveedorDisplay';
 
 interface ProveedorMatch {
   id: string;
@@ -494,7 +495,7 @@ export function VincularPagosMovModal({ mov, open, onClose, onSuccess }: Props) 
           </div>
           {proveedorResuelto && (
             <div className="mt-1.5 text-[10px] text-emerald-700">
-              🔗 Detectado proveedor <strong>{proveedorResuelto.nombre_comercial ?? proveedorResuelto.razon_social}</strong>
+              🔗 Detectado proveedor <strong>{displayProveedor(proveedorResuelto)?.principal ?? '—'}</strong>
               {proveedorResuelto.cuit ? ` (CUIT ${proveedorResuelto.cuit})` : ''}
               {' '}vía {proveedorResuelto.score >= 90 ? 'CUIT' : proveedorResuelto.score >= 70 ? 'alias' : 'razón social'}.
               {usarProveedorId

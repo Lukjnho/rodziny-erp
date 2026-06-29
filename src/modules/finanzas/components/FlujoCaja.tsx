@@ -6,6 +6,7 @@ import { formatARS, formatFecha, cn } from '@/lib/utils';
 import { procesarComprobantePago } from '@/lib/ocrComprobantePago';
 import { useAuth } from '@/lib/auth';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
+import { useProveedoresMap, nombreProveedor } from '@/modules/gastos/proveedorDisplay';
 
 // ── tipos ────────────────────────────────────────────────────────────────────
 
@@ -87,6 +88,7 @@ interface PagoRealizado {
   gasto: {
     local: string;
     proveedor: string | null;
+    proveedor_id: string | null;
     categoria: string | null;
     subcategoria: string | null;
     categoria_id: string | null;
@@ -234,6 +236,7 @@ function esMpLucasAuto(d: Dividendo): boolean {
 export function FlujoCaja({ onNavigateToTab }: { onNavigateToTab?: (tab: string) => void } = {}) {
   const qc = useQueryClient();
   const { user } = useAuth();
+  const { data: proveedoresMap } = useProveedoresMap();
   // El flujo de caja es a nivel empresa (Rodziny SAS) — los movimientos bancarios
   // son de la SAS, no del local. Filtrar por local daba una vista parcial confusa.
   const [periodo, setPeriodo] = useState(() => new Date().toISOString().substring(0, 7));
@@ -335,7 +338,7 @@ export function FlujoCaja({ onNavigateToTab }: { onNavigateToTab?: (tab: string)
       const { data } = await supabase
         .from('pagos_gastos')
         .select(
-          'id, gasto_id, fecha_pago, monto, medio_pago, gasto:gastos!inner(local, proveedor, categoria, subcategoria, categoria_id, cancelado)',
+          'id, gasto_id, fecha_pago, monto, medio_pago, gasto:gastos!inner(local, proveedor, proveedor_id, categoria, subcategoria, categoria_id, cancelado)',
         )
         .gte('fecha_pago', `${periodo}-01`)
         .lte('fecha_pago', `${periodo}-${lastDay}`)
@@ -735,7 +738,11 @@ export function FlujoCaja({ onNavigateToTab }: { onNavigateToTab?: (tab: string)
       const entry = grupos.get(grupo)!;
       entry.total += Number(p.monto);
       entry.porLocal.set(localGasto, (entry.porLocal.get(localGasto) ?? 0) + Number(p.monto));
-      const label = g?.categoria || g?.subcategoria || g?.proveedor || 'Sin categoría';
+      const label =
+        g?.categoria ||
+        g?.subcategoria ||
+        (g ? nombreProveedor(g, proveedoresMap, '') : '') ||
+        'Sin categoría';
       const existing = entry.items.find((i) => i.nombre === label);
       if (existing) existing.monto += Number(p.monto);
       else entry.items.push({ nombre: label, monto: Number(p.monto) });
@@ -862,6 +869,7 @@ export function FlujoCaja({ onNavigateToTab }: { onNavigateToTab?: (tab: string)
     divsFiltrados,
     sueldosFiltrados,
     catMap,
+    proveedoresMap,
   ]);
 
   // ── NO OPERATIVO ───────────────────────────────────────────────────────────

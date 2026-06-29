@@ -6,6 +6,12 @@ import type { Gasto, MedioPago, PagoGasto } from './types';
 import { MEDIO_PAGO_LABEL } from './types';
 import { PagarGastoModal } from './PagarGastoModal';
 import { recomputarEstadoGasto } from './recomputarEstadoGasto';
+import {
+  useProveedoresMap,
+  resolverProveedor,
+  proveedorSearchSpace,
+  ProveedorLabel,
+} from './proveedorDisplay';
 
 type Vista = 'pendientes' | 'pagados' | 'todos';
 
@@ -24,6 +30,9 @@ export function PagosPanel({ local, desde, hasta }: Props) {
   const [gastoAPagar, setGastoAPagar] = useState<Gasto | null>(null);
 
   const HOY = new Date().toISOString().split('T')[0];
+
+  // Mapa proveedor_id → display canónico (mismo que el resto del ERP).
+  const { data: proveedoresMap } = useProveedoresMap();
 
   // Pendientes: TODA la deuda viva con fecha <= hasta, sin importar `desde`.
   // Si en abril quedó algo sin pagar, sigue apareciendo en mayo / junio / etc.
@@ -89,13 +98,13 @@ export function PagosPanel({ local, desde, hasta }: Props) {
       const b = busqueda.toLowerCase();
       lista = lista.filter(
         ({ gasto: g }) =>
-          (g.proveedor ?? '').toLowerCase().includes(b) ||
+          proveedorSearchSpace(g, proveedoresMap).includes(b) ||
           (g.comentario ?? '').toLowerCase().includes(b) ||
           (g.categoria ?? '').toLowerCase().includes(b),
       );
     }
     return lista;
-  }, [pendientes, pagosRango, vista, busqueda]);
+  }, [pendientes, pagosRango, vista, busqueda, proveedoresMap]);
 
   const totales = useMemo(
     () => ({
@@ -246,7 +255,9 @@ export function PagosPanel({ local, desde, hasta }: Props) {
                     <td className="whitespace-nowrap px-3 py-2 text-gray-700">
                       {formatFecha(g.fecha)}
                     </td>
-                    <td className="px-3 py-2 font-medium text-gray-900">{g.proveedor || '—'}</td>
+                    <td className="px-3 py-2 font-medium text-gray-900">
+                      <ProveedorLabel value={resolverProveedor(g, proveedoresMap, '—')} />
+                    </td>
                     <td className="px-3 py-2 text-gray-600">{g.categoria || '—'}</td>
                     <td
                       className="max-w-[200px] truncate px-3 py-2 text-gray-600"

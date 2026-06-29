@@ -20,6 +20,7 @@ import { cn, formatARS } from '@/lib/utils';
 import { procesarComprobantePago } from '@/lib/ocrComprobantePago';
 import { MEDIO_PAGO_LABEL, medioRequiereComprobante, type MedioPago, type Gasto, type PagoGasto } from './types';
 import { recomputarEstadoGasto } from './recomputarEstadoGasto';
+import { useProveedoresMap, nombreProveedor } from './proveedorDisplay';
 
 interface Props {
   open: boolean;
@@ -94,6 +95,7 @@ async function abrirArchivoStorage(path: string) {
 export function PagarGastoModal({ open, gasto, onClose }: Props) {
   const { user } = useAuth();
   const qc = useQueryClient();
+  const { data: proveedoresMap } = useProveedoresMap({ enabled: open });
 
   const [fechaPago, setFechaPago] = useState<string>('');
   const [medioPago, setMedioPago] = useState<MedioPago>('transferencia_mp');
@@ -433,7 +435,7 @@ export function PagarGastoModal({ open, gasto, onClose }: Props) {
           <div>
             <h2 className="text-lg font-semibold">💸 Registrar pago</h2>
             <p className="text-xs text-gray-500">
-              {gasto.proveedor || 's/proveedor'} · {gasto.fecha}
+              {nombreProveedor(gasto, proveedoresMap, 's/proveedor')} · {gasto.fecha}
             </p>
           </div>
           <button onClick={onClose} className="rounded p-2 text-gray-500 hover:bg-gray-100">
