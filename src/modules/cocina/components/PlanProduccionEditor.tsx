@@ -45,7 +45,11 @@ function recetasDelTipoPlan(recetas: Receta[], tipoPlan: TipoItem): Receta[] {
     case 'masa':
       return recetas.filter((r) => r.rol === 'masa');
     case 'salsa':
-      return recetas.filter((r) => r.rol === 'salsa_base' || r.categoria === 'salsa');
+      // Solo la subreceta Base: es la que el cocinero carga por QR (ver
+      // recetasSalsa en ProduccionQRPage). Si se planifica con la receta
+      // vendible (categoria='salsa', otro receta_id), el trigger que tacha
+      // el pizarrón nunca matchea el lote y el item queda en "pendiente".
+      return recetas.filter((r) => r.rol === 'salsa_base');
     case 'postre':
       return recetas.filter((r) => r.rol === 'postre_base' || r.categoria === 'postre');
     case 'panaderia':
