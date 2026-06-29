@@ -10,6 +10,7 @@ import { ResumenSemanalCard } from './components/ResumenSemanalCard';
 import { EditarLoteModal } from './components/EditarLoteModal';
 import { cn, fmtCantidad } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
+import { hoyAR } from '@/lib/fechaAR';
 
 // Badge que muestra si un lote tiene ingredientes reales guardados y un popover con el detalle
 function IngredientesRealesBadge({ ingredientes }: { ingredientes: IngredienteRealRow[] | null }) {
@@ -281,7 +282,7 @@ function matchLocal(itemLocal: string | null, filtro: string): boolean {
 }
 
 function hoy() {
-  return new Date().toISOString().slice(0, 10);
+  return hoyAR();
 }
 
 function formatDDMM(fecha: string) {

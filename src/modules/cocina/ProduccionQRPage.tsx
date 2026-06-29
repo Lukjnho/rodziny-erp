@@ -15,6 +15,7 @@ import {
 } from '@/lib/numero';
 import { TrasladoPastasForm } from '@/modules/compras/components/TrasladoPastasForm';
 import { useCierresFaltantes } from './hooks/useCierresFaltantes';
+import { hoyAR } from '@/lib/fechaAR';
 
 // ── Tipos ──────────────────────────────────────────────────────────────────────
 
@@ -207,8 +208,10 @@ type CategoriaGenerica = 'salsa' | 'postre' | 'pasteleria' | 'panaderia' | 'past
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
+// Día operativo AR: una carga de noche debe imputarse al día que se trabajó,
+// no al siguiente (que es lo que hacía toISOString() en UTC). Ver hoyAR.
 function hoy() {
-  return new Date().toISOString().slice(0, 10);
+  return hoyAR();
 }
 
 // Ventana de días hacia atrás para buscar lotes de relleno/masa todavía abiertos.
@@ -4810,7 +4813,7 @@ function FormMerma({
       producto_id: string | null;
       receta_id: string | null;
     } = {
-      fecha: new Date().toISOString().split('T')[0],
+      fecha: hoy(),
       porciones: cant,
       motivo: motivo.trim(),
       responsable: responsable.trim(),

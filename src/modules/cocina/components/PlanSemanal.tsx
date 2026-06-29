@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
+import { hoyAR } from '@/lib/fechaAR';
 import { TimelineModal } from './TimelineModal';
 
 type TipoPlan =
@@ -129,7 +130,7 @@ function ddmm(fecha: string): string {
 }
 
 function hoy(): string {
-  return new Date().toISOString().slice(0, 10);
+  return hoyAR();
 }
 
 function normNombre(s: string): string {
