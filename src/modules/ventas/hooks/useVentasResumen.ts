@@ -24,6 +24,8 @@ export interface ResumenVentas {
   ticketPromedio: number;
   diasConVenta: number;
   ventaDiaria: number;
+  /** Fecha más reciente con ventas cargadas en el período ('YYYY-MM-DD'), o null si no hay. */
+  ultimaFecha: string | null;
   // desglose por local (sólo relevante en consolidado, pero siempre poblado)
   porLocal: Record<'vedia' | 'saavedra', { venta: number; tickets: number }>;
   porMedio: AgregadoMedio[];
@@ -149,6 +151,7 @@ function agregar(periodo: string, filas: TicketRow[]): ResumenVentas {
     : null;
 
   const diasConVenta = fechas.size;
+  const ultimaFecha = fechas.size ? [...fechas].sort().at(-1)! : null;
   return {
     periodo,
     ventaTotal,
@@ -156,6 +159,7 @@ function agregar(periodo: string, filas: TicketRow[]): ResumenVentas {
     ticketPromedio: tickets > 0 ? ventaTotal / tickets : 0,
     diasConVenta,
     ventaDiaria: diasConVenta > 0 ? ventaTotal / diasConVenta : 0,
+    ultimaFecha,
     porLocal,
     porMedio,
     porHora,

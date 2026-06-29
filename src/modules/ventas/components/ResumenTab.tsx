@@ -29,6 +29,27 @@ function mesLabel(periodo: string): string {
   return `${MESES[Number(m) - 1]} ${y}`;
 }
 
+/** Período 'YYYY-MM' del mes actual. */
+function periodoActual(): string {
+  const hoy = new Date();
+  return `${hoy.getFullYear()}-${String(hoy.getMonth() + 1).padStart(2, '0')}`;
+}
+
+/** '2026-06-22' → '22 Jun'. */
+function fechaCorta(iso: string): string {
+  const [, m, d] = iso.split('-');
+  return `${Number(d)} ${MESES[Number(m) - 1]}`;
+}
+
+/** Días entre la última fecha cargada y hoy (cuántos días faltan importar). */
+function diasFaltantes(ultimaFechaISO: string): number {
+  const hoy = new Date();
+  const hoy0 = Date.UTC(hoy.getFullYear(), hoy.getMonth(), hoy.getDate());
+  const [y, m, d] = ultimaFechaISO.split('-').map(Number);
+  const ult0 = Date.UTC(y, m - 1, d);
+  return Math.max(0, Math.round((hoy0 - ult0) / 86_400_000));
+}
+
 function deltaPct(actual: number, anterior: number): number | undefined {
   if (!anterior) return undefined;
   return ((actual - anterior) / anterior) * 100;
@@ -90,6 +111,9 @@ export function ResumenTab() {
     [tendencia],
   );
 
+  const esMesActual = periodo === periodoActual();
+  const gapDias = actual?.ultimaFecha ? diasFaltantes(actual.ultimaFecha) : 0;
+
   return (
     <div className="space-y-4">
       {/* Toolbar */}
@@ -129,6 +153,19 @@ export function ResumenTab() {
           No hay ventas cargadas para <strong>{mesLabel(periodo)}</strong>
           {local !== 'consolidado' ? ` en ${local}` : ''}. Subí el export de Fudo de ese mes en
           Finanzas → Importar Fudo.
+        </div>
+      )}
+
+      {actual && actual.tickets > 0 && esMesActual && actual.ultimaFecha && gapDias >= 2 && (
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm text-amber-800">
+          <span>
+            📅 Datos hasta el <strong>{fechaCorta(actual.ultimaFecha)}</strong> · faltan importar{' '}
+            <strong>{gapDias} {gapDias === 1 ? 'día' : 'días'}</strong>. El mes en curso no está
+            completo.
+          </span>
+          <span className="text-xs text-amber-700">
+            Para actualizar: <strong>Finanzas → Estado de Resultados → Sincronizar Fudo</strong>.
+          </span>
         </div>
       )}
 
