@@ -395,6 +395,16 @@ export function ChecklistPagos() {
       return;
     }
 
+    // Categoría obligatoria: sin ella el gasto cae en "Sin categoría" del Resumen
+    // de Egresos y no se ubica en ningún rubro. El form manual ya lo valida; acá
+    // tapamos el mismo agujero para los pagos fijos.
+    if (!pago.categoria_gasto_id) {
+      window.alert(
+        `"${pago.concepto}" no tiene categoría asignada. Asignale una categoría al pago fijo (columna Categoría) antes de marcarlo como pagado, así el gasto se ubica en su rubro del Resumen de Egresos.`,
+      );
+      return;
+    }
+
     const fechaPago = hoy();
     const local = derivarLocal(pago.concepto);
 
