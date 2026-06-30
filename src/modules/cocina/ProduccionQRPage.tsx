@@ -1787,19 +1787,13 @@ function FormPasta({
   const requiereSemolinHuevo = ratioSemolinPorKg != null && ratioHuevoPorKg != null;
 
   // Armado itemizado (ej: ñoqui SG): la receta del relleno define la lista de
-  // ingredientes que se agregan por kg de papa. Tiene prioridad sobre el bloque
-  // semolín/huevo (Vedia). Cada ingrediente sugiere por_kg × kgPapa, editable.
+  // ingredientes que se agregan por kg de PURÉ. Tiene prioridad sobre el bloque
+  // semolín/huevo (Vedia). Cada ingrediente sugiere por_kg × kgPuré, editable.
   const ingredientesArmado = rellenoSel?.receta?.ingredientes_armado ?? null;
   const usaArmadoItemizado = (ingredientesArmado?.length ?? 0) > 0;
-  // En modo itemizado el input es "kg de puré a ocupar". Los ingredientes están
-  // definidos por kg de PAPA, así que convertimos puré→papa con el rinde guardado
-  // del lote (kg_papa / kg_puré). Si el lote no tiene rinde (viejo), 1:1.
+  // En modo itemizado el input es "kg de puré a ocupar". Los ratios de la receta
+  // (por_kg) están definidos por kg de PURÉ, así que se aplican directo sin conversión.
   const kgPureNum = parseDecimal(kgPapa);
-  const papaPorPure =
-    rellenoSel?.kg_papa && rellenoSel.peso_total_kg
-      ? rellenoSel.kg_papa / rellenoSel.peso_total_kg
-      : null;
-  const kgPapaEquiv = kgPureNum * (papaPorPure ?? 1);
   useEffect(() => {
     if (!usaArmadoItemizado || kgPureNum <= 0) {
       setArmadoReales({});
@@ -1807,7 +1801,7 @@ function FormPasta({
     }
     const sug: Record<string, string> = {};
     for (const ing of ingredientesArmado ?? []) {
-      const cant = kgPapaEquiv * (Number(ing.por_kg) || 0);
+      const cant = kgPureNum * (Number(ing.por_kg) || 0);
       // kg con hasta 3 decimales, unidades enteras.
       sug[ing.nombre] =
         ing.unidad === 'kg' ? String(+cant.toFixed(3)) : String(Math.round(cant));
@@ -1911,7 +1905,7 @@ function FormPasta({
 
     // Detalle del armado itemizado (ñoqui SG) → se registra en notas para trazabilidad.
     const notasArmado = usaArmadoItemizado
-      ? `Armado (${formatNum(kgPureNum)} kg puré${papaPorPure ? ` ≈ ${formatNum(kgPapaEquiv)} kg papa` : ''}): ` +
+      ? `Armado (${formatNum(kgPureNum)} kg puré): ` +
         (ingredientesArmado ?? [])
           .map(
             (ing) =>
@@ -2324,16 +2318,11 @@ function FormPasta({
                 Poné los kg de puré que vas a usar y se calcula cuánto de cada harina y huevo
                 agregar (editable). Se descuenta del stock de puré.
               </p>
-              {papaPorPure && kgPureNum > 0 && (
-                <p className="mt-1 text-[11px] font-medium text-amber-900">
-                  ≈ {formatNum(kgPapaEquiv)} kg de papa (rinde del lote)
-                </p>
-              )}
             </div>
             <div className="grid grid-cols-2 gap-2">
               {(ingredientesArmado ?? []).map((ing) => {
                 const esKg = ing.unidad === 'kg';
-                const sug = kgPapaEquiv > 0 ? kgPapaEquiv * (Number(ing.por_kg) || 0) : null;
+                const sug = kgPureNum > 0 ? kgPureNum * (Number(ing.por_kg) || 0) : null;
                 return (
                   <div key={ing.nombre}>
                     <label className="mb-1 block text-xs font-medium text-amber-900">
