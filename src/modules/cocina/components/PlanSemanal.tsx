@@ -12,6 +12,7 @@ type TipoPlan =
   | 'postre'
   | 'pasteleria'
   | 'panaderia'
+  | 'milanesa'
   | 'pasta_simple';
 // Estados visibles en el pizarrón. en_mostrador_* viven solo en tab Stock.
 type EstadoItem = 'pendiente' | 'en_produccion' | 'en_bandejas' | 'ciclo_completo';
@@ -29,7 +30,7 @@ interface PlanItem {
   estado: 'pendiente' | 'en_produccion' | 'en_bandejas' | 'ciclo_completo' | 'cancelado';
   lote_tabla: string | null;
   lote_id: string | null;
-  receta?: { nombre: string; kg_por_bolsa: number | null } | null;
+  receta?: { nombre: string; kg_por_bolsa: number | null; rendimiento_kg: number | null } | null;
   destino_producto_id: string | null;
   destino?: { nombre: string } | null;
 }
@@ -67,6 +68,7 @@ const TIPO_LABEL: Record<TipoPlan, string> = {
   postre: 'Postres',
   pasteleria: 'Pastelería',
   panaderia: 'Panadería',
+  milanesa: 'Milanesas',
   pasta_simple: 'Pastas simples',
 };
 
@@ -77,6 +79,7 @@ const TIPO_EMOJI: Record<TipoPlan, string> = {
   postre: '🍰',
   pasteleria: '🥐',
   panaderia: '🍞',
+  milanesa: '🍖',
   pasta_simple: '🍝',
 };
 
@@ -87,12 +90,18 @@ const TIPOS_VISIBLES: TipoPlan[] = [
   'relleno',
   'pasta_simple',
   'salsa',
+  'milanesa',
   'postre',
   'pasteleria',
   'panaderia',
 ];
 
 const DIAS_CORTOS = ['DOM', 'LUN', 'MAR', 'MIE', 'JUE', 'VIE', 'SAB'];
+
+// Display de kg con coma decimal, sin ceros sobrantes ("3" / "10,1").
+function fmtKg(n: number): string {
+  return n.toFixed(1).replace(/\.0$/, '').replace('.', ',');
+}
 
 // Display de bolsas de papa (planificación del puré). 0,5 → "½ bolsa".
 function fmtBolsas(n: number): string {
@@ -217,6 +226,7 @@ export interface ItemAgrupado {
   fechaObjetivo: string;
   totalCantidad: number;
   kgPorBolsa: number | null; // si la receta se planifica por bolsa (puré), display en bolsas
+  kgPorReceta: number | null; // rendimiento_kg: milanesa se planifica en kg de milanesa terminada
   cuentaPlan: number;
   hechosPlan: number;
   estado: EstadoItem;
@@ -246,7 +256,7 @@ export function PlanSemanal({
       const { data, error } = await supabase
         .from('cocina_pizarron_items')
         .select(
-          'id, fecha_objetivo, local, turno, tipo, receta_id, texto_libre, cantidad_recetas, cantidad_hecha, estado, lote_tabla, lote_id, destino_producto_id, receta:cocina_recetas(nombre, kg_por_bolsa), destino:cocina_productos(nombre)',
+          'id, fecha_objetivo, local, turno, tipo, receta_id, texto_libre, cantidad_recetas, cantidad_hecha, estado, lote_tabla, lote_id, destino_producto_id, receta:cocina_recetas(nombre, kg_por_bolsa, rendimiento_kg), destino:cocina_productos(nombre)',
         )
         .eq('local', local)
         .gte('fecha_objetivo', desde)
@@ -353,6 +363,7 @@ export function PlanSemanal({
           fechaObjetivo: fecha,
           totalCantidad: 0,
           kgPorBolsa: null,
+          kgPorReceta: null,
           cuentaPlan: 0,
           hechosPlan: 0,
           estado: 'pendiente',
@@ -381,6 +392,10 @@ export function PlanSemanal({
       if (it.destino?.nombre && !g.destinoNombre) g.destinoNombre = it.destino.nombre;
       const kgB = it.receta?.kg_por_bolsa ?? 0;
       if (kgB > 0 && g.kgPorBolsa == null) g.kgPorBolsa = kgB;
+      // Milanesa: el plan guarda cantidad_recetas (= tandas); se muestra en kg
+      // de milanesa terminada (cantidad_recetas × rendimiento_kg) como en el editor.
+      const kgR = it.receta?.rendimiento_kg ?? 0;
+      if (tipoVista === 'milanesa' && kgR > 0 && g.kgPorReceta == null) g.kgPorReceta = kgR;
       const estado: EstadoItem = it.estado === 'cancelado' ? 'pendiente' : it.estado;
       g.totalCantidad += Number(it.cantidad_recetas ?? 0);
       g.cuentaPlan += 1;
@@ -609,9 +624,11 @@ function ItemAgrupadoCard({
     grupo.totalCantidad > 0
       ? grupo.kgPorBolsa && grupo.kgPorBolsa > 0
         ? fmtBolsas(grupo.totalCantidad / grupo.kgPorBolsa)
-        : grupo.tipo === 'pasta_simple'
-          ? `${grupo.totalCantidad} porc.`
-          : `×${grupo.totalCantidad}`
+        : grupo.tipo === 'milanesa' && grupo.kgPorReceta && grupo.kgPorReceta > 0
+          ? `${fmtKg(grupo.totalCantidad * grupo.kgPorReceta)} kg`
+          : grupo.tipo === 'pasta_simple'
+            ? `${grupo.totalCantidad} porc.`
+            : `×${grupo.totalCantidad}`
       : null;
   const masasCargadas = grupo.masasUsadas.length > 0;
   const falta = calcularFalta(grupo.tipo, grupo.estado, masasCargadas);
