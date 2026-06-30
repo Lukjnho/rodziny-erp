@@ -53,7 +53,15 @@ function recetasDelTipoPlan(recetas: Receta[], tipoPlan: TipoItem): Receta[] {
     case 'postre':
       return recetas.filter((r) => r.rol === 'postre_base' || r.categoria === 'postre');
     case 'panaderia':
-      return recetas.filter((r) => r.rol === 'panificado' || r.categoria === 'panificado');
+      // Incluye 'masa_panaderia' (ej: Prepizza) para poder planificarla en esta
+      // sección. Su demanda sale de las variantes que la consumen vía el
+      // producto Prepizza (fudo_nombres = las pizzas), no de un Fudo propio.
+      return recetas.filter(
+        (r) =>
+          r.rol === 'panificado' ||
+          r.rol === 'masa_panaderia' ||
+          r.categoria === 'panificado',
+      );
     case 'pasteleria':
       // Saavedra agrupa pastelería y postres en una sola sección: el dropdown
       // ofrece ambos, pero cada receta conserva su tipo real (ver
@@ -821,7 +829,10 @@ export function PlanProduccionEditor({
       stockPorReceta: stockPostresCob ?? new Map(),
       pedidosPorProducto: pedidosCob ?? new Map(),
       rindePorLote: rindePorLoteCob ?? new Map(),
-      tiposIncluidos: ['pasta', 'postre'],
+      // 'panificado' incluye panes y la Prepizza (demanda = suma de variantes de
+      // pizza). El Resumen semanal ya lo incluía; acá lo agregamos para que la
+      // cobertura EN VIVO del editor coincida.
+      tiposIncluidos: ['pasta', 'postre', 'panificado'],
     });
     for (const r of res) m.set(r.id, r);
     return m;
