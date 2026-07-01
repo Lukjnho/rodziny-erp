@@ -15,6 +15,7 @@ import type {
   PagoGasto,
 } from './types';
 import { TIPO_COMPROBANTE_LABEL, MEDIO_PAGO_LABEL, medioRequiereComprobante } from './types';
+import { PagarGastoModal } from './PagarGastoModal';
 
 export interface PrefillGasto {
   recepcion_id?: string;
@@ -101,6 +102,8 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busquedaProducto, setBusquedaProducto] = useState('');
+  // Modal de pago (canónico) abierto desde el bloque de pagos en edición
+  const [pagarOpen, setPagarOpen] = useState(false);
   // Drafts de texto crudo para los inputs numéricos de items. Sin esto
   // React re-render machaca la coma/punto que estás tipeando porque
   // it.cantidad/subtotal son number y parseFloat("10500,") => 10500.
@@ -897,7 +900,7 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
                 >
                   <option value="vedia">Rodziny Vedia</option>
                   <option value="saavedra">Rodziny Saavedra</option>
-                  <option value="sas">Rodziny SAS</option>
+                  <option value="sas">Empresa</option>
                 </select>
               </div>
               <div>
@@ -1322,15 +1325,31 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
                         <> · Saldo <span className="font-medium text-amber-700">{formatARS(saldo)}</span></>
                       )}
                     </span>
-                    <span className="text-[10px] text-gray-400">Se editan en la pestaña Pagos</span>
+                    {saldo > 0.01 ? (
+                      <button
+                        type="button"
+                        onClick={() => setPagarOpen(true)}
+                        className="rounded bg-rodziny-700 px-2 py-1 text-[11px] font-medium text-white hover:bg-rodziny-800"
+                      >
+                        💸 Registrar pago
+                      </button>
+                    ) : (
+                      <span className="text-[10px] font-medium text-green-700">✓ Saldado</span>
+                    )}
                   </div>
                 </div>
               );
             })()}
             {gastoEditando && (!pagosRegistrados || pagosRegistrados.length === 0) && (
-              <div className="mb-3 rounded border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-600">
-                Sin pagos registrados. Para pagarlo usá <strong>💸 Pagar</strong> en el listado de
-                gastos — así queda el medio y la conciliación bien vinculados.
+              <div className="mb-3 flex items-center justify-between gap-2 rounded border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-600">
+                <span>Sin pagos registrados.</span>
+                <button
+                  type="button"
+                  onClick={() => setPagarOpen(true)}
+                  className="shrink-0 rounded bg-rodziny-700 px-2 py-1 text-[11px] font-medium text-white hover:bg-rodziny-800"
+                >
+                  💸 Pagar
+                </button>
               </div>
             )}
             {/* Alta de gasto: el estado/medio de pago se define acá y crea el pago.
@@ -1617,6 +1636,20 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
           </button>
         </div>
       </div>
+
+      {/* Pago canónico: registrar pago / confirmar echeq del gasto en edición.
+          Reusa el mismo modal que la pestaña Pagos, así el estado se recalcula
+          y concilia igual que en el resto del sistema. */}
+      {gastoEditando && (
+        <PagarGastoModal
+          open={pagarOpen}
+          gasto={gastoEditando}
+          onClose={() => {
+            setPagarOpen(false);
+            qc.invalidateQueries({ queryKey: ['pagos_gasto_editando', gastoEditando.id] });
+          }}
+        />
+      )}
     </div>
   );
 }
