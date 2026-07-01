@@ -692,6 +692,11 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
           parseFloat(form.iibb.replace(',', '.')) || 0,
           parseFloat(form.importe_total.replace(',', '.')) || 0,
         );
+        // La edición no crea ni modifica pagos: el estado y el medio de pago se
+        // derivan de pagos_gastos (pestaña Pagos / botón Pagar). No los pisamos
+        // acá para no desincronizar (antes se sobrescribía medio_pago a un default).
+        delete (payload as Partial<typeof payload>).estado_pago;
+        delete (payload as Partial<typeof payload>).medio_pago;
         const { error: errUp } = await supabase
           .from('gastos')
           .update(payload)
@@ -892,6 +897,7 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
                 >
                   <option value="vedia">Rodziny Vedia</option>
                   <option value="saavedra">Rodziny Saavedra</option>
+                  <option value="sas">Rodziny SAS</option>
                 </select>
               </div>
               <div>
@@ -1321,6 +1327,17 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
                 </div>
               );
             })()}
+            {gastoEditando && (!pagosRegistrados || pagosRegistrados.length === 0) && (
+              <div className="mb-3 rounded border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-600">
+                Sin pagos registrados. Para pagarlo usá <strong>💸 Pagar</strong> en el listado de
+                gastos — así queda el medio y la conciliación bien vinculados.
+              </div>
+            )}
+            {/* Alta de gasto: el estado/medio de pago se define acá y crea el pago.
+                En edición NO se muestra: los pagos se gestionan desde la pestaña Pagos
+                (botón Pagar) para no desincronizar con pagos_gastos. */}
+            {!gastoEditando && (
+            <>
             <div className="mb-3 flex items-center gap-3">
               <button
                 type="button"
@@ -1397,6 +1414,8 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
                   </div>
                 )}
               </div>
+            )}
+            </>
             )}
           </div>
 
