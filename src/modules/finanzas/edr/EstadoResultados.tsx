@@ -320,6 +320,9 @@ function computarMes(manual: Map<string, number>, auto: AutoMes): Map<string, nu
   result.set('stock_final_bebidas', auto.stockFinalBebidas);
   result.set('stock_final_indirectos', auto.stockFinalIndirectos);
   result.set('__cmv_real', cmvReal);
+  // Flag: 1 = el CMV real es estimado (= compras) porque falta el cierre de
+  // inventario del mes y/o del anterior, así que no se aplicó el Δ inventario.
+  result.set('__cmv_estimado', aplicarDelta ? 0 : 1);
   result.set('__margen_bruto', margenBruto);
   // Food Cost % usa CMV REAL para reflejar el consumo real, no las compras.
   result.set('_kpi_food', ingNeto > 0 ? cmvReal / ingNeto : 0);
@@ -1030,6 +1033,25 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
     return con;
   }, [meses, autoMap, manualMap]);
 
+  // Meses con actividad cuyo CMV quedó estimado (falta cierre de inventario del
+  // mes y/o del anterior → no se aplicó el Δ inventario). Se avisa arriba de la
+  // tabla para que el CMV real no se lea como definitivo sin serlo.
+  const mesesCmvEstimado = useMemo(() => {
+    const arr: string[] = [];
+    for (const mes of meses) {
+      const mv = valoresPorMes.get(mes);
+      if (!mv) continue;
+      if (
+        mesesConDatos.has(mes) &&
+        (mv.get('__cmv_total') ?? 0) > 0 &&
+        mv.get('__cmv_estimado') === 1
+      ) {
+        arr.push(MESES_LABEL[parseInt(mes.substring(5, 7)) - 1]);
+      }
+    }
+    return arr;
+  }, [meses, valoresPorMes, mesesConDatos]);
+
   // ── edición inline ─────────────────────────────────────────────────────────
   function startEdit(periodo: string, key: string, valorActual: number) {
     setEditando({ periodo, key });
@@ -1121,6 +1143,16 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
       <p className="mb-4 text-xs text-gray-400">
         Clic en celda azul para editar · Enter para guardar · Esc para cancelar
       </p>
+
+      {mesesCmvEstimado.length > 0 && (
+        <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          ⚠ <strong>CMV estimado</strong> en {mesesCmvEstimado.join(', ')}:{' '}
+          {localEdr === 'consolidado' ? 'el consolidado necesita' : 'este local necesita'} el cierre
+          de inventario aprobado del mes <em>y</em> del anterior para calcular el consumo real. Sin
+          eso, el CMV se muestra igual a las compras (sin Δ inventario) y el margen puede estar
+          distorsionado.
+        </div>
+      )}
 
       {/* Tabla EdR */}
       <div className="overflow-hidden rounded-lg border border-surface-border bg-white">

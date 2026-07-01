@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/lib/auth';
 import { formatARS, formatFecha, cn } from '@/lib/utils';
 
 // ── tipos ────────────────────────────────────────────────────────────────────
@@ -53,6 +54,8 @@ interface Props {
 
 export function CierreMesPanel({ onNavigateToTab }: Props) {
   const qc = useQueryClient();
+  const { perfil } = useAuth();
+  const usuarioActual = perfil?.nombre ?? 'desconocido';
   const [periodo, setPeriodo] = useState(() => new Date().toISOString().substring(0, 7));
   // Checklist unificado a nivel EMPRESA — sin filtro por local (decisión Lucas, 2026-06-02).
   // Las dos filas de Ventas Fudo (Vedia/Saavedra) se conservan porque son dos Excel
@@ -193,6 +196,20 @@ export function CierreMesPanel({ onNavigateToTab }: Props) {
       const { data } = await supabase
         .from('dividendos')
         .select('id, monto, socio, fecha')
+        .eq('periodo', periodo);
+      return data ?? [];
+    },
+  });
+
+  // Cierres de inventario del mes (por local). El EdR solo calcula el CMV real
+  // (con Δ inventario) si el mes tiene cierre APROBADO en los dos locales
+  // operativos; sin eso, el CMV se muestra igual a las compras (estimado).
+  const { data: cierresInv, isLoading: lInv } = useQuery({
+    queryKey: ['cmes_cierres_inventario', periodo],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('edr_cierres_inventario')
+        .select('local, estado')
         .eq('periodo', periodo);
       return data ?? [];
     },
@@ -531,6 +548,45 @@ export function CierreMesPanel({ onNavigateToTab }: Props) {
 
     // === VERIFICACIÓN ===
 
+    // Cierre de inventario aprobado (Vedia + Saavedra) — gatea el CMV real del EdR
+    {
+      const OPERATIVOS = ['vedia', 'saavedra'] as const;
+      const estadoPorLocal = new Map<string, string>();
+      for (const c of cierresInv ?? []) estadoPorLocal.set(c.local, c.estado);
+      const aprobados = OPERATIVOS.filter((l) => estadoPorLocal.get(l) === 'aprobado');
+      const pendientes = OPERATIVOS.filter((l) => estadoPorLocal.get(l) === 'pendiente');
+      const faltan = OPERATIVOS.filter((l) => !estadoPorLocal.has(l));
+      const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+      list.push({
+        key: 'cierre_inventario_aprobado',
+        bloque: 'verificacion',
+        titulo: 'Cierre de inventario aprobado (Vedia + Saavedra)',
+        status: lInv
+          ? 'loading'
+          : aprobados.length === OPERATIVOS.length
+            ? 'ok'
+            : 'fail',
+        detalle: lInv
+          ? 'Cargando…'
+          : aprobados.length === OPERATIVOS.length
+            ? 'Los dos locales tienen cierre aprobado — el EdR calcula el CMV real'
+            : [
+                faltan.length > 0 && `Falta cerrar: ${faltan.map(cap).join(', ')}`,
+                pendientes.length > 0 && `Pendiente de tu aprobación: ${pendientes.map(cap).join(', ')}`,
+              ]
+                .filter(Boolean)
+                .join(' · ') +
+              ' — sin esto el EdR muestra el CMV estimado (igual a las compras, sin Δ inventario)',
+        pasos: [
+          'Cargar el conteo físico del mes en Cocina/Compras → Stock (cada local)',
+          'Solicitar el cierre de inventario del mes desde el banner de Compras',
+          'Aprobar los cierres pendientes desde el Inicio (card "Cierres de inventario pendientes")',
+        ],
+        ctaLabel: 'Ir a Compras',
+        ctaUrl: '/compras',
+      });
+    }
+
     // Cuadre por banco
     {
       const cuentas = ['mercadopago', 'galicia', 'icbc'] as const;
@@ -599,6 +655,7 @@ export function CierreMesPanel({ onNavigateToTab }: Props) {
     pagos,
     sueldos,
     dividendos,
+    cierresInv,
     lVentas,
     lCierres,
     lMovs,
@@ -606,6 +663,7 @@ export function CierreMesPanel({ onNavigateToTab }: Props) {
     lPagos,
     lSueldos,
     lDivs,
+    lInv,
   ]);
 
   // ── status global del cierre ───────────────────────────────────────────────
@@ -628,7 +686,7 @@ export function CierreMesPanel({ onNavigateToTab }: Props) {
           periodo,
           checkpoint_key: key,
           motivo: motivo.trim() || null,
-          marcado_por: 'Admin',
+          marcado_por: usuarioActual,
         },
         { onConflict: 'local,periodo,checkpoint_key' },
       );
@@ -660,7 +718,7 @@ export function CierreMesPanel({ onNavigateToTab }: Props) {
         local,
         periodo,
         notas: notasCierre.trim() || null,
-        cerrado_por: 'Admin',
+        cerrado_por: usuarioActual,
       });
       if (error) throw error;
     },
