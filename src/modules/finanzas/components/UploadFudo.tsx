@@ -65,12 +65,16 @@ export function UploadFudo({ onSuccess }: { onSuccess?: () => void }) {
   const [result, setResult] = useState<UploadResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [detectado, setDetectado] = useState<(Detectado & { nombre: string }) | null>(null);
+  // Guardamos el File en estado (no lo releemos del <input>): al arrastrar, el input
+  // queda vacío y el botón Importar no tenía archivo para procesar.
+  const [archivo, setArchivo] = useState<File | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // ── cuando el usuario elige o arrastra un archivo ─────────────────────────
   function onFileSelected(file: File) {
     setResult(null);
     setError(null);
+    setArchivo(file);
     const det = detectarDesdeNombre(file.name);
     setDetectado({ ...det, nombre: file.name });
   }
@@ -389,9 +393,8 @@ export function UploadFudo({ onSuccess }: { onSuccess?: () => void }) {
           {/* Botón importar */}
           <button
             onClick={async () => {
-              const file = inputRef.current?.files?.[0];
-              if (!file) return;
-              await importar(file, detectado.tipo, detectado.local);
+              if (!archivo) return;
+              await importar(archivo, detectado.tipo, detectado.local);
             }}
             className="w-full rounded-md bg-rodziny-800 py-2 text-sm font-medium text-white transition-colors hover:bg-rodziny-700"
           >
@@ -419,6 +422,7 @@ export function UploadFudo({ onSuccess }: { onSuccess?: () => void }) {
             onClick={() => {
               setResult(null);
               setDetectado(null);
+              setArchivo(null);
             }}
             className="mt-2 block text-xs text-gray-500 underline"
           >
@@ -433,6 +437,7 @@ export function UploadFudo({ onSuccess }: { onSuccess?: () => void }) {
             onClick={() => {
               setError(null);
               setDetectado(null);
+              setArchivo(null);
             }}
             className="mt-2 block text-xs text-red-500 underline"
           >
