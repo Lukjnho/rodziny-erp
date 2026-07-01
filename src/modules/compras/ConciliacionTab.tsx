@@ -682,6 +682,9 @@ export function ConciliacionTab() {
     [cargosAuto],
   );
 
+  // Rojo (faltan) vs verde (todo procesado) para el cuadrante de pendientes.
+  const hayPendientes = !loadingMovs && (movsPendientes?.movs.length ?? 0) > 0;
+
   // ---- Render ----
 
   return (
@@ -845,18 +848,18 @@ export function ConciliacionTab() {
         </div>
       )}
 
-      {/* Conciliados — visibilidad de qué se vinculó (colapsable) */}
-      <div className="rounded-lg border border-blue-200 bg-blue-50/40 p-4">
+      {/* Conciliados — visibilidad de qué se vinculó (colapsable). Verde = ya conciliado. */}
+      <div className="rounded-lg border-2 border-green-300 bg-green-50/50 p-4">
         <button
           type="button"
           onClick={() => setVerConciliados((v) => !v)}
           className="flex w-full items-center justify-between text-left"
         >
           <div>
-            <h4 className="text-sm font-semibold text-blue-900">
-              🔗 Conciliados en este período
+            <h4 className="text-sm font-semibold text-green-900">
+              ✅ Conciliados en este período
             </h4>
-            <p className="mt-1 text-xs text-blue-700">
+            <p className="mt-1 text-xs text-green-800">
               Gastos cargados con al menos un movimiento del extracto vinculado.
               Los cargos automáticos (impuestos, comisiones) aparecen consolidados por mes;
               click en la fila para ver los movimientos individuales.
@@ -864,13 +867,13 @@ export function ConciliacionTab() {
           </div>
           <div className="text-right">
             {loadingConciliados ? (
-              <div className="h-8 w-12 animate-pulse rounded bg-blue-200" />
+              <div className="h-8 w-12 animate-pulse rounded bg-green-200" />
             ) : (
               <>
-                <div className="text-2xl font-bold text-blue-900 tabular-nums">
+                <div className="text-2xl font-bold text-green-900 tabular-nums">
                   {(conciliados?.length ?? 0).toLocaleString('es-AR')}
                 </div>
-                <div className="text-[11px] text-blue-700">
+                <div className="text-[11px] text-green-700">
                   {verConciliados ? '▲ ocultar' : '▼ ver detalle'}
                 </div>
               </>
@@ -879,14 +882,14 @@ export function ConciliacionTab() {
         </button>
 
         {verConciliados && (
-          <div className="mt-3 max-h-[28rem] overflow-y-auto rounded border border-blue-100 bg-white">
+          <div className="mt-3 max-h-[28rem] overflow-y-auto rounded border border-green-200 bg-white">
             {(conciliados?.length ?? 0) === 0 ? (
               <div className="py-4 text-center text-xs text-gray-400">
                 Todavía no hay gastos vinculados a movimientos en este período.
               </div>
             ) : (
               <table className="w-full text-xs">
-                <thead className="sticky top-0 border-b border-blue-100 bg-blue-50 text-blue-900">
+                <thead className="sticky top-0 border-b border-green-200 bg-green-50 text-green-900">
                   <tr>
                     <th className="px-2 py-1.5 text-left font-medium"></th>
                     <th className="px-2 py-1.5 text-left font-medium">Proveedor / Concepto</th>
@@ -896,7 +899,7 @@ export function ConciliacionTab() {
                     <th className="px-2 py-1.5 text-right font-medium">Σ Débito movs</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-blue-50">
+                <tbody className="divide-y divide-green-50">
                   {(conciliados ?? []).map((g) => {
                     const isExpanded = expandido.has(g.gasto_id);
                     const desfase = Math.abs(g.importe_total - g.movs_total_debito);
@@ -906,7 +909,7 @@ export function ConciliacionTab() {
                     return (
                       <Fragment key={g.gasto_id}>
                         <tr
-                          className="cursor-pointer hover:bg-blue-50/50"
+                          className="cursor-pointer hover:bg-green-50/50"
                           onClick={() => toggleExpandir(g.gasto_id)}
                         >
                           <td className="px-2 py-1.5 text-gray-400">
@@ -977,11 +980,36 @@ export function ConciliacionTab() {
         )}
       </div>
 
-      {/* Tabla unificada de movimientos del extracto por procesar */}
-      <div className="rounded-lg border border-gray-200 bg-white p-4">
+      {/* Tabla unificada de movimientos del extracto por procesar.
+          Rojo = faltan conciliar · Verde = todo procesado. */}
+      <div
+        className={cn(
+          'rounded-lg border-2 p-4',
+          hayPendientes ? 'border-red-300 bg-red-50/30' : 'border-green-300 bg-green-50/40',
+        )}
+      >
         <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h4 className="text-sm font-semibold text-gray-800">Movimientos por procesar</h4>
+            <h4
+              className={cn(
+                'flex items-center gap-2 text-sm font-semibold',
+                hayPendientes ? 'text-red-900' : 'text-green-900',
+              )}
+            >
+              {hayPendientes ? '⛔ Movimientos por procesar' : '✅ Movimientos por procesar'}
+              {hayPendientes ? (
+                <span className="rounded-full bg-red-600 px-2 py-0.5 text-[11px] font-bold text-white tabular-nums">
+                  {(movsPendientes?.movs.length ?? 0).toLocaleString('es-AR')}
+                  {movsPendientes?.truncado ? '+' : ''} faltan
+                </span>
+              ) : (
+                !loadingMovs && (
+                  <span className="rounded-full bg-green-600 px-2 py-0.5 text-[11px] font-bold text-white">
+                    todo procesado
+                  </span>
+                )
+              )}
+            </h4>
             <p className="mt-1 text-xs text-gray-500">
               Egresos del extracto que aún no están vinculados a un gasto.
               La columna <strong>Estado</strong> dice qué hacer con cada uno:{' '}
