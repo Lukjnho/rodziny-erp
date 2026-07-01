@@ -66,7 +66,8 @@ export function UploadFudo({ onSuccess }: { onSuccess?: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [detectado, setDetectado] = useState<(Detectado & { nombre: string }) | null>(null);
   // Guardamos el File en estado (no lo releemos del <input>): al arrastrar, el input
-  // queda vacío y el botón Importar no tenía archivo para procesar.
+  // queda vacío y el botón Importar no tendría archivo; además así podemos resetear
+  // el value del input y permitir volver a elegir el MISMO archivo.
   const [archivo, setArchivo] = useState<File | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -316,6 +317,8 @@ export function UploadFudo({ onSuccess }: { onSuccess?: () => void }) {
           onChange={(e) => {
             const f = e.target.files?.[0];
             if (f) onFileSelected(f);
+            // Reseteamos el value para que volver a elegir el mismo archivo dispare onChange
+            e.target.value = '';
           }}
         />
       </div>
