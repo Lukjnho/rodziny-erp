@@ -9,7 +9,6 @@
 //  5) Se invoca edge function ocr-comprobante (Claude Haiku 4.5)
 //  6) Se muestra preview con datos extraidos + alerta de duplicado por OCR si lo hay
 //  7) Usuario edita/confirma; se crea fila en `gastos` con FK a comprobantes
-//  8) Si importe_total >= umbral_minimo de config_aprobaciones: estado_aprobacion='requiere_aprobacion'
 
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -359,24 +358,8 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
     enabled: open,
   });
 
-  // Umbral de aprobacion
-  const { data: configAprobaciones } = useQuery<{ umbral_minimo: number; activo: boolean } | null>({
-    queryKey: ['config-aprobaciones'],
-    queryFn: async () => {
-      const { data } = await supabase
-        .from('config_aprobaciones')
-        .select('umbral_minimo, activo')
-        .eq('id', 1)
-        .maybeSingle();
-      return data;
-    },
-    enabled: open,
-  });
-
-  const umbralAprobacion = configAprobaciones?.activo ? configAprobaciones.umbral_minimo : Infinity;
   // Derivado: el importe como numero, parseado del input texto
   const importeTotal = useMemo(() => parseNumeroAR(importeTexto) ?? 0, [importeTexto]);
-  const requiereAprobacion = importeTotal >= umbralAprobacion;
 
   // Plan de pagos: suma de las cuotas y cuánto falta asignar contra el total.
   const totalPlan = useMemo(
@@ -1375,7 +1358,6 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
           creado_manual: true,
           cancelado: false,
           periodo,
-          estado_aprobacion: requiereAprobacion ? 'requiere_aprobacion' : null,
           items_json: itemsParaGuardar && itemsParaGuardar.length > 0 ? itemsParaGuardar : null,
         };
       };
@@ -2399,12 +2381,6 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
                     className="w-full rounded-r px-2 py-2 text-sm tabular-nums focus:outline-none"
                   />
                 </div>
-                {requiereAprobacion && (
-                  <div className="mt-1 rounded bg-amber-100 px-2 py-1 text-xs text-amber-900">
-                    ⚠ Supera el umbral de {formatARS(umbralAprobacion)}. Este gasto va a quedar
-                    pendiente de aprobacion por Lucas.
-                  </div>
-                )}
                 {/* Discriminación de IVA */}
                 <div className="mt-2 rounded border border-gray-200 bg-gray-50 p-2">
                   <label className="flex cursor-pointer items-center gap-2 text-xs text-gray-700">
@@ -2699,15 +2675,9 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
             <div className="flex flex-col items-center justify-center py-12">
               <div className="text-5xl">✅</div>
               <div className="mt-3 text-base font-semibold">Gasto cargado</div>
-              {requiereAprobacion ? (
-                <div className="mt-2 text-center text-sm text-amber-700">
-                  Esta esperando aprobacion de Lucas (supera {formatARS(umbralAprobacion)}).
-                </div>
-              ) : (
-                <div className="mt-2 text-center text-sm text-gray-600">
-                  Todo en orden. Ya aparece en Compras y en el EdR.
-                </div>
-              )}
+              <div className="mt-2 text-center text-sm text-gray-600">
+                Todo en orden. Ya aparece en Compras y en el EdR.
+              </div>
               <button
                 onClick={onClose}
                 className="mt-6 rounded bg-rodziny-600 px-4 py-2 text-sm font-medium text-white hover:bg-rodziny-700"
