@@ -243,6 +243,12 @@ export function CierreInventarioModal({
               </div>
             </div>
 
+            <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              ℹ Este total valoriza solo <strong>materia prima e insumos comprados</strong> (incluye
+              bebidas de reventa). <strong>No</strong> incluye los productos elaborados en casa
+              (pastas, salsas, postres, panadería), que Cocina lleva en porciones sin costo.
+            </div>
+
             {snap.productos_sin_clasificar > 0 && (
               <div className="mb-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
                 ⚠ Hay <strong>{snap.productos_sin_clasificar}</strong> producto
