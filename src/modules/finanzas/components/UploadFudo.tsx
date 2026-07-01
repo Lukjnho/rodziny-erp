@@ -390,6 +390,18 @@ export function UploadFudo({ onSuccess }: { onSuccess?: () => void }) {
             </div>
           </div>
 
+          {/* Aviso: el import reemplaza los datos del local+período elegido.
+              Si se elige mal el local, se pisan las ventas del otro local. */}
+          <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
+            <p className="font-semibold">⚠️ Revisá el Local antes de importar</p>
+            <p className="mt-1">
+              Vas a importar como{' '}
+              <strong>{detectado.local === 'vedia' ? 'Rodziny Vedia' : 'Rodziny Saavedra'}</strong>.
+              Al importar se <strong>reemplazan</strong> las {tipoLabel[detectado.tipo].replace(/^[^ ]+ /, '').toLowerCase()} de
+              ese local del período. Si elegís el local equivocado, pisás los datos del otro local.
+            </p>
+          </div>
+
           {/* Botón importar */}
           <button
             onClick={async () => {
