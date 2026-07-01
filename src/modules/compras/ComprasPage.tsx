@@ -266,6 +266,37 @@ export function ComprasPage() {
     enabled: tab === 'movimientos',
   });
 
+  // Saldo real de stock (antes → después) por movimiento. No se puede calcular
+  // fila por fila con el stock de HOY (así estaba: cada fila mostraba
+  // "actual ∓ cantidad", correcto solo para el último movimiento de cada
+  // producto; los anteriores mostraban números falsos, ej. una entrada de 32kg
+  // que "terminaba" en 16). Acá encadenamos hacia atrás: arrancamos del stock
+  // actual y, recorriendo los movimientos del más nuevo al más viejo (que es el
+  // orden en que vienen), el "después" de cada fila es el "antes" de la fila
+  // siguiente más nueva del mismo producto. Los ajustes de inventario también
+  // se guardan como delta (dif = nuevo - viejo), así que el encadenado cierra.
+  const saldosPorMovimiento = useMemo(() => {
+    const mapa = new Map<string, { antes: number; despues: number }>();
+    if (!movimientos) return mapa;
+    const stockActualPorProd = new Map<string, number>();
+    (productos ?? []).forEach((p) => stockActualPorProd.set(p.id, p.stock_actual));
+    // running = stock "después" de la próxima fila a procesar de ese producto.
+    const running = new Map<string, number>();
+    for (const m of movimientos) {
+      if (!m.producto_id) continue;
+      if (!stockActualPorProd.has(m.producto_id)) continue; // producto no cargado
+      const despues = running.has(m.producto_id)
+        ? (running.get(m.producto_id) as number)
+        : (stockActualPorProd.get(m.producto_id) as number);
+      const delta =
+        m.tipo === 'entrada' ? m.cantidad : m.tipo === 'salida' ? -m.cantidad : 0;
+      const antes = despues - delta;
+      mapa.set(m.id, { antes, despues });
+      running.set(m.producto_id, antes);
+    }
+    return mapa;
+  }, [movimientos, productos]);
+
   const { data: gastosPagos } = useQuery({
     queryKey: ['gastos_pagos', local],
     queryFn: async () => {
@@ -2331,18 +2362,13 @@ export function ComprasPage() {
                           </span>
                           {m.producto_id &&
                             (() => {
-                              const prod = (productos ?? []).find((p) => p.id === m.producto_id);
-                              if (!prod) return null;
-                              const stockActual = prod.stock_actual;
-                              const stockAnterior =
-                                m.tipo === 'entrada'
-                                  ? stockActual - m.cantidad
-                                  : stockActual + m.cantidad;
+                              const saldo = saldosPorMovimiento.get(m.id);
+                              if (!saldo) return null;
                               return (
                                 <div className="mt-0.5 text-[10px] text-gray-400">
-                                  {Math.max(0, Math.round(stockAnterior * 100) / 100)} →{' '}
+                                  {Math.max(0, Math.round(saldo.antes * 100) / 100)} →{' '}
                                   <span className="font-medium text-gray-600">
-                                    {Math.round(stockActual * 100) / 100}
+                                    {Math.max(0, Math.round(saldo.despues * 100) / 100)}
                                   </span>
                                 </div>
                               );
