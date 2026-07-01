@@ -2428,13 +2428,17 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
                 </div>
               </Field>
 
-              <Field label="Fecha del comprobante *">
+              <Field label="Fecha de la factura *">
                 <input
                   type="date"
                   value={fecha}
                   onChange={(e) => setFecha(e.target.value)}
                   className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
                 />
+                <p className="mt-1 text-[11px] text-gray-500">
+                  Fecha del comprobante (define el período del gasto). La fecha de cada pago se
+                  carga abajo, en cada cuota.
+                </p>
                 {cierreAprobadoMes && (
                   <div className="mt-1 rounded bg-amber-100 px-2 py-1 text-xs text-amber-900">
                     ⚠ El mes <strong>{cierreAprobadoMes.periodo}</strong> ya tiene cierre de

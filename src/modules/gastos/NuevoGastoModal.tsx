@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth';
-import { cn, formatARS } from '@/lib/utils';
+import { cn, formatARS, formatFecha } from '@/lib/utils';
 import { MontoInput } from '@/components/ui/MontoInput';
 import type {
   Proveedor,
@@ -12,6 +12,7 @@ import type {
   TipoComprobante,
   MedioPago,
   EstadoPago,
+  PagoGasto,
 } from './types';
 import { TIPO_COMPROBANTE_LABEL, MEDIO_PAGO_LABEL, medioRequiereComprobante } from './types';
 
@@ -144,6 +145,22 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
       return data ?? [];
     },
     enabled: open && form.vincular_stock,
+  });
+
+  // Pagos ya registrados del gasto que se está editando. Solo lectura: acá se
+  // muestran para ver con qué medio (transferencia / echeq / efectivo) y en qué
+  // fecha se pagó. Editarlos/agregarlos se hace desde la pestaña Pagos.
+  const { data: pagosRegistrados } = useQuery({
+    queryKey: ['pagos_gasto_editando', gastoEditando?.id],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('pagos_gastos')
+        .select('id, fecha_pago, monto, medio_pago, numero_operacion, programado')
+        .eq('gasto_id', gastoEditando!.id)
+        .order('fecha_pago');
+      return (data ?? []) as PagoGasto[];
+    },
+    enabled: open && !!gastoEditando?.id,
   });
 
   // Cargar al abrir
@@ -1259,6 +1276,51 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
             <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
               Estado del pago
             </h4>
+            {gastoEditando && pagosRegistrados && pagosRegistrados.length > 0 && (() => {
+              const totalPagado = pagosRegistrados.reduce((s, p) => s + Number(p.monto || 0), 0);
+              const saldo = Number(gastoEditando.importe_total || 0) - totalPagado;
+              return (
+                <div className="mb-3 rounded border border-gray-200 bg-gray-50 p-2">
+                  <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-gray-500">
+                    Pagos registrados
+                  </div>
+                  <ul className="space-y-1">
+                    {pagosRegistrados.map((p) => (
+                      <li key={p.id} className="flex items-center justify-between gap-2 text-xs">
+                        <span className="flex min-w-0 items-center gap-1.5">
+                          <span className="font-medium text-gray-800">
+                            {MEDIO_PAGO_LABEL[p.medio_pago] ?? p.medio_pago}
+                          </span>
+                          <span className="text-gray-500">{formatFecha(p.fecha_pago)}</span>
+                          {p.programado && (
+                            <span className="rounded bg-amber-100 px-1 text-[10px] text-amber-800">
+                              a vencer
+                            </span>
+                          )}
+                          {p.numero_operacion && (
+                            <span className="truncate font-mono text-[10px] text-gray-400">
+                              N° {p.numero_operacion}
+                            </span>
+                          )}
+                        </span>
+                        <span className="shrink-0 tabular-nums font-medium text-gray-800">
+                          {formatARS(Number(p.monto || 0))}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                  <div className="mt-1.5 flex items-center justify-between border-t border-gray-200 pt-1.5 text-xs">
+                    <span className="text-gray-500">
+                      Pagado {formatARS(totalPagado)}
+                      {saldo > 0.01 && (
+                        <> · Saldo <span className="font-medium text-amber-700">{formatARS(saldo)}</span></>
+                      )}
+                    </span>
+                    <span className="text-[10px] text-gray-400">Se editan en la pestaña Pagos</span>
+                  </div>
+                </div>
+              );
+            })()}
             <div className="mb-3 flex items-center gap-3">
               <button
                 type="button"
