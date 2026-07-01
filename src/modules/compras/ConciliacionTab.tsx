@@ -861,8 +861,11 @@ export function ConciliacionTab() {
             </h4>
             <p className="mt-1 text-xs text-green-800">
               Gastos cargados con al menos un movimiento del extracto vinculado.
-              Los cargos automáticos (impuestos, comisiones) aparecen consolidados por mes;
-              click en la fila para ver los movimientos individuales.
+              <strong> Importe gasto</strong> = lo que cargaste en el ERP ·{' '}
+              <strong>Débito banco</strong> = lo que realmente salió del extracto. Si no coinciden,
+              aparece un ⚠. Las <strong>transferencias compartidas</strong> (una transferencia que
+              paga varios gastos) muestran el total de la transferencia, no es un desfase.
+              Click en la fila para ver los movimientos individuales.
             </p>
           </div>
           <div className="text-right">
@@ -894,9 +897,19 @@ export function ConciliacionTab() {
                     <th className="px-2 py-1.5 text-left font-medium"></th>
                     <th className="px-2 py-1.5 text-left font-medium">Proveedor / Concepto</th>
                     <th className="px-2 py-1.5 text-left font-medium">Fecha gasto</th>
-                    <th className="px-2 py-1.5 text-right font-medium">Importe</th>
+                    <th
+                      className="px-2 py-1.5 text-right font-medium"
+                      title="Importe cargado en el ERP (lo que registraste como gasto)"
+                    >
+                      Importe gasto (ERP)
+                    </th>
                     <th className="px-2 py-1.5 text-center font-medium">Movs</th>
-                    <th className="px-2 py-1.5 text-right font-medium">Σ Débito movs</th>
+                    <th
+                      className="px-2 py-1.5 text-right font-medium"
+                      title="Débito real que salió del extracto bancario vinculado"
+                    >
+                      Débito banco (extracto)
+                    </th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-green-50">
@@ -942,22 +955,34 @@ export function ConciliacionTab() {
                           <td
                             className={cn(
                               'px-2 py-1.5 text-right tabular-nums',
-                              cuadra ? 'text-gray-500' : 'font-semibold text-amber-700',
+                              g.consolidado
+                                ? 'text-gray-500'
+                                : cuadra
+                                  ? 'text-gray-700'
+                                  : 'font-semibold text-amber-700',
                             )}
                             title={
                               g.consolidado
-                                ? `Transferencia consolidada de ${formatARS(g.movs_total_debito)} que paga varios gastos (este es uno de ellos)`
+                                ? `Transferencia de ${formatARS(g.movs_total_debito)} que paga varios gastos — este es uno de ellos, no es un desfase`
                                 : cuadra
-                                  ? 'Importe del gasto cuadra con la suma de movimientos'
-                                  : `Desfase de ${formatARS(desfase)} entre el importe del gasto y los movimientos vinculados`
+                                  ? 'El importe del gasto coincide con lo que salió del banco'
+                                  : `El gasto dice ${formatARS(g.importe_total)} pero del banco salieron ${formatARS(g.movs_total_debito)} — difieren ${formatARS(desfase)}`
                             }
                           >
-                            {formatARS(g.movs_total_debito)}
-                            {g.consolidado ? (
-                              <span className="ml-1 text-[9px] text-blue-600">compartida</span>
-                            ) : (
-                              !cuadra && ' ⚠'
-                            )}
+                            <div className="flex flex-col items-end leading-tight">
+                              <span>{formatARS(g.movs_total_debito)}</span>
+                              {g.consolidado ? (
+                                <span className="text-[9px] font-medium text-blue-600">
+                                  🔗 transf. compartida
+                                </span>
+                              ) : (
+                                !cuadra && (
+                                  <span className="text-[9px] font-medium text-amber-700">
+                                    ⚠ difiere {formatARS(desfase)}
+                                  </span>
+                                )
+                              )}
+                            </div>
                           </td>
                         </tr>
                         {isExpanded && (
