@@ -122,6 +122,7 @@ export function VincularPagosMovModal({ mov, open, onClose, onSuccess }: Props) 
   const [selSueldos, setSelSueldos] = useState<Set<string>>(new Set());
   const [selDividendos, setSelDividendos] = useState<Set<string>>(new Set());
   const [busqueda, setBusqueda] = useState<string>(() => extraerKeywordProveedor(mov.descripcion));
+  const [busquedaSueldo, setBusquedaSueldo] = useState<string>('');
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Proveedor resuelto via tabla `proveedores` (razón social del extracto → nombre comercial del ERP).
@@ -371,6 +372,45 @@ export function VincularPagosMovModal({ mov, open, onClose, onSuccess }: Props) 
       .filter((s) => selSueldos.has(s.id))
       .reduce((acc, s) => acc + Number(s.monto), 0);
   }, [sueldosPendientes, selSueldos]);
+
+  // Sueldos filtrados por nombre y agrupados por fecha de pago (más reciente primero),
+  // con nombres ordenados alfabéticamente dentro de cada fecha → prolijo y buscable.
+  const sueldosPorFecha = useMemo(() => {
+    if (!sueldosPendientes) return [];
+    const norm = (t: string) =>
+      t.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+    const q = norm(busquedaSueldo.trim());
+    const filtrados = q
+      ? sueldosPendientes.filter((s) => norm(s.empleado_nombre ?? '').includes(q))
+      : sueldosPendientes;
+    const grupos = new Map<string, SueldoPendiente[]>();
+    for (const s of filtrados) {
+      const k = s.fecha_pago;
+      if (!grupos.has(k)) grupos.set(k, []);
+      grupos.get(k)!.push(s);
+    }
+    return Array.from(grupos.entries())
+      .sort((a, b) => b[0].localeCompare(a[0])) // fecha desc
+      .map(([fecha, items]) => ({
+        fecha,
+        items: items.sort((a, b) =>
+          (a.empleado_nombre ?? '').localeCompare(b.empleado_nombre ?? '', 'es'),
+        ),
+        total: items.reduce((s, x) => s + Number(x.monto), 0),
+      }));
+  }, [sueldosPendientes, busquedaSueldo]);
+
+  function seleccionarSueldosDe(items: SueldoPendiente[]) {
+    setSelSueldos((prev) => {
+      const next = new Set(prev);
+      const todas = items.every((s) => next.has(s.id));
+      for (const s of items) {
+        if (todas) next.delete(s.id);
+        else next.add(s.id);
+      }
+      return next;
+    });
+  }
 
   const sumaDividendos = useMemo(() => {
     if (!dividendosPendientes) return 0;
@@ -823,59 +863,101 @@ export function VincularPagosMovModal({ mov, open, onClose, onSuccess }: Props) 
           )}
         </div>
 
-        {/* Lista de sueldos pendientes (pestaña sueldos) */}
+        {/* Lista de sueldos pendientes (pestaña sueldos): buscador + agrupada por fecha */}
         {modo === 'sueldos' && (
-          <div className="flex-1 overflow-y-auto px-5 py-3">
-            {loadingSueldos ? (
-              <div className="py-6 text-center text-xs text-gray-400">Cargando sueldos…</div>
-            ) : (sueldosPendientes?.length ?? 0) === 0 ? (
-              <div className="py-6 text-center text-xs text-gray-400">
-                No hay sueldos pendientes de conciliar cerca de esta fecha.
-              </div>
-            ) : (
-              <div className="space-y-1">
-                {(sueldosPendientes ?? []).map((s) => {
-                  const sel = selSueldos.has(s.id);
-                  return (
-                    <button
-                      type="button"
-                      key={s.id}
-                      onClick={() => toggleSueldo(s.id)}
-                      className={cn(
-                        'w-full rounded-md border p-2.5 text-left text-xs transition-all',
-                        sel
-                          ? 'border-rodziny-700 bg-rodziny-50 ring-1 ring-rodziny-300'
-                          : 'border-gray-200 bg-white hover:bg-gray-50',
-                      )}
-                    >
-                      <div className="flex items-center gap-2">
-                        <input type="checkbox" checked={sel} readOnly className="h-4 w-4" />
-                        <div className="flex-1">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <strong className="text-gray-900">
-                              {s.empleado_nombre ?? '(sin nombre)'}
-                            </strong>
-                            <span className="text-[10px] text-gray-500">{s.fecha_pago}</span>
-                            {s.periodo && (
-                              <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[9px] text-gray-600">
-                                {s.periodo}
-                              </span>
-                            )}
-                            {s.medio_pago && s.medio_pago !== 'transferencia' && (
-                              <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[9px] text-amber-800">
-                                {s.medio_pago} → transf.
-                              </span>
-                            )}
+          <>
+            <div className="border-b border-gray-100 px-5 py-2">
+              <input
+                type="text"
+                value={busquedaSueldo}
+                onChange={(e) => setBusquedaSueldo(e.target.value)}
+                placeholder="🔎 Buscar empleado por nombre o apellido…"
+                className="w-full rounded border border-gray-300 px-3 py-1.5 text-sm focus:border-rodziny-500 focus:outline-none"
+              />
+            </div>
+            <div className="flex-1 overflow-y-auto px-5 py-3">
+              {loadingSueldos ? (
+                <div className="py-6 text-center text-xs text-gray-400">Cargando sueldos…</div>
+              ) : sueldosPorFecha.length === 0 ? (
+                <div className="py-6 text-center text-xs text-gray-400">
+                  {busquedaSueldo.trim()
+                    ? `No hay sueldos que coincidan con "${busquedaSueldo}".`
+                    : 'No hay sueldos pendientes de conciliar cerca de esta fecha.'}
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {sueldosPorFecha.map((grupo) => {
+                    const todasSel = grupo.items.every((s) => selSueldos.has(s.id));
+                    const algunaSel = grupo.items.some((s) => selSueldos.has(s.id));
+                    return (
+                      <div key={grupo.fecha} className="rounded-md border border-gray-200">
+                        <div className="flex items-center justify-between gap-2 border-b border-gray-200 bg-gray-50 px-2.5 py-1.5">
+                          <div className="flex items-center gap-2 text-xs">
+                            <strong className="text-gray-800">📅 {grupo.fecha}</strong>
+                            <span className="text-gray-500">
+                              · {grupo.items.length} {grupo.items.length === 1 ? 'sueldo' : 'sueldos'}
+                            </span>
+                            <span className="tabular-nums text-red-700">· {formatARS(grupo.total)}</span>
                           </div>
+                          <button
+                            type="button"
+                            onClick={() => seleccionarSueldosDe(grupo.items)}
+                            className={cn(
+                              'rounded border px-2 py-0.5 text-[10px] font-medium transition-colors',
+                              todasSel
+                                ? 'border-rodziny-700 bg-rodziny-700 text-white hover:bg-rodziny-800'
+                                : algunaSel
+                                  ? 'border-rodziny-300 bg-rodziny-50 text-rodziny-700 hover:bg-rodziny-100'
+                                  : 'border-gray-300 bg-white text-gray-600 hover:bg-gray-50',
+                            )}
+                          >
+                            {todasSel ? '✓ todos' : `Seleccionar todos (${grupo.items.length})`}
+                          </button>
                         </div>
-                        <strong className="tabular-nums text-red-700">{formatARS(s.monto)}</strong>
+                        <div className="space-y-1 p-1.5">
+                          {grupo.items.map((s) => {
+                            const sel = selSueldos.has(s.id);
+                            return (
+                              <button
+                                type="button"
+                                key={s.id}
+                                onClick={() => toggleSueldo(s.id)}
+                                className={cn(
+                                  'w-full rounded-md border p-2 text-left text-xs transition-all',
+                                  sel
+                                    ? 'border-rodziny-700 bg-rodziny-50 ring-1 ring-rodziny-300'
+                                    : 'border-gray-200 bg-white hover:bg-gray-50',
+                                )}
+                              >
+                                <div className="flex items-center gap-2">
+                                  <input type="checkbox" checked={sel} readOnly className="h-4 w-4" />
+                                  <div className="flex-1">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <strong className="text-gray-900">
+                                        {s.empleado_nombre ?? '(sin nombre)'}
+                                      </strong>
+                                      {s.medio_pago && s.medio_pago !== 'transferencia' && (
+                                        <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[9px] text-amber-800">
+                                          {s.medio_pago} → transf.
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+                                  <strong className="tabular-nums text-red-700">
+                                    {formatARS(s.monto)}
+                                  </strong>
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
                       </div>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </>
         )}
 
         {/* Lista de dividendos pendientes (pestaña dividendos) */}
