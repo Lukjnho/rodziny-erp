@@ -110,8 +110,12 @@ function extraerKeywordProveedor(descripcion: string | null): string {
 }
 
 export function VincularPagosMovModal({ mov, open, onClose, onSuccess }: Props) {
-  const { user } = useAuth();
+  const { user, tienePermiso } = useAuth();
   const qc = useQueryClient();
+  // Los dividendos son plata de los socios: la pestaña solo se muestra a quien puede
+  // ver finanzas (mismo permiso que protege la tabla dividendos por RLS). Los
+  // administrativos (compras/gastos) no la ven.
+  const puedeVerDividendos = tienePermiso('finanzas');
   const [seleccion, setSeleccion] = useState<Set<string>>(new Set());
   // Selecciones de sueldos y dividendos (persisten al cambiar de sub-pestaña, para
   // poder armar un movimiento mixto: ej. dividendo Karina $2M + $500k de sueldos).
@@ -277,7 +281,7 @@ export function VincularPagosMovModal({ mov, open, onClose, onSuccess }: Props) 
       if (error) throw error;
       return (data ?? []) as DividendoPendiente[];
     },
-    enabled: open,
+    enabled: open && puedeVerDividendos,
   });
 
   function toggleSueldo(id: string) {
@@ -597,12 +601,15 @@ export function VincularPagosMovModal({ mov, open, onClose, onSuccess }: Props) 
             mezclar sueldos + dividendos en un mismo movimiento). */}
         <div className="border-b border-gray-100 px-5 py-2">
           <div className="flex gap-1 rounded-md bg-gray-100 p-1">
-            {([
-              { k: 'facturas', label: '💸 Facturas', n: seleccion.size },
-              { k: 'sueldos', label: '👷 Sueldos', n: selSueldos.size },
-              { k: 'dividendos', label: '📈 Dividendos', n: selDividendos.size },
-              { k: 'crear', label: '➕ Crear', n: 0 },
-            ] as const).map((t) => (
+            {[
+              { k: 'facturas' as const, label: '💸 Facturas', n: seleccion.size },
+              { k: 'sueldos' as const, label: '👷 Sueldos', n: selSueldos.size },
+              // Dividendos solo para finanzas (plata de socios) — se oculta al resto.
+              ...(puedeVerDividendos
+                ? [{ k: 'dividendos' as const, label: '📈 Dividendos', n: selDividendos.size }]
+                : []),
+              { k: 'crear' as const, label: '➕ Crear', n: 0 },
+            ].map((t) => (
               <button
                 key={t.k}
                 type="button"
