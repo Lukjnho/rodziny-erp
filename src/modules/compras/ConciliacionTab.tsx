@@ -129,6 +129,20 @@ interface GastoConciliado {
   consolidado: boolean;
 }
 
+// Fila de la tabla de conciliados. Puede ser:
+//  - 'gasto': un gasto del ERP (link 1:1, o cargo auto con N movs propios).
+//  - 'transferencia': UNA transferencia del banco que paga VARIOS gastos del ERP;
+//    la línea principal es el débito del banco y los gastos cuelgan como detalle.
+type FilaConciliada =
+  | { tipo: 'gasto'; key: string; gasto: GastoConciliado }
+  | {
+      tipo: 'transferencia';
+      key: string;
+      mov: MovBancario;
+      gastos: GastoConciliado[];
+      sumaImportes: number; // Σ importes de los gastos que paga
+    };
+
 export function ConciliacionTab() {
   const { user } = useAuth();
   const qc = useQueryClient();
@@ -685,6 +699,40 @@ export function ConciliacionTab() {
   // Rojo (faltan) vs verde (todo procesado) para el cuadrante de pendientes.
   const hayPendientes = !loadingMovs && (movsPendientes?.movs.length ?? 0) > 0;
 
+  // Agrupa los conciliados para el render: las transferencias compartidas (1 transf.
+  // paga N gastos) se colapsan en UNA fila por transferencia, con los gastos adentro.
+  // El resto queda como una fila por gasto.
+  const filasConciliadas = useMemo<FilaConciliada[]>(() => {
+    const filas: FilaConciliada[] = [];
+    const grupos = new Map<string, { mov: MovBancario; gastos: GastoConciliado[] }>();
+    for (const g of conciliados ?? []) {
+      // consolidado === true ⟺ su (único) mov es una transferencia compartida.
+      const movCompartido = g.consolidado ? g.movs[0] : undefined;
+      if (movCompartido) {
+        const grp = grupos.get(movCompartido.id) ?? { mov: movCompartido, gastos: [] };
+        grp.gastos.push(g);
+        grupos.set(movCompartido.id, grp);
+      } else {
+        filas.push({ tipo: 'gasto', key: g.gasto_id, gasto: g });
+      }
+    }
+    for (const [movId, grp] of grupos) {
+      filas.push({
+        tipo: 'transferencia',
+        key: `mov:${movId}`,
+        mov: grp.mov,
+        gastos: grp.gastos,
+        sumaImportes: grp.gastos.reduce((s, x) => s + x.importe_total, 0),
+      });
+    }
+    filas.sort((a, b) => {
+      const fa = a.tipo === 'gasto' ? a.gasto.movs[0]?.fecha ?? a.gasto.fecha : a.mov.fecha;
+      const fb = b.tipo === 'gasto' ? b.gasto.movs[0]?.fecha ?? b.gasto.fecha : b.mov.fecha;
+      return (fb ?? '').localeCompare(fa ?? '');
+    });
+    return filas;
+  }, [conciliados]);
+
   // ---- Render ----
 
   return (
@@ -913,30 +961,125 @@ export function ConciliacionTab() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-green-50">
-                  {(conciliados ?? []).map((g) => {
-                    const isExpanded = expandido.has(g.gasto_id);
+                  {filasConciliadas.map((fila) => {
+                    const isExpanded = expandido.has(fila.key);
+
+                    // ─── Fila de TRANSFERENCIA COMPARTIDA: 1 transf. banco → N gastos ───
+                    if (fila.tipo === 'transferencia') {
+                      const { mov, gastos, sumaImportes } = fila;
+                      const dif = Math.abs(mov.debito - sumaImportes);
+                      const cuadra = dif < 1;
+                      return (
+                        <Fragment key={fila.key}>
+                          <tr
+                            className="cursor-pointer bg-blue-50/40 hover:bg-blue-50"
+                            onClick={() => toggleExpandir(fila.key)}
+                          >
+                            <td className="px-2 py-1.5 text-gray-400">{isExpanded ? '▼' : '▶'}</td>
+                            <td className="px-2 py-1.5 text-gray-800">
+                              <div className="font-medium">
+                                🔗 Transferencia compartida
+                                <span className="ml-1.5 rounded bg-blue-100 px-1.5 py-0.5 text-[9px] font-medium text-blue-700">
+                                  paga {gastos.length} gasto{gastos.length === 1 ? '' : 's'}
+                                </span>
+                              </div>
+                              {mov.descripcion && (
+                                <div className="text-[10px] text-gray-500">
+                                  {mov.descripcion.length > 80
+                                    ? mov.descripcion.slice(0, 80) + '…'
+                                    : mov.descripcion}
+                                </div>
+                              )}
+                            </td>
+                            <td className="px-2 py-1.5 tabular-nums text-gray-600">{mov.fecha}</td>
+                            {/* Importe gasto (ERP): Σ de los gastos que paga */}
+                            <td
+                              className={cn(
+                                'px-2 py-1.5 text-right tabular-nums',
+                                cuadra ? 'font-semibold text-red-700' : 'font-semibold text-amber-700',
+                              )}
+                              title={
+                                cuadra
+                                  ? 'La suma de los gastos cargados coincide con la transferencia'
+                                  : `La transferencia salió ${formatARS(mov.debito)} pero los gastos cargados suman ${formatARS(sumaImportes)} — faltan cargar ${formatARS(dif)}`
+                              }
+                            >
+                              <div className="flex flex-col items-end leading-tight">
+                                <span>{formatARS(sumaImportes)}</span>
+                                {!cuadra && (
+                                  <span className="text-[9px] font-medium text-amber-700">
+                                    ⚠ faltan {formatARS(dif)}
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+                            <td className="px-2 py-1.5 text-center text-gray-700 tabular-nums">
+                              {gastos.length}
+                            </td>
+                            {/* Débito banco: el monto REAL de la transferencia (línea principal) */}
+                            <td className="px-2 py-1.5 text-right font-semibold tabular-nums text-gray-800">
+                              {formatARS(mov.debito)}
+                            </td>
+                          </tr>
+                          {isExpanded && (
+                            <tr className="bg-gray-50/50">
+                              <td colSpan={6} className="px-2 py-2">
+                                <div className="rounded border border-gray-200 bg-white">
+                                  <table className="w-full text-[11px]">
+                                    <thead className="border-b border-gray-200 bg-gray-50 text-gray-500">
+                                      <tr>
+                                        <th className="px-2 py-1 text-left font-medium">
+                                          Gasto del ERP (proveedor)
+                                        </th>
+                                        <th className="px-2 py-1 text-left font-medium">Fecha</th>
+                                        <th className="px-2 py-1 text-right font-medium">Importe</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-gray-100">
+                                      {gastos.map((gg) => (
+                                        <tr key={gg.gasto_id} className="hover:bg-gray-50">
+                                          <td className="px-2 py-1 text-gray-700">
+                                            {gg.proveedor ?? '(sin proveedor)'}
+                                            {gg.comentario && (
+                                              <span className="ml-1 text-[10px] text-gray-400">
+                                                · {gg.comentario.slice(0, 50)}
+                                                {gg.comentario.length > 50 ? '…' : ''}
+                                              </span>
+                                            )}
+                                          </td>
+                                          <td className="px-2 py-1 tabular-nums text-gray-600">
+                                            {gg.fecha}
+                                          </td>
+                                          <td className="px-2 py-1 text-right font-semibold tabular-nums text-red-700">
+                                            {formatARS(gg.importe_total)}
+                                          </td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
+                      );
+                    }
+
+                    // ─── Fila de GASTO normal (link 1:1 o cargo auto con N movs propios) ───
+                    const g = fila.gasto;
                     const desfase = Math.abs(g.importe_total - g.movs_total_debito);
-                    // En consolidados (1 transferencia paga varios gastos) el importe del
-                    // gasto NO iguala el débito del mov a propósito → no es desfase.
-                    const cuadra = g.consolidado || desfase < 1;
+                    const cuadra = desfase < 1;
                     return (
-                      <Fragment key={g.gasto_id}>
+                      <Fragment key={fila.key}>
                         <tr
                           className="cursor-pointer hover:bg-green-50/50"
-                          onClick={() => toggleExpandir(g.gasto_id)}
+                          onClick={() => toggleExpandir(fila.key)}
                         >
                           <td className="px-2 py-1.5 text-gray-400">
                             {isExpanded ? '▼' : '▶'}
                           </td>
                           <td className="px-2 py-1.5 text-gray-800">
-                            <div className="font-medium">
-                              {g.proveedor ?? '(sin proveedor)'}
-                              {g.consolidado && (
-                                <span className="ml-1.5 rounded bg-blue-100 px-1.5 py-0.5 text-[9px] font-medium text-blue-700">
-                                  transf. compartida
-                                </span>
-                              )}
-                            </div>
+                            <div className="font-medium">{g.proveedor ?? '(sin proveedor)'}</div>
                             {g.comentario && (
                               <div className="text-[10px] text-gray-500">
                                 {g.comentario.length > 80
@@ -955,32 +1098,20 @@ export function ConciliacionTab() {
                           <td
                             className={cn(
                               'px-2 py-1.5 text-right tabular-nums',
-                              g.consolidado
-                                ? 'text-gray-500'
-                                : cuadra
-                                  ? 'text-gray-700'
-                                  : 'font-semibold text-amber-700',
+                              cuadra ? 'text-gray-700' : 'font-semibold text-amber-700',
                             )}
                             title={
-                              g.consolidado
-                                ? `Transferencia de ${formatARS(g.movs_total_debito)} que paga varios gastos — este es uno de ellos, no es un desfase`
-                                : cuadra
-                                  ? 'El importe del gasto coincide con lo que salió del banco'
-                                  : `El gasto dice ${formatARS(g.importe_total)} pero del banco salieron ${formatARS(g.movs_total_debito)} — difieren ${formatARS(desfase)}`
+                              cuadra
+                                ? 'El importe del gasto coincide con lo que salió del banco'
+                                : `El gasto dice ${formatARS(g.importe_total)} pero del banco salieron ${formatARS(g.movs_total_debito)} — difieren ${formatARS(desfase)}`
                             }
                           >
                             <div className="flex flex-col items-end leading-tight">
                               <span>{formatARS(g.movs_total_debito)}</span>
-                              {g.consolidado ? (
-                                <span className="text-[9px] font-medium text-blue-600">
-                                  🔗 transf. compartida
+                              {!cuadra && (
+                                <span className="text-[9px] font-medium text-amber-700">
+                                  ⚠ difiere {formatARS(desfase)}
                                 </span>
-                              ) : (
-                                !cuadra && (
-                                  <span className="text-[9px] font-medium text-amber-700">
-                                    ⚠ difiere {formatARS(desfase)}
-                                  </span>
-                                )
                               )}
                             </div>
                           </td>
