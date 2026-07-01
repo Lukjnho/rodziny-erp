@@ -19,6 +19,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth';
 import { formatARS, cn } from '@/lib/utils';
+import { hoyAR } from '@/lib/fechaAR';
 import { ImportarExtractoModal } from '@/modules/gastos/ImportarExtractoModal';
 import { VincularPagosMovModal } from './VincularPagosMovModal';
 
@@ -148,29 +149,21 @@ export function ConciliacionTab() {
     });
   }
 
-  // ---- Período (default: mes actual) ----
-  const ahora = new Date();
-  const primerDelMes = useMemo(
-    () => ymd(new Date(ahora.getFullYear(), ahora.getMonth(), 1)),
-    [],
-  );
-  const ultimoDelMes = useMemo(
-    () => ymd(new Date(ahora.getFullYear(), ahora.getMonth() + 1, 0)),
-    [],
-  );
-  const primerMesAnt = useMemo(
-    () => ymd(new Date(ahora.getFullYear(), ahora.getMonth() - 1, 1)),
-    [],
-  );
-  const ultimoMesAnt = useMemo(
-    () => ymd(new Date(ahora.getFullYear(), ahora.getMonth(), 0)),
-    [],
-  );
-  const primerDelAnio = useMemo(() => `${ahora.getFullYear()}-01-01`, []);
-  const ultimoDelAnio = useMemo(() => `${ahora.getFullYear()}-12-31`, []);
+  // ---- Período ----
+  // Fecha "hoy" en horario AR (no UTC) para no desfasar a fin/inicio de mes.
+  const [anioHoy, mesHoy, diaHoy] = useMemo(() => hoyAR().split('-').map(Number), []); // mesHoy: 1-12
+  const primerDelMes = useMemo(() => ymd(new Date(anioHoy, mesHoy - 1, 1)), [anioHoy, mesHoy]);
+  const ultimoDelMes = useMemo(() => ymd(new Date(anioHoy, mesHoy, 0)), [anioHoy, mesHoy]);
+  const primerMesAnt = useMemo(() => ymd(new Date(anioHoy, mesHoy - 2, 1)), [anioHoy, mesHoy]);
+  const ultimoMesAnt = useMemo(() => ymd(new Date(anioHoy, mesHoy - 1, 0)), [anioHoy, mesHoy]);
+  const primerDelAnio = useMemo(() => `${anioHoy}-01-01`, [anioHoy]);
+  const ultimoDelAnio = useMemo(() => `${anioHoy}-12-31`, [anioHoy]);
 
-  const [desde, setDesde] = useState<string>(primerDelMes);
-  const [hasta, setHasta] = useState<string>(ultimoDelMes);
+  // Durante los primeros días del mes normalmente se está cerrando el mes anterior:
+  // arrancamos el selector en ESE mes para no mostrar paneles vacíos del mes nuevo.
+  const cerrandoMesAnterior = diaHoy <= 5;
+  const [desde, setDesde] = useState<string>(cerrandoMesAnterior ? primerMesAnt : primerDelMes);
+  const [hasta, setHasta] = useState<string>(cerrandoMesAnterior ? ultimoMesAnt : ultimoDelMes);
 
   function aplicarPreset(d: string, h: string) {
     setDesde(d);
@@ -484,6 +477,8 @@ export function ConciliacionTab() {
       const { data, error } = await q;
       if (error) throw error;
       let movs = (data ?? []) as MovimientoSinConciliar[];
+      // Si el fetch llegó al tope de 500, hay más movs que no se muestran → avisamos.
+      const truncado = (data ?? []).length >= 500;
 
       // Excluir movimientos ya conciliados vía link 1:N (no setean gasto_id):
       // transferencias consolidadas / sueldos / dividendos por transferencia.
@@ -505,14 +500,16 @@ export function ConciliacionTab() {
         }
         movs = movs.filter((m) => !excl.has(m.id));
       }
-      return movs;
+      return { movs, truncado };
     },
   });
 
   // ---- Estado por banco (cards arriba) ----
   // Para cada banco: total movs, fecha del último mov del extracto, fecha del primero
   const { data: estadoBancos } = useQuery({
-    queryKey: ['conciliacion', 'estado_bancos'],
+    // `total` / `ultimaFecha` son históricos (indicador de frescura del extracto).
+    // `sinGastoCount` se acota al período seleccionado para que coincida con la tabla de abajo.
+    queryKey: ['conciliacion', 'estado_bancos', desde, hasta],
     queryFn: async () => {
       const cuentas = ['mercadopago', 'galicia', 'icbc'] as const;
       const result: Record<string, { total: number; ultimaFecha: string | null; primeraFecha: string | null; sinGastoCount: number }> = {};
@@ -523,6 +520,7 @@ export function ConciliacionTab() {
           supabase.from('movimientos_bancarios').select('fecha').eq('cuenta', c).order('fecha', { ascending: true }).limit(1),
           supabase.from('movimientos_bancarios').select('*', { count: 'exact', head: true })
             .eq('cuenta', c).is('gasto_id', null).is('sugerencia', null).gt('debito', 0)
+            .gte('fecha', desde).lte('fecha', hasta)
             .or('es_transferencia_interna.is.null,es_transferencia_interna.eq.false'),
         ]);
         result[c] = {
@@ -675,6 +673,15 @@ export function ConciliacionTab() {
     }
   }
 
+  // IDs de movs que el botón "Crear cargos auto" realmente procesa (matchean los
+  // patrones de cargo bancario). Solo esos se pintan como 🔵 en la tabla; un mov con
+  // `sugerencia` que NO califica se muestra como pendiente manual (antes quedaba azul
+  // y colgado porque el botón global nunca lo tocaba).
+  const cargosAutoIds = useMemo(
+    () => new Set((cargosAuto?.movs ?? []).map((m) => m.id as string)),
+    [cargosAuto],
+  );
+
   // ---- Render ----
 
   return (
@@ -715,7 +722,7 @@ export function ConciliacionTab() {
           let semaforo: 'verde' | 'amarillo' | 'rojo' | 'gris' = 'gris';
           let dias = 0;
           if (ultima) {
-            dias = diffDays(ymd(new Date()), ultima);
+            dias = diffDays(hoyAR(), ultima);
             if (dias <= 1) semaforo = 'verde';
             else if (dias <= 5) semaforo = 'amarillo';
             else semaforo = 'rojo';
@@ -768,7 +775,7 @@ export function ConciliacionTab() {
                     </div>
                     {e?.sinGastoCount && e.sinGastoCount > 0 ? (
                       <div className="mt-1 text-gray-600">
-                        <strong className="text-amber-800">{e.sinGastoCount}</strong> egresos sin gasto cargado
+                        <strong className="text-amber-800">{e.sinGastoCount}</strong> egresos sin gasto (en el período)
                       </div>
                     ) : null}
                   </>
@@ -1016,7 +1023,7 @@ export function ConciliacionTab() {
         <div className="max-h-[36rem] space-y-1 overflow-y-auto rounded border border-gray-100">
           {loadingMovs ? (
             <div className="py-4 text-center text-xs text-gray-400">Cargando…</div>
-          ) : (movsPendientes?.length ?? 0) === 0 ? (
+          ) : (movsPendientes?.movs.length ?? 0) === 0 ? (
             <div className="py-4 text-center text-xs text-gray-400">
               No hay movimientos pendientes de procesar en este período.
             </div>
@@ -1033,9 +1040,9 @@ export function ConciliacionTab() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {(movsPendientes ?? []).map((m) => {
+                {(movsPendientes?.movs ?? []).map((m) => {
                   const candidatos = buscarCandidatos(m);
-                  const tieneSugerencia = !!m.sugerencia;
+                  const esCargoAuto = cargosAutoIds.has(m.id);
                   return (
                     <tr key={m.id} className="hover:bg-gray-50">
                       <td className="px-2 py-1.5 text-gray-600 tabular-nums">{m.fecha}</td>
@@ -1048,7 +1055,7 @@ export function ConciliacionTab() {
                         {formatARS(Number(m.debito))}
                       </td>
                       <td className="px-2 py-1.5">
-                        {tieneSugerencia ? (
+                        {esCargoAuto ? (
                           <span
                             className="inline-block rounded border border-blue-300 bg-blue-50 px-2 py-0.5 text-[11px] font-medium text-blue-800"
                             title="Cargo automático del banco. Se procesa con 'Crear cargos auto' arriba."
@@ -1057,6 +1064,14 @@ export function ConciliacionTab() {
                           </span>
                         ) : (
                           <div className="flex flex-wrap items-center gap-1">
+                            {m.sugerencia && (
+                              <span
+                                className="text-[10px] italic text-gray-400"
+                                title="Tiene sugerencia pero no califica como cargo automático — resolvelo a mano."
+                              >
+                                {m.sugerencia}
+                              </span>
+                            )}
                             {candidatos.length === 0 ? (
                               <span className="text-[10px] text-gray-400">⚪ sin match</span>
                             ) : candidatos.length === 1 ? (
@@ -1111,6 +1126,12 @@ export function ConciliacionTab() {
             </table>
           )}
         </div>
+        {movsPendientes?.truncado && (
+          <p className="mt-2 text-[11px] text-amber-700">
+            ⚠ Mostrando los primeros 500 movimientos del período. Hay más — acotá el rango de
+            fechas o filtrá por banco para ver el resto.
+          </p>
+        )}
       </div>
 
       {/* Modal: subir CSV de extractos (Galicia / ICBC / MP). Al cerrar, refresca queries. */}
