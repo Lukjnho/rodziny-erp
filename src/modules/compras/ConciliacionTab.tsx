@@ -432,6 +432,26 @@ export function ConciliacionTab() {
     },
   });
 
+  // Confirma manualmente que una cuenta está al día hasta hoy (para que el semáforo
+  // no quede en rojo cuando simplemente no hubo movimientos nuevos, como el ICBC).
+  async function handleMarcarAlDia(cuenta: string) {
+    setMensaje(null);
+    try {
+      const { error } = await supabase
+        .from('extractos_estado')
+        .upsert(
+          { cuenta, al_dia_hasta: hoyAR(), actualizado_por: user?.id ?? null },
+          { onConflict: 'cuenta' },
+        );
+      if (error) throw error;
+      setMensaje({ tipo: 'ok', texto: `${cuenta.toUpperCase()} marcado como al día.` });
+      qc.invalidateQueries({ queryKey: ['conciliacion', 'estado_bancos'] });
+    } catch (e: unknown) {
+      console.error('[Conciliacion] marcar al día error:', e);
+      setMensaje({ tipo: 'err', texto: `Error al marcar al día: ${formatError(e)}` });
+    }
+  }
+
   async function handleMarcarInterna(movId: string) {
     setMensaje(null);
     try {
@@ -526,7 +546,12 @@ export function ConciliacionTab() {
     queryKey: ['conciliacion', 'estado_bancos', desde, hasta],
     queryFn: async () => {
       const cuentas = ['mercadopago', 'galicia', 'icbc'] as const;
-      const result: Record<string, { total: number; ultimaFecha: string | null; primeraFecha: string | null; sinGastoCount: number }> = {};
+      // Confirmaciones manuales "al día hasta X" por cuenta (para el semáforo).
+      const { data: estados } = await supabase
+        .from('extractos_estado')
+        .select('cuenta, al_dia_hasta');
+      const alDiaMap = new Map((estados ?? []).map((e) => [e.cuenta as string, e.al_dia_hasta as string]));
+      const result: Record<string, { total: number; ultimaFecha: string | null; primeraFecha: string | null; sinGastoCount: number; alDiaHasta: string | null }> = {};
       for (const c of cuentas) {
         const [{ count: total }, { data: ultimoMov }, { data: primerMov }, { count: sinGasto }] = await Promise.all([
           supabase.from('movimientos_bancarios').select('*', { count: 'exact', head: true }).eq('cuenta', c),
@@ -542,6 +567,7 @@ export function ConciliacionTab() {
           ultimaFecha: ultimoMov?.[0]?.fecha ?? null,
           primeraFecha: primerMov?.[0]?.fecha ?? null,
           sinGastoCount: sinGasto ?? 0,
+          alDiaHasta: alDiaMap.get(c) ?? null,
         };
       }
       return result;
@@ -770,10 +796,16 @@ export function ConciliacionTab() {
           const label = c === 'mercadopago' ? 'Mercado Pago' : c === 'galicia' ? 'Banco Galicia' : 'ICBC';
           const emoji = c === 'mercadopago' ? '🟢' : c === 'galicia' ? '🔵' : '🟠';
           const ultima = e?.ultimaFecha;
+          const alDia = e?.alDiaHasta ?? null;
+          // Fecha de referencia del semáforo: la más reciente entre el último
+          // movimiento y la confirmación manual "al día hasta X".
+          const refFecha = [ultima, alDia].filter(Boolean).sort().slice(-1)[0] ?? null;
+          // Está confirmada al día si la confirmación es igual o posterior al último mov.
+          const confirmadoAlDia = !!alDia && (!ultima || alDia >= ultima);
           let semaforo: 'verde' | 'amarillo' | 'rojo' | 'gris' = 'gris';
           let dias = 0;
-          if (ultima) {
-            dias = diffDays(hoyAR(), ultima);
+          if (refFecha) {
+            dias = diffDays(hoyAR(), refFecha);
             if (dias <= 1) semaforo = 'verde';
             else if (dias <= 5) semaforo = 'amarillo';
             else semaforo = 'rojo';
@@ -785,12 +817,13 @@ export function ConciliacionTab() {
             : 'border-gray-200 bg-gray-50';
           const isFiltrado = bancoFiltro === c;
           return (
-            <button
-              type="button"
+            <div
+              role="button"
+              tabIndex={0}
               key={c}
               onClick={() => setBancoFiltro(isFiltrado ? 'todos' : c)}
               className={cn(
-                'rounded-lg border-2 p-3 text-left transition-all hover:shadow-md',
+                'cursor-pointer rounded-lg border-2 p-3 text-left transition-all hover:shadow-md',
                 colorBorder,
                 isFiltrado && 'ring-2 ring-rodziny-700 ring-offset-1',
               )}
@@ -815,26 +848,47 @@ export function ConciliacionTab() {
                   <>
                     <div>
                       <strong>Último mov:</strong> {ultima}
-                      <span className={cn(
-                        'ml-1 rounded px-1 py-0.5 text-[9px] font-semibold',
-                        semaforo === 'verde' ? 'bg-green-200 text-green-900'
-                        : semaforo === 'amarillo' ? 'bg-amber-200 text-amber-900'
-                        : 'bg-red-200 text-red-900',
-                      )}>
-                        {dias === 0 ? 'hoy' : `hace ${dias}d`}
-                      </span>
+                    </div>
+                    <div className="mt-1">
+                      {confirmadoAlDia ? (
+                        <span className="rounded bg-green-200 px-1 py-0.5 text-[9px] font-semibold text-green-900">
+                          ✓ al día · confirmado {alDia}
+                        </span>
+                      ) : (
+                        <span
+                          className={cn(
+                            'rounded px-1 py-0.5 text-[9px] font-semibold',
+                            semaforo === 'verde' ? 'bg-green-200 text-green-900'
+                            : semaforo === 'amarillo' ? 'bg-amber-200 text-amber-900'
+                            : 'bg-red-200 text-red-900',
+                          )}
+                        >
+                          {dias === 0 ? 'hoy' : `hace ${dias}d`}
+                        </span>
+                      )}
                     </div>
                     {e?.sinGastoCount && e.sinGastoCount > 0 ? (
                       <div className="mt-1 text-gray-600">
                         <strong className="text-amber-800">{e.sinGastoCount}</strong> egresos sin gasto (en el período)
                       </div>
                     ) : null}
+                    <button
+                      type="button"
+                      onClick={(ev) => {
+                        ev.stopPropagation();
+                        handleMarcarAlDia(c);
+                      }}
+                      title="Confirmar que esta cuenta está al día hasta hoy (aunque no haya movimientos nuevos)"
+                      className="mt-2 rounded border border-gray-300 bg-white px-2 py-0.5 text-[10px] font-medium text-gray-600 hover:bg-gray-50"
+                    >
+                      ✓ Marcar al día
+                    </button>
                   </>
                 ) : (
                   <span className="italic text-gray-400">Sin extracto importado todavía</span>
                 )}
               </div>
-            </button>
+            </div>
           );
         })}
       </div>
