@@ -1342,9 +1342,9 @@ export function ConciliacionTab() {
                               type="button"
                               onClick={() => setMovParaVincular(m)}
                               className="rounded border border-blue-300 bg-blue-50 px-2 py-0.5 text-[11px] text-blue-800 hover:bg-blue-100"
-                              title="Vincular este movimiento a una o varias facturas pendientes (1 transferencia → N facturas)"
+                              title="Vincular este movimiento a facturas, sueldos o dividendos pendientes (podés mezclar hasta cuadrar el débito)"
                             >
-                              💸 Pagar facturas…
+                              🔗 Vincular…
                             </button>
                             <button
                               type="button"
@@ -1397,8 +1397,9 @@ export function ConciliacionTab() {
           onSuccess={() => {
             setMensaje({
               tipo: 'ok',
-              texto: 'Facturas marcadas como pagadas y movimiento vinculado.',
+              texto: 'Movimiento vinculado y conciliado.',
             });
+            qc.invalidateQueries({ queryKey: ['conciliacion'] });
           }}
         />
       )}

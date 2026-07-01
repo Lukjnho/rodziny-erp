@@ -52,6 +52,37 @@ interface GastoPendiente {
   local: string | null;
 }
 
+interface SueldoPendiente {
+  id: string;
+  empleado_nombre: string | null;
+  monto: number;
+  fecha_pago: string;
+  medio_pago: string | null;
+  periodo: string | null;
+  local: string | null;
+}
+
+interface DividendoPendiente {
+  id: string;
+  socio: string | null;
+  monto: number;
+  fecha: string;
+  medio_pago: string | null;
+  concepto: string | null;
+}
+
+// Ventana de fechas para buscar sueldos/dividendos pendientes cerca del movimiento
+// (los HABERES de fin de mes pagan sueldos del período; un dividendo puede tener
+// otra fecha cargada). Devuelve [desde, hasta] en YYYY-MM-DD.
+function ventanaFechas(fechaMov: string): [string, string] {
+  const base = new Date(fechaMov + 'T12:00:00Z');
+  const d1 = new Date(base);
+  d1.setUTCDate(d1.getUTCDate() - 60);
+  const d2 = new Date(base);
+  d2.setUTCDate(d2.getUTCDate() + 5);
+  return [d1.toISOString().slice(0, 10), d2.toISOString().slice(0, 10)];
+}
+
 interface Props {
   mov: MovExtracto;
   open: boolean;
@@ -82,14 +113,20 @@ export function VincularPagosMovModal({ mov, open, onClose, onSuccess }: Props) 
   const { user } = useAuth();
   const qc = useQueryClient();
   const [seleccion, setSeleccion] = useState<Set<string>>(new Set());
+  // Selecciones de sueldos y dividendos (persisten al cambiar de sub-pestaña, para
+  // poder armar un movimiento mixto: ej. dividendo Karina $2M + $500k de sueldos).
+  const [selSueldos, setSelSueldos] = useState<Set<string>>(new Set());
+  const [selDividendos, setSelDividendos] = useState<Set<string>>(new Set());
   const [busqueda, setBusqueda] = useState<string>(() => extraerKeywordProveedor(mov.descripcion));
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Proveedor resuelto via tabla `proveedores` (razón social del extracto → nombre comercial del ERP).
   const [proveedorResuelto, setProveedorResuelto] = useState<ProveedorMatch | null>(null);
 
-  // Modo "crear gasto nuevo" — para ECHEQs / regularización ARCA / casos sin factura cargada
-  const [modoCrear, setModoCrear] = useState(false);
+  // Sub-pestaña activa. 'crear' es el modo "crear gasto nuevo" (single-item);
+  // facturas/sueldos/dividendos son multi-select y comparten el total del footer.
+  const [modo, setModo] = useState<'facturas' | 'sueldos' | 'dividendos' | 'crear'>('facturas');
+  const modoCrear = modo === 'crear';
   const [nuevoCategoria, setNuevoCategoria] = useState<string>('');
   const [nuevoLocal, setNuevoLocal] = useState<'vedia' | 'saavedra' | 'sas'>('sas');
   const [nuevoProveedor, setNuevoProveedor] = useState<string>('');
@@ -204,6 +241,63 @@ export function VincularPagosMovModal({ mov, open, onClose, onSuccess }: Props) 
     enabled: open,
   });
 
+  // Sueldos pendientes de conciliar (cualquier medio_pago — al vincular corregimos a
+  // transferencia). Ventana de ±60/+5 días alrededor del movimiento.
+  const { data: sueldosPendientes, isLoading: loadingSueldos } = useQuery<SueldoPendiente[]>({
+    queryKey: ['sueldos_pendientes_para_vincular', mov.id],
+    queryFn: async () => {
+      const [d1, d2] = ventanaFechas(mov.fecha);
+      const { data, error } = await supabase
+        .from('pagos_sueldos')
+        .select('id, empleado_nombre, monto, fecha_pago, medio_pago, periodo, local')
+        .is('conciliado_movimiento_id', null)
+        .gte('fecha_pago', d1)
+        .lte('fecha_pago', d2)
+        .order('monto', { ascending: false })
+        .limit(300);
+      if (error) throw error;
+      return (data ?? []) as SueldoPendiente[];
+    },
+    enabled: open,
+  });
+
+  // Dividendos pendientes de conciliar (idem: al vincular corregimos medio a transferencia).
+  const { data: dividendosPendientes, isLoading: loadingDividendos } = useQuery<DividendoPendiente[]>({
+    queryKey: ['dividendos_pendientes_para_vincular', mov.id],
+    queryFn: async () => {
+      const [d1, d2] = ventanaFechas(mov.fecha);
+      const { data, error } = await supabase
+        .from('dividendos')
+        .select('id, socio, monto, fecha, medio_pago, concepto')
+        .is('conciliado_movimiento_id', null)
+        .gte('fecha', d1)
+        .lte('fecha', d2)
+        .order('monto', { ascending: false })
+        .limit(300);
+      if (error) throw error;
+      return (data ?? []) as DividendoPendiente[];
+    },
+    enabled: open,
+  });
+
+  function toggleSueldo(id: string) {
+    setSelSueldos((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleDividendo(id: string) {
+    setSelDividendos((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
   function toggle(id: string) {
     setSeleccion((prev) => {
       const next = new Set(prev);
@@ -260,12 +354,30 @@ export function VincularPagosMovModal({ mov, open, onClose, onSuccess }: Props) 
     return '📋 Sin local';
   }
 
-  const sumaSeleccion = useMemo(() => {
+  const sumaFacturas = useMemo(() => {
     if (!gastosPendientes) return 0;
     return gastosPendientes
       .filter((g) => seleccion.has(g.id))
       .reduce((s, g) => s + Number(g.importe_total), 0);
   }, [gastosPendientes, seleccion]);
+
+  const sumaSueldos = useMemo(() => {
+    if (!sueldosPendientes) return 0;
+    return sueldosPendientes
+      .filter((s) => selSueldos.has(s.id))
+      .reduce((acc, s) => acc + Number(s.monto), 0);
+  }, [sueldosPendientes, selSueldos]);
+
+  const sumaDividendos = useMemo(() => {
+    if (!dividendosPendientes) return 0;
+    return dividendosPendientes
+      .filter((d) => selDividendos.has(d.id))
+      .reduce((acc, d) => acc + Number(d.monto), 0);
+  }, [dividendosPendientes, selDividendos]);
+
+  // Total combinado (facturas + sueldos + dividendos) para reconciliar contra el mov.
+  const sumaSeleccion = sumaFacturas + sumaSueldos + sumaDividendos;
+  const totalSeleccionados = seleccion.size + selSueldos.size + selDividendos.size;
 
   const diferencia = mov.debito - sumaSeleccion;
   const cuadra = Math.abs(diferencia) < 1;
@@ -348,44 +460,73 @@ export function VincularPagosMovModal({ mov, open, onClose, onSuccess }: Props) 
   }
 
   async function handleConfirmar() {
-    if (seleccion.size === 0) {
-      setError('Seleccioná al menos una factura.');
+    if (totalSeleccionados === 0) {
+      setError('Seleccioná al menos una factura, sueldo o dividendo.');
       return;
     }
     setGuardando(true);
     setError(null);
     try {
       const idsArr = Array.from(seleccion);
-      const seleccionados = (gastosPendientes ?? []).filter((g) => seleccion.has(g.id));
-      const medio = medioPagoFromCuenta(mov.cuenta);
 
-      // 1) Insertar un pago por cada gasto seleccionado
-      const pagos = seleccionados.map((g) => ({
-        gasto_id: g.id,
-        fecha_pago: mov.fecha,
-        monto: g.importe_total,
-        medio_pago: medio,
-        numero_operacion: mov.referencia ?? null,
-        conciliado_movimiento_id: mov.id,
-        creado_por: user?.id ?? 'sistema',
-        notas: `Pago consolidado · Mov. ${mov.referencia ?? mov.id.slice(0, 8)}`,
-      }));
-      const { error: errPagos } = await supabase.from('pagos_gastos').insert(pagos);
-      if (errPagos) throw errPagos;
+      // 1) FACTURAS: un pago por gasto + marcar pagado + vincular mov al primero
+      if (idsArr.length > 0) {
+        const seleccionados = (gastosPendientes ?? []).filter((g) => seleccion.has(g.id));
+        const medio = medioPagoFromCuenta(mov.cuenta);
+        const pagos = seleccionados.map((g) => ({
+          gasto_id: g.id,
+          fecha_pago: mov.fecha,
+          monto: g.importe_total,
+          medio_pago: medio,
+          numero_operacion: mov.referencia ?? null,
+          conciliado_movimiento_id: mov.id,
+          creado_por: user?.id ?? 'sistema',
+          notas: `Pago consolidado · Mov. ${mov.referencia ?? mov.id.slice(0, 8)}`,
+        }));
+        const { error: errPagos } = await supabase.from('pagos_gastos').insert(pagos);
+        if (errPagos) throw errPagos;
 
-      // 2) Marcar gastos como pagados
-      const { error: errGastos } = await supabase
-        .from('gastos')
-        .update({ estado_pago: 'Pagado' })
-        .in('id', idsArr);
-      if (errGastos) throw errGastos;
+        const { error: errGastos } = await supabase
+          .from('gastos')
+          .update({ estado_pago: 'Pagado' })
+          .in('id', idsArr);
+        if (errGastos) throw errGastos;
 
-      // 3) Vincular el movimiento al primer gasto (para el panel Conciliados)
-      const { error: errMov } = await supabase
-        .from('movimientos_bancarios')
-        .update({ gasto_id: idsArr[0] })
-        .eq('id', mov.id);
-      if (errMov) throw errMov;
+        // Vincular el movimiento al primer gasto (para el panel Conciliados)
+        const { error: errMov } = await supabase
+          .from('movimientos_bancarios')
+          .update({ gasto_id: idsArr[0] })
+          .eq('id', mov.id);
+        if (errMov) throw errMov;
+      }
+
+      // 2) SUELDOS: conciliar y CORREGIR el medio a transferencia (venían como efectivo).
+      //    Guarda el N° de op y la cuenta del banco para que el flujo cuadre.
+      if (selSueldos.size > 0) {
+        const { error: errSueldos } = await supabase
+          .from('pagos_sueldos')
+          .update({
+            conciliado_movimiento_id: mov.id,
+            medio_pago: 'transferencia',
+            numero_operacion: mov.referencia ?? null,
+            cuenta: mov.cuenta,
+          })
+          .in('id', Array.from(selSueldos));
+        if (errSueldos) throw errSueldos;
+      }
+
+      // 3) DIVIDENDOS: idem — conciliar y corregir el medio a transferencia.
+      if (selDividendos.size > 0) {
+        const { error: errDiv } = await supabase
+          .from('dividendos')
+          .update({
+            conciliado_movimiento_id: mov.id,
+            medio_pago: 'transferencia',
+            numero_operacion: mov.referencia ?? null,
+          })
+          .in('id', Array.from(selDividendos));
+        if (errDiv) throw errDiv;
+      }
 
       // 4) Refresh
       qc.invalidateQueries({ queryKey: ['conciliacion'] });
@@ -393,6 +534,8 @@ export function VincularPagosMovModal({ mov, open, onClose, onSuccess }: Props) 
       qc.invalidateQueries({ queryKey: ['gastos_conciliados_ids'] });
       qc.invalidateQueries({ queryKey: ['gastos_pendientes_para_vincular'] });
       qc.invalidateQueries({ queryKey: ['gastos_resumen_kpis'] });
+      qc.invalidateQueries({ queryKey: ['sueldos_pendientes_para_vincular'] });
+      qc.invalidateQueries({ queryKey: ['dividendos_pendientes_para_vincular'] });
 
       onSuccess();
       onClose();
@@ -420,11 +563,11 @@ export function VincularPagosMovModal({ mov, open, onClose, onSuccess }: Props) 
           <div className="flex items-start justify-between gap-3">
             <div className="flex-1">
               <h3 className="text-base font-semibold text-gray-900">
-                💸 Vincular movimiento a facturas
+                🔗 Vincular movimiento
               </h3>
               <p className="mt-1 text-xs text-gray-500">
-                Marcá las facturas pendientes que cubre este movimiento del extracto.
-                Se van a marcar como pagadas con la misma fecha y N° de operación.
+                Elegí lo que cubre este movimiento: facturas, sueldos o dividendos. Podés
+                mezclar (ej. un dividendo + sueldos) hasta que la suma cuadre con el débito.
               </p>
             </div>
             <button
@@ -449,29 +592,34 @@ export function VincularPagosMovModal({ mov, open, onClose, onSuccess }: Props) 
           </div>
         </div>
 
-        {/* Toggle de modo: pagar facturas existentes vs crear gasto nuevo */}
+        {/* Sub-pestañas: facturas / sueldos / dividendos / crear gasto.
+            Las 3 primeras son multi-select y comparten el total del footer (podés
+            mezclar sueldos + dividendos en un mismo movimiento). */}
         <div className="border-b border-gray-100 px-5 py-2">
           <div className="flex gap-1 rounded-md bg-gray-100 p-1">
-            <button
-              type="button"
-              onClick={() => setModoCrear(false)}
-              className={cn(
-                'flex-1 rounded px-3 py-1.5 text-xs font-medium transition-colors',
-                !modoCrear ? 'bg-white text-rodziny-800 shadow-sm' : 'text-gray-500 hover:text-gray-700',
-              )}
-            >
-              💸 Pagar facturas existentes
-            </button>
-            <button
-              type="button"
-              onClick={() => setModoCrear(true)}
-              className={cn(
-                'flex-1 rounded px-3 py-1.5 text-xs font-medium transition-colors',
-                modoCrear ? 'bg-white text-rodziny-800 shadow-sm' : 'text-gray-500 hover:text-gray-700',
-              )}
-            >
-              ➕ Crear gasto nuevo
-            </button>
+            {([
+              { k: 'facturas', label: '💸 Facturas', n: seleccion.size },
+              { k: 'sueldos', label: '👷 Sueldos', n: selSueldos.size },
+              { k: 'dividendos', label: '📈 Dividendos', n: selDividendos.size },
+              { k: 'crear', label: '➕ Crear', n: 0 },
+            ] as const).map((t) => (
+              <button
+                key={t.k}
+                type="button"
+                onClick={() => setModo(t.k)}
+                className={cn(
+                  'flex-1 rounded px-2 py-1.5 text-xs font-medium transition-colors',
+                  modo === t.k ? 'bg-white text-rodziny-800 shadow-sm' : 'text-gray-500 hover:text-gray-700',
+                )}
+              >
+                {t.label}
+                {t.n > 0 && (
+                  <span className="ml-1 rounded-full bg-rodziny-700 px-1.5 text-[9px] font-bold text-white">
+                    {t.n}
+                  </span>
+                )}
+              </button>
+            ))}
           </div>
           {modoCrear && (
             <p className="mt-1 text-[10px] text-gray-500">
@@ -479,10 +627,20 @@ export function VincularPagosMovModal({ mov, open, onClose, onSuccess }: Props) 
               Crea el gasto y lo marca como pagado con este mov.
             </p>
           )}
+          {modo === 'sueldos' && (
+            <p className="mt-1 text-[10px] text-amber-700">
+              Al vincular, estos sueldos se corrigen a <strong>transferencia</strong> con el N° de op del banco.
+            </p>
+          )}
+          {modo === 'dividendos' && (
+            <p className="mt-1 text-[10px] text-amber-700">
+              Al vincular, estos dividendos se corrigen a <strong>transferencia</strong> con el N° de op del banco.
+            </p>
+          )}
         </div>
 
-        {/* Buscador (solo en modo pagar facturas) */}
-        <div className={cn('border-b border-gray-100 px-5 py-3', modoCrear && 'hidden')}>
+        {/* Buscador (solo en la pestaña de facturas) */}
+        <div className={cn('border-b border-gray-100 px-5 py-3', modo !== 'facturas' && 'hidden')}>
           <div className="flex items-center gap-2">
             <label className="text-xs text-gray-500">Buscar proveedor:</label>
             <input
@@ -505,8 +663,8 @@ export function VincularPagosMovModal({ mov, open, onClose, onSuccess }: Props) 
           )}
         </div>
 
-        {/* Lista de gastos pendientes (modo pagar) */}
-        <div className={cn('flex-1 overflow-y-auto px-5 py-3', modoCrear && 'hidden')}>
+        {/* Lista de gastos pendientes (pestaña facturas) */}
+        <div className={cn('flex-1 overflow-y-auto px-5 py-3', modo !== 'facturas' && 'hidden')}>
           {isLoading ? (
             <div className="py-6 text-center text-xs text-gray-400">Cargando facturas pendientes…</div>
           ) : (gastosPendientes?.length ?? 0) === 0 ? (
@@ -658,6 +816,114 @@ export function VincularPagosMovModal({ mov, open, onClose, onSuccess }: Props) 
           )}
         </div>
 
+        {/* Lista de sueldos pendientes (pestaña sueldos) */}
+        {modo === 'sueldos' && (
+          <div className="flex-1 overflow-y-auto px-5 py-3">
+            {loadingSueldos ? (
+              <div className="py-6 text-center text-xs text-gray-400">Cargando sueldos…</div>
+            ) : (sueldosPendientes?.length ?? 0) === 0 ? (
+              <div className="py-6 text-center text-xs text-gray-400">
+                No hay sueldos pendientes de conciliar cerca de esta fecha.
+              </div>
+            ) : (
+              <div className="space-y-1">
+                {(sueldosPendientes ?? []).map((s) => {
+                  const sel = selSueldos.has(s.id);
+                  return (
+                    <button
+                      type="button"
+                      key={s.id}
+                      onClick={() => toggleSueldo(s.id)}
+                      className={cn(
+                        'w-full rounded-md border p-2.5 text-left text-xs transition-all',
+                        sel
+                          ? 'border-rodziny-700 bg-rodziny-50 ring-1 ring-rodziny-300'
+                          : 'border-gray-200 bg-white hover:bg-gray-50',
+                      )}
+                    >
+                      <div className="flex items-center gap-2">
+                        <input type="checkbox" checked={sel} readOnly className="h-4 w-4" />
+                        <div className="flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <strong className="text-gray-900">
+                              {s.empleado_nombre ?? '(sin nombre)'}
+                            </strong>
+                            <span className="text-[10px] text-gray-500">{s.fecha_pago}</span>
+                            {s.periodo && (
+                              <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[9px] text-gray-600">
+                                {s.periodo}
+                              </span>
+                            )}
+                            {s.medio_pago && s.medio_pago !== 'transferencia' && (
+                              <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[9px] text-amber-800">
+                                {s.medio_pago} → transf.
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <strong className="tabular-nums text-red-700">{formatARS(s.monto)}</strong>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Lista de dividendos pendientes (pestaña dividendos) */}
+        {modo === 'dividendos' && (
+          <div className="flex-1 overflow-y-auto px-5 py-3">
+            {loadingDividendos ? (
+              <div className="py-6 text-center text-xs text-gray-400">Cargando dividendos…</div>
+            ) : (dividendosPendientes?.length ?? 0) === 0 ? (
+              <div className="py-6 text-center text-xs text-gray-400">
+                No hay dividendos pendientes de conciliar cerca de esta fecha.
+              </div>
+            ) : (
+              <div className="space-y-1">
+                {(dividendosPendientes ?? []).map((d) => {
+                  const sel = selDividendos.has(d.id);
+                  return (
+                    <button
+                      type="button"
+                      key={d.id}
+                      onClick={() => toggleDividendo(d.id)}
+                      className={cn(
+                        'w-full rounded-md border p-2.5 text-left text-xs transition-all',
+                        sel
+                          ? 'border-rodziny-700 bg-rodziny-50 ring-1 ring-rodziny-300'
+                          : 'border-gray-200 bg-white hover:bg-gray-50',
+                      )}
+                    >
+                      <div className="flex items-center gap-2">
+                        <input type="checkbox" checked={sel} readOnly className="h-4 w-4" />
+                        <div className="flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <strong className="capitalize text-gray-900">
+                              {d.socio ?? '(sin socio)'}
+                            </strong>
+                            <span className="text-[10px] text-gray-500">{d.fecha}</span>
+                            {d.medio_pago && d.medio_pago !== 'transferencia' && (
+                              <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[9px] text-amber-800">
+                                {d.medio_pago} → transf.
+                              </span>
+                            )}
+                            {d.concepto && (
+                              <span className="text-[10px] text-gray-400">{d.concepto}</span>
+                            )}
+                          </div>
+                        </div>
+                        <strong className="tabular-nums text-red-700">{formatARS(d.monto)}</strong>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Form crear gasto nuevo */}
         {modoCrear && (
           <div className="flex-1 overflow-y-auto px-5 py-3">
@@ -758,10 +1024,17 @@ export function VincularPagosMovModal({ mov, open, onClose, onSuccess }: Props) 
           {!modoCrear && (
             <div className="mb-2 flex items-center justify-between text-xs">
               <div>
-                <span className="text-gray-500">Seleccionadas:</span>{' '}
-                <strong>{seleccion.size}</strong>{' '}
+                <span className="text-gray-500">Seleccionados:</span>{' '}
+                <strong>{totalSeleccionados}</strong>{' '}
                 <span className="text-gray-400">·</span>{' '}
                 <strong className="tabular-nums">{formatARS(sumaSeleccion)}</strong>
+                {(selSueldos.size > 0 || selDividendos.size > 0) && (
+                  <span className="ml-1 text-[10px] text-gray-400">
+                    ({seleccion.size > 0 ? `${seleccion.size} fact · ` : ''}
+                    {selSueldos.size > 0 ? `${selSueldos.size} sueldos · ` : ''}
+                    {selDividendos.size > 0 ? `${selDividendos.size} divid.` : ''})
+                  </span>
+                )}
               </div>
               <div
                 className={cn(
@@ -808,10 +1081,10 @@ export function VincularPagosMovModal({ mov, open, onClose, onSuccess }: Props) 
             ) : (
               <button
                 onClick={handleConfirmar}
-                disabled={guardando || seleccion.size === 0}
+                disabled={guardando || totalSeleccionados === 0}
                 className="rounded bg-rodziny-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-rodziny-800 disabled:bg-gray-300"
               >
-                {guardando ? 'Guardando…' : `✓ Marcar como pagadas (${seleccion.size})`}
+                {guardando ? 'Guardando…' : `✓ Vincular y conciliar (${totalSeleccionados})`}
               </button>
             )}
           </div>
