@@ -96,7 +96,7 @@ const ayudaPorTab: Record<Tab, { titulo: string; pasos: string[] }> = {
       'Los días con diferencia mayor a 30 minutos quedan resaltados en amarillo dentro del drilldown.',
       'Horas reales = suma de pares entrada→salida cronológicos del día (soporta jornadas partidas).',
       'Si un par entrada→salida dura más de 16 hs, se considera "salida no fichada" (cierre tardío al día siguiente) y NO suma horas — aparece como "⚠ sin salida".',
-      'Empleados sin cronograma cargado en el período aparecen con badge "sin cronograma" y NO suman al total consolidado (solo se ven sus reales).',
+      'Empleados sin cronograma cargado en el período aparecen con badge "sin cronograma" y NO suman al total de Empresa (solo se ven sus reales).',
       'Tildá "Solo con discrepancia" para filtrar empleados que tienen al menos un día con diferencia >30min.',
       'Las fichadas en días no programados (francos) suman a las reales pero no a las teóricas — quedan en verde.',
     ],
@@ -154,7 +154,7 @@ const ayudaPorTab: Record<Tab, { titulo: string; pasos: string[] }> = {
     pasos: [
       'Rankings del equipo calculados automáticamente a partir de asistencia, puntualidad y horas trabajadas.',
       'Elegí período Mensual o Quincenal con el selector, y navegá con las flechas ‹ ›.',
-      'Filtrá por local si querés ver solo Vedia o Saavedra, o dejalo en "Todos" para el consolidado.',
+      'Filtrá por local si querés ver solo Vedia o Saavedra, o dejalo en "Todos" para ver la Empresa.',
       '🏆 Asistencia perfecta: top empleados con 0 ausencias en el período.',
       '⏰ Puntualidad: porcentaje de fichadas dentro de los 10 min del horario.',
       '🔥 Racha actual: días consecutivos sin faltar (desde hoy hacia atrás, no depende del período).',
@@ -279,7 +279,7 @@ export function RRHHPage() {
   const [ayudaAbierta, setAyudaAbierta] = useState(false);
 
   return (
-    <PageContainer title="RRHH" subtitle="Gestión del personal — Rodziny S.A.S.">
+    <PageContainer title="RRHH" subtitle="Gestión del personal — Empresa">
       <div className="mb-6 flex items-center gap-1 border-b border-surface-border">
         <TabButton activo={tab === 'legajos'} onClick={() => setTab('legajos')}>
           Legajos

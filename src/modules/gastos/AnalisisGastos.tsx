@@ -436,7 +436,7 @@ export function AnalisisGastos({ local }: Props) {
               <tbody>
                 <tr className="bg-rodziny-700 text-white">
                   <td className="sticky left-0 z-10 bg-rodziny-700 px-4 py-3 text-sm font-bold tracking-wide">
-                    RODZINY {localActivo ? `· ${localActivo.toUpperCase()}` : '· CONSOLIDADO'}
+                    RODZINY {localActivo ? `· ${localActivo.toUpperCase()}` : '· EMPRESA'}
                   </td>
                   {meses.map((mes) => (
                     <td key={mes} className="px-3 py-3 text-right font-semibold tabular-nums">

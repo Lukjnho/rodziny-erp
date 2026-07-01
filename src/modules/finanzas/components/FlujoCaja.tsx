@@ -1807,8 +1807,8 @@ function GrupoEgreso({
   const localLabel: Record<string, string> = {
     vedia: 'Vedia',
     saavedra: 'Saavedra',
-    sas: 'SAS',
-    ambos: 'Ambos',
+    sas: 'Empresa',
+    ambos: 'Empresa',
     general: 'General',
   };
   const localesSorted = porLocal

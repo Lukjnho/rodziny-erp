@@ -696,7 +696,7 @@ export function CierreMesPanel({ onNavigateToTab }: Props) {
       <div className="flex flex-wrap items-center gap-4">
         <div className="flex items-center gap-2">
           <span className="rounded-md bg-rodziny-100 px-2.5 py-1 text-xs font-semibold text-rodziny-800">
-            🏢 Empresa (ambos locales)
+            🏢 Empresa
           </span>
         </div>
         <div className="flex items-center gap-2">

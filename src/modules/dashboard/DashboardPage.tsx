@@ -6,7 +6,7 @@ import { ExtractosAlerta } from '@/modules/finanzas/components/ExtractosAlerta';
 
 export function DashboardPage() {
   return (
-    <PageContainer title="Dashboard" subtitle="Rodziny S.A.S. — panel principal">
+    <PageContainer title="Dashboard" subtitle="Empresa — panel principal">
       <div className="space-y-6">
         <CierresInventarioPendientesCard />
         <AlertasOperativasCard />

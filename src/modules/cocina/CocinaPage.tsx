@@ -89,7 +89,7 @@ export function CocinaPage() {
   const [ayudaAbierta, setAyudaAbierta] = useState(false);
 
   return (
-    <PageContainer title="Cocina" subtitle="Producción y stock — Rodziny S.A.S.">
+    <PageContainer title="Cocina" subtitle="Producción y stock — Empresa">
       <div className="mb-6 flex items-center gap-1 border-b border-surface-border">
         <TabButton activo={tab === 'dashboard'} onClick={() => setTab('dashboard')}>
           Dashboard

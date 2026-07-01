@@ -107,7 +107,7 @@ const ayudaPorTab: Record<Tab, { titulo: string; pasos: string[] }> = {
     pasos: [
       'Compara los movimientos del extracto bancario (Galicia, ICBC, MercadoPago) con los gastos cargados.',
       'Vista 1 — Auto-match: vincula gastos manuales con su movimiento del extracto cuando coinciden por N° de operación.',
-      'Vista 2 — Cargos automáticos: genera gastos de "Impuestos y comisiones bancarias" (Rodziny S.A.S.) para impuestos Ley 25.413, comisiones MP, IVA bancario, etc.',
+      'Vista 2 — Cargos automáticos: genera gastos de "Impuestos y comisiones bancarias" (Empresa) para impuestos Ley 25.413, comisiones MP, IVA bancario, etc.',
       'Vista 3 — Sin conciliar: muestra los egresos del extracto que no matchean por N° op ni son cargos automáticos. Cargalos a mano desde Gastos.',
       'Recomendado: ejecutar "Conciliar ahora" después de cada carga de gastos nuevos, y "Crear cargos automáticos" una vez por mes.',
     ],

@@ -256,7 +256,7 @@ export function VincularPagosMovModal({ mov, open, onClose, onSuccess }: Props) 
   function rotuloLocal(l: string): string {
     if (l === 'vedia') return '🍝 Vedia';
     if (l === 'saavedra') return '🌿 Saavedra';
-    if (l === 'sas') return '🏢 Rodziny S.A.S.';
+    if (l === 'sas') return '🏢 Empresa';
     return '📋 Sin local';
   }
 
@@ -703,7 +703,7 @@ export function VincularPagosMovModal({ mov, open, onClose, onSuccess }: Props) 
                           : 'border-gray-300 bg-white text-gray-600 hover:bg-gray-50',
                       )}
                     >
-                      {l === 'sas' ? 'Rodziny S.A.S.' : l === 'vedia' ? 'Vedia' : 'Saavedra'}
+                      {l === 'sas' ? 'Empresa' : l === 'vedia' ? 'Vedia' : 'Saavedra'}
                     </button>
                   ))}
                 </div>

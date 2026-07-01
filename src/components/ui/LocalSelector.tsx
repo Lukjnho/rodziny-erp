@@ -11,9 +11,9 @@ interface Props {
 const LABELS: Record<LocalOption, string> = {
   vedia: 'Rodziny Vedia',
   saavedra: 'Rodziny Saavedra',
-  ambos: 'Ambos Locales',
-  consolidado: 'Consolidado',
-  sas: 'Rodziny S.A.S.',
+  ambos: 'Empresa',
+  consolidado: 'Empresa',
+  sas: 'Empresa',
 };
 
 export function LocalSelector({ value, onChange, options = ['vedia', 'saavedra'] }: Props) {

@@ -30,7 +30,7 @@ type LocalKey = 'vedia' | 'saavedra' | 'sas';
 const LOCAL_LABEL: Record<LocalKey, string> = {
   vedia: 'Vedia',
   saavedra: 'Saavedra',
-  sas: 'Empresa (SAS)',
+  sas: 'Empresa',
 };
 
 const LOCAL_DOT: Record<LocalKey, string> = {
@@ -356,10 +356,10 @@ export function CalendarioPagosCtaCte({
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-rodziny-100 bg-rodziny-50 px-4 py-3">
         <div>
           <h3 className="text-sm font-semibold text-rodziny-900">
-            🗓 Calendario de pagos — Cuenta corriente (consolidado)
+            🗓 Calendario de pagos — Cuenta corriente (Empresa)
           </h3>
           <p className="mt-0.5 text-[11px] text-rodziny-600">
-            Total empresa, sumando Vedia + Saavedra + SAS. Toda la deuda viva con proveedores.
+            Total empresa, sumando Vedia + Saavedra + Empresa. Toda la deuda viva con proveedores.
           </p>
         </div>
         <div className="text-right">

@@ -1716,7 +1716,7 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
                     )}
                     title="Gastos de la razón social — impuestos, ARCA, comisiones bancarias"
                   >
-                    SAS
+                    Empresa
                   </button>
                 </div>
               </div>
@@ -1825,14 +1825,14 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
                         'flex-1 rounded border px-3 py-2 text-sm font-medium',
                         local === 'sas' ? 'border-rodziny-600 bg-rodziny-50 text-rodziny-900' : 'border-gray-300 text-gray-700',
                       )}
-                      title="Razón social Rodziny S.A.S. — gastos no atribuibles a un local (impuestos, ARCA, comisiones bancarias)"
+                      title="Razón social — gastos no atribuibles a un local (impuestos, ARCA, comisiones bancarias)"
                     >
-                      SAS
+                      Empresa
                     </button>
                   </div>
                 ) : (
                   <div className="rounded bg-gray-100 px-3 py-2 text-sm">
-                    {local === 'vedia' ? 'Vedia' : local === 'saavedra' ? 'Saavedra' : 'SAS'}
+                    {local === 'vedia' ? 'Vedia' : local === 'saavedra' ? 'Saavedra' : 'Empresa'}
                   </div>
                 )}
               </Field>

@@ -660,7 +660,7 @@ export function ConciliacionTab() {
       const res = data as { creados: number; monto_total: number };
       setMensaje({
         tipo: 'ok',
-        texto: `${res.creados} cargo(s) automáticos creados (${formatARS(Number(res.monto_total ?? 0))}). Categoría: Impuestos y comisiones bancarias · Local: Rodziny S.A.S.`,
+        texto: `${res.creados} cargo(s) automáticos creados (${formatARS(Number(res.monto_total ?? 0))}). Categoría: Impuestos y comisiones bancarias · Local: Empresa`,
       });
       qc.invalidateQueries({ queryKey: ['conciliacion'] });
       qc.invalidateQueries({ queryKey: ['gastos'] });
@@ -1001,7 +1001,7 @@ export function ConciliacionTab() {
             <button
               onClick={handleCrearCargosAutomaticos}
               disabled={procesando !== null || (cargosAuto?.movs.length ?? 0) === 0}
-              title="Crea gastos automáticos en categoría 'Impuestos y comisiones bancarias' (Rodziny S.A.S.) para todos los movs etiquetados (Ley 25.413, Comisión MP, IVA bancario, etc.)"
+              title="Crea gastos automáticos en categoría 'Impuestos y comisiones bancarias' (Empresa) para todos los movs etiquetados (Ley 25.413, Comisión MP, IVA bancario, etc.)"
               className="whitespace-nowrap rounded border border-rodziny-300 bg-rodziny-50 px-3 py-1.5 text-xs font-medium text-rodziny-800 hover:bg-rodziny-100 disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-50 disabled:text-gray-400"
             >
               {procesando === 'cargos'
