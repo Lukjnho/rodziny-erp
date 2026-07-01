@@ -3,46 +3,34 @@ import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
 
-interface Producto {
-  id: string;
+interface VistaStockPasta {
+  producto_id: string;
   nombre: string;
   codigo: string;
   local: string;
   minimo_produccion: number | null;
-}
-interface LotePasta {
-  producto_id: string;
-  porciones: number | null;
-  local: string;
-  ubicacion: 'freezer_produccion' | 'camara_congelado';
-}
-interface Traspaso {
-  producto_id: string;
-  porciones: number;
-  local: string;
-}
-interface Merma {
-  producto_id: string;
-  porciones: number;
-  local: string;
+  porciones_camara: number | null;
+  porciones_fresco: number | null;
+  porciones_traspasadas: number | null;
+  porciones_merma: number | null;
 }
 
 interface Row {
   id: string;
   nombre: string;
   codigo: string;
-  enCamara: number;
   frescos: number;
-  traspasados: number;
-  merma: number;
   stock: number;
   minimo: number;
 }
 
 /**
  * Panel read-only con el stock de pastas terminadas del local.
- * Se alimenta de cocina_productos/cocina_lotes_pasta — el encargado de compras
- * ve el disponible pero no lo edita (la gestión vive en Cocina).
+ * Lee de la vista canónica `v_cocina_stock_pastas` (misma que Cocina → Stock,
+ * Dashboard y Traspasos): stock de cámara = último conteo físico (baseline) +
+ * porcionado/traslados/merma/ajustes posteriores. Antes este panel sumaba todo
+ * el histórico de lotes sin baseline y sobrecontaba (ej. 341 vs 88 reales).
+ * El encargado de compras ve el disponible pero no lo edita (gestión en Cocina).
  */
 export function PastasTerminadasPanel({
   local,
@@ -53,85 +41,40 @@ export function PastasTerminadasPanel({
 }) {
   const [abierto, setAbierto] = useState(true);
 
-  const { data: productos } = useQuery({
-    queryKey: ['compras-pastas-cocina-productos', local],
+  const { data: vista } = useQuery({
+    queryKey: ['compras-pastas-vista-stock', local],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from('cocina_productos')
-        .select('id, nombre, codigo, local, minimo_produccion')
-        .eq('tipo', 'pasta')
-        .eq('activo', true)
+        .from('v_cocina_stock_pastas')
+        .select(
+          'producto_id, nombre, codigo, local, minimo_produccion, porciones_camara, porciones_fresco, porciones_traspasadas, porciones_merma',
+        )
         .eq('local', local)
         .order('nombre');
       if (error) throw error;
-      return data as Producto[];
-    },
-  });
-
-  const { data: lotes } = useQuery({
-    queryKey: ['compras-pastas-lotes', local],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('cocina_lotes_pasta')
-        .select('producto_id, porciones, local, ubicacion')
-        .eq('local', local);
-      if (error) throw error;
-      return data as LotePasta[];
-    },
-  });
-
-  const { data: traspasos } = useQuery({
-    queryKey: ['compras-pastas-traspasos', local],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('cocina_traspasos')
-        .select('producto_id, porciones, local')
-        .eq('local', local);
-      if (error) throw error;
-      return data as Traspaso[];
-    },
-  });
-
-  const { data: mermas } = useQuery({
-    queryKey: ['compras-pastas-mermas', local],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('cocina_merma')
-        .select('producto_id, porciones, local')
-        .eq('local', local);
-      if (error) throw error;
-      return data as Merma[];
+      return data as VistaStockPasta[];
     },
   });
 
   const rows = useMemo<Row[]>(() => {
-    if (!productos) return [];
-    return productos.map((p) => {
-      const enCamara = (lotes ?? [])
-        .filter((l) => l.producto_id === p.id && l.ubicacion === 'camara_congelado')
-        .reduce((s, l) => s + (l.porciones ?? 0), 0);
-      const frescos = (lotes ?? [])
-        .filter((l) => l.producto_id === p.id && l.ubicacion === 'freezer_produccion')
-        .reduce((s, l) => s + (l.porciones ?? 0), 0);
-      const traspasados = (traspasos ?? [])
-        .filter((t) => t.producto_id === p.id)
-        .reduce((s, t) => s + t.porciones, 0);
-      const merma = (mermas ?? [])
-        .filter((m) => m.producto_id === p.id)
-        .reduce((s, m) => s + m.porciones, 0);
+    if (!vista) return [];
+    return vista.map((v) => {
+      // Disponible en cámara = cámara (baseline + producido posterior) − traslados − merma.
+      // Espeja exactamente el "Stock disponible" de Cocina → Stock.
+      const stock =
+        Number(v.porciones_camara ?? 0) -
+        Number(v.porciones_traspasadas ?? 0) -
+        Number(v.porciones_merma ?? 0);
       return {
-        id: p.id,
-        nombre: p.nombre,
-        codigo: p.codigo,
-        enCamara,
-        frescos,
-        traspasados,
-        merma,
-        stock: enCamara - traspasados - merma,
-        minimo: p.minimo_produccion ?? 0,
+        id: v.producto_id,
+        nombre: v.nombre,
+        codigo: v.codigo,
+        frescos: Number(v.porciones_fresco ?? 0),
+        stock: Math.max(0, stock),
+        minimo: v.minimo_produccion ?? 0,
       };
     });
-  }, [productos, lotes, traspasos, mermas]);
+  }, [vista]);
 
   const rowsFiltradas = useMemo(() => {
     if (!filtro.trim()) return rows;
