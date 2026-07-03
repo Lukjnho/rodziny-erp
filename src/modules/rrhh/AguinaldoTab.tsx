@@ -1,10 +1,11 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { formatARS, cn } from '@/lib/utils';
 import { KPICard } from '@/components/ui/KPICard';
 import type { Empleado } from './RRHHPage';
 import { parseYmd, ymd, normalizarTexto, remuneracionConPresentismo } from './utils';
+import { medioRequiereComprobante } from '../gastos/types';
 
 // ── Tipos ────────────────────────────────────────────────────────────────────
 type MedioPagoGasto =
@@ -445,14 +446,81 @@ function ModalAguinaldo({
     (r?.medio_pago as MedioPagoGasto) ?? 'transferencia_mp',
   );
   const [notas, setNotas] = useState(r?.notas ?? '');
+  const [numeroOperacion, setNumeroOperacion] = useState('');
+  const [comprobante, setComprobante] = useState<File | null>(null);
+  const [comprobantePath, setComprobantePath] = useState<string | null>(null);
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // El N° de operación vive en pagos_gastos y el comprobante en gastos.comprobante_path;
+  // el registro de aguinaldo no los guarda, así que los traemos del gasto vinculado
+  // para poder prefilllearlos al editar un aguinaldo ya pagado.
+  const { data: pagoExistente } = useQuery({
+    queryKey: ['aguinaldo_pago', r?.gasto_id ?? null],
+    enabled: !!r?.gasto_id,
+    queryFn: async () => {
+      const gid = r!.gasto_id!;
+      const [{ data: g }, { data: p }] = await Promise.all([
+        supabase.from('gastos').select('comprobante_path').eq('id', gid).maybeSingle(),
+        supabase
+          .from('pagos_gastos')
+          .select('id, numero_operacion')
+          .eq('gasto_id', gid)
+          .limit(1)
+          .maybeSingle(),
+      ]);
+      return {
+        comprobante_path: (g as { comprobante_path: string | null } | null)?.comprobante_path ?? null,
+        pago: p as { id: string; numero_operacion: string | null } | null,
+      };
+    },
+  });
+
+  useEffect(() => {
+    if (!pagoExistente) return;
+    setComprobantePath(pagoExistente.comprobante_path);
+    if (pagoExistente.pago?.numero_operacion) setNumeroOperacion(pagoExistente.pago.numero_operacion);
+  }, [pagoExistente]);
+
+  const bancarizado = medioRequiereComprobante(medioPago);
+
   async function guardar() {
     setError(null);
+
+    // Regla del comprobante bancarizado: transferencia/cheque exigen N° de operación
+    // + comprobante para poder conciliar 1:1 con el extracto. Efectivo queda exento.
+    if (pagado && bancarizado) {
+      if (!numeroOperacion.trim()) {
+        setError(
+          'N° de operación requerido para transferencias. Es lo que permite conciliar el pago con el extracto del banco. Para pagos en efectivo, cambiá el medio de pago.',
+        );
+        return;
+      }
+      if (!comprobante && !comprobantePath) {
+        setError('Comprobante de pago obligatorio para transferencias. Subí la captura o PDF.');
+        return;
+      }
+    }
+
     setGuardando(true);
     try {
       let gastoIdFinal: string | null = r?.gasto_id ?? null;
+
+      // Subir el comprobante nuevo si hay uno (mismo bucket que el resto de gastos).
+      let pathComprobante = comprobantePath;
+      if (comprobante) {
+        const ext = comprobante.name.split('.').pop()?.toLowerCase() || 'pdf';
+        const path = `aguinaldos/${fechaPago.substring(0, 7)}/${Date.now()}_${Math.random()
+          .toString(36)
+          .slice(2, 8)}.${ext}`;
+        const { error: errUp } = await supabase.storage
+          .from('gastos-comprobantes')
+          .upload(path, comprobante, {
+            contentType: comprobante.type || 'application/octet-stream',
+          });
+        if (errUp) throw errUp;
+        pathComprobante = path;
+      }
 
       // ── Sincronizar gasto en Finanzas ────────────────────────────────────
       if (pagado) {
@@ -475,6 +543,7 @@ function ModalAguinaldo({
           categoria_id: categoriaAguinaldoId,
           estado_pago: 'Pagado',
           medio_pago: medioPago,
+          comprobante_path: pathComprobante,
           comentario: comentarioTxt,
           creado_manual: true,
           cancelado: false,
@@ -498,13 +567,37 @@ function ModalAguinaldo({
           if (errIns) throw errIns;
           gastoIdFinal = (nuevo as { id: string }).id;
         }
+
+        // ── Pago en pagos_gastos ───────────────────────────────────────────
+        // Es lo que la conciliación matchea contra el extracto (por numero_operacion).
+        // Sin esto, el gasto de aguinaldo queda flotando y no se puede conciliar.
+        const pagoRow = {
+          gasto_id: gastoIdFinal,
+          fecha_pago: fechaPago,
+          monto: montoPagado,
+          medio_pago: medioPago,
+          numero_operacion: numeroOperacion.trim() || null,
+        };
+        const pagoIdExist = pagoExistente?.pago?.id ?? null;
+        if (pagoIdExist) {
+          const { error: errPago } = await supabase
+            .from('pagos_gastos')
+            .update(pagoRow)
+            .eq('id', pagoIdExist);
+          if (errPago) throw errPago;
+        } else {
+          const { error: errPago } = await supabase.from('pagos_gastos').insert(pagoRow);
+          if (errPago) throw errPago;
+        }
       } else if (gastoIdFinal) {
-        // Se desmarca pagado → cancelar gasto vinculado (no lo borramos para mantener historial)
+        // Se desmarca pagado → cancelar gasto vinculado (no lo borramos para mantener
+        // historial) y quitar su pago para que no aparezca como conciliable.
         const { error: errCancel } = await supabase
           .from('gastos')
           .update({ cancelado: true })
           .eq('id', gastoIdFinal);
         if (errCancel) throw errCancel;
+        await supabase.from('pagos_gastos').delete().eq('gasto_id', gastoIdFinal);
         gastoIdFinal = null;
       }
 
@@ -624,6 +717,38 @@ function ModalAguinaldo({
                   className="w-full rounded border border-gray-300 px-3 py-1.5 text-sm"
                 />
               </div>
+              {bancarizado && (
+                <>
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-gray-600">
+                      N° de operación <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={numeroOperacion}
+                      onChange={(e) => setNumeroOperacion(e.target.value)}
+                      placeholder="N° de la transferencia (para conciliar)"
+                      className="w-full rounded border border-gray-300 px-3 py-1.5 text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-gray-600">
+                      Comprobante de pago <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="file"
+                      accept="image/*,application/pdf"
+                      onChange={(e) => setComprobante(e.target.files?.[0] ?? null)}
+                      className="w-full text-xs text-gray-600 file:mr-2 file:rounded file:border-0 file:bg-rodziny-50 file:px-2 file:py-1 file:text-rodziny-700"
+                    />
+                    {comprobantePath && !comprobante && (
+                      <p className="mt-1 text-[11px] text-green-600">
+                        ✓ Ya hay un comprobante cargado. Subí uno nuevo solo si querés reemplazarlo.
+                      </p>
+                    )}
+                  </div>
+                </>
+              )}
             </>
           )}
           <div>
