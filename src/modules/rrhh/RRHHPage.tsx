@@ -639,8 +639,6 @@ function LegajosTab() {
               </tr>
             )}
             {filtrados.map((e) => {
-              const dias = diasDesde(e.fecha_ingreso);
-              const alertaPrueba = e.estado_laboral === 'prueba' && dias >= 75;
               return (
                 <tr key={e.id} className="border-t border-gray-100 hover:bg-gray-50">
                   <td className="px-4 py-2">
@@ -654,14 +652,7 @@ function LegajosTab() {
                   <td className="px-4 py-2">
                     <span className="capitalize text-gray-600">{e.local}</span>
                   </td>
-                  <td className="px-4 py-2 text-gray-600">
-                    {formatFecha(e.fecha_ingreso)}
-                    {alertaPrueba && (
-                      <div className="text-[10px] font-semibold text-yellow-700">
-                        ⚠ {dias} días en prueba
-                      </div>
-                    )}
-                  </td>
+                  <td className="px-4 py-2 text-gray-600">{formatFecha(e.fecha_ingreso)}</td>
                   <td className="px-4 py-2 text-right text-gray-700">{formatARS(e.sueldo_neto)}</td>
                   <td className="px-4 py-2 text-center">
                     <input
