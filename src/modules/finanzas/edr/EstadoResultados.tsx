@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef } from 'react';
+import { useState, useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { PageContainer } from '@/components/layout/PageContainer';
@@ -58,13 +58,6 @@ const FILAS: FilaEdR[] = [
     formato: 'moneda',
   },
   { key: '__ing_netos', label: 'INGRESOS NETOS', tipo: 'calculada', depth: 0, formato: 'moneda' },
-  {
-    key: '__ticket_prom',
-    label: 'Ticket Promedio',
-    tipo: 'calculada',
-    depth: 1,
-    formato: 'moneda',
-  },
   // Fila resumen plegable: suma cortesías + otros descuentos. Actúa como toggle
   // (▸/▾) para no ocupar dos filas fijas con datos meramente informativos.
   {
@@ -210,7 +203,7 @@ const FILAS: FilaEdR[] = [
   { key: '_fin', label: 'RESULTADO FINANCIERO', tipo: 'seccion', depth: 0 },
   { key: 'fin_intereses', label: 'Intereses', tipo: 'auto', depth: 1, formato: 'moneda' },
   { key: 'fin_arca', label: 'Regularización ARCA', tipo: 'auto', depth: 1, formato: 'moneda' },
-  { key: 'fin_prestamo', label: 'Préstamo', tipo: 'manual', depth: 1, formato: 'moneda' },
+  { key: 'fin_prestamo', label: 'Préstamo', tipo: 'auto', depth: 1, formato: 'moneda' },
   { key: '__fin_total', label: 'TOTAL FINANCIERO', tipo: 'calculada', depth: 0, formato: 'moneda' },
   { key: '_esp7', label: '', tipo: 'espacio', depth: 0 },
 
@@ -224,7 +217,7 @@ const FILAS: FilaEdR[] = [
   {
     key: 'anticipo_gcias',
     label: '(-) Anticipo Ganancias',
-    tipo: 'manual',
+    tipo: 'auto',
     depth: 1,
     formato: 'moneda',
   },
@@ -271,7 +264,7 @@ interface AutoMes {
 
 function computarMes(manual: Map<string, number>, auto: AutoMes): Map<string, number> {
   const m = (k: string) => manual.get(k) ?? 0;
-  const { ingBruto, ivaDebito, ticketCount } = auto;
+  const { ingBruto, ivaDebito } = auto;
   // IVA débito: ya viene resuelto POR LOCAL en la query de tickets (real por
   // ticket del XLS fiscal si existe; si no, el total mensual estimado 21/121
   // guardado en edr_partidas). Ver el queryFn de ticketsRaw. Al resolverlo antes
@@ -335,7 +328,6 @@ function computarMes(manual: Map<string, number>, auto: AutoMes): Map<string, nu
   result.set('iva_debito', -ivaDebito);
   result.set('dif_arqueo', difArqueo);
   result.set('__ing_netos', ingNeto);
-  result.set('__ticket_prom', ticketCount > 0 ? ingBruto / ticketCount : 0);
   // Cortesías y otros descuentos (informativos — se guardan en edr_partidas al importar)
   result.set('__cortesias_info', m('cortesias_monto'));
   result.set('__otros_desc', m('otros_descuentos'));
@@ -444,7 +436,7 @@ const SENTIDO_FILA: Record<string, 1 | -1 | 0> = {
   ing_bruto: 1, iva_debito: 1, __ing_netos: 1,
   // dif_arqueo: deliberadamente sin sentido — son montos chicos puntuales
   // (faltantes/sobrantes de caja), comparar mes a mes no aporta señal.
-  __ticket_prom: 0, __descuentos_toggle: 0, __cortesias_info: 0, __otros_desc: 0,
+  __descuentos_toggle: 0, __cortesias_info: 0, __otros_desc: 0,
   cmv_alimentos: -1, cmv_bebidas: -1, cmv_indirectos: -1, __cmv_total: -1,
   // Stock final: subir es bueno para el dueño (más activo) pero los Δ% mes a mes
   // tienen poca señal — se quedan neutros para no ruido.
@@ -478,9 +470,6 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
   const locales: ('vedia' | 'saavedra')[] =
     localEdr === 'consolidado' ? ['vedia', 'saavedra'] : [localEdr];
   const esConsolidado = localEdr === 'consolidado';
-  const [editando, setEditando] = useState<{ periodo: string; key: string } | null>(null);
-  const [valorEdit, setValorEdit] = useState('');
-  const inputRef = useRef<HTMLInputElement>(null);
   const qc = useQueryClient();
   const [sincronizando, setSincronizando] = useState(false);
   const [resumenSync, setResumenSync] = useState<string | null>(null);
@@ -1113,6 +1102,16 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
     return con;
   }, [meses, autoMap, manualMap]);
 
+  // Meses a mostrar: los que tienen datos + el mes en curso (aunque esté vacío,
+  // para que aparezca apenas arranca). Los meses futuros vacíos se ocultan para
+  // no llenar la tabla de columnas con "—". El cálculo del ACUM sigue usando los
+  // 12 meses; esto es solo visual.
+  const mesesVisibles = useMemo(() => {
+    const ahora = new Date();
+    const periodoActual = `${ahora.getFullYear()}-${String(ahora.getMonth() + 1).padStart(2, '0')}`;
+    return meses.filter((m) => mesesConDatos.has(m) || m === periodoActual);
+  }, [meses, mesesConDatos]);
+
   // Meses con actividad cuyo CMV quedó estimado (falta cierre de inventario del
   // mes y/o del anterior → no se aplicó el Δ inventario). Se avisa arriba de la
   // tabla para que el CMV real no se lea como definitivo sin serlo.
@@ -1131,31 +1130,6 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
     }
     return arr;
   }, [meses, valoresPorMes, mesesConDatos]);
-
-  // ── edición inline ─────────────────────────────────────────────────────────
-  function startEdit(periodo: string, key: string, valorActual: number) {
-    setEditando({ periodo, key });
-    setValorEdit(valorActual !== 0 ? String(Math.abs(valorActual)).replace('.', ',') : '');
-    setTimeout(() => inputRef.current?.focus(), 50);
-  }
-
-  async function guardar() {
-    if (!editando) return;
-    const raw = valorEdit.trim().replace(/\./g, '').replace(',', '.');
-    const monto = parseFloat(raw) || 0;
-    await supabase
-      .from('edr_partidas')
-      .upsert(
-        { local: localEdr, periodo: editando.periodo, concepto: editando.key, monto },
-        { onConflict: 'local,periodo,concepto' },
-      );
-    qc.invalidateQueries({ queryKey: ['edr_partidas', año, localEdr] });
-    setEditando(null);
-  }
-
-  function cancelar() {
-    setEditando(null);
-  }
 
   // ── render ─────────────────────────────────────────────────────────────────
   const inner = (
@@ -1220,18 +1194,10 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
           {resumenSync}
         </p>
       )}
-      {esConsolidado ? (
-        <p className="mb-4 text-xs text-gray-400">
-          Vista <strong>Empresa</strong> (solo lectura). Para editar valores manuales, elegí un
-          local.
-        </p>
-      ) : (
-        <p className="mb-4 text-xs text-gray-400">
-          Solo las filas manuales (<span className="text-blue-600">Préstamo</span>,{' '}
-          <span className="text-blue-600">Anticipo Ganancias</span>) son editables — clic en la
-          celda · Enter guarda · Esc cancela
-        </p>
-      )}
+      <p className="mb-4 text-xs text-gray-400">
+        El EdR es de <strong>solo lectura</strong>: se calcula automáticamente desde la información
+        que ya tiene el ERP (ventas de Fudo, gastos, sueldos, cierres de inventario).
+      </p>
 
       {mesesCmvEstimado.length > 0 && (
         <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
@@ -1253,7 +1219,7 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
                 <th className="sticky left-0 z-10 min-w-[240px] bg-gray-50 px-4 py-3 text-left text-xs font-semibold text-gray-600">
                   CONCEPTO
                 </th>
-                {meses.map((mes) => (
+                {mesesVisibles.map((mes) => (
                   <th
                     key={mes}
                     className={cn(
@@ -1296,7 +1262,6 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
                 const esSeccion = fila.tipo === 'seccion';
                 const esTotal = fila.tipo === 'calculada' && fila.depth === 0;
                 const esKpi = fila.tipo === 'kpi';
-                const esManual = fila.tipo === 'manual';
                 // Filas informativas (cortesías/descuentos): números en gris/itálica
                 // para que matcheen con su label y no se lean como parte del P&L.
                 const esInformativo =
@@ -1374,20 +1339,18 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
                     </td>
 
                     {/* Celdas por mes */}
-                    {meses.map((mes) => {
+                    {mesesVisibles.map((mes) => {
                       if (esSeccion) return <td key={mes} className="bg-gray-900" />;
 
                       const valores = valoresPorMes.get(mes) ?? new Map();
                       const valor = valores.get(fila.key) ?? 0;
-                      const estaEditando = editando?.periodo === mes && editando?.key === fila.key;
                       const color = esKpi ? semaforo(fila.key, valor) : null;
                       const sinDatos = !mesesConDatos.has(mes);
 
-                      // Δ% vs mes anterior con datos. Solo en filas con sentido definido
-                      // (no en manuales, KPIs o informativos sin clasificar).
+                      // Δ% vs mes anterior con datos. Solo en filas con sentido definido.
                       const sentido = SENTIDO_FILA[fila.key];
                       const mostrarDelta =
-                        !esKpi && !esManual && sentido !== undefined && !sinDatos && valor !== 0;
+                        !esKpi && sentido !== undefined && !sinDatos && valor !== 0;
                       const deltaPct = mostrarDelta ? calcularDelta(fila.key, mes) : null;
                       const deltaColor = (() => {
                         if (deltaPct === null || sentido === undefined) return '';
@@ -1402,59 +1365,23 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
                           key={mes}
                           className={cn(
                             'px-3 py-2 text-right',
-                            esManual &&
-                              !sinDatos &&
-                              'cursor-pointer hover:bg-blue-50 hover:text-blue-700',
-                            esManual &&
-                              sinDatos &&
-                              'cursor-pointer opacity-40 hover:bg-blue-50 hover:opacity-100',
                             esTotal && 'font-semibold',
                             esKpi && color === 'verde' && 'font-medium text-green-700',
                             esKpi && color === 'amarillo' && 'font-medium text-yellow-600',
                             esKpi && color === 'rojo' && 'font-medium text-red-600',
                             !esKpi && valor < 0 && 'text-red-600',
-                            !esKpi &&
-                              valor > 0 &&
-                              !esManual &&
-                              !esTotal &&
-                              fila.depth === 0 &&
-                              'text-gray-900',
-                            !esKpi && esManual && valor !== 0 && 'text-blue-700',
+                            !esKpi && valor > 0 && !esTotal && fila.depth === 0 && 'text-gray-900',
                           )}
-                          onClick={() =>
-                            esManual && !esConsolidado && startEdit(mes, fila.key, valor)
-                          }
                         >
-                          {estaEditando ? (
-                            <input
-                              ref={inputRef}
-                              value={valorEdit}
-                              onChange={(e) => setValorEdit(e.target.value)}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') guardar();
-                                if (e.key === 'Escape') cancelar();
-                              }}
-                              onBlur={guardar}
-                              className="w-full rounded border border-blue-400 bg-blue-50 px-1 py-0.5 text-right text-sm outline-none"
-                              placeholder="0"
-                            />
-                          ) : (
-                            <span
-                              className={cn(
-                                esKpi ? 'text-xs' : 'text-sm',
-                                esInformativo && 'italic text-gray-400',
-                              )}
-                            >
-                              {valor !== 0 ? (
-                                formatValor(valor, fila.formato)
-                              ) : esManual ? (
-                                <span className="text-gray-200">—</span>
-                              ) : (
-                                '—'
-                              )}
-                            </span>
-                          )}
-                          {deltaPct !== null && !estaEditando && (
+                          <span
+                            className={cn(
+                              esKpi ? 'text-xs' : 'text-sm',
+                              esInformativo && 'italic text-gray-400',
+                            )}
+                          >
+                            {valor !== 0 ? formatValor(valor, fila.formato) : '—'}
+                          </span>
+                          {deltaPct !== null && (
                             <div className={cn('mt-0.5 text-[10px] leading-none', deltaColor)}>
                               {deltaPct > 0 ? '↑' : '↓'} {Math.abs(deltaPct).toFixed(1)}%
                             </div>
@@ -1513,8 +1440,8 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
         fiscal por ticket cuando el mes tiene el XLS cargado; si no, el total mensual estimado
         (21/121 sobre lo facturado). Los Gastos se toman netos de IVA cuando el comprobante lo
         discrimina (factura A); si no, el total como neto. Cortesías y descuentos son informativos
-        (ya incluidos en la venta bruta de Fudo). Solo las filas manuales (Préstamo, Anticipo
-        Ganancias) son editables, y únicamente en la vista por local.
+        (ya incluidos en la venta bruta de Fudo). Todo el EdR se calcula automáticamente — no hay
+        edición manual.
       </p>
     </>
   );
