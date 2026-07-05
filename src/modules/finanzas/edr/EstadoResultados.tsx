@@ -84,7 +84,7 @@ const FILAS: FilaEdR[] = [
   },
   { key: '_esp1', label: '', tipo: 'espacio', depth: 0 },
 
-  { key: '_cmv', label: 'CMV', tipo: 'seccion', depth: 0 },
+  { key: '_cmv', label: 'CMV — COSTO DE MERCADERÍA', tipo: 'seccion', depth: 0 },
   { key: 'cmv_alimentos', label: 'Costo de alimentos', tipo: 'auto', depth: 1, formato: 'moneda' },
   { key: 'cmv_bebidas', label: 'Costo de bebidas', tipo: 'auto', depth: 1, formato: 'moneda' },
   {
@@ -94,7 +94,7 @@ const FILAS: FilaEdR[] = [
     depth: 1,
     formato: 'moneda',
   },
-  { key: '__cmv_total', label: 'TOTAL COMPRAS', tipo: 'calculada', depth: 0, formato: 'moneda' },
+  { key: '__cmv_total', label: 'TOTAL COMPRAS DEL MES', tipo: 'calculada', depth: 0, formato: 'moneda' },
   // ── Inventario valorizado (cierres aprobados) ──
   // Si no hay cierre del mes y del anterior, Δ queda en 0 y CMV REAL = TOTAL COMPRAS
   // (comportamiento previo, sin romper).
@@ -120,8 +120,15 @@ const FILAS: FilaEdR[] = [
     formato: 'moneda',
   },
   {
+    key: '__stock_final_total',
+    label: 'Total stock final (depósito)',
+    tipo: 'calculada',
+    depth: 1,
+    formato: 'moneda',
+  },
+  {
     key: '__cmv_real',
-    label: 'TOTAL CMV REAL',
+    label: 'TOTAL CMV REAL (CONSUMO)',
     tipo: 'calculada',
     depth: 0,
     formato: 'moneda',
@@ -341,6 +348,7 @@ function computarMes(manual: Map<string, number>, auto: AutoMes): Map<string, nu
   result.set('stock_final_alimentos', auto.stockFinalAlimentos);
   result.set('stock_final_bebidas', auto.stockFinalBebidas);
   result.set('stock_final_indirectos', auto.stockFinalIndirectos);
+  result.set('__stock_final_total', stockFinalTotal);
   result.set('__cmv_real', cmvReal);
   // Flag: 1 = el CMV real es estimado (= compras) porque falta el cierre de
   // inventario del mes y/o del anterior, o porque el Δ daba consumo negativo
@@ -441,6 +449,7 @@ const SENTIDO_FILA: Record<string, 1 | -1 | 0> = {
   // Stock final: subir es bueno para el dueño (más activo) pero los Δ% mes a mes
   // tienen poca señal — se quedan neutros para no ruido.
   stock_final_alimentos: 0, stock_final_bebidas: 0, stock_final_indirectos: 0,
+  __stock_final_total: 0,
   // CMV REAL: subir es malo (consumiste más).
   __cmv_real: -1,
   __margen_bruto: 1,
@@ -465,7 +474,7 @@ const PARTIDAS_ADITIVAS = new Set([
 // ── componente ────────────────────────────────────────────────────────────────
 export function EstadoResultados({ embedded = false }: { embedded?: boolean } = {}) {
   const [año, setAño] = useState(() => String(new Date().getFullYear()));
-  const [localEdr, setLocalEdr] = useState<'vedia' | 'saavedra' | 'consolidado'>('vedia');
+  const [localEdr, setLocalEdr] = useState<'vedia' | 'saavedra' | 'consolidado'>('consolidado');
   const locales: ('vedia' | 'saavedra')[] =
     localEdr === 'consolidado' ? ['vedia', 'saavedra'] : [localEdr];
   const esConsolidado = localEdr === 'consolidado';
@@ -562,6 +571,11 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
   // Δ% vs mes anterior (con datos). Devuelve null si no se puede calcular.
   // Ignora cambios menores al 0.5% para no ensuciar la tabla con ruido.
   function calcularDelta(filaKey: string, mes: string): number | null {
+    // Mes en curso (parcial): sin Δ%. Comparar medio mes contra uno cerrado da
+    // caídas falsas (ej. Julio a los 5 días muestra −80% en todo).
+    const ahora = new Date();
+    const periodoActual = `${ahora.getFullYear()}-${String(ahora.getMonth() + 1).padStart(2, '0')}`;
+    if (mes === periodoActual) return null;
     const idx = meses.indexOf(mes);
     if (idx <= 0) return null;
     // Buscar el mes anterior CON datos. Saltea meses vacíos para que enero→marzo
@@ -1206,9 +1220,18 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
           {resumenSync}
         </p>
       )}
-      <p className="mb-4 text-xs text-gray-400">
-        Clic en celda azul para editar · Enter para guardar · Esc para cancelar
-      </p>
+      {esConsolidado ? (
+        <p className="mb-4 text-xs text-gray-400">
+          Vista <strong>Empresa</strong> (solo lectura). Para editar valores manuales, elegí un
+          local.
+        </p>
+      ) : (
+        <p className="mb-4 text-xs text-gray-400">
+          Solo las filas manuales (<span className="text-blue-600">Préstamo</span>,{' '}
+          <span className="text-blue-600">Anticipo Ganancias</span>) son editables — clic en la
+          celda · Enter guarda · Esc cancela
+        </p>
+      )}
 
       {mesesCmvEstimado.length > 0 && (
         <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
@@ -1274,6 +1297,12 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
                 const esTotal = fila.tipo === 'calculada' && fila.depth === 0;
                 const esKpi = fila.tipo === 'kpi';
                 const esManual = fila.tipo === 'manual';
+                // Filas informativas (cortesías/descuentos): números en gris/itálica
+                // para que matcheen con su label y no se lean como parte del P&L.
+                const esInformativo =
+                  fila.key === '__descuentos_toggle' ||
+                  fila.key === '__cortesias_info' ||
+                  fila.key === '__otros_desc';
 
                 return (
                   <tr
@@ -1410,7 +1439,12 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
                               placeholder="0"
                             />
                           ) : (
-                            <span className={esKpi ? 'text-xs' : 'text-sm'}>
+                            <span
+                              className={cn(
+                                esKpi ? 'text-xs' : 'text-sm',
+                                esInformativo && 'italic text-gray-400',
+                              )}
+                            >
                               {valor !== 0 ? (
                                 formatValor(valor, fila.formato)
                               ) : esManual ? (
@@ -1463,7 +1497,7 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
                     )}
 
                     {/* Benchmark */}
-                    <td className="px-3 py-2 text-center text-xs text-gray-300">
+                    <td className="px-3 py-2 text-center text-xs text-gray-500">
                       {fila.benchmark ?? ''}
                     </td>
                   </tr>
@@ -1475,12 +1509,12 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
       </div>
 
       <p className="mt-3 text-xs text-gray-400">
-        Ingresos Brutos e IVA Débito se calculan automáticamente desde los tickets importados de
-        Fudo (21% sobre facturadas). Gastos se agregan netos de IVA cuando el comprobante lo
-        discrimina (factura A); si no, se toma el total como neto. El bloque "Memo fiscal" al pie
-        es solo informativo para ver la posición frente a ARCA y no afecta el Resultado Neto.
-        Cortesías y descuentos son informativos (ya incluidos en la venta bruta por Fudo). El
-        resto de las celdas (azules) son editables — hacé clic para ingresar el valor.
+        Los Ingresos Brutos salen de los tickets importados de Fudo. El IVA Débito usa el detalle
+        fiscal por ticket cuando el mes tiene el XLS cargado; si no, el total mensual estimado
+        (21/121 sobre lo facturado). Los Gastos se toman netos de IVA cuando el comprobante lo
+        discrimina (factura A); si no, el total como neto. Cortesías y descuentos son informativos
+        (ya incluidos en la venta bruta de Fudo). Solo las filas manuales (Préstamo, Anticipo
+        Ganancias) son editables, y únicamente en la vista por local.
       </p>
     </>
   );
