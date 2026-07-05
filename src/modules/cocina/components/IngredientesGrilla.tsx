@@ -60,13 +60,16 @@ export function IngredientesGrilla({
     queryKey: ['cocina-receta-ingredientes-grilla', recetaId],
     queryFn: async () => {
       if (!recetaId) return [] as IngredienteRow[];
-      const { data, error } = await supabase
-        .from('cocina_receta_ingredientes')
-        .select('id, nombre, cantidad, unidad, producto_id')
-        .eq('receta_id', recetaId)
-        .order('orden');
+      // RPC con expansión de subrecetas: un renglón "Subreceta X" se reemplaza por
+      // los insumos reales de esa subreceta (recursivo). Así los postres/salsas
+      // armados con una subreceta base muestran ingredientes pesables y no un
+      // puntero vacío (mig 124). Recetas sin subrecetas devuelven sus ids reales
+      // intactos, por lo que el matcheo de costos por id sigue funcionando.
+      const { data, error } = await supabase.rpc('cocina_ingredientes_expandidos', {
+        p_receta_id: recetaId,
+      });
       if (error) throw error;
-      return data as IngredienteRow[];
+      return (data ?? []) as IngredienteRow[];
     },
     enabled: !!recetaId,
   });
@@ -132,6 +135,13 @@ export function IngredientesGrilla({
 
   const costoAjustadoTotal = useMemo(() => {
     if (!ingredientes || !costoReceta) return null;
+    // Cuando la receta trae subrecetas expandidas, los renglones tienen ids
+    // sintéticos que no matchean el detalle del costeo (que es por ingrediente de
+    // primer nivel). En ese caso no se puede recomponer el total sumando por
+    // renglón sin subcontar → se muestra el costo base del motor (que sí incluye
+    // el costo de las subrecetas).
+    const todosConCosto = ingredientes.every((i) => costoPorIng.has(i.id));
+    if (!todosConCosto) return costoBaseTotal;
     let total = 0;
     for (const i of ingredientes) {
       const base = costoPorIng.get(i.id) ?? 0;
@@ -140,7 +150,7 @@ export function IngredientesGrilla({
       total += base * ratio;
     }
     return total;
-  }, [ingredientes, cantidades, costoPorIng, costoReceta, factor]);
+  }, [ingredientes, cantidades, costoPorIng, costoReceta, factor, costoBaseTotal]);
 
   if (!recetaId) return null;
   if (isLoading) return <p className="text-[10px] text-gray-400">Cargando ingredientes…</p>;
