@@ -443,6 +443,17 @@ const SENTIDO_FILA: Record<string, 1 | -1 | 0> = {
   __rdo_antes: 1, anticipo_gcias: -1, __rdo_neto: 1,
 };
 
+// Partidas (edr_partidas) informativas/aditivas: al consolidar "Empresa" se SUMAN
+// entre locales (partidasRaw llega aplanado con las de todos los locales). El
+// resto de las partidas (overrides manuales) mantiene last-wins. iva_debito se
+// resuelve aparte en ticketsRaw, pero se suma acá igual por consistencia.
+const PARTIDAS_ADITIVAS = new Set([
+  'cortesias_monto',
+  'cortesias_cant',
+  'otros_descuentos',
+  'iva_debito',
+]);
+
 // ── componente ────────────────────────────────────────────────────────────────
 export function EstadoResultados({ embedded = false }: { embedded?: boolean } = {}) {
   const [año, setAño] = useState(() => String(new Date().getFullYear()));
@@ -1017,7 +1028,16 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
     const map = new Map<string, Map<string, number>>();
     for (const p of partidasRaw ?? []) {
       if (!map.has(p.periodo)) map.set(p.periodo, new Map());
-      map.get(p.periodo)!.set(p.concepto, Number(p.monto));
+      const mp = map.get(p.periodo)!;
+      const monto = Number(p.monto);
+      // Aditivas (cortesías, descuentos, iva) → sumar entre locales al consolidar.
+      // El resto → last-wins (comportamiento previo). En vista de un solo local
+      // no hay periodos duplicados, así que se comporta igual que antes.
+      if (PARTIDAS_ADITIVAS.has(p.concepto)) {
+        mp.set(p.concepto, (mp.get(p.concepto) ?? 0) + monto);
+      } else {
+        mp.set(p.concepto, monto);
+      }
     }
     return map;
   }, [partidasRaw]);
