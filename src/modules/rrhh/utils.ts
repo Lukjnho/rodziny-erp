@@ -172,6 +172,138 @@ export function diffMinutosVsTurnos(
   return mejor;
 }
 
+// ── Decisión de fichaje (entrada vs salida) ─────────────────────────────────
+// Ventana máxima que puede durar un turno abierto (un par entrada→salida). Más
+// allá de esto, una entrada sin salida se considera "olvido de salida", no un
+// turno todavía abierto. Un turno legítimo no supera las ~16 h.
+export const VENTANA_TURNO_ABIERTO_H = 16;
+
+// Anti doble-tap: dos marcas del mismo empleado separadas por menos que esto son
+// un toque repetido (o un reintento por red lenta), no un fichaje real.
+export const ANTIREBOTE_SEG = 90;
+
+// Fichada mínima necesaria para decidir el próximo tipo.
+export interface FichadaMin {
+  tipo: 'entrada' | 'salida';
+  timestamp: string; // ISO
+  fecha: string; // YYYY-MM-DD
+}
+
+// Datos de cronograma de un día (turnos o par legacy hora_entrada/hora_salida).
+export interface CronoDia {
+  turnos: TurnoCrono[] | null;
+  hora_entrada: string | null;
+  hora_salida: string | null;
+}
+
+interface LimiteTurno {
+  kind: 'entrada' | 'salida';
+  at: Date; // momento programado de ese límite
+  fecha: string; // día base del turno (donde se imputa la marca)
+  hhmm: string; // hora programada "HH:MM"
+}
+
+// Expande los turnos de un día a sus límites (entradas y salidas) como Date.
+// Si la salida es <= entrada, cruza medianoche → cae al día siguiente.
+function limitesDeDia(fechaBase: string, crono: CronoDia | null): LimiteTurno[] {
+  if (!crono) return [];
+  const src: TurnoCrono[] =
+    crono.turnos && crono.turnos.length > 0
+      ? crono.turnos
+      : crono.hora_entrada && crono.hora_salida
+        ? [{ entrada: crono.hora_entrada, salida: crono.hora_salida }]
+        : [];
+  const base = parseYmd(fechaBase);
+  const out: LimiteTurno[] = [];
+  for (const t of src) {
+    const [eh, em] = t.entrada.split(':').map(Number);
+    const [sh, sm] = t.salida.split(':').map(Number);
+    const eAt = new Date(base);
+    eAt.setHours(eh, em, 0, 0);
+    const sAt = new Date(base);
+    sAt.setHours(sh, sm, 0, 0);
+    if (sAt.getTime() <= eAt.getTime()) sAt.setDate(sAt.getDate() + 1);
+    out.push({ kind: 'entrada', at: eAt, fecha: fechaBase, hhmm: t.entrada });
+    out.push({ kind: 'salida', at: sAt, fecha: fechaBase, hhmm: t.salida });
+  }
+  return out;
+}
+
+export interface DecisionFichada {
+  tipo: 'entrada' | 'salida';
+  fecha: string; // día al que se imputa la marca
+  horarioTramo: string | null; // "HH:MM" programado del tramo, para el mensaje de confirmación
+  advertencia: string | null; // aviso no bloqueante (ej. olvido de salida)
+}
+
+// Decide si el próximo fichaje es entrada o salida usando la ÚLTIMA marca del
+// empleado y su cronograma (turnos de hoy + los de ayer que cruzan medianoche).
+//
+// Regla central (robusta ante marcas faltantes/sobrantes, a diferencia de contar
+// paridad): tras una entrada abierta reciente, lo próximo SIEMPRE es salida; si
+// no hay entrada abierta, lo próximo es entrada. El cronograma resuelve el caso
+// del turno partido con una marca olvidada y aporta el horario de referencia.
+export function decidirProximaFichada(params: {
+  ahora: Date;
+  fechaHoy: string;
+  fechaAyer: string;
+  cronoHoy: CronoDia | null;
+  cronoAyer: CronoDia | null;
+  ultimaFichada: FichadaMin | null;
+}): DecisionFichada {
+  const { ahora, fechaHoy, fechaAyer, cronoHoy, cronoAyer, ultimaFichada } = params;
+
+  const msDesdeUltima = ultimaFichada
+    ? ahora.getTime() - new Date(ultimaFichada.timestamp).getTime()
+    : Infinity;
+  const entradaAbierta =
+    ultimaFichada?.tipo === 'entrada' && msDesdeUltima < VENTANA_TURNO_ABIERTO_H * 3_600_000;
+
+  // Límite de horario más cercano al momento del fichaje (ayer para turnos que
+  // cruzan medianoche + hoy).
+  const limites = [...limitesDeDia(fechaAyer, cronoAyer), ...limitesDeDia(fechaHoy, cronoHoy)];
+  let cercano: LimiteTurno | null = null;
+  for (const l of limites) {
+    if (
+      !cercano ||
+      Math.abs(l.at.getTime() - ahora.getTime()) < Math.abs(cercano.at.getTime() - ahora.getTime())
+    ) {
+      cercano = l;
+    }
+  }
+
+  if (entradaAbierta) {
+    // Excepción: el horario indica que arranca un turno nuevo (límite más cercano
+    // = entrada posterior a la entrada abierta) → el empleado olvidó la salida.
+    const arrancaTurnoNuevo =
+      cercano?.kind === 'entrada' &&
+      cercano.at.getTime() > new Date(ultimaFichada!.timestamp).getTime();
+    if (arrancaTurnoNuevo) {
+      return {
+        tipo: 'entrada',
+        fecha: cercano!.fecha,
+        horarioTramo: cercano!.hhmm,
+        advertencia: 'Quedó una entrada anterior sin marcar la salida. Avisá a tu encargado.',
+      };
+    }
+    // Cerramos el turno abierto: salida imputada al día de esa entrada.
+    return {
+      tipo: 'salida',
+      fecha: ultimaFichada!.fecha,
+      horarioTramo: cercano?.kind === 'salida' ? cercano.hhmm : null,
+      advertencia: null,
+    };
+  }
+
+  // Sin turno abierto → lo próximo es entrada.
+  return {
+    tipo: 'entrada',
+    fecha: cercano?.kind === 'entrada' ? cercano.fecha : fechaHoy,
+    horarioTramo: cercano?.kind === 'entrada' ? cercano.hhmm : null,
+    advertencia: null,
+  };
+}
+
 // Formatea los turnos del día para mostrarlos al usuario.
 // Ej: [{11:00-15:00},{20:00-00:30}] → "11:00–15:00 · 20:00–00:30"
 export function formatTurnos(

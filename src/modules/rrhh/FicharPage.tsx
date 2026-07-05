@@ -3,12 +3,16 @@ import { supabaseAnon as supabase } from '@/lib/supabaseAnon';
 import { cn } from '@/lib/utils';
 import {
   TOLERANCIA_MIN,
+  ANTIREBOTE_SEG,
   esTardanzaReal,
   ymd,
   hhmm,
   diffMinutosVsTurnos,
   formatTurnos,
+  decidirProximaFichada,
   type TurnoCrono,
+  type FichadaMin,
+  type CronoDia,
 } from './utils';
 
 // ─── Configuración editable ─────────────────────────────────────────────────
@@ -357,8 +361,9 @@ function Inicio({
   onIrAQuincena: () => void;
 }) {
   const [crono, setCrono] = useState<Cronograma | null>(null);
+  const [cronoAyer, setCronoAyer] = useState<Cronograma | null>(null);
   const [fichadasHoy, setFichadasHoy] = useState<Fichada[]>([]);
-  const [entradaAbiertaAyer, setEntradaAbiertaAyer] = useState(false);
+  const [fichadasAyer, setFichadasAyer] = useState<Fichada[]>([]);
   const [debugInfo, setDebugInfo] = useState<string>('');
   const ahoraDev = new Date();
   const hoy = ymd(ahoraDev);
@@ -371,12 +376,19 @@ function Inicio({
 
   useEffect(() => {
     (async () => {
-      const [{ data: c }, { data: f }, { data: fAyer }] = await Promise.all([
+      const [{ data: c }, { data: cAyer }, { data: f }, { data: fAyer }] = await Promise.all([
         supabase
           .from('cronograma')
           .select('*')
           .eq('empleado_id', empleado.id)
           .eq('fecha', hoy)
+          .maybeSingle(),
+        // Cronograma de ayer: por turnos nocturnos que cierran hoy de madrugada
+        supabase
+          .from('cronograma')
+          .select('*')
+          .eq('empleado_id', empleado.id)
+          .eq('fecha', ayer)
           .maybeSingle(),
         supabase
           .from('fichadas')
@@ -393,13 +405,9 @@ function Inicio({
           .order('timestamp'),
       ]);
       setCrono((c as Cronograma) || null);
+      setCronoAyer((cAyer as Cronograma) || null);
       setFichadasHoy((f as Fichada[]) || []);
-
-      // Si ayer tiene cantidad impar de fichadas, hay una entrada abierta (sin salida).
-      // Excluimos fichadas legacy (entradas 00:xx que son salidas del día anterior)
-      // para no falsear la paridad.
-      const fichadasAyer = ((fAyer as Fichada[]) || []).filter((f) => !esSalidaNocturnaLegacy(f));
-      setEntradaAbiertaAyer(fichadasAyer.length > 0 && fichadasAyer.length % 2 !== 0);
+      setFichadasAyer((fAyer as Fichada[]) || []);
 
       if (debugOn) {
         // Verificar si hay sesión auth activa en el cliente principal (hipótesis del bug RLS)
@@ -508,17 +516,28 @@ function Inicio({
     })();
   }, [empleado.id, hoy, debugOn]);
 
-  // Si hoy no tiene fichadas pero ayer quedó una entrada abierta (turno nocturno),
-  // el próximo fichaje es SALIDA, no entrada.
-  // Excluimos fichadas legacy (entradas 00:xx que son salidas del turno nocturno) para
-  // que no corran la paridad y tipen mal el próximo fichaje.
-  const fichadasHoyReales = fichadasHoy.filter((f) => !esSalidaNocturnaLegacy(f));
-  const proximoTipo: 'entrada' | 'salida' =
-    fichadasHoyReales.length === 0 && entradaAbiertaAyer
-      ? 'salida'
-      : fichadasHoyReales.length % 2 === 0
-        ? 'entrada'
-        : 'salida';
+  // El próximo tipo se decide mirando la ÚLTIMA marca + el cronograma (robusto
+  // ante marcas faltantes/sobrantes). Excluimos entradas fantasma de madrugada
+  // (00:xx) que en datos viejos son salidas mal tipeadas del turno nocturno.
+  const marcasRecientes = [...fichadasAyer, ...fichadasHoy].filter(
+    (f) => !esSalidaNocturnaLegacy(f),
+  );
+  const ultimaFichada: FichadaMin | null =
+    marcasRecientes.length > 0
+      ? marcasRecientes.reduce((a, b) => (a.timestamp >= b.timestamp ? a : b))
+      : null;
+  const toCronoDia = (c: Cronograma | null): CronoDia | null =>
+    c ? { turnos: c.turnos, hora_entrada: c.hora_entrada, hora_salida: c.hora_salida } : null;
+  const decision = decidirProximaFichada({
+    ahora: ahoraDev,
+    fechaHoy: hoy,
+    fechaAyer: ayer,
+    cronoHoy: toCronoDia(crono),
+    cronoAyer: toCronoDia(cronoAyer),
+    ultimaFichada,
+  });
+  const proximoTipo = decision.tipo;
+  const ultimaMarca = ultimaFichada;
 
   return (
     <>
@@ -553,12 +572,33 @@ function Inicio({
         </div>
       )}
 
+      {ultimaMarca && (
+        <p className="mb-2 text-center text-xs text-gray-500">
+          Tu última marca fue{' '}
+          <span className="font-medium text-gray-700">
+            {ultimaMarca.tipo} {hhmm(new Date(ultimaMarca.timestamp))}
+          </span>{' '}
+          ✓
+        </p>
+      )}
+
       <button
         onClick={onIrAFichar}
-        className="mb-3 w-full rounded-lg bg-rodziny-700 py-4 text-base font-semibold text-white shadow hover:bg-rodziny-800"
+        className="mb-1 w-full rounded-lg bg-rodziny-700 py-4 text-base font-semibold text-white shadow hover:bg-rodziny-800"
       >
         FICHAR {proximoTipo.toUpperCase()}
       </button>
+      {decision.horarioTramo && (
+        <p className="mb-3 text-center text-[11px] text-gray-500">
+          Tu horario de este tramo: {decision.horarioTramo}
+        </p>
+      )}
+      {decision.advertencia && (
+        <p className="mb-3 rounded border border-amber-200 bg-amber-50 px-2 py-1.5 text-center text-[11px] text-amber-800">
+          ⚠️ {decision.advertencia}
+        </p>
+      )}
+      {!decision.horarioTramo && <div className="mb-3" />}
 
       <div className="grid grid-cols-2 gap-2">
         <button
@@ -607,7 +647,12 @@ function Fichando({
   const streamRef = useRef<MediaStream | null>(null);
   const [fotoBlob, setFotoBlob] = useState<Blob | null>(null);
   const [fotoPreview, setFotoPreview] = useState<string | null>(null);
-  const [resultado, setResultado] = useState<{ tipo: string; minutos: number | null } | null>(null);
+  const [resultado, setResultado] = useState<{
+    tipo: string;
+    minutos: number | null;
+    hora: string;
+    horarioTramo: string | null;
+  } | null>(null);
 
   // Verificación de ubicación — corre al entrar en el paso 'gps'.
   // Bloquea si el GPS funciona pero el empleado está fuera del local.
@@ -745,61 +790,95 @@ function Fichando({
       ayerDt2.setDate(ayerDt2.getDate() - 1);
       const fechaAyer = ymd(ayerDt2);
 
-      // Verificar si hay entrada abierta de ayer (turno nocturno).
-      // Filtramos fichadas legacy de madrugada (entradas 00:xx que son salidas del día anterior)
-      // para que no corran la paridad.
-      const { data: fichadasAyerRaw } = await supabase
-        .from('fichadas')
-        .select('id, tipo, timestamp')
-        .eq('empleado_id', empleado.id)
-        .eq('fecha', fechaAyer);
-      const fichadasAyer = (fichadasAyerRaw ?? []).filter((f: any) => !esSalidaNocturnaLegacy(f));
-      const entradaAbiertaDeAyer = fichadasAyer.length > 0 && fichadasAyer.length % 2 !== 0;
+      // Traer marcas y cronogramas de ayer+hoy en un solo viaje.
+      const [{ data: fichHoyAyer }, { data: cronoHoyRaw }, { data: cronoAyerRaw }] =
+        await Promise.all([
+          supabase
+            .from('fichadas')
+            .select('id, tipo, timestamp, fecha')
+            .eq('empleado_id', empleado.id)
+            .in('fecha', [fechaAyer, fechaHoy])
+            .order('timestamp'),
+          supabase
+            .from('cronograma')
+            .select('hora_entrada, hora_salida, turnos, es_franco, publicado')
+            .eq('empleado_id', empleado.id)
+            .eq('fecha', fechaHoy)
+            .maybeSingle(),
+          supabase
+            .from('cronograma')
+            .select('hora_entrada, hora_salida, turnos, es_franco, publicado')
+            .eq('empleado_id', empleado.id)
+            .eq('fecha', fechaAyer)
+            .maybeSingle(),
+        ]);
 
-      // Determinar tipo (entrada o salida)
-      const { data: yaHoyRaw } = await supabase
-        .from('fichadas')
-        .select('id, tipo, timestamp')
-        .eq('empleado_id', empleado.id)
-        .eq('fecha', fechaHoy);
-      const yaHoy = (yaHoyRaw ?? []).filter((f: any) => !esSalidaNocturnaLegacy(f));
+      // Última marca real (ignoramos entradas fantasma de madrugada de datos viejos).
+      const marcas = (fichHoyAyer ?? []).filter((f: any) => !esSalidaNocturnaLegacy(f));
+      const ultimaFichada: FichadaMin | null =
+        marcas.length > 0
+          ? (marcas.reduce((a: any, b: any) => (a.timestamp >= b.timestamp ? a : b)) as FichadaMin)
+          : null;
 
-      let tipo: 'entrada' | 'salida';
-      let fechaFichada: string;
-
-      if (yaHoy.length === 0 && entradaAbiertaDeAyer) {
-        tipo = 'salida';
-        fechaFichada = fechaAyer;
-      } else {
-        tipo = yaHoy.length % 2 === 0 ? 'entrada' : 'salida';
-        fechaFichada = fechaHoy;
+      // Anti doble-tap: si acabás de fichar hace segundos, es un toque repetido.
+      if (
+        ultimaFichada &&
+        ahora.getTime() - new Date(ultimaFichada.timestamp).getTime() < ANTIREBOTE_SEG * 1000
+      ) {
+        setWarning(
+          `Ya registramos tu marca de ${ultimaFichada.tipo} a las ${hhmm(
+            new Date(ultimaFichada.timestamp),
+          )}. Esperá un momento antes de fichar de nuevo.`,
+        );
+        setPaso('error');
+        return;
       }
 
-      // Cronograma del día correspondiente (con turnos partidos)
-      const { data: crono } = await supabase
-        .from('cronograma')
-        .select('hora_entrada, hora_salida, turnos, es_franco, publicado')
-        .eq('empleado_id', empleado.id)
-        .eq('fecha', fechaFichada)
-        .maybeSingle();
+      // Decidir entrada/salida + día imputado con la última marca y el cronograma.
+      const cronoHoy: CronoDia | null = cronoHoyRaw
+        ? {
+            turnos: (cronoHoyRaw.turnos as TurnoCrono[] | null) ?? null,
+            hora_entrada: cronoHoyRaw.hora_entrada ?? null,
+            hora_salida: cronoHoyRaw.hora_salida ?? null,
+          }
+        : null;
+      const cronoAyer: CronoDia | null = cronoAyerRaw
+        ? {
+            turnos: (cronoAyerRaw.turnos as TurnoCrono[] | null) ?? null,
+            hora_entrada: cronoAyerRaw.hora_entrada ?? null,
+            hora_salida: cronoAyerRaw.hora_salida ?? null,
+          }
+        : null;
+      const decision = decidirProximaFichada({
+        ahora,
+        fechaHoy,
+        fechaAyer,
+        cronoHoy,
+        cronoAyer,
+        ultimaFichada,
+      });
+      const tipo = decision.tipo;
+      const fechaFichada = decision.fecha;
 
-      const turnosDia = (crono?.turnos as TurnoCrono[] | null) ?? null;
+      // Cronograma del día al que se imputa la marca (para la diferencia vs horario).
+      const cronoImputado = fechaFichada === fechaHoy ? cronoHoyRaw : cronoAyerRaw;
+      const turnosDia = (cronoImputado?.turnos as TurnoCrono[] | null) ?? null;
       const minutosDif = diffMinutosVsTurnos(
         ahora,
         turnosDia,
         tipo,
-        crono?.hora_entrada ?? null,
-        crono?.hora_salida ?? null,
+        cronoImputado?.hora_entrada ?? null,
+        cronoImputado?.hora_salida ?? null,
       );
-      const tieneHorario = (turnosDia && turnosDia.length > 0) || !!crono?.hora_entrada;
+      const tieneHorario = (turnosDia && turnosDia.length > 0) || !!cronoImputado?.hora_entrada;
 
       // Warnings (no bloquean)
-      let w: string | null = null;
-      if (crono?.es_franco) w = 'Hoy figurás de franco. Quedará registrado igual.';
-      else if (crono && !crono.publicado)
-        w = 'Tu horario de hoy está en borrador (sin publicar). Queda registrado igual.';
-      else if (!tieneHorario) w = 'No tenés horario asignado para hoy.';
-      else if (minutosDif !== null && Math.abs(minutosDif) > TOLERANCIA_MIN)
+      let w: string | null = decision.advertencia;
+      if (cronoImputado?.es_franco) w = 'Hoy figurás de franco. Quedará registrado igual.';
+      else if (cronoImputado && !cronoImputado.publicado)
+        w = 'Tu horario está en borrador (sin publicar). Queda registrado igual.';
+      else if (!tieneHorario && !w) w = 'No tenés horario asignado para hoy.';
+      else if (!w && minutosDif !== null && Math.abs(minutosDif) > TOLERANCIA_MIN)
         w = `Estás ${minutosDif > 0 ? 'tarde' : 'antes'} ${Math.abs(minutosDif)} min vs tu horario.`;
       setWarning(w);
 
@@ -836,7 +915,12 @@ function Fichando({
         throw insErr;
       }
 
-      setResultado({ tipo, minutos: minutosDif });
+      setResultado({
+        tipo,
+        minutos: minutosDif,
+        hora: hhmm(ahora),
+        horarioTramo: decision.horarioTramo,
+      });
       setPaso('ok');
     } catch (e: any) {
       setMensaje('Error: ' + (e?.message || e));
@@ -948,11 +1032,16 @@ function Fichando({
 
       {paso === 'ok' && resultado && (
         <div className="py-4 text-center">
-          <div className="mb-2 text-3xl">✓</div>
-          <p className="text-base font-semibold capitalize text-gray-900">
-            {resultado.tipo} registrada
+          <div className="mb-2 text-4xl">✓</div>
+          <p className="text-lg font-bold text-gray-900">
+            Marcaste <span className="uppercase">{resultado.tipo}</span>
           </p>
-          <p className="mt-1 text-xs text-gray-500">{hhmm(new Date())}</p>
+          <p className="mt-1 text-2xl font-bold text-rodziny-700">{resultado.hora}</p>
+          {resultado.horarioTramo && (
+            <p className="mt-1 text-xs text-gray-500">
+              Tu horario de este tramo: {resultado.horarioTramo}
+            </p>
+          )}
           {resultado.minutos !== null && (
             <p
               className={cn(
