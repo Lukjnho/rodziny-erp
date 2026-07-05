@@ -302,6 +302,10 @@ type Vista = 'inicio' | 'fichando' | 'mis_horarios' | 'mi_quincena';
 function Home({ empleado, onLogout }: { empleado: Empleado; onLogout: () => void }) {
   const [vista, setVista] = useState<Vista>('inicio');
   const [refrescador, setRefrescador] = useState(0);
+  // Última marca recién hecha: se la pasamos al Inicio para que la muestre al
+  // instante, sin esperar a que la relea de la base (evita el flash de
+  // "FICHAR ENTRADA" justo después de fichar).
+  const [ultimaMarca, setUltimaMarca] = useState<FichadaMin | null>(null);
 
   return (
     <Pantalla>
@@ -323,6 +327,7 @@ function Home({ empleado, onLogout }: { empleado: Empleado; onLogout: () => void
         <Inicio
           empleado={empleado}
           key={refrescador}
+          marcaRecien={ultimaMarca}
           onIrAFichar={() => setVista('fichando')}
           onIrAHorarios={() => setVista('mis_horarios')}
           onIrAQuincena={() => setVista('mi_quincena')}
@@ -332,7 +337,8 @@ function Home({ empleado, onLogout }: { empleado: Empleado; onLogout: () => void
         <Fichando
           empleado={empleado}
           onCancelar={() => setVista('inicio')}
-          onListo={() => {
+          onListo={(marca) => {
+            setUltimaMarca(marca);
             setRefrescador((x) => x + 1);
             setVista('inicio');
           }}
@@ -351,11 +357,13 @@ function Home({ empleado, onLogout }: { empleado: Empleado; onLogout: () => void
 // ─── Inicio ─────────────────────────────────────────────────────────────────
 function Inicio({
   empleado,
+  marcaRecien,
   onIrAFichar,
   onIrAHorarios,
   onIrAQuincena,
 }: {
   empleado: Empleado;
+  marcaRecien?: FichadaMin | null;
   onIrAFichar: () => void;
   onIrAHorarios: () => void;
   onIrAQuincena: () => void;
@@ -364,6 +372,7 @@ function Inicio({
   const [cronoAyer, setCronoAyer] = useState<Cronograma | null>(null);
   const [fichadasHoy, setFichadasHoy] = useState<Fichada[]>([]);
   const [fichadasAyer, setFichadasAyer] = useState<Fichada[]>([]);
+  const [cargando, setCargando] = useState(true);
   const [debugInfo, setDebugInfo] = useState<string>('');
   const ahoraDev = new Date();
   const hoy = ymd(ahoraDev);
@@ -408,6 +417,7 @@ function Inicio({
       setCronoAyer((cAyer as Cronograma) || null);
       setFichadasHoy((f as Fichada[]) || []);
       setFichadasAyer((fAyer as Fichada[]) || []);
+      setCargando(false);
 
       if (debugOn) {
         // Verificar si hay sesión auth activa en el cliente principal (hipótesis del bug RLS)
@@ -519,9 +529,14 @@ function Inicio({
   // El próximo tipo se decide mirando la ÚLTIMA marca + el cronograma (robusto
   // ante marcas faltantes/sobrantes). Excluimos entradas fantasma de madrugada
   // (00:xx) que en datos viejos son salidas mal tipeadas del turno nocturno.
-  const marcasRecientes = [...fichadasAyer, ...fichadasHoy].filter(
-    (f) => !esSalidaNocturnaLegacy(f),
-  );
+  const marcasRecientes: FichadaMin[] = [...fichadasAyer, ...fichadasHoy]
+    .filter((f) => !esSalidaNocturnaLegacy(f))
+    .map((f) => ({ tipo: f.tipo, timestamp: f.timestamp, fecha: f.fecha }));
+  // Incluir la marca recién hecha si el re-fetch todavía no la trajo (evita
+  // depender de la latencia lectura-tras-escritura).
+  if (marcaRecien && !marcasRecientes.some((m) => m.timestamp === marcaRecien.timestamp)) {
+    marcasRecientes.push(marcaRecien);
+  }
   const ultimaFichada: FichadaMin | null =
     marcasRecientes.length > 0
       ? marcasRecientes.reduce((a, b) => (a.timestamp >= b.timestamp ? a : b))
@@ -584,21 +599,22 @@ function Inicio({
 
       <button
         onClick={onIrAFichar}
-        className="mb-1 w-full rounded-lg bg-rodziny-700 py-4 text-base font-semibold text-white shadow hover:bg-rodziny-800"
+        disabled={cargando}
+        className="mb-1 w-full rounded-lg bg-rodziny-700 py-4 text-base font-semibold text-white shadow hover:bg-rodziny-800 disabled:cursor-not-allowed disabled:opacity-60"
       >
-        FICHAR {proximoTipo.toUpperCase()}
+        {cargando ? 'Cargando…' : `FICHAR ${proximoTipo.toUpperCase()}`}
       </button>
-      {decision.horarioTramo && (
+      {!cargando && decision.horarioTramo && (
         <p className="mb-3 text-center text-[11px] text-gray-500">
           Tu horario de este tramo: {decision.horarioTramo}
         </p>
       )}
-      {decision.advertencia && (
+      {!cargando && decision.advertencia && (
         <p className="mb-3 rounded border border-amber-200 bg-amber-50 px-2 py-1.5 text-center text-[11px] text-amber-800">
           ⚠️ {decision.advertencia}
         </p>
       )}
-      {!decision.horarioTramo && <div className="mb-3" />}
+      {(cargando || !decision.horarioTramo) && <div className="mb-3" />}
 
       <div className="grid grid-cols-2 gap-2">
         <button
@@ -634,7 +650,7 @@ function Fichando({
 }: {
   empleado: Empleado;
   onCancelar: () => void;
-  onListo: () => void;
+  onListo: (marca: FichadaMin) => void;
 }) {
   const [paso, setPaso] = useState<PasoFichaje>('gps');
   const [mensaje, setMensaje] = useState<string>('');
@@ -648,10 +664,12 @@ function Fichando({
   const [fotoBlob, setFotoBlob] = useState<Blob | null>(null);
   const [fotoPreview, setFotoPreview] = useState<string | null>(null);
   const [resultado, setResultado] = useState<{
-    tipo: string;
+    tipo: 'entrada' | 'salida';
     minutos: number | null;
     hora: string;
     horarioTramo: string | null;
+    iso: string;
+    fecha: string;
   } | null>(null);
 
   // Verificación de ubicación — corre al entrar en el paso 'gps'.
@@ -920,6 +938,8 @@ function Fichando({
         minutos: minutosDif,
         hora: hhmm(ahora),
         horarioTramo: decision.horarioTramo,
+        iso: ahora.toISOString(),
+        fecha: fechaFichada,
       });
       setPaso('ok');
     } catch (e: any) {
@@ -1068,7 +1088,9 @@ function Fichando({
           )}
           {warning && <p className="mt-2 text-xs text-amber-700">{warning}</p>}
           <button
-            onClick={onListo}
+            onClick={() =>
+              onListo({ tipo: resultado.tipo, timestamp: resultado.iso, fecha: resultado.fecha })
+            }
             className="mt-4 w-full rounded bg-rodziny-700 py-2.5 text-sm font-medium text-white hover:bg-rodziny-800"
           >
             Listo
