@@ -264,14 +264,11 @@ interface AutoMes {
 
 function computarMes(manual: Map<string, number>, auto: AutoMes): Map<string, number> {
   const m = (k: string) => manual.get(k) ?? 0;
-  const { ingBruto, ticketCount } = auto;
-  // IVA débito: el dato REAL por ticket (hoja "Ventas Fiscales" del XLS de Fudo)
-  // manda siempre. Si el mes todavía no tiene datos fiscales cargados
-  // (auto.ivaDebito = 0), se usa el total mensual estimado (21/121 sobre lo
-  // facturado) guardado como partida 'iva_debito'. Cuando después se sube el XLS,
-  // el real pisa la estimación automáticamente y esta línea deja de usar el
-  // fallback — sin borrar nada a mano.
-  const ivaDebito = auto.ivaDebito > 0 ? auto.ivaDebito : m('iva_debito');
+  const { ingBruto, ivaDebito, ticketCount } = auto;
+  // IVA débito: ya viene resuelto POR LOCAL en la query de tickets (real por
+  // ticket del XLS fiscal si existe; si no, el total mensual estimado 21/121
+  // guardado en edr_partidas). Ver el queryFn de ticketsRaw. Al resolverlo antes
+  // de consolidar, el "Empresa" suma bien el efectivo de ambos locales.
 
   // CMV: auto desde gastos Fudo, override manual si el usuario cargó algo
   const cmvAlimentos = manual.has('cmv_alimentos') ? m('cmv_alimentos') : auto.cmvAlimentos;
@@ -630,7 +627,27 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
             console.error('[edr_resumen_ventas]', error);
             return [];
           }
-          return (data ?? []) as TicketRow[];
+          // IVA débito estimado (total mensual 21/121) guardado por local en
+          // edr_partidas. Se resuelve el efectivo POR LOCAL acá, ANTES de
+          // consolidar: el real por ticket manda; si es 0, se usa el estimado del
+          // local. Clave para el consolidado — así se suma el efectivo de cada
+          // local. (Antes el estimado se resolvía después del merge y un local
+          // pisaba al otro, mostrando el IVA de uno solo en "Empresa".)
+          const { data: ivaEst } = await supabase
+            .from('edr_partidas')
+            .select('periodo, monto')
+            .eq('local', loc)
+            .eq('concepto', 'iva_debito')
+            .gte('periodo', `${año}-01`)
+            .lte('periodo', `${año}-12`);
+          const ivaEstMap = new Map(
+            (ivaEst ?? []).map((r) => [r.periodo as string, Number(r.monto)]),
+          );
+          return ((data ?? []) as TicketRow[]).map((row) => ({
+            ...row,
+            iva_debito:
+              Number(row.iva_debito) > 0 ? Number(row.iva_debito) : ivaEstMap.get(row.periodo) ?? 0,
+          }));
         }),
       );
       return esConsolidado
