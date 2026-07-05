@@ -65,12 +65,21 @@ const FILAS: FilaEdR[] = [
     depth: 1,
     formato: 'moneda',
   },
-  { key: '__cortesias_info', label: 'Cortesías', tipo: 'calculada', depth: 1, formato: 'moneda' },
+  // Fila resumen plegable: suma cortesías + otros descuentos. Actúa como toggle
+  // (▸/▾) para no ocupar dos filas fijas con datos meramente informativos.
+  {
+    key: '__descuentos_toggle',
+    label: 'Cortesías y descuentos',
+    tipo: 'calculada',
+    depth: 1,
+    formato: 'moneda',
+  },
+  { key: '__cortesias_info', label: 'Cortesías', tipo: 'calculada', depth: 2, formato: 'moneda' },
   {
     key: '__otros_desc',
     label: 'Otros descuentos',
     tipo: 'calculada',
-    depth: 1,
+    depth: 2,
     formato: 'moneda',
   },
   { key: '_esp1', label: '', tipo: 'espacio', depth: 0 },
@@ -255,7 +264,14 @@ interface AutoMes {
 
 function computarMes(manual: Map<string, number>, auto: AutoMes): Map<string, number> {
   const m = (k: string) => manual.get(k) ?? 0;
-  const { ingBruto, ivaDebito, ticketCount } = auto;
+  const { ingBruto, ticketCount } = auto;
+  // IVA débito: el dato REAL por ticket (hoja "Ventas Fiscales" del XLS de Fudo)
+  // manda siempre. Si el mes todavía no tiene datos fiscales cargados
+  // (auto.ivaDebito = 0), se usa el total mensual estimado (21/121 sobre lo
+  // facturado) guardado como partida 'iva_debito'. Cuando después se sube el XLS,
+  // el real pisa la estimación automáticamente y esta línea deja de usar el
+  // fallback — sin borrar nada a mano.
+  const ivaDebito = auto.ivaDebito > 0 ? auto.ivaDebito : m('iva_debito');
 
   // CMV: auto desde gastos Fudo, override manual si el usuario cargó algo
   const cmvAlimentos = manual.has('cmv_alimentos') ? m('cmv_alimentos') : auto.cmvAlimentos;
@@ -312,6 +328,8 @@ function computarMes(manual: Map<string, number>, auto: AutoMes): Map<string, nu
   // Cortesías y otros descuentos (informativos — se guardan en edr_partidas al importar)
   result.set('__cortesias_info', m('cortesias_monto'));
   result.set('__otros_desc', m('otros_descuentos'));
+  // Resumen plegable = suma de ambos informativos (no alimenta ningún total del P&L).
+  result.set('__descuentos_toggle', m('cortesias_monto') + m('otros_descuentos'));
   result.set('cmv_alimentos', cmvAlimentos);
   result.set('cmv_bebidas', cmvBebidas);
   result.set('cmv_indirectos', cmvIndirectos);
@@ -413,7 +431,7 @@ const SENTIDO_FILA: Record<string, 1 | -1 | 0> = {
   ing_bruto: 1, iva_debito: 1, __ing_netos: 1,
   // dif_arqueo: deliberadamente sin sentido — son montos chicos puntuales
   // (faltantes/sobrantes de caja), comparar mes a mes no aporta señal.
-  __ticket_prom: 0, __cortesias_info: 0, __otros_desc: 0,
+  __ticket_prom: 0, __descuentos_toggle: 0, __cortesias_info: 0, __otros_desc: 0,
   cmv_alimentos: -1, cmv_bebidas: -1, cmv_indirectos: -1, __cmv_total: -1,
   // Stock final: subir es bueno para el dueño (más activo) pero los Δ% mes a mes
   // tienen poca señal — se quedan neutros para no ruido.
@@ -444,6 +462,9 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
   // Rotación por categoría: colapsada por defecto. La fila total funciona como
   // toggle (▸/▾) para no recargar visualmente el EdR.
   const [rotacionExpandida, setRotacionExpandida] = useState(false);
+  // Cortesías + Otros descuentos: informativos, colapsados por defecto. La fila
+  // resumen "Cortesías y descuentos" funciona como toggle (▸/▾).
+  const [descuentosExpandido, setDescuentosExpandido] = useState(false);
 
   // Última sync OK por local (para mostrar "hace X min" en el header).
   const { data: ultimaSync } = useQuery({
@@ -1195,6 +1216,14 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
                 // la fila total de rotación (que actúa como toggle).
                 if (fila.key.startsWith('_kpi_rotacion_') && !rotacionExpandida) return null;
 
+                // Detalle de cortesías/descuentos: oculto salvo que se expanda la
+                // fila resumen "Cortesías y descuentos" (que actúa como toggle).
+                if (
+                  (fila.key === '__cortesias_info' || fila.key === '__otros_desc') &&
+                  !descuentosExpandido
+                )
+                  return null;
+
                 const esSeccion = fila.tipo === 'seccion';
                 const esTotal = fila.tipo === 'calculada' && fila.depth === 0;
                 const esKpi = fila.tipo === 'kpi';
@@ -1239,6 +1268,19 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
                             {rotacionExpandida ? '▾' : '▸'}
                           </span>
                           {fila.label}
+                        </button>
+                      ) : fila.key === '__descuentos_toggle' ? (
+                        <button
+                          type="button"
+                          onClick={() => setDescuentosExpandido((v) => !v)}
+                          className="flex items-center gap-1 text-xs italic text-gray-400 transition-colors hover:text-gray-600"
+                          title="Ver/ocultar cortesías y otros descuentos (informativo)"
+                        >
+                          <span className="text-[9px] not-italic leading-none">
+                            {descuentosExpandido ? '▾' : '▸'}
+                          </span>
+                          {fila.label}
+                          <span className="ml-1 not-italic text-gray-300">(informativo)</span>
                         </button>
                       ) : (
                         <span
