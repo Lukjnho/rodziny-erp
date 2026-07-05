@@ -304,7 +304,14 @@ function computarMes(manual: Map<string, number>, auto: AutoMes): Map<string, nu
   // Solo aplicamos el ajuste si hay cierre del mes actual Y del anterior.
   // Sin uno de los dos extremos, no podemos calcular Δ confiable → fallback a compras.
   const aplicarDelta = auto.hayCierreMes && auto.hayCierreAnterior;
-  const cmvReal = aplicarDelta ? cmvTotal - deltaInventario : cmvTotal;
+  // Guardarraíl: si aplicar el Δ inventario da un CMV negativo (consumo < 0,
+  // imposible), la apertura no es confiable — típicamente el conteo del mes
+  // anterior fue parcial (ej. Saavedra may-2026: cierre completo recién desde
+  // jun). Caemos a "compras" y lo marcamos estimado, para no mostrar un margen
+  // > 100% como si fuera real. El primer CMV real llega cuando hay dos conteos
+  // completos seguidos.
+  const deltaValido = aplicarDelta && cmvTotal - deltaInventario >= 0;
+  const cmvReal = deltaValido ? cmvTotal - deltaInventario : cmvTotal;
   const margenBruto = ingNeto - cmvReal;
   const persTotal = persSueldos + persCargas;
   const primeCost = cmvTotal + persTotal;
@@ -336,8 +343,9 @@ function computarMes(manual: Map<string, number>, auto: AutoMes): Map<string, nu
   result.set('stock_final_indirectos', auto.stockFinalIndirectos);
   result.set('__cmv_real', cmvReal);
   // Flag: 1 = el CMV real es estimado (= compras) porque falta el cierre de
-  // inventario del mes y/o del anterior, así que no se aplicó el Δ inventario.
-  result.set('__cmv_estimado', aplicarDelta ? 0 : 1);
+  // inventario del mes y/o del anterior, o porque el Δ daba consumo negativo
+  // (apertura no confiable) y se aplicó el guardarraíl.
+  result.set('__cmv_estimado', deltaValido ? 0 : 1);
   result.set('__margen_bruto', margenBruto);
   // Food Cost % usa CMV REAL para reflejar el consumo real, no las compras.
   result.set('_kpi_food', ingNeto > 0 ? cmvReal / ingNeto : 0);
@@ -346,14 +354,14 @@ function computarMes(manual: Map<string, number>, auto: AutoMes): Map<string, nu
   const stockPromedio = (stockFinalTotal + stockInicialTotal) / 2;
   result.set(
     '_kpi_rotacion',
-    aplicarDelta && stockPromedio > 0 ? cmvReal / stockPromedio : 0,
+    deltaValido && stockPromedio > 0 ? cmvReal / stockPromedio : 0,
   );
   // Rotación por categoría = CMV real de la categoría / stock promedio de la
   // categoría. Mismo criterio (solo con los dos cierres). CMV real categoría =
   // compras de la categoría − Δ stock de la categoría. Permite ver qué rubro
   // es el que no rota (ej: bebidas paradas).
   const rotacionCat = (cmvCat: number, sFin: number, sIni: number): number => {
-    if (!aplicarDelta) return 0;
+    if (!deltaValido) return 0;
     const prom = (sFin + sIni) / 2;
     if (prom <= 0) return 0;
     return (cmvCat - (sFin - sIni)) / prom;
@@ -1206,9 +1214,10 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
         <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
           ⚠ <strong>CMV estimado</strong> en {mesesCmvEstimado.join(', ')}:{' '}
           {localEdr === 'consolidado' ? 'el consolidado necesita' : 'este local necesita'} el cierre
-          de inventario aprobado del mes <em>y</em> del anterior para calcular el consumo real. Sin
-          eso, el CMV se muestra igual a las compras (sin Δ inventario) y el margen puede estar
-          distorsionado.
+          de inventario aprobado del mes <em>y</em> del anterior para calcular el consumo real —{' '}
+          <em>y que el conteo de apertura sea confiable</em> (si el Δ da consumo negativo, se
+          descarta). Sin eso, el CMV se muestra igual a las compras (sin Δ inventario) y el margen
+          puede estar distorsionado.
         </div>
       )}
 
