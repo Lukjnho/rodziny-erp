@@ -5,10 +5,14 @@ import { useMenuEngineering, type ProductoME } from '../hooks/useMenuEngineering
 import { useProductosCosteoConfig } from '../hooks/useProductosCosteoConfig';
 import { useAccionesEstado, type AccionEstado } from '../hooks/useAccionesEstado';
 
-function ultimosMeses(n: number): string[] {
+// Meses COMPLETOS previos al mes en curso. El mes actual se excluye a propósito:
+// con pocos días transcurridos las ventas parecen mínimas y CUALQUIER producto
+// cae en cuadrante "perro" / "candidato a eliminar" (falso positivo). Tomamos una
+// ventana de meses cerrados y promediamos a /mes al armar las acciones.
+function mesesCompletos(n: number): string[] {
   const out: string[] = [];
   const hoy = new Date();
-  for (let i = 0; i < n; i++) {
+  for (let i = 1; i <= n; i++) {
     const d = new Date(hoy.getFullYear(), hoy.getMonth() - i, 1);
     out.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
   }
@@ -54,7 +58,7 @@ const TIPO_LABEL: Record<TipoAccion, { label: string; icon: string; color: strin
 export function PlanAccionTab() {
   const { perfil } = useAuth();
   const localRestringido = (perfil?.local_restringido ?? null) as 'vedia' | 'saavedra' | null;
-  const meses = useMemo(() => ultimosMeses(1), []);
+  const meses = useMemo(() => mesesCompletos(3), []);
   const [local, setLocal] = useState<'vedia' | 'saavedra'>(localRestringido ?? 'vedia');
   const [tipoFiltro, setTipoFiltro] = useState<TipoAccion | 'todas'>('todas');
   const [vista, setVista] = useState<'pendientes' | 'resueltas'>('pendientes');
@@ -65,6 +69,11 @@ export function PlanAccionTab() {
 
   const acciones = useMemo<AccionSugerida[]>(() => {
     const out: AccionSugerida[] = [];
+    // La ventana son N meses cerrados: el hook SUMA las ventas de todos. Para las
+    // etiquetas, umbrales e impactos dividimos por N y trabajamos siempre en /mes.
+    // El cuadrante ya viene calculado por medianas en el hook (escala-invariante),
+    // así que promediar acá no lo altera.
+    const nMeses = Math.max(1, meses.length);
 
     for (const p of productos) {
       const cfg = getConfig(p.tipo);
@@ -72,6 +81,8 @@ export function PlanAccionTab() {
       // productos de Fudo no tienen `codigo` (Vedia ~30%): si usáramos solo el
       // codigo vacío, las keys colisionarían y React no re-renderiza al filtrar.
       const idp = p.codigo || `n:${p.nombre}`;
+      const udsMes = p.unidadesVendidas / nMeses;
+      const contribMes = (p.contribucionAbsoluta ?? 0) / nMeses;
 
       // Acción A — Vaca: subir precio leve si no es ancla
       if (
@@ -83,7 +94,7 @@ export function PlanAccionTab() {
         // Sugerencia: subir 5% del precio promedio
         const nuevoPrecio = Math.round((p.precioPromedio * 1.05) / 100) * 100;
         const incrementoUnit = nuevoPrecio - p.precioPromedio;
-        const impactoMes = incrementoUnit * p.unidadesVendidas;
+        const impactoMes = incrementoUnit * udsMes;
         out.push({
           id: `vaca-${p.local}-${idp}`,
           tipo: 'subir_precio_vaca',
@@ -91,7 +102,7 @@ export function PlanAccionTab() {
           producto: p,
           impactoEstimadoMes: impactoMes,
           titulo: `Subir ${p.nombre} ${formatARS(p.precioPromedio)} → ${formatARS(nuevoPrecio)}`,
-          detalle: `${p.unidadesVendidas} uds/mes × +${formatARS(incrementoUnit)} = +${formatARS(impactoMes)}/mes estimado. Vaca con alta demanda absorbe subas leves.`,
+          detalle: `${Math.round(udsMes)} uds/mes × +${formatARS(incrementoUnit)} = +${formatARS(impactoMes)}/mes estimado. Vaca con alta demanda absorbe subas leves.`,
           precioSugerido: nuevoPrecio,
         });
       }
@@ -107,7 +118,7 @@ export function PlanAccionTab() {
         out.push({
           id: `margen-${p.local}-${idp}`,
           tipo: 'subir_precio_margen_bajo',
-          prioridad: diff * Math.abs(p.contribucionAbsoluta ?? 0) * 10,
+          prioridad: diff * Math.abs(contribMes) * 10,
           producto: p,
           impactoEstimadoMes: null,
           titulo: `${p.nombre}: margen ${(p.margenPctSobrePrecio * 100).toFixed(1)}% (mínimo ${(cfg.margen_min * 100).toFixed(0)}%)`,
@@ -116,15 +127,15 @@ export function PlanAccionTab() {
       }
 
       // Acción C — Perro: candidato a eliminar
-      if (p.cuadrante === 'perro' && !p.esAncla && p.unidadesVendidas < 20) {
+      if (p.cuadrante === 'perro' && !p.esAncla && udsMes < 20) {
         out.push({
           id: `perro-${p.local}-${idp}`,
           tipo: 'eliminar_perro',
-          prioridad: 1000 - p.unidadesVendidas, // menos ventas = más urgente
+          prioridad: 1000 - udsMes, // menos ventas = más urgente
           producto: p,
-          impactoEstimadoMes: -(p.contribucionAbsoluta ?? 0), // ahorro al sacarlo
+          impactoEstimadoMes: -contribMes, // ahorro al sacarlo
           titulo: `${p.nombre}: candidato a eliminar`,
-          detalle: `Solo ${p.unidadesVendidas} uds/mes y margen bajo. Si no cumple función estratégica (alérgicos, temporada, etc.) considerá sacarlo.`,
+          detalle: `Solo ${Math.round(udsMes)} uds/mes y margen bajo. Si no cumple función estratégica (alérgicos, temporada, etc.) considerá sacarlo.`,
         });
       }
 
@@ -146,18 +157,18 @@ export function PlanAccionTab() {
         out.push({
           id: `sincosto-${p.local}-${idp}`,
           tipo: 'sin_costo',
-          prioridad: p.unidadesVendidas, // más vendido = más urgente
+          prioridad: udsMes, // más vendido = más urgente
           producto: p,
           impactoEstimadoMes: null,
           titulo: `${p.nombre}: cargar receta / costo`,
-          detalle: `Se vendieron ${p.unidadesVendidas} uds pero no hay costo cargado. No podemos calcular margen.`,
+          detalle: `Se vendieron ${Math.round(udsMes)} uds/mes (promedio) pero no hay costo cargado. No podemos calcular margen.`,
         });
       }
     }
 
     out.sort((a, b) => b.prioridad - a.prioridad);
     return out;
-  }, [productos, getConfig]);
+  }, [productos, getConfig, meses]);
 
   // Una acción está resuelta si el usuario la marcó. Para subas de precio,
   // sigue resuelta solo mientras el objetivo sugerido no supere al que marcó
@@ -209,9 +220,10 @@ export function PlanAccionTab() {
   return (
     <div className="space-y-4">
       <div className="rounded-lg border border-rodziny-200 bg-rodziny-50 p-3 text-xs text-rodziny-900">
-        <strong>Plan de acción del mes</strong> — el motor cruza ventas Fudo, costos cargados,
-        margen objetivo por categoría y producto ancla para sugerirte movimientos priorizados por
-        impacto en $.
+        <strong>Plan de acción del mes</strong> — el motor cruza ventas Fudo (promedio de los
+        últimos 3 meses cerrados, se excluye el mes en curso para no falsear con días sueltos),
+        costos cargados, margen objetivo por categoría y producto ancla para sugerirte movimientos
+        priorizados por impacto en $.
       </div>
 
       <div className="flex flex-wrap items-end gap-3 rounded-lg border border-gray-200 bg-white p-3">
