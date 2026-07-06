@@ -314,7 +314,10 @@ function computarMes(manual: Map<string, number>, auto: AutoMes): Map<string, nu
   const cmvReal = deltaValido ? cmvTotal - deltaInventario : cmvTotal;
   const margenBruto = ingNeto - cmvReal;
   const persTotal = persSueldos + persCargas;
-  const primeCost = cmvTotal + persTotal;
+  // Prime Cost = CMV (consumo real) + Personal. Usa cmvReal, NO cmvTotal (compras):
+  // Prime Cost es costo de lo VENDIDO + mano de obra. Antes usaba compras y en meses
+  // con movimiento de inventario inflaba el % y no cuadraba con el CMV REAL mostrado.
+  const primeCost = cmvReal + persTotal;
   const amortizaciones = manual.has('amortizaciones') ? m('amortizaciones') : auto.amortizaciones;
   const ebitda = margenBruto - persTotal - gastosOp - impuestosOp;
   const ebit = ebitda - amortizaciones;
