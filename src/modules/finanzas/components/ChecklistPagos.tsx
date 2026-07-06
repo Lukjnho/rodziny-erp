@@ -159,13 +159,14 @@ export function ChecklistPagos() {
   // acordarme de clickear la flecha para ir a ver qué había en el período siguiente.
   const urgentesEnOtrosPeriodos = useMemo(() => {
     const pp = alertas?.porPeriodo ?? {};
-    const otros = Object.entries(pp).filter(([p]) => p !== periodo);
-    if (otros.length === 0) return null;
-    const cantidad = otros.reduce((s, [, v]) => s + v.cantidad, 0);
-    const monto = otros.reduce((s, [, v]) => s + v.monto, 0);
-    // Período más cercano (ordenado lexicograficamente YYYY-MM funciona)
-    const proximoPeriodo = otros.map(([p]) => p).sort()[0];
-    return { cantidad, monto, proximoPeriodo, porPeriodo: Object.fromEntries(otros) };
+    // Un renglón por período: cada mes muestra SU propia deuda urgente, no la
+    // suma de todos. Antes se sumaba todo y se etiquetaba con el mes más viejo,
+    // así que "Mayo: $20M" en realidad era Mayo + Julio juntos.
+    const otros = Object.entries(pp)
+      .filter(([p]) => p !== periodo)
+      .map(([p, v]) => ({ periodo: p, cantidad: v.cantidad, monto: v.monto }))
+      .sort((a, b) => a.periodo.localeCompare(b.periodo));
+    return otros.length ? otros : null;
   }, [alertas, periodo]);
   const [showModal, setShowModal] = useState(false);
   const [agruparPor, setAgruparPor] = useState<'seccion' | 'edr'>('seccion');
@@ -754,22 +755,29 @@ export function ChecklistPagos() {
       )}
 
       {urgentesEnOtrosPeriodos && (
-        <div className="flex items-center justify-between gap-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm">
-          <div className="flex items-center gap-2 text-amber-900">
+        <div className="space-y-1.5 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm">
+          <div className="flex items-center gap-2 font-medium text-amber-900">
             <span className="text-base leading-none">⚠️</span>
-            <span>
-              Tenés <strong>{urgentesEnOtrosPeriodos.cantidad}</strong>{' '}
-              {urgentesEnOtrosPeriodos.cantidad === 1 ? 'pago urgente' : 'pagos urgentes'} en{' '}
-              <strong>{labelMes(urgentesEnOtrosPeriodos.proximoPeriodo)}</strong> por{' '}
-              <strong>{formatARS(urgentesEnOtrosPeriodos.monto)}</strong>
-            </span>
+            <span>Pagos urgentes en otros meses (vencidos o vencen en ≤7 días)</span>
           </div>
-          <button
-            onClick={() => setPeriodo(urgentesEnOtrosPeriodos.proximoPeriodo)}
-            className="whitespace-nowrap rounded-md bg-amber-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-amber-700"
-          >
-            Ver {labelMes(urgentesEnOtrosPeriodos.proximoPeriodo)} →
-          </button>
+          {urgentesEnOtrosPeriodos.map((u) => (
+            <div
+              key={u.periodo}
+              className="flex items-center justify-between gap-3 pl-6 text-amber-900"
+            >
+              <span>
+                <strong>{labelMes(u.periodo)}</strong> — {u.cantidad}{' '}
+                {u.cantidad === 1 ? 'pago' : 'pagos'} · deuda{' '}
+                <strong>{formatARS(u.monto)}</strong>
+              </span>
+              <button
+                onClick={() => setPeriodo(u.periodo)}
+                className="whitespace-nowrap rounded-md bg-amber-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-amber-700"
+              >
+                Ver →
+              </button>
+            </div>
+          ))}
         </div>
       )}
 
