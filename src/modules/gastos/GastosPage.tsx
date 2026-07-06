@@ -6,18 +6,16 @@ import { LocalSelector } from '@/components/ui/LocalSelector';
 import { KPICard } from '@/components/ui/KPICard';
 import { cn, formatARS } from '@/lib/utils';
 import { ListadoGastos } from './ListadoGastos';
-import { PagosPanel } from './PagosPanel';
 import { AnalisisGastos } from './AnalisisGastos';
 import { CategoriasPanel } from './CategoriasPanel';
 import { NuevoGastoModal } from './NuevoGastoModal';
 import type { Gasto } from './types';
 
-type Tab = 'listado' | 'pagos' | 'analisis' | 'categorias';
+type Tab = 'listado' | 'analisis' | 'categorias';
 type Local = 'vedia' | 'saavedra' | 'consolidado';
 
 const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: 'listado', label: 'Listado', icon: '📋' },
-  { id: 'pagos', label: 'Pagos', icon: '💳' },
   { id: 'analisis', label: 'Análisis', icon: '📊' },
   { id: 'categorias', label: 'Categorías', icon: '🏷' },
 ];
@@ -90,7 +88,7 @@ export function GastosPage({ embedded = false }: { embedded?: boolean } = {}) {
   const ocultarHeader = tab === 'categorias';
   // La vista de Análisis es anual (su propio selector de Año) → sin rango de fechas
   // ni KPIs por rango, para no tener dos relojes contradictorios en la misma pantalla.
-  const mostrarRango = tab === 'listado' || tab === 'pagos';
+  const mostrarRango = tab === 'listado';
 
   // Período anterior (mismo nro de días, justo antes)
   const periodoAnt = useMemo(() => periodoAnterior(desde, hasta), [desde, hasta]);
@@ -314,7 +312,6 @@ export function GastosPage({ embedded = false }: { embedded?: boolean } = {}) {
           }}
         />
       )}
-      {tab === 'pagos' && !embedded && <PagosPanel local={local} desde={desde} hasta={hasta} />}
       {tab === 'analisis' && <AnalisisGastos local={local} />}
       {tab === 'categorias' && !embedded && <CategoriasPanel />}
 

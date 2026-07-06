@@ -5,6 +5,7 @@ import { supabase } from '@/lib/supabase';
 import { PageContainer } from '@/components/layout/PageContainer';
 import { LocalSelector } from '@/components/ui/LocalSelector';
 import { formatARS, cn } from '@/lib/utils';
+import { hoyAR } from '@/lib/fechaAR';
 import { parseDecimal, normalizarDecimal, equivalenteKgGramos } from '@/lib/numero';
 import {
   parseFudoGastos,
@@ -32,6 +33,15 @@ import { PagarGastoModal } from '@/modules/gastos/PagarGastoModal';
 
 type Tab = 'gastos' | 'stock' | 'movimientos' | 'recepcion' | 'pagos' | 'proveedores' | 'conciliacion';
 type FiltroEstado = 'todos' | 'bajo_minimo' | 'sin_stock' | 'inactivos';
+
+// "Hoy + N días" en fecha operativa AR (mismo huso que hoyAR). Evita el desfase
+// de toISOString() UTC, que de noche adelantaba el día y marcaba como vencido lo
+// que vencía hoy.
+function hoyMasDiasAR(dias: number): string {
+  const d = new Date(hoyAR() + 'T12:00:00');
+  d.setDate(d.getDate() + dias);
+  return d.toISOString().slice(0, 10);
+}
 
 interface Producto {
   id: string;
@@ -313,12 +323,13 @@ export function ComprasPage() {
         .order('fecha_vencimiento', { ascending: true, nullsFirst: false })
         .order('created_at', { ascending: false })
         .limit(1500);
-      // Excluir pagos fijos del tab Pagos. Esos tienen su propio flujo en
-      // Finanzas > Pagos Fijos y aparecen acá como ruido. Se identifican
-      // por el prefijo "Pago fijo:" que pone el checklist al generarlos.
-      return ((data ?? []) as Gasto[]).filter(
-        (g) => !(g.comentario ?? '').startsWith('Pago fijo:'),
-      );
+      // Excluir del tab Pagos (vista de cuenta corriente de proveedores):
+      //  - "Pago fijo:" → su propio flujo en Finanzas > Pagos Fijos.
+      //  - categoría "Inversiones" (capex/bienes de uso) → no son deuda de cta cte
+      //    operativa; van por amortización + plan de cheques en Pagos Fijos.
+      return ((data ?? []) as Gasto[])
+        .filter((g) => !(g.comentario ?? '').startsWith('Pago fijo:'))
+        .filter((g) => (g.categoria ?? '') !== 'Inversiones');
     },
     enabled: tab === 'pagos',
   });
@@ -328,6 +339,8 @@ export function ComprasPage() {
     gasto_id: string;
     fecha_pago: string;
     monto: number;
+    descuento: number;
+    programado: boolean;
     medio_pago: string;
     created_at: string;
   }
@@ -343,7 +356,7 @@ export function ComprasPage() {
       const { data, error } = await supabase
         .from('pagos_gastos')
         .select(
-          'id, gasto_id, fecha_pago, monto, medio_pago, created_at, gasto:gastos!inner(local, cancelado)',
+          'id, gasto_id, fecha_pago, monto, descuento, programado, medio_pago, created_at, gasto:gastos!inner(local, cancelado)',
         )
         .eq('gasto.local', local)
         .eq('gasto.cancelado', false)
@@ -354,6 +367,8 @@ export function ComprasPage() {
         gasto_id: p.gasto_id as string,
         fecha_pago: p.fecha_pago as string,
         monto: Number(p.monto),
+        descuento: Number((p as { descuento?: number | null }).descuento ?? 0),
+        programado: Boolean((p as { programado?: boolean }).programado),
         medio_pago: p.medio_pago as string,
         created_at: p.created_at as string,
       })) as PagoGastoRow[];
@@ -372,6 +387,26 @@ export function ComprasPage() {
     }
     return m;
   }, [pagosGastosData]);
+
+  // Suma de pagos EJECUTADOS (no programados) por gasto: monto + descuento.
+  // Los echeq programados (a futuro) no se descuentan porque la plata todavía
+  // no salió — siguen siendo deuda a pagar.
+  const pagadoRealMap = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const p of pagosGastosData ?? []) {
+      if (p.programado) continue;
+      m.set(p.gasto_id, (m.get(p.gasto_id) ?? 0) + p.monto + p.descuento);
+    }
+    return m;
+  }, [pagosGastosData]);
+
+  // Saldo vivo de un gasto = importe − lo ya pagado. Un gasto "Parcial" (o con
+  // pagos cargados y estado desactualizado) debe pesar en la deuda solo por lo
+  // que resta, no por el importe completo.
+  const saldoGasto = useCallback(
+    (g: Gasto) => Math.max(0, g.importe_total - (pagadoRealMap.get(g.id) ?? 0)),
+    [pagadoRealMap],
+  );
 
   // Mapa proveedor_id → display canónico + espacio de búsqueda (hook compartido).
   // Agrupa "FRESH", "FRESH Dist." y "MACLAR SRL" en una sola fila "FRESH Distribuidora"
@@ -537,7 +572,7 @@ export function ComprasPage() {
 
   // Modal de pago bulk
   const [bulkPagoOpen, setBulkPagoOpen] = useState(false);
-  const [bulkFecha, setBulkFecha] = useState(() => new Date().toISOString().split('T')[0]);
+  const [bulkFecha, setBulkFecha] = useState(() => hoyAR());
   const [bulkMedio, setBulkMedio] = useState<MedioPago>('efectivo');
   const [bulkReferencia, setBulkReferencia] = useState('');
   const [bulkNotas, setBulkNotas] = useState('');
@@ -562,8 +597,8 @@ export function ComprasPage() {
   }, [gastosPagos]);
 
   const pagosFiltrados = useMemo(() => {
-    const hoy = new Date().toISOString().split('T')[0];
-    const en7dias = new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0];
+    const hoy = hoyAR();
+    const en7dias = hoyMasDiasAR(7);
     let lista = gastosPagos ?? [];
 
     // Filtro por proveedor
@@ -659,9 +694,10 @@ export function ComprasPage() {
         ? todosDelProveedor.filter((g) => g.fecha?.startsWith(mesPagos))
         : todosDelProveedor.filter((g) => g.fecha?.startsWith(año));
 
-    // Pendiente: SIEMPRE total (lo que se debe no depende del período seleccionado)
+    // Pendiente: SIEMPRE total (lo que se debe no depende del período seleccionado).
+    // Por saldo neto: excluye gastos ya cubiertos por pagos ejecutados.
     const pendientesTotal = todosDelProveedor.filter(
-      (g) => g.estado_pago?.toLowerCase() !== 'pagado',
+      (g) => g.estado_pago?.toLowerCase() !== 'pagado' && saldoGasto(g) > 0.01,
     );
     const pagados = delProveedor.filter((g) => g.estado_pago?.toLowerCase() === 'pagado');
 
@@ -669,20 +705,22 @@ export function ComprasPage() {
       nombre: todosDelProveedor[0] ? proveedorDisplay(todosDelProveedor[0]) : filtroProveedor,
       totalCompras: delProveedor.reduce((s, g) => s + g.importe_total, 0),
       cantCompras: delProveedor.length,
-      totalPendiente: pendientesTotal.reduce((s, g) => s + g.importe_total, 0),
+      totalPendiente: pendientesTotal.reduce((s, g) => s + saldoGasto(g), 0),
       cantPendientes: pendientesTotal.length,
       totalPagado: pagados.reduce((s, g) => s + g.importe_total, 0),
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gastosPagos, filtroProveedor, vistaResumenProv, mesPagos, proveedoresMap]);
+  }, [gastosPagos, filtroProveedor, vistaResumenProv, mesPagos, proveedoresMap, saldoGasto]);
 
   // Agrupación de PENDIENTES por proveedor para vista bulk.
   // También adjunta los gastos PAGADOS del mes seleccionado por proveedor,
   // así el expand muestra el historial reciente sin perderlos.
   const pendientesPorProveedor = useMemo(() => {
-    const hoy = new Date().toISOString().split('T')[0];
-    const en7dias = new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0];
-    let lista = (gastosPagos ?? []).filter((g) => g.estado_pago?.toLowerCase() !== 'pagado');
+    const hoy = hoyAR();
+    const en7dias = hoyMasDiasAR(7);
+    let lista = (gastosPagos ?? []).filter(
+      (g) => g.estado_pago?.toLowerCase() !== 'pagado' && saldoGasto(g) > 0.01,
+    );
 
     if (filtroPagos === 'vencidos') {
       lista = lista.filter((g) => g.fecha_vencimiento && g.fecha_vencimiento < hoy);
@@ -745,11 +783,11 @@ export function ComprasPage() {
       totalPagadoMes: number;
     }
     const grupoMain: GrupoProveedor[] = [...grupos.entries()].map(([proveedor, gastos]) => {
-      const total = gastos.reduce((s, g) => s + g.importe_total, 0);
+      const total = gastos.reduce((s, g) => s + saldoGasto(g), 0);
       const venc = gastos.filter(
         (g) => g.fecha_vencimiento && g.fecha_vencimiento < hoy,
       );
-      const totalVencido = venc.reduce((s, g) => s + g.importe_total, 0);
+      const totalVencido = venc.reduce((s, g) => s + saldoGasto(g), 0);
       const proxVenc =
         gastos
           .map((g) => g.fecha_vencimiento)
@@ -813,7 +851,7 @@ export function ComprasPage() {
         return b.totalPagadoMes - a.totalPagadoMes;
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gastosPagos, filtroPagos, filtroProveedor, pagosGastosMap, mesPagos, proveedoresMap]);
+  }, [gastosPagos, filtroPagos, filtroProveedor, pagosGastosMap, mesPagos, proveedoresMap, saldoGasto]);
 
   // Proveedores con deuda viva vs. los que solo tienen pagos del mes (saldo $0).
   // Estos últimos se colapsan en una sola sección "✓ Pagados en el mes" al final
@@ -851,10 +889,13 @@ export function ComprasPage() {
     if (seleccionados.size === 0)
       return { gastos: [] as Gasto[], total: 0, proveedores: [] as string[] };
     const gastos = (gastosPagos ?? []).filter((g) => seleccionados.has(g.id));
-    const total = gastos.reduce((s, g) => s + g.importe_total, 0);
+    // Total a pagar = saldos vivos (no importes completos): si algo ya tenía un
+    // pago parcial, solo se debe el resto.
+    const total = gastos.reduce((s, g) => s + saldoGasto(g), 0);
     const proveedores = [...new Set(gastos.map((g) => proveedorDisplay(g) || '(Sin proveedor)'))];
     return { gastos, total, proveedores };
-  }, [seleccionados, gastosPagos]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seleccionados, gastosPagos, saldoGasto]);
 
   function toggleSeleccion(id: string) {
     setSeleccionados((prev) => {
@@ -887,7 +928,7 @@ export function ComprasPage() {
 
   function abrirBulkPago() {
     if (seleccionInfo.gastos.length === 0) return;
-    setBulkFecha(new Date().toISOString().split('T')[0]);
+    setBulkFecha(hoyAR());
     setBulkMedio('efectivo');
     setBulkReferencia('');
     setBulkNotas('');
@@ -964,7 +1005,8 @@ export function ComprasPage() {
       const filasPago = seleccionInfo.gastos.map((g) => ({
         gasto_id: g.id,
         fecha_pago: bulkFecha,
-        monto: g.importe_total,
+        // Saldo vivo, no importe completo: no re-pagar la parte ya abonada.
+        monto: saldoGasto(g),
         descuento: 0,
         medio_pago: bulkMedio,
         numero_operacion: bulkReferencia.trim() || null,
@@ -1038,10 +1080,14 @@ export function ComprasPage() {
   }
 
   const pagosKpis = useMemo(() => {
-    const hoy = new Date().toISOString().split('T')[0];
-    const en7dias = new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0];
+    const hoy = hoyAR();
+    const en7dias = hoyMasDiasAR(7);
     const todos = gastosPagos ?? [];
-    const pendientes = todos.filter((g) => g.estado_pago?.toLowerCase() !== 'pagado');
+    // Deuda viva = estado != pagado Y con saldo pendiente > 0. El saldo>0 filtra
+    // gastos ya cubiertos por pagos ejecutados aunque el estado esté sin recalcular.
+    const pendientes = todos.filter(
+      (g) => g.estado_pago?.toLowerCase() !== 'pagado' && saldoGasto(g) > 0.01,
+    );
     const vencidos = pendientes.filter((g) => g.fecha_vencimiento && g.fecha_vencimiento < hoy);
     const venceHoy = pendientes.filter((g) => g.fecha_vencimiento === hoy);
     const proxSemana = pendientes.filter(
@@ -1070,14 +1116,16 @@ export function ComprasPage() {
     });
 
     return {
-      totalPendiente: pendientes.reduce((s, g) => s + g.importe_total, 0),
+      // Deuda: por saldo (neto de pagos ejecutados).
+      totalPendiente: pendientes.reduce((s, g) => s + saldoGasto(g), 0),
       cantPendientes: pendientes.length,
-      totalVencido: vencidos.reduce((s, g) => s + g.importe_total, 0),
+      totalVencido: vencidos.reduce((s, g) => s + saldoGasto(g), 0),
       cantVencidos: vencidos.length,
-      totalHoy: venceHoy.reduce((s, g) => s + g.importe_total, 0),
+      totalHoy: venceHoy.reduce((s, g) => s + saldoGasto(g), 0),
       cantHoy: venceHoy.length,
-      totalSemana: proxSemana.reduce((s, g) => s + g.importe_total, 0),
+      totalSemana: proxSemana.reduce((s, g) => s + saldoGasto(g), 0),
       cantSemana: proxSemana.length,
+      // Comprado/Pagado del mes: montos brutos (lo comprado y lo saldado, no deuda).
       totalMes: delMes.reduce((s, g) => s + g.importe_total, 0),
       cantMes: delMes.length,
       pagadoMes: pagadosDelMes.reduce((s, g) => s + g.importe_total, 0),
@@ -1085,7 +1133,7 @@ export function ComprasPage() {
       pagadoCtaCteMes: pagadosCtaCteDelMes.reduce((s, g) => s + g.importe_total, 0),
       cantPagadoCtaCteMes: pagadosCtaCteDelMes.length,
     };
-  }, [gastosPagos, mesPagos, pagosGastosMap]);
+  }, [gastosPagos, mesPagos, pagosGastosMap, saldoGasto]);
 
   // ── Filtrar productos ──────────────────────────────────────────────────────
   const productosFiltrados = useMemo(() => {
@@ -2729,6 +2777,12 @@ export function ComprasPage() {
               <span className="font-semibold text-gray-700">
                 {local === 'vedia' ? 'Rodziny Vedia' : 'Rodziny Saavedra'}
               </span>
+              <span
+                className="text-[11px] text-gray-400"
+                title="Pulso del mes de compra del local seleccionado. La deuda total a pagar está arriba, en el calendario de cuenta corriente."
+              >
+                (resumen del mes · no es la deuda total)
+              </span>
               <span className="text-gray-500">
                 Comprado{' '}
                 <strong className="text-gray-900">{formatARS(pagosKpis.totalMes)}</strong>{' '}
@@ -2924,10 +2978,8 @@ export function ComprasPage() {
                     </tr>
                   ) : (
                     pagosFiltrados.map((g) => {
-                      const hoy = new Date().toISOString().split('T')[0];
-                      const en7dias = new Date(Date.now() + 7 * 86400000)
-                        .toISOString()
-                        .split('T')[0];
+                      const hoy = hoyAR();
+                      const en7dias = hoyMasDiasAR(7);
                       const pagado = g.estado_pago?.toLowerCase() === 'pagado';
                       const vencido = !pagado && g.fecha_vencimiento && g.fecha_vencimiento < hoy;
                       const proxSemana =
@@ -3118,10 +3170,12 @@ export function ComprasPage() {
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="text-gray-400">{expandido ? '▼' : '▶'}</span>
                           <span className="font-medium text-gray-900">{grupo.proveedor}</span>
-                          {grupo.cantPendientes > 0 && (
+                          {/* Badges no solapados: gris = pendientes AL DÍA (no vencidos),
+                              rojo = vencidos. Antes ambos contaban el mismo gasto y se
+                              leía como si fueran ítems distintos ("1 pendiente 1 vencido"). */}
+                          {grupo.cantPendientes - grupo.cantVencidos > 0 && (
                             <span className="rounded bg-gray-100 px-1.5 py-0.5 text-xs text-gray-600">
-                              {grupo.cantPendientes} pendiente
-                              {grupo.cantPendientes !== 1 ? 's' : ''}
+                              {grupo.cantPendientes - grupo.cantVencidos} a pagar
                             </span>
                           )}
                           {grupo.cantVencidos > 0 && (
@@ -3182,10 +3236,8 @@ export function ComprasPage() {
                           </thead>
                           <tbody>
                             {grupo.gastos.map((g) => {
-                              const hoy = new Date().toISOString().split('T')[0];
-                              const en7dias = new Date(Date.now() + 7 * 86400000)
-                                .toISOString()
-                                .split('T')[0];
+                              const hoy = hoyAR();
+                              const en7dias = hoyMasDiasAR(7);
                               const vencido =
                                 g.fecha_vencimiento && g.fecha_vencimiento < hoy;
                               const proxSemana =
@@ -3235,7 +3287,15 @@ export function ComprasPage() {
                                     {g.subcategoria || g.categoria}
                                   </td>
                                   <td className="px-3 py-1.5 text-right font-medium text-gray-900">
-                                    {formatARS(g.importe_total)}
+                                    {formatARS(saldoGasto(g))}
+                                    {saldoGasto(g) < g.importe_total - 0.01 && (
+                                      <span
+                                        className="block text-[10px] font-normal text-gray-400"
+                                        title="Saldo pendiente (ya se pagó una parte)"
+                                      >
+                                        de {formatARS(g.importe_total)}
+                                      </span>
+                                    )}
                                   </td>
                                   <td className="px-3 py-1.5 text-center">
                                     {vencido ? (

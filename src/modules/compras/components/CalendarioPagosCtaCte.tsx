@@ -23,6 +23,7 @@ interface GastoPend {
   fecha: string;
   fecha_vencimiento: string | null;
   comentario: string | null;
+  categoria: string | null;
 }
 
 type LocalKey = 'vedia' | 'saavedra' | 'sas';
@@ -217,19 +218,58 @@ export function CalendarioPagosCtaCte({
     queryFn: async () => {
       const { data, error } = await supabase
         .from('gastos')
-        .select('id, local, proveedor, proveedor_id, importe_total, fecha, fecha_vencimiento, comentario, estado_pago')
+        .select('id, local, proveedor, proveedor_id, importe_total, fecha, fecha_vencimiento, comentario, categoria, estado_pago')
         .eq('cancelado', false)
         .order('fecha_vencimiento', { ascending: true, nullsFirst: false })
         .limit(5000);
       if (error) throw error;
-      // Solo deuda viva (no pagada) y, como en el resto del tab Pagos, excluimos
-      // los "Pago fijo:" que tienen su propio flujo en Finanzas.
+      // Solo deuda viva (no pagada). Excluimos:
+      //  - "Pago fijo:" → tienen su propio flujo en Finanzas > Pagos Fijos.
+      //  - categoría "Inversiones" (capex/bienes de uso) → no son deuda de
+      //    cuenta corriente operativa; se manejan por amortización + su plan de
+      //    cheques en Pagos Fijos. Meterlos acá mezcla e infla la deuda de proveedores.
       return ((data ?? []) as (GastoPend & { estado_pago?: string })[])
         .filter((g) => (g.estado_pago ?? '').toLowerCase() !== 'pagado')
-        .filter((g) => !(g.comentario ?? '').startsWith('Pago fijo:'));
+        .filter((g) => !(g.comentario ?? '').startsWith('Pago fijo:'))
+        .filter((g) => (g.categoria ?? '') !== 'Inversiones');
     },
     staleTime: 60_000,
   });
+
+  // Pagos ya EJECUTADOS (no programados) por gasto. Un gasto "Parcial" —o con un
+  // plan de echeqs a medio ejecutar— sigue vivo pero solo por su SALDO, no por el
+  // importe completo. Sin esto la deuda queda inflada por lo ya abonado.
+  const { data: pagadoRealMap } = useQuery({
+    queryKey: ['cta_cte_pagos_ejecutados'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('pagos_gastos')
+        .select('gasto_id, monto, descuento, programado')
+        .limit(20000);
+      if (error) throw error;
+      const m = new Map<string, number>();
+      for (const p of data ?? []) {
+        if ((p as { programado?: boolean }).programado) continue; // echeq a futuro: aún no salió
+        const id = p.gasto_id as string;
+        m.set(id, (m.get(id) ?? 0) + Number(p.monto ?? 0) + Number(p.descuento ?? 0));
+      }
+      return m;
+    },
+    staleTime: 60_000,
+  });
+
+  // Gastos con el importe ya neteado al saldo real (importe − pagos ejecutados).
+  // Descartamos los que quedan en cero (pagados de hecho aunque el estado esté viejo).
+  const gastosNetos = useMemo(
+    () =>
+      (gastos ?? [])
+        .map((g) => ({
+          ...g,
+          importe_total: Number(g.importe_total) - (pagadoRealMap?.get(g.id) ?? 0),
+        }))
+        .filter((g) => g.importe_total > 0.01),
+    [gastos, pagadoRealMap],
+  );
 
   const hoy = useMemo(() => ymdLocal(new Date()), []);
   const dias7 = useMemo(() => {
@@ -243,9 +283,10 @@ export function CalendarioPagosCtaCte({
     return out;
   }, []);
 
-  const { atrasado, porDia, masAdelante, totalDeuda, deudaPorLocal } = useMemo(() => {
+  const { atrasado, porDia, masAdelante, sinVenc, totalDeuda, deudaPorLocal } = useMemo(() => {
     const atrasado = bucketVacio();
     const masAdelante = bucketVacio();
+    const sinVenc = bucketVacio();
     const porDia = new Map<string, ReturnType<typeof bucketVacio>>();
     for (const d of dias7) porDia.set(d, bucketVacio());
     const dias7Set = new Set(dias7);
@@ -253,18 +294,18 @@ export function CalendarioPagosCtaCte({
     let totalDeuda = 0;
     const deudaPorLocal: Record<LocalKey, number> = { vedia: 0, saavedra: 0, sas: 0 };
 
-    for (const g of gastos ?? []) {
+    for (const g of gastosNetos) {
       const local = (g.local as LocalKey) ?? 'sas';
       const monto = Number(g.importe_total);
       totalDeuda += monto;
       if (local in deudaPorLocal) deudaPorLocal[local] += monto;
 
-      // Sin fecha de vencimiento: cuenta en el total de deuda pero no se imputa a
-      // ningún día del calendario.
-      if (!g.fecha_vencimiento) continue;
-
+      // Sin fecha de vencimiento: cuenta en el total de deuda pero no cae en ningún
+      // día del calendario. Lo juntamos en su propio bucket para que no quede
+      // "invisible" (antes el total no cerraba contra atrasado + días).
       let bucket: ReturnType<typeof bucketVacio>;
-      if (g.fecha_vencimiento < hoy) bucket = atrasado;
+      if (!g.fecha_vencimiento) bucket = sinVenc;
+      else if (g.fecha_vencimiento < hoy) bucket = atrasado;
       else if (dias7Set.has(g.fecha_vencimiento)) bucket = porDia.get(g.fecha_vencimiento)!;
       else bucket = masAdelante;
 
@@ -274,8 +315,8 @@ export function CalendarioPagosCtaCte({
       bucket.gastos.push(g);
     }
 
-    return { atrasado, porDia, masAdelante, totalDeuda, deudaPorLocal };
-  }, [gastos, dias7, hoy]);
+    return { atrasado, porDia, masAdelante, sinVenc, totalDeuda, deudaPorLocal };
+  }, [gastosNetos, dias7, hoy]);
 
   const totalProx7 = useMemo(
     () => dias7.reduce((s, d) => s + (porDia.get(d)?.total ?? 0), 0),
@@ -285,15 +326,16 @@ export function CalendarioPagosCtaCte({
   const detalleAbierto = useMemo(() => {
     if (!abierto) return null;
     if (abierto === 'atrasado') return resolverDetalle(atrasado, proveedoresMap);
+    if (abierto === 'sinvenc') return resolverDetalle(sinVenc, proveedoresMap);
     const b = porDia.get(abierto);
     return b ? resolverDetalle(b, proveedoresMap) : null;
-  }, [abierto, atrasado, porDia, proveedoresMap]);
+  }, [abierto, atrasado, sinVenc, porDia, proveedoresMap]);
 
   // Todos los vencimientos agrupados por fecha exacta — alimenta el modal de mes
   // completo (cualquier mes, sin otra query: usamos los mismos gastos ya traídos).
   const porFecha = useMemo(() => {
     const map = new Map<string, ReturnType<typeof bucketVacio>>();
-    for (const g of gastos ?? []) {
+    for (const g of gastosNetos) {
       if (!g.fecha_vencimiento) continue;
       let b = map.get(g.fecha_vencimiento);
       if (!b) {
@@ -308,7 +350,7 @@ export function CalendarioPagosCtaCte({
       b.gastos.push(g);
     }
     return map;
-  }, [gastos]);
+  }, [gastosNetos]);
 
   // Grilla del mes en vista (semana arranca lunes) + total del mes.
   const mesGrid = useMemo(() => {
@@ -468,6 +510,21 @@ export function CalendarioPagosCtaCte({
                 {masAdelante.cantidad})
               </span>
             )}
+            {sinVenc.total > 0 && (
+              <button
+                onClick={() => seleccionarBucket('sinvenc')}
+                className={cn(
+                  'inline-flex items-center gap-1 rounded px-1.5 py-0.5 transition-colors',
+                  abierto === 'sinvenc'
+                    ? 'bg-amber-100 text-amber-800'
+                    : 'text-amber-700 hover:bg-amber-50',
+                )}
+                title="Deuda cargada sin fecha de vencimiento — no cae en ningún día del calendario"
+              >
+                ⚠ Sin fecha de vto:{' '}
+                <strong>{formatARS(sinVenc.total)}</strong> ({sinVenc.cantidad})
+              </button>
+            )}
           </div>
           <button
             onClick={abrirModalMes}
@@ -484,7 +541,9 @@ export function CalendarioPagosCtaCte({
               <p className="text-xs font-semibold text-gray-700">
                 {abierto === 'atrasado'
                   ? 'Detalle de atrasados'
-                  : `Detalle — ${capitalizar(etiquetaDia(abierto!).dia)} ${etiquetaDia(abierto!).fecha}`}
+                  : abierto === 'sinvenc'
+                    ? 'Detalle — sin fecha de vencimiento'
+                    : `Detalle — ${capitalizar(etiquetaDia(abierto!).dia)} ${etiquetaDia(abierto!).fecha}`}
               </p>
               <button
                 onClick={() => setAbierto(null)}
