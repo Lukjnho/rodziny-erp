@@ -105,6 +105,18 @@ function periodoSiguiente(p: string): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 
+// Lista de períodos YYYY-MM alrededor de uno dado, para el selector "mover a otro
+// mes". Devuelve desde `atras` meses antes hasta `adelante` meses después.
+function periodosCercanos(centro: string, atras = 3, adelante = 12): string[] {
+  const [y, m] = centro.split('-').map(Number);
+  const out: string[] = [];
+  for (let i = -atras; i <= adelante; i++) {
+    const d = new Date(y, m - 1 + i, 1);
+    out.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+  }
+  return out;
+}
+
 function labelMes(p: string): string {
   const [y, m] = p.split('-').map(Number);
   const meses = [
@@ -179,9 +191,10 @@ export function ChecklistPagos() {
     medioInicial: string | null;
   } | null>(null);
   const [toast, setToast] = useState<{
-    tipo: 'pagado' | 'desmarcado';
+    tipo: 'pagado' | 'desmarcado' | 'movido';
     concepto: string;
     monto: number;
+    destino?: string;
   } | null>(null);
 
   useEffect(() => {
@@ -562,6 +575,45 @@ export function ChecklistPagos() {
     qc.invalidateQueries({ queryKey: ['pagos_fijos', periodo] });
     qc.invalidateQueries({ queryKey: ['fc_pagos'] });
     qc.invalidateQueries({ queryKey: ['edr_gastos_resumen'] });
+  }
+
+  // Mover un pago a otro mes: cambia SOLO el campo `periodo` (el bucket del mes),
+  // no la fecha de vencimiento. El tab agrupa por periodo, así que el pago
+  // desaparece del mes actual y aparece en el destino. Si ya está pagado,
+  // propagamos el periodo al gasto vinculado para que EdR/Flujo lo imputen al
+  // mes correcto.
+  async function moverPago(pago: PagoFijo, nuevoPeriodo: string) {
+    if (!nuevoPeriodo || nuevoPeriodo === pago.periodo) return;
+    const { error } = await supabase
+      .from('pagos_fijos')
+      .update({ periodo: nuevoPeriodo })
+      .eq('id', pago.id);
+    if (error) {
+      // 23505 = choque con la constraint única (periodo, concepto): ya hay un
+      // pago con ese mismo nombre en el mes destino.
+      if (error.code === '23505') {
+        window.alert(
+          `Ya existe un pago "${pago.concepto}" en ${labelMes(nuevoPeriodo)}. Renombrá uno de los dos (ej. "IVA (mayo)") o eliminá el duplicado antes de mover.`,
+        );
+      } else {
+        window.alert(`No se pudo mover el pago: ${error.message}`);
+      }
+      return;
+    }
+    if (pago.pagado && pago.gasto_id) {
+      await supabase.from('gastos').update({ periodo: nuevoPeriodo }).eq('id', pago.gasto_id);
+    }
+    qc.invalidateQueries({ queryKey: ['pagos_fijos', periodo] });
+    qc.invalidateQueries({ queryKey: ['pagos_fijos', nuevoPeriodo] });
+    qc.invalidateQueries({ queryKey: ['pagos_alertas_global'] });
+    qc.invalidateQueries({ queryKey: ['fc_pagos'] });
+    qc.invalidateQueries({ queryKey: ['edr_gastos_resumen'] });
+    setToast({
+      tipo: 'movido',
+      concepto: pago.concepto,
+      monto: pago.monto ?? 0,
+      destino: nuevoPeriodo,
+    });
   }
 
   // ── datos derivados ──────────────────────────────────────────────────────
@@ -1030,6 +1082,7 @@ export function ChecklistPagos() {
                           subcategorias={subcategorias}
                           padres={padres}
                           onUpdate={(fields) => actualizarPago(pago, fields)}
+                          onMover={(nuevoPeriodo) => moverPago(pago, nuevoPeriodo)}
                           onTogglePagado={() => {
                             if (pago.pagado) {
                               desmarcarPagado(pago);
@@ -1076,28 +1129,46 @@ export function ChecklistPagos() {
               'flex items-start gap-3 rounded-lg border px-4 py-3 shadow-lg',
               toast.tipo === 'pagado'
                 ? 'border-green-300 bg-green-50'
-                : 'border-gray-300 bg-gray-50',
+                : toast.tipo === 'movido'
+                  ? 'border-blue-300 bg-blue-50'
+                  : 'border-gray-300 bg-gray-50',
             )}
           >
-            <span className="text-xl leading-none">{toast.tipo === 'pagado' ? '✅' : '↩️'}</span>
+            <span className="text-xl leading-none">
+              {toast.tipo === 'pagado' ? '✅' : toast.tipo === 'movido' ? '📅' : '↩️'}
+            </span>
             <div className="min-w-0 flex-1">
               <p
                 className={cn(
                   'text-sm font-semibold',
-                  toast.tipo === 'pagado' ? 'text-green-900' : 'text-gray-800',
+                  toast.tipo === 'pagado'
+                    ? 'text-green-900'
+                    : toast.tipo === 'movido'
+                      ? 'text-blue-900'
+                      : 'text-gray-800',
                 )}
               >
-                {toast.tipo === 'pagado' ? 'Pago registrado' : 'Pago desmarcado'}
+                {toast.tipo === 'pagado'
+                  ? 'Pago registrado'
+                  : toast.tipo === 'movido'
+                    ? 'Pago movido de mes'
+                    : 'Pago desmarcado'}
               </p>
               <p
                 className={cn(
                   'mt-0.5 text-xs',
-                  toast.tipo === 'pagado' ? 'text-green-700' : 'text-gray-600',
+                  toast.tipo === 'pagado'
+                    ? 'text-green-700'
+                    : toast.tipo === 'movido'
+                      ? 'text-blue-700'
+                      : 'text-gray-600',
                 )}
               >
                 {toast.tipo === 'pagado'
                   ? `Se creó un gasto de ${formatARS(toast.monto)} por "${toast.concepto}" — impacta en Flujo de Caja y EdR.`
-                  : `Se eliminó el gasto de "${toast.concepto}" de Flujo de Caja y EdR.`}
+                  : toast.tipo === 'movido'
+                    ? `"${toast.concepto}" se movió a ${toast.destino ? labelMes(toast.destino) : 'otro mes'}. Cambiá al mes destino para verlo.`
+                    : `Se eliminó el gasto de "${toast.concepto}" de Flujo de Caja y EdR.`}
               </p>
             </div>
             <button
@@ -1134,6 +1205,7 @@ function FilaPago({
   subcategorias,
   padres,
   onUpdate,
+  onMover,
   onTogglePagado,
   onDelete,
 }: {
@@ -1141,6 +1213,7 @@ function FilaPago({
   subcategorias: CategoriaGasto[];
   padres: Map<string, string>;
   onUpdate: (fields: Partial<PagoFijo>) => void;
+  onMover: (nuevoPeriodo: string) => void;
   onTogglePagado: () => void;
   onDelete: () => void;
 }) {
@@ -1301,6 +1374,20 @@ function FilaPago({
       </td>
       <td className="px-2 py-2">
         <div className="flex items-center gap-2">
+          <select
+            className="max-w-[110px] rounded border border-transparent bg-transparent px-1 py-0.5 text-[10px] text-gray-400 opacity-0 transition-opacity hover:border-gray-200 focus:border-rodziny-500 focus:bg-white focus:opacity-100 focus:outline-none group-hover:opacity-100"
+            value={pago.periodo}
+            onChange={(e) => {
+              if (e.target.value !== pago.periodo) onMover(e.target.value);
+            }}
+            title="Mover este pago a otro mes"
+          >
+            {periodosCercanos(pago.periodo).map((p) => (
+              <option key={p} value={p}>
+                📅 {labelMes(p)}
+              </option>
+            ))}
+          </select>
           {pago.comprobante_path && (
             <button
               onClick={async () => {
