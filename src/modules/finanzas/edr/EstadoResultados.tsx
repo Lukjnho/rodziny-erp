@@ -260,6 +260,10 @@ interface AutoMes {
   stockInicialIndirectos: number;
   hayCierreMes: boolean;
   hayCierreAnterior: boolean;
+  // CMV real ya resuelto por local y sumado (ver cmvResueltoRaw). Si es null, no
+  // llegó y computarMes cae al cálculo interno con los stocks (merged) de fallback.
+  cmvRealResuelto: number | null;
+  cmvEstimadoResuelto: boolean;
 }
 
 function computarMes(manual: Map<string, number>, auto: AutoMes): Map<string, number> {
@@ -301,17 +305,20 @@ function computarMes(manual: Map<string, number>, auto: AutoMes): Map<string, nu
   const stockInicialTotal =
     auto.stockInicialAlimentos + auto.stockInicialBebidas + auto.stockInicialIndirectos;
   const deltaInventario = stockFinalTotal - stockInicialTotal;
-  // Solo aplicamos el ajuste si hay cierre del mes actual Y del anterior.
-  // Sin uno de los dos extremos, no podemos calcular Δ confiable → fallback a compras.
   const aplicarDelta = auto.hayCierreMes && auto.hayCierreAnterior;
-  // Guardarraíl: si aplicar el Δ inventario da un CMV negativo (consumo < 0,
-  // imposible), la apertura no es confiable — típicamente el conteo del mes
-  // anterior fue parcial (ej. Saavedra may-2026: cierre completo recién desde
-  // jun). Caemos a "compras" y lo marcamos estimado, para no mostrar un margen
-  // > 100% como si fuera real. El primer CMV real llega cuando hay dos conteos
-  // completos seguidos.
-  const deltaValido = aplicarDelta && cmvTotal - deltaInventario >= 0;
-  const cmvReal = deltaValido ? cmvTotal - deltaInventario : cmvTotal;
+  // CMV real: viene RESUELTO por local desde cmvResueltoRaw (guardarraíl por local
+  // aplicado y sumado). Es lo correcto para el consolidado. Si no llegó, cae al
+  // cálculo local con guardarraíl: Δ inventario si es válido; si da negativo
+  // (apertura no confiable, ej. conteo parcial) o falta un cierre → compras.
+  const deltaValidoLocal = aplicarDelta && cmvTotal - deltaInventario >= 0;
+  const cmvReal =
+    auto.cmvRealResuelto != null
+      ? auto.cmvRealResuelto
+      : deltaValidoLocal
+        ? cmvTotal - deltaInventario
+        : cmvTotal;
+  const cmvEstimado =
+    auto.cmvRealResuelto != null ? auto.cmvEstimadoResuelto : !deltaValidoLocal;
   const margenBruto = ingNeto - cmvReal;
   const persTotal = persSueldos + persCargas;
   // Prime Cost = CMV (consumo real) + Personal. Usa cmvReal, NO cmvTotal (compras):
@@ -348,7 +355,7 @@ function computarMes(manual: Map<string, number>, auto: AutoMes): Map<string, nu
   // Flag: 1 = el CMV real es estimado (= compras) porque falta el cierre de
   // inventario del mes y/o del anterior, o porque el Δ daba consumo negativo
   // (apertura no confiable) y se aplicó el guardarraíl.
-  result.set('__cmv_estimado', deltaValido ? 0 : 1);
+  result.set('__cmv_estimado', cmvEstimado ? 1 : 0);
   result.set('__margen_bruto', margenBruto);
   // Food Cost % usa CMV REAL para reflejar el consumo real, no las compras.
   result.set('_kpi_food', ingNeto > 0 ? cmvReal / ingNeto : 0);
@@ -357,14 +364,14 @@ function computarMes(manual: Map<string, number>, auto: AutoMes): Map<string, nu
   const stockPromedio = (stockFinalTotal + stockInicialTotal) / 2;
   result.set(
     '_kpi_rotacion',
-    deltaValido && stockPromedio > 0 ? cmvReal / stockPromedio : 0,
+    !cmvEstimado && stockPromedio > 0 ? cmvReal / stockPromedio : 0,
   );
   // Rotación por categoría = CMV real de la categoría / stock promedio de la
   // categoría. Mismo criterio (solo con los dos cierres). CMV real categoría =
   // compras de la categoría − Δ stock de la categoría. Permite ver qué rubro
   // es el que no rota (ej: bebidas paradas).
   const rotacionCat = (cmvCat: number, sFin: number, sIni: number): number => {
-    if (!deltaValido) return 0;
+    if (cmvEstimado) return 0;
     const prom = (sFin + sIni) / 2;
     if (prom <= 0) return 0;
     return (cmvCat - (sFin - sIni)) / prom;
@@ -585,6 +592,9 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
     if (valPrev === 0 || valActual === 0) return null;
     const pct = ((valActual - valPrev) / Math.abs(valPrev)) * 100;
     if (Math.abs(pct) < 0.5) return null;
+    // Cap superior: variaciones enormes (>300%) son líneas esporádicas de base
+    // chica (impuestos, ARCA, cargas). El % no aporta señal y alarma — se omite.
+    if (Math.abs(pct) > 300) return null;
     return pct;
   }
 
@@ -712,6 +722,81 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
             'arca',
           ])
         : results[0];
+    },
+  });
+
+  // CMV real RESUELTO por local y sumado. Se calcula acá (y no en computarMes)
+  // porque el consolidado necesita resolver el guardarraíl POR LOCAL antes de
+  // sumar: si no, el mal conteo de un local (ej. Saavedra jun-2026) se mezcla con
+  // el consumo normal del otro y distorsiona el CMV/Food Cost del consolidado.
+  // Por local: cmvReal = compras − Δstock (si hay cierre del mes y del anterior);
+  // si el Δ da negativo o falta un cierre → compras (estimado). Después se suma.
+  const { data: cmvResueltoRaw } = useQuery({
+    queryKey: ['edr_cmv_resuelto', año, localEdr],
+    queryFn: async () => {
+      const perLocal = await Promise.all(
+        locales.map(async (loc) => {
+          const [gastosRes, cierresRes] = await Promise.all([
+            supabase.rpc('edr_resumen_gastos', { p_local: loc, p_anio: año }),
+            supabase
+              .from('edr_cierres_inventario')
+              .select('periodo, monto_alimentos, monto_bebidas, monto_indirectos')
+              .eq('local', loc)
+              .eq('estado', 'aprobado')
+              .gte('periodo', `${Number(año) - 1}-12`)
+              .lte('periodo', `${año}-12`),
+          ]);
+          const comprasPorP = new Map<string, number>();
+          for (const g of (gastosRes.data ?? []) as GastoResRow[]) {
+            comprasPorP.set(
+              g.periodo,
+              Number(g.cmv_alimentos) + Number(g.cmv_bebidas) + Number(g.cmv_indirectos),
+            );
+          }
+          const stockPorP = new Map<string, number>();
+          for (const c of (cierresRes.data ?? []) as Array<{
+            periodo: string;
+            monto_alimentos: number;
+            monto_bebidas: number;
+            monto_indirectos: number;
+          }>) {
+            stockPorP.set(
+              c.periodo,
+              Number(c.monto_alimentos) + Number(c.monto_bebidas) + Number(c.monto_indirectos),
+            );
+          }
+          const res = new Map<string, { cmvReal: number; estimado: boolean }>();
+          for (let i = 1; i <= 12; i++) {
+            const periodo = `${año}-${String(i).padStart(2, '0')}`;
+            const prev =
+              i === 1 ? `${Number(año) - 1}-12` : `${año}-${String(i - 1).padStart(2, '0')}`;
+            const compras = comprasPorP.get(periodo) ?? 0;
+            const sFin = stockPorP.get(periodo);
+            const sIni = stockPorP.get(prev);
+            const aplicar = sFin !== undefined && sIni !== undefined;
+            const calc = aplicar ? compras - (sFin! - sIni!) : compras;
+            const valido = aplicar && calc >= 0;
+            res.set(periodo, { cmvReal: valido ? calc : compras, estimado: !valido });
+          }
+          return res;
+        }),
+      );
+      // Sumar entre locales. estimado = true si CUALQUIER local quedó estimado.
+      const out = new Map<string, { cmvReal: number; estimado: boolean }>();
+      for (let i = 1; i <= 12; i++) {
+        const periodo = `${año}-${String(i).padStart(2, '0')}`;
+        let cmv = 0;
+        let estimado = false;
+        for (const mp of perLocal) {
+          const r = mp.get(periodo);
+          if (r) {
+            cmv += r.cmvReal;
+            if (r.estimado) estimado = true;
+          }
+        }
+        out.set(periodo, { cmvReal: cmv, estimado });
+      }
+      return out;
     },
   });
 
@@ -893,6 +978,8 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
     stockInicialIndirectos: 0,
     hayCierreMes: false,
     hayCierreAnterior: false,
+    cmvRealResuelto: null,
+    cmvEstimadoResuelto: false,
   };
 
   const autoMap = useMemo(() => {
@@ -1026,6 +1113,16 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
       }
       map.set(periodo, existing);
     }
+    // CMV real resuelto por local (ver cmvResueltoRaw): override para que el
+    // consolidado sume el consumo por local en vez de mezclarlo. Solo se setea en
+    // periodos que ya tienen entrada (con datos); los vacíos quedan en null.
+    for (const [periodo, r] of cmvResueltoRaw ?? []) {
+      const existing = map.get(periodo);
+      if (existing) {
+        existing.cmvRealResuelto = r.cmvReal;
+        existing.cmvEstimadoResuelto = r.estimado;
+      }
+    }
     return map;
   }, [
     ticketsRaw,
@@ -1035,6 +1132,7 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
     sueldosPagadosRaw,
     cargosMPRaw,
     cierresInventarioRaw,
+    cmvResueltoRaw,
     año,
   ]);
 
