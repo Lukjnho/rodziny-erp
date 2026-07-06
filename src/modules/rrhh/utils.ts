@@ -273,11 +273,24 @@ export function decidirProximaFichada(params: {
   }
 
   if (entradaAbierta) {
-    // Excepción: el horario indica que arranca un turno nuevo (límite más cercano
-    // = entrada posterior a la entrada abierta) → el empleado olvidó la salida.
-    const arrancaTurnoNuevo =
+    // Excepción: el empleado olvidó marcar la salida y ya arranca un turno nuevo.
+    // No alcanza con que el límite más cercano sea una entrada posterior a la
+    // marca abierta: quien ficha unos minutos ANTES de su horario deja la entrada
+    // programada "en el futuro" respecto de su marca, y eso NO es un turno nuevo
+    // (es la misma entrada, temprana). La señal real de olvido es que exista una
+    // SALIDA programada entre la entrada abierta y esa nueva entrada: significa que
+    // el tramo anterior ya debía haber cerrado.
+    const entradaTs = new Date(ultimaFichada!.timestamp).getTime();
+    const haySalidaIntermedia =
       cercano?.kind === 'entrada' &&
-      cercano.at.getTime() > new Date(ultimaFichada!.timestamp).getTime();
+      limites.some(
+        (l) =>
+          l.kind === 'salida' &&
+          l.at.getTime() > entradaTs &&
+          l.at.getTime() <= cercano!.at.getTime(),
+      );
+    const arrancaTurnoNuevo =
+      cercano?.kind === 'entrada' && cercano.at.getTime() > entradaTs && haySalidaIntermedia;
     if (arrancaTurnoNuevo) {
       return {
         tipo: 'entrada',
