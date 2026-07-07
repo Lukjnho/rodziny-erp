@@ -477,8 +477,11 @@ const PARTIDAS_ADITIVAS = new Set([
 export function EstadoResultados({ embedded = false }: { embedded?: boolean } = {}) {
   const [año, setAño] = useState(() => String(new Date().getFullYear()));
   const [localEdr, setLocalEdr] = useState<'vedia' | 'saavedra' | 'consolidado'>('consolidado');
-  const locales: ('vedia' | 'saavedra')[] =
-    localEdr === 'consolidado' ? ['vedia', 'saavedra'] : [localEdr];
+  // "Empresa" (consolidado) = Vedia + Saavedra + SAS (gastos de la razón social,
+  // ej. pagos fijos company-wide). Antes 'sas' quedaba afuera del EdR. Las vistas
+  // por local siguen mostrando solo su local.
+  const locales: ('vedia' | 'saavedra' | 'sas')[] =
+    localEdr === 'consolidado' ? ['vedia', 'saavedra', 'sas'] : [localEdr];
   const esConsolidado = localEdr === 'consolidado';
   const qc = useQueryClient();
   const [sincronizando, setSincronizando] = useState(false);

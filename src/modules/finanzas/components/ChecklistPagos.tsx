@@ -17,6 +17,7 @@ import {
 interface PagoFijo {
   id: string;
   periodo: string;
+  local: string; // 'vedia' | 'saavedra' | 'sas' (Empresa) — destino del gasto al pagar
   concepto: string;
   categoria: string;
   categoria_gasto_id: string | null;
@@ -366,6 +367,7 @@ export function ChecklistPagos() {
         }
         return {
           periodo,
+          local: a.local,
           concepto: a.concepto,
           categoria: a.categoria,
           categoria_gasto_id: a.categoria_gasto_id,
@@ -420,7 +422,9 @@ export function ChecklistPagos() {
     }
 
     const fechaPago = hoy();
-    const local = derivarLocal(pago.concepto);
+    // Local explícito del pago fijo (Vedia/Saavedra/Empresa='sas'). Fallback a la
+    // heurística por texto solo por si alguna fila vieja quedara sin local.
+    const local = pago.local || derivarLocal(pago.concepto);
 
     // Buscar nombre de categoría padre para el campo 'categoria' de gastos
     const subcat = subcategorias.find((c) => c.id === pago.categoria_gasto_id);
@@ -1278,6 +1282,16 @@ function FilaPago({
             <option value={pago.categoria}>{pago.categoria}</option>
           )}
         </select>
+        <select
+          className="mt-0.5 ml-1 rounded border border-transparent bg-transparent px-1.5 py-0.5 text-[10px] text-gray-400 opacity-0 transition-opacity hover:border-gray-200 focus:border-rodziny-500 focus:bg-white focus:opacity-100 focus:outline-none group-hover:opacity-100"
+          value={pago.local ?? 'sas'}
+          onChange={(e) => onUpdate({ local: e.target.value })}
+          title="Local / destino del gasto"
+        >
+          <option value="sas">Empresa</option>
+          <option value="vedia">Vedia</option>
+          <option value="saavedra">Saavedra</option>
+        </select>
       </td>
       <td className="px-4 py-2">
         <select
@@ -1430,6 +1444,7 @@ function ModalAgregarPago({
   onClose: () => void;
 }) {
   const [concepto, setConcepto] = useState('');
+  const [local, setLocal] = useState<'vedia' | 'saavedra' | 'sas'>('sas');
   const [categoria, setCategoria] = useState(CATEGORIAS[0]);
   const [catGastoId, setCatGastoId] = useState('');
   const [monto, setMonto] = useState<number | null>(null);
@@ -1440,6 +1455,7 @@ function ModalAgregarPago({
     if (!concepto.trim()) return;
     onSave({
       periodo,
+      local,
       concepto: concepto.trim(),
       categoria,
       categoria_gasto_id: catGastoId || null,
@@ -1471,6 +1487,30 @@ function ModalAgregarPago({
               placeholder="Ej: Alquiler Vedia"
               autoFocus
             />
+          </div>
+
+          <div>
+            <label className="mb-1 block text-xs text-gray-500">Local / Destino</label>
+            <div className="flex gap-2">
+              {(['sas', 'vedia', 'saavedra'] as const).map((l) => (
+                <button
+                  key={l}
+                  type="button"
+                  onClick={() => setLocal(l)}
+                  className={cn(
+                    'flex-1 rounded border px-3 py-2 text-sm font-medium transition-colors',
+                    local === l
+                      ? 'border-rodziny-600 bg-rodziny-50 text-rodziny-900'
+                      : 'border-gray-200 text-gray-600 hover:bg-gray-50',
+                  )}
+                >
+                  {l === 'sas' ? 'Empresa' : l === 'vedia' ? 'Vedia' : 'Saavedra'}
+                </button>
+              ))}
+            </div>
+            <p className="mt-1 text-[10px] text-gray-400">
+              "Empresa" = costo de toda la S.A.S. (va al consolidado, no a un local).
+            </p>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
