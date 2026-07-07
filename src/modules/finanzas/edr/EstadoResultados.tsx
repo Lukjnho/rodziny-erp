@@ -908,6 +908,23 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
     },
   });
 
+  // F931 (cargas sociales) cargado en RRHH → impuestos_mensuales. Es UNA DDJJ por
+  // CUIT (toda la empresa), así que se usa SOLO en la vista "Empresa" como costo
+  // laboral canónico. Company-wide: no se filtra por local.
+  const { data: f931Raw } = useQuery({
+    queryKey: ['edr_f931', año],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('impuestos_mensuales')
+        .select('periodo, monto_total')
+        .gte('periodo', `${año}-01`)
+        .lte('periodo', `${año}-12`);
+      const map = new Map<string, number>();
+      for (const r of data ?? []) map.set(r.periodo as string, Number(r.monto_total) || 0);
+      return map;
+    },
+  });
+
   // Cargos MP sobre pagos egresos (impuesto al débito, comisiones por enviar plata).
   // Vienen en movimientos_bancarios con tipo='cargo_mp' y gasto_id null. Como tipicamente
   // no tienen local imputado (es un costo del medio de pago, no del local), en consolidado
@@ -1123,6 +1140,19 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
         existing.cmvEstimadoResuelto = r.estimado;
       }
     }
+    // F931 (RRHH) → Cargas Sociales, SOLO en "Empresa". Es una DDJJ por CUIT que
+    // no se reparte por local (decisión de negocio). Si el mes tiene F931 cargado,
+    // pisa la suma de cargas de gastos; si no, queda el fallback de gastos. Por eso
+    // en Empresa las Cargas pueden no ser la suma exacta de Vedia+Saavedra.
+    if (esConsolidado) {
+      for (const [periodo, monto] of f931Raw ?? []) {
+        if (monto > 0) {
+          const existing = map.get(periodo) ?? { ...EMPTY_AUTO };
+          existing.cargasSociales = monto;
+          map.set(periodo, existing);
+        }
+      }
+    }
     return map;
   }, [
     ticketsRaw,
@@ -1133,6 +1163,8 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
     cargosMPRaw,
     cierresInventarioRaw,
     cmvResueltoRaw,
+    f931Raw,
+    esConsolidado,
     año,
   ]);
 
@@ -1540,9 +1572,10 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
         Los Ingresos Brutos salen de los tickets importados de Fudo. El IVA Débito usa el detalle
         fiscal por ticket cuando el mes tiene el XLS cargado; si no, el total mensual estimado
         (21/121 sobre lo facturado). Los Gastos se toman netos de IVA cuando el comprobante lo
-        discrimina (factura A); si no, el total como neto. Cortesías y descuentos son informativos
-        (ya incluidos en la venta bruta de Fudo). Todo el EdR se calcula automáticamente — no hay
-        edición manual.
+        discrimina (factura A); si no, el total como neto. En <strong>Empresa</strong>, las Cargas
+        Sociales salen del <strong>F931</strong> (cargado en RRHH → Sueldos) del mes; si ese mes no
+        tiene F931, del cajón de gastos. Cortesías y descuentos son informativos (ya incluidos en la
+        venta bruta de Fudo). Todo el EdR se calcula automáticamente — no hay edición manual.
       </p>
     </>
   );

@@ -180,7 +180,7 @@ export function SeccionImpuestos({ periodoMes }: Props) {
               </label>
             </div>
             <div className="flex items-end text-[10px] text-gray-400">
-              Estos montos alimentan el módulo Finanzas (próximamente).
+              Este monto alimenta las Cargas Sociales del EdR (vista Empresa).
             </div>
           </div>
         </div>
