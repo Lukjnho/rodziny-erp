@@ -619,8 +619,21 @@ export function StockTab() {
         // (baseline) y solo suma/resta lo POSTERIOR a ese conteo. Así el
         // porcionado siempre se ve y el conteo no se come la producción.
         // Si no hay baseline (ej. producto sin conteo aún), cae al histórico total.
+        // En Saavedra se produce y almacena en la MISMA cámara: el cierre de turno
+        // de pastas (cocina_cierre_dia) ES el conteo físico de cámara. Se toma como
+        // baseline si es más reciente que el último conteo de cámara, para que el
+        // acumulado se resetee cada turno y solo lo producido vía QR posterior sume.
+        // En Vedia el cierre de turno es del mostrador (≠ cámara) y NO entra acá.
+        // Espeja el lateral `b` de v_cocina_stock_pastas (mig 125).
         const baselineCamara = cierresCamaraPorProducto?.get(`${prod.id}|${loc}`) ?? null;
-        const baseTs = baselineCamara?.created_at ?? null;
+        const cierreTurnoCamara =
+          loc === 'saavedra' ? (cierresPorProducto?.get(`${prod.id}|${loc}`) ?? null) : null;
+        let baseCamaraCantidad = baselineCamara ? Number(baselineCamara.cantidad_real) : 0;
+        let baseTs = baselineCamara?.created_at ?? null;
+        if (cierreTurnoCamara && (baseTs === null || cierreTurnoCamara.created_at > baseTs)) {
+          baseCamaraCantidad = Number(cierreTurnoCamara.cantidad_real);
+          baseTs = cierreTurnoCamara.created_at;
+        }
         const despuesDelConteo = (ts: string | null) =>
           baseTs === null || (ts !== null && ts > baseTs);
 
@@ -744,8 +757,7 @@ export function StockTab() {
         // − traslados posteriores − merma posterior + ajustes posteriores.
         // Espeja exactamente v_cocina_stock_pastas (Dashboard / Traspasos).
         // El stock nunca puede ser negativo (regla de negocio: máximo puede ser 0).
-        const baseCamara = baselineCamara ? Number(baselineCamara.cantidad_real) : 0;
-        const stockRaw = baseCamara + producido - traspasado - mermaTotal + ajusteCamara;
+        const stockRaw = baseCamaraCantidad + producido - traspasado - mermaTotal + ajusteCamara;
         const stock = Math.max(0, stockRaw);
 
         // Demanda real: ventas Fudo de los últimos 7 días (vía fudo_nombres).
