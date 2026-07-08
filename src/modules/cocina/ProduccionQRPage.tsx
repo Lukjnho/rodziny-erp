@@ -3947,6 +3947,22 @@ function FormMila({
     }
     setGuardando(true);
     setError('');
+    // Milanesa = overwrite ("último pesaje manda", ver comentario esAditivo): apagar
+    // el lote activo previo de la receta antes de insertar, para no acumular. El path
+    // genérico ya lo hace para no-aditivos; este path dedicado lo había omitido.
+    if (recetaId) {
+      const { error: errOff } = await supabase
+        .from('cocina_lotes_produccion')
+        .update({ en_stock: false })
+        .eq('local', local)
+        .eq('receta_id', recetaId)
+        .eq('en_stock', true);
+      if (errOff) {
+        setError(mensajeErrorAmigable(errOff, 'No se pudo actualizar el stock de milanesa'));
+        setGuardando(false);
+        return;
+      }
+    }
     const { error: err } = await supabase.from('cocina_lotes_produccion').insert({
       fecha: hoy(),
       local,
