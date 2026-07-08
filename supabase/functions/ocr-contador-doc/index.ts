@@ -48,8 +48,9 @@ Analiza TODO el archivo (todas las paginas) y devolve UNICAMENTE un JSON estrict
   ],
   "vep": {                          // SOLO si tipo=vep
     "impuesto": string,             // concepto corto (ej "F931 SICOSS", "IVA", "Ganancias", "Autonomos")
-    "periodo": string,              // YYYY-MM
-    "vencimiento": string,          // fecha de vencimiento/expiracion, formato YYYY-MM-DD
+    "periodo": string,              // periodo del impuesto/DDJJ, formato YYYY-MM
+    "vencimiento": string | null,   // fecha de vencimiento/expiracion si figura, formato YYYY-MM-DD; null si no aparece
+    "fecha_pago": string | null,    // fecha EFECTIVA de pago si el documento es un COMPROBANTE de pago ya realizado (ej "Fecha y hora de pago"), formato YYYY-MM-DD; null si es un VEP todavia a pagar
     "monto": number,                // importe total a pagar
     "numero": string                // Nro de VEP si aparece
   },
@@ -64,6 +65,7 @@ REGLAS CRITICAS:
 4. neto = el "TOTAL NETO" / "SON PESOS" que efectivamente cobra el empleado, NO el bruto ni los descuentos.
 4b. DESGLOSE: bruto = total de haberes antes de descuentos. aporte_jubilacion/obra_social/pami = los descuentos AL EMPLEADO que figuran en el recibo. total_aportes = suma de descuentos del empleado (bruto - neto). Las CONTRIBUCIONES PATRONALES (lo que paga el empleador) NO figuran en el recibo: NO las inventes. Si algun campo del desglose no aparece, poné null (no estimes).
 5. Montos: numero plano, sin $ ni puntos de miles, decimal con punto. Fechas YYYY-MM-DD, periodos YYYY-MM.
+5b. VEP fecha_pago: si el documento es un COMPROBANTE de una operacion ya realizada (dice "Realizado", "Fecha y hora de pago", comprobante de banco/Interbanking), extrae esa fecha de pago en fecha_pago. Si es solo un volante A PAGAR (sin pago hecho), fecha_pago = null. El "periodo" es SIEMPRE el del impuesto (ej. 202512 => 2025-12), NO el mes en que se pago.
 6. CUIL: 11 digitos sin guiones. El CUIT de la empresa (30-71735236-6) NO es el CUIL del empleado.
 7. Si no estas seguro del tipo o no hay datos extraibles (ej. captura de pantalla, acuse), usa "desconocido". NO inventes montos ni fechas.
 8. SALIDA: exclusivamente el objeto JSON. Nada de markdown ni notas.`;

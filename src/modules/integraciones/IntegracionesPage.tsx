@@ -4,6 +4,7 @@ import { supabase } from '@/lib/supabase';
 import { PageContainer } from '@/components/layout/PageContainer';
 import { cn, formatARS } from '@/lib/utils';
 import { normalizarTexto } from '@/modules/rrhh/utils';
+import { hoyAR } from '@/lib/fechaAR';
 
 // ── Tipos ──────────────────────────────────────────────────────────────────
 interface EmpleadoMin {
@@ -32,6 +33,7 @@ interface DatosOcr {
     impuesto: string | null;
     periodo: string | null;
     vencimiento: string | null;
+    fecha_pago: string | null;
     monto: number | null;
     numero: string | null;
   } | null;
@@ -83,17 +85,37 @@ async function abrirArchivo(path: string) {
 }
 
 // Categorías de gasto para rutear el VEP a Pagos Fijos (IDs estables).
-const CAT_CARGAS = { id: '0ad4dc6c-016a-4146-8b00-38cb5bae797f', nombre: 'Cargas sociales' };
+// Las cargas sociales pagadas por VEP van a "Regularización de impuestos" (resultado
+// extraordinario, fuera del giro del mes) — mismo criterio que los F931/PLAN de la SAS.
+// Así no inflan la línea de Cargas Sociales operativas del EdR (que sale del F931/RRHH).
+const CAT_REGULARIZACION = {
+  id: '2b6f10eb-b749-46a7-baf9-3dc915d4d64b',
+  nombre: 'Regularización de impuestos',
+};
 const CAT_IMPUESTOS = { id: '407704c3-9b1a-45c4-92c8-f4f41642e4ac', nombre: 'Impuestos y Tasas' };
 const MESES_ES = [
   'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
   'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre',
 ];
-// 'YYYY-MM' -> 'Abril 2026'
+// Normaliza un período a 'YYYY-MM'. Tolera el formato viejo 'YYYYMM' (que a veces
+// devuelve el OCR copiando el PDF, ej "202512") y 'YYYY-MM-DD'. Devuelve null si no
+// se puede interpretar (evita insertar períodos inválidos que no matchean ninguna
+// vista del checklist, que filtra por 'YYYY-MM' exacto).
+function normPeriodo(p: string | null | undefined): string | null {
+  if (!p) return null;
+  const s = String(p).trim();
+  let m = s.match(/^(\d{4})-(\d{2})/); // 'YYYY-MM' o 'YYYY-MM-DD'
+  if (m) return `${m[1]}-${m[2]}`;
+  m = s.match(/^(\d{4})(\d{2})$/); // 'YYYYMM'
+  if (m) return `${m[1]}-${m[2]}`;
+  return null;
+}
+// 'YYYY-MM' (o 'YYYYMM') -> 'Abril 2026'
 function mesNombre(periodo: string | null): string {
-  if (!periodo) return '';
-  const [y, m] = periodo.split('-').map(Number);
-  return MESES_ES[(m || 1) - 1] ? `${MESES_ES[(m || 1) - 1]} ${y}` : periodo;
+  const norm = normPeriodo(periodo);
+  if (!norm) return '';
+  const [y, m] = norm.split('-').map(Number);
+  return MESES_ES[(m || 1) - 1] ? `${MESES_ES[(m || 1) - 1]} ${y}` : norm;
 }
 function esCargaSocial(imp: string | null | undefined): boolean {
   const s = (imp ?? '').toLowerCase();
@@ -251,23 +273,27 @@ export function IntegracionesPage() {
       } else if (d.tipo === 'vep') {
         const v = d.vep ?? null;
         const venc = v?.vencimiento ?? null;
-        const periodoImp = v?.periodo ?? null;
-        // Aparece en el mes de PAGO (vencimiento); el concepto lleva el período del impuesto.
-        const periodoPago = venc ? venc.slice(0, 7) : periodoImp ?? new Date().toISOString().slice(0, 7);
+        const fechaPagoVep = v?.fecha_pago ?? null;
+        const periodoImp = normPeriodo(v?.periodo ?? null); // período del impuesto (ej "2025-12")
+        // Cae en el MES EN QUE SE PAGÓ: fecha real de pago del comprobante → si no
+        // hay (VEP a pagar), vencimiento → último recurso, hoy (AR). El período del
+        // impuesto se preserva en el concepto y la nota, no define el mes.
+        const periodoPago =
+          normPeriodo((fechaPagoVep ?? venc)?.slice(0, 7)) ?? hoyAR().slice(0, 7);
         const carga = esCargaSocial(v?.impuesto);
-        const cat = carga ? CAT_CARGAS : CAT_IMPUESTOS;
-        const concepto = carga
+        const cat = carga ? CAT_REGULARIZACION : CAT_IMPUESTOS;
+        const etiqueta = carga
           ? `Pago cargas sociales ${mesNombre(periodoImp)}`.trim()
           : `Pago ${v?.impuesto ?? 'impuesto'} ${mesNombre(periodoImp)}`.trim();
         const { error } = await supabase.from('pagos_fijos').insert({
           periodo: periodoPago,
-          concepto,
+          concepto: etiqueta,
           categoria: cat.nombre,
           categoria_gasto_id: cat.id,
           monto: v?.monto ?? null,
-          fecha_vencimiento: venc,
+          fecha_vencimiento: venc ?? fechaPagoVep,
           comprobante_path: path,
-          notas: `VEP ${v?.impuesto ?? ''}${v?.numero ? ` N° ${v.numero}` : ''} · período ${periodoImp ?? '—'}`.trim(),
+          notas: `${etiqueta}${v?.numero ? ` · VEP N° ${v.numero}` : ''}${v?.impuesto ? ` · ${v.impuesto}` : ''}`.trim(),
         });
         if (error) throw error;
         setItem({

@@ -190,6 +190,7 @@ export function ChecklistPagos() {
     pagoId: string;
     concepto: string;
     medioInicial: string | null;
+    comprobantePathExistente: string | null;
   } | null>(null);
   const [toast, setToast] = useState<{
     tipo: 'pagado' | 'desmarcado' | 'movido';
@@ -399,6 +400,7 @@ export function ChecklistPagos() {
     numeroOperacion: string | null = null,
     archivoComprobante: File | null = null,
     comprobantePathPreSubido: string | null = null,
+    reusarDeCorreos: boolean = false,
   ) {
     // Regla uniforme: pago bancarizado (no efectivo / cta cte) exige N° op + comprobante.
     if (
@@ -433,6 +435,33 @@ export function ChecklistPagos() {
     // 0. Comprobante: si el modal ya lo subió al disparar OCR, reusamos ese path.
     //    Si no, subimos el File aquí (fallback cuando el OCR no se ejecutó).
     let pathComprobante: string | null = comprobantePathPreSubido;
+    // 0.b Si el comprobante reusado viene del pago fijo (bucket 'correos-contadores',
+    //     ej. el PDF del VEP), el gasto y el pago_gasto lo resuelven desde
+    //     'gastos-comprobantes'. Copiamos el archivo al bucket correcto para no dejar
+    //     el link roto en Gastos / Resumen de Egresos.
+    if (pathComprobante && reusarDeCorreos) {
+      const { data: blob, error: dErr } = await supabase.storage
+        .from('correos-contadores')
+        .download(pathComprobante);
+      if (dErr || !blob) {
+        console.error('No se pudo reutilizar el comprobante del VEP:', dErr);
+        window.alert('No se pudo reutilizar el comprobante adjunto. Subilo de nuevo.');
+        return;
+      }
+      const ext = pathComprobante.split('.').pop()?.toLowerCase() || 'pdf';
+      const destino = `${local}/${fechaPago.substring(0, 7)}/pago_fijo_${Date.now()}_${Math.random()
+        .toString(36)
+        .slice(2, 8)}.${ext}`;
+      const { error: uErr } = await supabase.storage
+        .from('gastos-comprobantes')
+        .upload(destino, blob, { contentType: blob.type || 'application/pdf' });
+      if (uErr) {
+        console.error('No se pudo copiar el comprobante al bucket de gastos:', uErr);
+        window.alert(`No se pudo reutilizar el comprobante: ${uErr.message}`);
+        return;
+      }
+      pathComprobante = destino;
+    }
     if (!pathComprobante && archivoComprobante) {
       const ext = archivoComprobante.name.split('.').pop()?.toLowerCase() || 'pdf';
       const carpeta = `${local}/${fechaPago.substring(0, 7)}`;
@@ -1095,6 +1124,7 @@ export function ChecklistPagos() {
                                 pagoId: pago.id,
                                 concepto: pago.concepto,
                                 medioInicial: pago.medio_pago,
+                                comprobantePathExistente: pago.comprobante_path,
                               });
                             }
                           }}
@@ -1190,10 +1220,19 @@ export function ChecklistPagos() {
         <ModalMedioPago
           concepto={medioPagoModal.concepto}
           medioInicial={medioPagoModal.medioInicial}
+          comprobanteInicial={medioPagoModal.comprobantePathExistente}
           subfolder={`pagos-fijos/${derivarLocal(medioPagoModal.concepto)}`}
-          onConfirmar={(medio, numeroOperacion, archivo, comprobantePathPreSubido) => {
+          onConfirmar={(medio, numeroOperacion, archivo, comprobantePathPreSubido, reusarDeCorreos) => {
             const pago = (pagos ?? []).find((p) => p.id === medioPagoModal.pagoId);
-            if (pago) marcarPagado(pago, medio, numeroOperacion, archivo, comprobantePathPreSubido);
+            if (pago)
+              marcarPagado(
+                pago,
+                medio,
+                numeroOperacion,
+                archivo,
+                comprobantePathPreSubido,
+                reusarDeCorreos,
+              );
             setMedioPagoModal(null);
           }}
           onClose={() => setMedioPagoModal(null)}
@@ -1608,26 +1647,32 @@ function ModalAgregarPago({
 function ModalMedioPago({
   concepto,
   medioInicial,
+  comprobanteInicial = null,
   subfolder,
   onConfirmar,
   onClose,
 }: {
   concepto: string;
   medioInicial: string | null;
+  comprobanteInicial?: string | null;
   subfolder: string;
   onConfirmar: (
     medio: string,
     numeroOperacion: string | null,
     archivo: File | null,
     comprobantePathPreSubido: string | null,
+    reusarDeCorreos: boolean,
   ) => void;
   onClose: () => void;
 }) {
   const [medio, setMedio] = useState<string>(medioInicial ?? '');
   const [numeroOp, setNumeroOp] = useState<string>('');
   const [archivo, setArchivo] = useState<File | null>(null);
-  // Path del comprobante ya subido por OCR (se reusa al confirmar)
-  const [comprobantePath, setComprobantePath] = useState<string | null>(null);
+  // Path del comprobante ya subido por OCR (se reusa al confirmar). Si el pago fijo
+  // ya trae un comprobante adjunto (ej. el PDF del VEP), arranca con ese path para
+  // no obligar a resubirlo. Se puede reemplazar subiendo otro archivo.
+  const [comprobantePath, setComprobantePath] = useState<string | null>(comprobanteInicial);
+  const [comprobanteReusado, setComprobanteReusado] = useState<boolean>(!!comprobanteInicial);
   const [ocrEjecutando, setOcrEjecutando] = useState(false);
   const [ocrInfo, setOcrInfo] = useState<string | null>(null);
   const [ocrWarning, setOcrWarning] = useState<string | null>(null);
@@ -1642,6 +1687,7 @@ function ModalMedioPago({
     setOcrInfo(null);
     setOcrWarning(null);
     setComprobantePath(null);
+    setComprobanteReusado(false);
     setArchivo(file);
     if (!file) return;
     setOcrEjecutando(true);
@@ -1686,11 +1732,14 @@ function ModalMedioPago({
     }
     // Si OCR ya subió el archivo, pasamos el path y archivo=null (no resubir).
     // Si no se ejecutó OCR (efectivo sin comprobante), pasamos el File.
+    // reusarDeCorreos: el path viene del comprobante ya adjunto al pago fijo (bucket
+    // 'correos-contadores'), no de un archivo recién subido por OCR.
     onConfirmar(
       medio,
       numeroOp.trim() || null,
       comprobantePath ? null : archivo,
       comprobantePath,
+      comprobanteReusado && !archivo,
     );
   }
 
@@ -1743,7 +1792,15 @@ function ModalMedioPago({
           </div>
           {requiereComprobante && (
             <div>
-              <label className="mb-1 block text-xs text-gray-500">Comprobante de pago *</label>
+              <label className="mb-1 block text-xs text-gray-500">
+                Comprobante de pago{comprobanteReusado ? '' : ' *'}
+              </label>
+              {comprobanteReusado && (
+                <p className="mb-1 rounded border border-green-200 bg-green-50 px-2 py-1 text-[11px] text-green-800">
+                  ✓ Ya hay un comprobante adjunto (del documento subido). No hace falta
+                  resubirlo. Si querés reemplazarlo, elegí otro archivo.
+                </p>
+              )}
               <input
                 type="file"
                 accept="image/*,application/pdf"
