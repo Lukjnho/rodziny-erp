@@ -306,19 +306,24 @@ export function IntegracionesPage() {
         }
         const carga = esCargaSocial(v?.impuesto);
         const cat = carga ? CAT_REGULARIZACION : CAT_IMPUESTOS;
-        const etiqueta = carga
+        const base = carga
           ? `Pago cargas sociales ${mesNombre(periodoImp)}`.trim()
           : `Pago ${v?.impuesto ?? 'impuesto'} ${mesNombre(periodoImp)}`.trim();
+        // El concepto incluye el N° de VEP para ser ÚNICO: puede haber VARIOS VEP del
+        // mismo período (ej. aportes y contribuciones, montos distintos) y el
+        // UNIQUE(periodo, concepto) rechazaría el segundo como falso duplicado. El
+        // número los distingue; el anti-duplicado real es por vep_numero (arriba).
+        const concepto = v?.numero ? `${base} · VEP ${v.numero}` : base;
         const { error } = await supabase.from('pagos_fijos').insert({
           periodo: periodoPago,
-          concepto: etiqueta,
+          concepto,
           categoria: cat.nombre,
           categoria_gasto_id: cat.id,
           monto: v?.monto ?? null,
           fecha_vencimiento: venc ?? fechaPagoVep,
           comprobante_path: path,
           vep_numero: v?.numero ?? null,
-          notas: `${etiqueta}${v?.numero ? ` · VEP N° ${v.numero}` : ''}${v?.impuesto ? ` · ${v.impuesto}` : ''}`.trim(),
+          notas: `${base}${v?.numero ? ` · VEP N° ${v.numero}` : ''}${v?.impuesto ? ` · ${v.impuesto}` : ''}`.trim(),
         });
         if (error) {
           // 23505 = viola un UNIQUE: el número de VEP (pagos_fijos_vep_numero_uidx) o
@@ -329,7 +334,7 @@ export function IntegracionesPage() {
             setItem({
               estado: 'error',
               tipo: 'vep',
-              resultado: `⚠️ Este VEP ya estaba cargado (${etiqueta}). No se cargó de nuevo.`,
+              resultado: `⚠️ Este VEP ya estaba cargado (${base}). No se cargó de nuevo.`,
             });
             return;
           }
