@@ -284,6 +284,26 @@ export function IntegracionesPage() {
         // impuesto se preserva en el concepto y la nota, no define el mes.
         const periodoPago =
           normPeriodo((fechaPagoVep ?? venc)?.slice(0, 7)) ?? hoyAR().slice(0, 7);
+        // Anti-duplicado por número de VEP: si ya existe un pago fijo con ese mismo
+        // número, es el mismo comprobante re-subido → rechazar con aviso claro (sin
+        // depender del error del índice). Best-effort: si RLS no deja leer, igual lo
+        // ataja el índice único parcial pagos_fijos_vep_numero_uidx (23505 abajo).
+        if (v?.numero) {
+          const { data: yaExiste } = await supabase
+            .from('pagos_fijos')
+            .select('id, concepto')
+            .eq('vep_numero', v.numero)
+            .maybeSingle();
+          if (yaExiste) {
+            await supabase.storage.from('correos-contadores').remove([path]);
+            setItem({
+              estado: 'error',
+              tipo: 'vep',
+              resultado: `⚠️ Este VEP (N° ${v.numero}) ya estaba cargado como "${yaExiste.concepto}". No se cargó de nuevo.`,
+            });
+            return;
+          }
+        }
         const carga = esCargaSocial(v?.impuesto);
         const cat = carga ? CAT_REGULARIZACION : CAT_IMPUESTOS;
         const etiqueta = carga
@@ -297,12 +317,13 @@ export function IntegracionesPage() {
           monto: v?.monto ?? null,
           fecha_vencimiento: venc ?? fechaPagoVep,
           comprobante_path: path,
+          vep_numero: v?.numero ?? null,
           notas: `${etiqueta}${v?.numero ? ` · VEP N° ${v.numero}` : ''}${v?.impuesto ? ` · ${v.impuesto}` : ''}`.trim(),
         });
         if (error) {
-          // 23505 = viola UNIQUE (periodo, concepto): ya existe un pago fijo con ese
-          // período + concepto → es el mismo VEP recargado. No duplicamos: avisamos
-          // y borramos el archivo recién subido (quedaría huérfano en storage).
+          // 23505 = viola un UNIQUE: el número de VEP (pagos_fijos_vep_numero_uidx) o
+          // período+concepto. En ambos casos es el mismo VEP recargado: no duplicamos,
+          // avisamos y borramos el archivo recién subido (quedaría huérfano en storage).
           if (error.code === '23505') {
             await supabase.storage.from('correos-contadores').remove([path]);
             setItem({
