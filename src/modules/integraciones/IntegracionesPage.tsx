@@ -299,7 +299,21 @@ export function IntegracionesPage() {
           comprobante_path: path,
           notas: `${etiqueta}${v?.numero ? ` · VEP N° ${v.numero}` : ''}${v?.impuesto ? ` · ${v.impuesto}` : ''}`.trim(),
         });
-        if (error) throw error;
+        if (error) {
+          // 23505 = viola UNIQUE (periodo, concepto): ya existe un pago fijo con ese
+          // período + concepto → es el mismo VEP recargado. No duplicamos: avisamos
+          // y borramos el archivo recién subido (quedaría huérfano en storage).
+          if (error.code === '23505') {
+            await supabase.storage.from('correos-contadores').remove([path]);
+            setItem({
+              estado: 'error',
+              tipo: 'vep',
+              resultado: `⚠️ Este VEP ya estaba cargado (${etiqueta}). No se cargó de nuevo.`,
+            });
+            return;
+          }
+          throw error;
+        }
         setItem({
           estado: 'ok',
           tipo: 'vep',
