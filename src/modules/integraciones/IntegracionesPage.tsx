@@ -88,9 +88,13 @@ async function abrirArchivo(path: string) {
 // Las cargas sociales pagadas por VEP van a "Regularización de impuestos" (resultado
 // extraordinario, fuera del giro del mes) — mismo criterio que los F931/PLAN de la SAS.
 // Así no inflan la línea de Cargas Sociales operativas del EdR (que sale del F931/RRHH).
+// nombre SIN tilde a propósito: es el texto con el que ya están las ~32 filas de
+// pagos_fijos y el checklist agrupa las secciones por ese string exacto. Con tilde
+// abría un segundo cuadro "Regularización de impuestos" separado. El EdR no depende
+// de esto (matchea la subcategoría del gasto con TRANSLATE, ignora tildes).
 const CAT_REGULARIZACION = {
   id: '2b6f10eb-b749-46a7-baf9-3dc915d4d64b',
-  nombre: 'Regularización de impuestos',
+  nombre: 'Regularizacion de impuestos',
 };
 const CAT_IMPUESTOS = { id: '407704c3-9b1a-45c4-92c8-f4f41642e4ac', nombre: 'Impuestos y Tasas' };
 const MESES_ES = [
