@@ -22,6 +22,7 @@ import { formatARS, cn } from '@/lib/utils';
 import { hoyAR } from '@/lib/fechaAR';
 import { ImportarExtractoModal } from '@/modules/gastos/ImportarExtractoModal';
 import { VincularPagosMovModal } from './VincularPagosMovModal';
+import { useProveedoresMap, nombreProveedor } from '@/modules/gastos/proveedorDisplay';
 
 function ymd(d: Date): string {
   const y = d.getFullYear();
@@ -47,6 +48,7 @@ interface GastoCandidato {
   fecha: string;
   importe_total: number;
   proveedor: string | null;
+  proveedor_id: string | null;
   nro_comprobante: string | null;
 }
 
@@ -117,6 +119,7 @@ interface MovBancario {
 interface GastoConciliado {
   gasto_id: string;
   proveedor: string | null;
+  proveedor_id: string | null;
   fecha: string;
   importe_total: number;
   comentario: string | null;
@@ -146,6 +149,8 @@ type FilaConciliada =
 export function ConciliacionTab() {
   const { user } = useAuth();
   const qc = useQueryClient();
+  // Nombre canónico de proveedor (mismo que el resto del ERP) en vez del texto crudo.
+  const { data: proveedoresMap } = useProveedoresMap();
   const [procesando, setProcesando] = useState<null | 'match' | 'cargos'>(null);
   const [mensaje, setMensaje] = useState<{ tipo: 'ok' | 'err'; texto: string } | null>(null);
   const [importModalOpen, setImportModalOpen] = useState(false);
@@ -262,7 +267,7 @@ export function ConciliacionTab() {
       const hastaAmpliado = ymdAddDays(hasta, 2);
       const { data: gastos, error } = await supabase
         .from('gastos')
-        .select('id, fecha, importe_total, proveedor, nro_comprobante')
+        .select('id, fecha, importe_total, proveedor, proveedor_id, nro_comprobante')
         .neq('cancelado', true)
         .gte('fecha', desdeAmpliado)
         .lte('fecha', hastaAmpliado);
@@ -373,17 +378,18 @@ export function ConciliacionTab() {
 
       // Traer datos de los gastos referenciados
       const gastoIds = Array.from(movsByGasto.keys());
-      const gastosById = new Map<string, { proveedor: string | null; fecha: string; importe_total: number; nro_comprobante: string | null; comentario: string | null }>();
+      const gastosById = new Map<string, { proveedor: string | null; proveedor_id: string | null; fecha: string; importe_total: number; nro_comprobante: string | null; comentario: string | null }>();
       const PAGE = 800;
       for (let i = 0; i < gastoIds.length; i += PAGE) {
         const batch = gastoIds.slice(i, i + PAGE);
         const { data: gs } = await supabase
           .from('gastos')
-          .select('id, proveedor, fecha, importe_total, nro_comprobante, comentario')
+          .select('id, proveedor, proveedor_id, fecha, importe_total, nro_comprobante, comentario')
           .in('id', batch);
         for (const g of gs ?? []) {
           gastosById.set(g.id as string, {
             proveedor: (g.proveedor as string | null) ?? null,
+            proveedor_id: (g.proveedor_id as string | null) ?? null,
             fecha: g.fecha as string,
             importe_total: Number(g.importe_total ?? 0),
             nro_comprobante: (g.nro_comprobante as string | null) ?? null,
@@ -413,6 +419,7 @@ export function ConciliacionTab() {
         result.push({
           gasto_id: gastoId,
           proveedor: g?.proveedor ?? null,
+          proveedor_id: g?.proveedor_id ?? null,
           fecha: g?.fecha ?? '',
           importe_total: g?.importe_total ?? 0,
           comentario: g?.comentario ?? null,
@@ -1093,7 +1100,7 @@ export function ConciliacionTab() {
                                       {gastos.map((gg) => (
                                         <tr key={gg.gasto_id} className="hover:bg-gray-50">
                                           <td className="px-2 py-1 text-gray-700">
-                                            {gg.proveedor ?? '(sin proveedor)'}
+                                            {nombreProveedor(gg, proveedoresMap, '(sin proveedor)')}
                                             {gg.comentario && (
                                               <span className="ml-1 text-[10px] text-gray-400">
                                                 · {gg.comentario.slice(0, 50)}
@@ -1133,7 +1140,7 @@ export function ConciliacionTab() {
                             {isExpanded ? '▼' : '▶'}
                           </td>
                           <td className="px-2 py-1.5 text-gray-800">
-                            <div className="font-medium">{g.proveedor ?? '(sin proveedor)'}</div>
+                            <div className="font-medium">{nombreProveedor(g, proveedoresMap, '(sin proveedor)')}</div>
                             {g.comentario && (
                               <div className="text-[10px] text-gray-500">
                                 {g.comentario.length > 80
@@ -1317,9 +1324,9 @@ export function ConciliacionTab() {
                                 type="button"
                                 onClick={() => handleVincular(m.id, candidatos[0].id)}
                                 className="rounded border border-amber-300 bg-amber-50 px-2 py-0.5 text-[11px] text-amber-900 hover:bg-amber-100"
-                                title={`Vincular este movimiento al gasto: ${candidatos[0].proveedor ?? '(sin proveedor)'} · ${formatARS(Number(candidatos[0].importe_total))} · ${candidatos[0].fecha}`}
+                                title={`Vincular este movimiento al gasto: ${nombreProveedor(candidatos[0], proveedoresMap, '(sin proveedor)')} · ${formatARS(Number(candidatos[0].importe_total))} · ${candidatos[0].fecha}`}
                               >
-                                🟡 {candidatos[0].proveedor ?? 'gasto'} · Vincular
+                                🟡 {nombreProveedor(candidatos[0], proveedoresMap, 'gasto')} · Vincular
                               </button>
                             ) : (
                               <select
@@ -1332,7 +1339,7 @@ export function ConciliacionTab() {
                                 <option value="">🟡 {candidatos.length} matches…</option>
                                 {candidatos.map((c) => (
                                   <option key={c.id} value={c.id}>
-                                    {c.proveedor ?? '(sin proveedor)'} · {c.fecha} ·{' '}
+                                    {nombreProveedor(c, proveedoresMap, '(sin proveedor)')} · {c.fecha} ·{' '}
                                     {formatARS(Number(c.importe_total))}
                                   </option>
                                 ))}

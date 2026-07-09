@@ -16,6 +16,7 @@ import type {
 } from './types';
 import { TIPO_COMPROBANTE_LABEL, MEDIO_PAGO_LABEL, medioRequiereComprobante } from './types';
 import { PagarGastoModal } from './PagarGastoModal';
+import { displayProveedor } from './proveedorDisplay';
 
 export interface PrefillGasto {
   recepcion_id?: string;
@@ -305,7 +306,14 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
         .replace(/[\u0300-\u036f]/g, '')
         .trim();
     const objetivo = norm(form.proveedor_libre);
-    const match = proveedores.find((p) => norm(p.razon_social) === objetivo);
+    // Match contra razón + nombre comercial + aliases (no solo razón social), para
+    // reconocer variantes y no dejar el gasto como texto suelto.
+    const match = proveedores.find((p) =>
+      [p.razon_social, p.nombre_comercial, ...(p.aliases ?? [])]
+        .filter(Boolean)
+        .map((s) => norm(s as string))
+        .includes(objetivo),
+    );
     if (match) {
       setForm((f) => ({
         ...f,
@@ -976,11 +984,16 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
                   className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm"
                 >
                   <option value="">— Seleccionar —</option>
-                  {(proveedores ?? []).map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.razon_social}
-                    </option>
-                  ))}
+                  {(proveedores ?? []).map((p) => {
+                    const disp = displayProveedor(p);
+                    const principal = disp?.principal ?? p.razon_social;
+                    return (
+                      <option key={p.id} value={p.id}>
+                        {principal}
+                        {disp?.secundario ? ` (${disp.secundario})` : ''}
+                      </option>
+                    );
+                  })}
                 </select>
                 {form.proveedor_libre && !form.proveedor_id && (
                   <div className="mt-1 text-[11px] text-amber-600">

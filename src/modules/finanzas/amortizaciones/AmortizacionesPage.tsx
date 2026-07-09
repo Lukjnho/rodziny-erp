@@ -4,6 +4,7 @@ import { supabase } from '@/lib/supabase';
 import { PageContainer } from '@/components/layout/PageContainer';
 import { formatARS, cn } from '@/lib/utils';
 import { LocalSelector } from '@/components/ui/LocalSelector';
+import { useProveedoresMap, nombreProveedor } from '@/modules/gastos/proveedorDisplay';
 
 const MESES_LABEL = [
   'Ene',
@@ -56,6 +57,8 @@ export function AmortizacionesPage({ embedded = false }: { embedded?: boolean } 
   const [vidaUtil, setVidaUtil] = useState('');
   const [desc, setDesc] = useState('');
   const qc = useQueryClient();
+  // Nombre canónico de proveedor (mismo que el resto del ERP).
+  const { data: proveedoresMap } = useProveedoresMap();
 
   // ── Inversiones sin amortizar ──────────────────────────────────────────────
   const { data: inversiones } = useQuery({
@@ -64,7 +67,7 @@ export function AmortizacionesPage({ embedded = false }: { embedded?: boolean } 
       // Traer gastos de inversiones
       const { data: gastos } = await supabase
         .from('gastos')
-        .select('id, fudo_id, fecha, proveedor, subcategoria, comentario, importe_total')
+        .select('id, fudo_id, fecha, proveedor, proveedor_id, subcategoria, comentario, importe_total')
         .eq('local', local)
         .eq('categoria', 'Inversiones')
         .eq('cancelado', false)
@@ -229,7 +232,7 @@ export function AmortizacionesPage({ embedded = false }: { embedded?: boolean } 
                 {inversiones.map((g) => (
                   <tr key={g.id} className="border-b border-gray-50 hover:bg-gray-50">
                     <td className="px-4 py-2 text-gray-600">{g.fecha}</td>
-                    <td className="px-4 py-2 font-medium text-gray-800">{g.proveedor || '—'}</td>
+                    <td className="px-4 py-2 font-medium text-gray-800">{nombreProveedor(g, proveedoresMap, '—')}</td>
                     <td className="px-4 py-2 text-gray-600">{g.subcategoria || '—'}</td>
                     <td className="max-w-[200px] truncate px-4 py-2 text-xs text-gray-500">
                       {g.comentario || '—'}
@@ -264,7 +267,9 @@ export function AmortizacionesPage({ embedded = false }: { embedded?: boolean } 
                                 crearMut.mutate({
                                   gasto: g,
                                   vidaUtilMeses: meses,
-                                  descripcion: desc || `${g.proveedor} - ${g.subcategoria}`,
+                                  descripcion:
+                                    desc ||
+                                    `${nombreProveedor(g, proveedoresMap, '')} - ${g.subcategoria}`,
                                 });
                               }}
                               disabled={crearMut.isPending}
@@ -293,7 +298,7 @@ export function AmortizacionesPage({ embedded = false }: { embedded?: boolean } 
                           onClick={() => {
                             setEditando(g.id);
                             setDesc(
-                              `${g.proveedor || ''} - ${g.subcategoria || ''}`.replace(
+                              `${nombreProveedor(g, proveedoresMap, '')} - ${g.subcategoria || ''}`.replace(
                                 /^ - | - $/g,
                                 '',
                               ),

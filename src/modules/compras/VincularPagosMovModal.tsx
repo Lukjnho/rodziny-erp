@@ -16,7 +16,11 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth';
 import { formatARS, cn } from '@/lib/utils';
-import { displayProveedor } from '@/modules/gastos/proveedorDisplay';
+import {
+  displayProveedor,
+  useProveedoresMap,
+  nombreProveedor,
+} from '@/modules/gastos/proveedorDisplay';
 
 interface ProveedorMatch {
   id: string;
@@ -45,6 +49,7 @@ interface GastoPendiente {
   id: string;
   fecha: string;
   proveedor: string | null;
+  proveedor_id: string | null;
   importe_total: number;
   estado_pago: string | null;
   comentario: string | null;
@@ -207,6 +212,10 @@ export function VincularPagosMovModal({ mov, open, onClose, onSuccess }: Props) 
   // modo texto (búsqueda por nombre).
   const usarProveedorId = proveedorResuelto !== null && busqueda.trim().length === 0;
 
+  // Mapa canónico de proveedores para mostrar el mismo nombre que el resto del ERP
+  // (nombre de fantasía) en la lista de gastos, en vez del texto crudo del gasto.
+  const { data: proveedoresMap } = useProveedoresMap({ enabled: open });
+
   const { data: gastosPendientes, isLoading } = useQuery<GastoPendiente[]>({
     queryKey: [
       'gastos_pendientes_para_vincular',
@@ -220,7 +229,7 @@ export function VincularPagosMovModal({ mov, open, onClose, onSuccess }: Props) 
       // Modo C — Sin filtro: muestra las 120 pendientes más recientes.
       let q = supabase
         .from('gastos')
-        .select('id, fecha, proveedor, importe_total, estado_pago, comentario, nro_comprobante, local')
+        .select('id, fecha, proveedor, proveedor_id, importe_total, estado_pago, comentario, nro_comprobante, local')
         .neq('cancelado', true)
         .neq('estado_pago', 'Pagado')
         .order('fecha', { ascending: false })
@@ -791,7 +800,7 @@ export function VincularPagosMovModal({ mov, open, onClose, onSuccess }: Props) 
                               <input type="checkbox" checked={sel} readOnly className="h-4 w-4" />
                               <div className="flex-1">
                                 <div className="flex flex-wrap items-center gap-2">
-                                  <strong className="text-gray-900">{g.proveedor ?? '(sin proveedor)'}</strong>
+                                  <strong className="text-gray-900">{nombreProveedor(g, proveedoresMap, '(sin proveedor)')}</strong>
                                   <span className="text-[10px] text-gray-500">{g.fecha}</span>
                                   {g.nro_comprobante && (
                                     <span className="font-mono text-[10px] text-gray-400">
@@ -835,7 +844,7 @@ export function VincularPagosMovModal({ mov, open, onClose, onSuccess }: Props) 
                       <input type="checkbox" checked={sel} readOnly className="h-4 w-4" />
                       <div className="flex-1">
                         <div className="flex flex-wrap items-center gap-2">
-                          <strong className="text-gray-900">{g.proveedor ?? '(sin proveedor)'}</strong>
+                          <strong className="text-gray-900">{nombreProveedor(g, proveedoresMap, '(sin proveedor)')}</strong>
                           <span className="text-[10px] text-gray-500">{g.fecha}</span>
                           {g.local && (
                             <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[9px] uppercase text-gray-600">

@@ -29,6 +29,16 @@ import {
   type CondicionIVA,
 } from './types';
 import type { PrefillGasto } from './NuevoGastoModal';
+import { displayProveedor } from './proveedorDisplay';
+
+// Normaliza un nombre para matchear: minúsculas, sin acentos, sin espacios de más.
+function normNombreProv(s: string): string {
+  return s
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .trim();
+}
 
 // ----- Props -----
 
@@ -512,11 +522,15 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
   }, [open, prefill]);
 
   // Match de proveedor por nombre (best-effort) una vez cargada la lista.
+  // Normalizado y contra razón + comercial + aliases, para reconocer variantes.
   useEffect(() => {
     if (!open || !prefill?.proveedor_nombre || proveedorId) return;
-    const target = prefill.proveedor_nombre.trim().toLowerCase();
-    const match = proveedores.find(
-      (p) => (p.razon_social ?? '').trim().toLowerCase() === target,
+    const target = normNombreProv(prefill.proveedor_nombre);
+    const match = proveedores.find((p) =>
+      [p.razon_social, p.nombre_comercial, ...(p.aliases ?? [])]
+        .filter(Boolean)
+        .map((s) => normNombreProv(s as string))
+        .includes(target),
     );
     if (match) setProveedorId(match.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -821,11 +835,18 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
       }
     }
 
-    // 2. Match por nombre exacto (case-insensitive)
+    // 2. Match por nombre: razón social, nombre comercial o algún alias, todo
+    //    normalizado (minúsculas + sin acentos). Antes solo comparaba razón social
+    //    exacta, así que "Frigo Porc"/"Victorello"/etc. no matcheaban y se cargaban
+    //    como texto suelto. Con esto reconoce las variantes del maestro.
     if (nombreOcr) {
-      const matchNombre = proveedores.find(
-        (p) => p.razon_social.trim().toLowerCase() === nombreOcr.toLowerCase(),
-      );
+      const n = normNombreProv(nombreOcr);
+      const matchNombre = proveedores.find((p) => {
+        const nombres = [p.razon_social, p.nombre_comercial, ...(p.aliases ?? [])]
+          .filter(Boolean)
+          .map((s) => normNombreProv(s as string));
+        return nombres.includes(n);
+      });
       if (matchNombre) {
         aplicarProveedorMatch(matchNombre, null);
         return;
@@ -1851,12 +1872,20 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
                   className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
                 >
                   <option value="">— Seleccionar —</option>
-                  {proveedoresParaDropdown.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.razon_social}
-                      {p.cuit ? ` (${p.cuit})` : ''}
-                    </option>
-                  ))}
+                  {proveedoresParaDropdown.map((p) => {
+                    // Mostramos el nombre canónico (fantasía si existe, si no razón),
+                    // igual que el resto del ERP; la razón social va como aclaración
+                    // cuando difiere, para reconocer al proveedor sin ambigüedad.
+                    const disp = displayProveedor(p);
+                    const principal = disp?.principal ?? p.razon_social;
+                    const extra = [disp?.secundario, p.cuit].filter(Boolean).join(' · ');
+                    return (
+                      <option key={p.id} value={p.id}>
+                        {principal}
+                        {extra ? ` (${extra})` : ''}
+                      </option>
+                    );
+                  })}
                 </select>
                 {mensajeProveedor && (
                   <div className={cn(
