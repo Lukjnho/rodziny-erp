@@ -411,6 +411,10 @@ export function PagarGastoModal({ open, gasto, onClose }: Props) {
       qc.invalidateQueries({ queryKey: ['gastos_pagos_rango'] });
       qc.invalidateQueries({ queryKey: ['gastos_pagos'] });
       qc.invalidateQueries({ queryKey: ['pagos_gastos_compras'] });
+      // Calendario consolidado de cuenta corriente (tab Pagos): refleja el pago
+      // en la deuda y en el día correspondiente sin esperar el refetch por tiempo.
+      qc.invalidateQueries({ queryKey: ['cta_cte_calendario_consolidado'] });
+      qc.invalidateQueries({ queryKey: ['cta_cte_pagos_ejecutados'] });
       qc.invalidateQueries({ queryKey: ['conciliacion'] });
 
       onClose();

@@ -190,8 +190,29 @@ const TAB_IDS: Tab[] = [
   'conciliacion',
 ];
 
+// Color/etiqueta por local para el desglose informativo del tab Pagos.
+// Mismos que el calendario de cuenta corriente para que se lea coherente.
+const PAGOS_LOCAL_DOT: Record<string, string> = {
+  vedia: 'bg-blue-500',
+  saavedra: 'bg-emerald-500',
+  sas: 'bg-gray-400',
+};
+const PAGOS_LOCAL_LABEL: Record<string, string> = {
+  vedia: 'Vedia',
+  saavedra: 'Saavedra',
+  sas: 'Empresa',
+};
+const PAGOS_LOCALES: ('vedia' | 'saavedra' | 'sas')[] = ['vedia', 'saavedra', 'sas'];
+
 export function ComprasPage() {
   const [local, setLocal] = useState<'vedia' | 'saavedra'>('vedia');
+  // Alcance del tab Pagos. Por defecto 'empresa' = deuda consolidada de cuenta
+  // corriente (Vedia + Saavedra + SAS) en UNA sola lista agrupada por proveedor;
+  // los que abastecen a ambos locales (Victorello, Don Vitto…) caen en una única
+  // fila con el total y un desglose informativo por local. Vedia/Saavedra
+  // permiten aislar un local puntual. Independiente del selector global.
+  type PagosLocal = 'empresa' | 'vedia' | 'saavedra';
+  const [pagosLocal, setPagosLocal] = useState<PagosLocal>('empresa');
   // Tab activo sincronizado con ?tab=... para linkear desde las alertas del Dashboard.
   const [searchParams, setSearchParams] = useSearchParams();
   const tabFromUrl = searchParams.get('tab') as Tab | null;
@@ -308,18 +329,23 @@ export function ComprasPage() {
   }, [movimientos, productos]);
 
   const { data: gastosPagos } = useQuery({
-    queryKey: ['gastos_pagos', local],
+    queryKey: ['gastos_pagos', pagosLocal],
     queryFn: async () => {
       // Ordenamos por venc ASC con nulls al final (los pendientes urgentes
       // arriba), y como tie-breaker created_at DESC para que entre los gastos
       // sin venc los más recientes aparezcan primero. Subimos el limit a 1500
       // para evitar que pendientes recientes queden truncados (Vedia tiene
       // ~700 gastos activos al cierre de mes).
-      const { data } = await supabase
+      // 'empresa' = consolidado: trae Vedia + Saavedra + SAS en una sola lista.
+      let q = supabase
         .from('gastos')
         .select('*')
-        .eq('local', local)
-        .eq('cancelado', false)
+        .eq('cancelado', false);
+      q =
+        pagosLocal === 'empresa'
+          ? q.in('local', ['vedia', 'saavedra', 'sas'])
+          : q.eq('local', pagosLocal);
+      const { data } = await q
         .order('fecha_vencimiento', { ascending: true, nullsFirst: false })
         .order('created_at', { ascending: false })
         .limit(1500);
@@ -351,16 +377,19 @@ export function ComprasPage() {
   // eso el KPI "Pagado" salía siempre en $0). Usa PostgREST embedding con
   // !inner para forzar el filtro por local del gasto.
   const { data: pagosGastosData } = useQuery({
-    queryKey: ['pagos_gastos_compras', local],
+    queryKey: ['pagos_gastos_compras', pagosLocal],
     queryFn: async () => {
-      const { data, error } = await supabase
+      let q = supabase
         .from('pagos_gastos')
         .select(
           'id, gasto_id, fecha_pago, monto, descuento, programado, medio_pago, created_at, gasto:gastos!inner(local, cancelado)',
         )
-        .eq('gasto.local', local)
-        .eq('gasto.cancelado', false)
-        .limit(5000);
+        .eq('gasto.cancelado', false);
+      q =
+        pagosLocal === 'empresa'
+          ? q.in('gasto.local', ['vedia', 'saavedra', 'sas'])
+          : q.eq('gasto.local', pagosLocal);
+      const { data, error } = await q.limit(5000);
       if (error) throw error;
       return (data ?? []).map((p) => ({
         id: p.id as string,
@@ -486,8 +515,16 @@ export function ComprasPage() {
   // marca como objetivo (la lista lo auto-expande y resalta; el scroll lo hace
   // un effect cuando la fila ya existe en el DOM tras el refetch del local).
   function irAProveedor(proveedor: string, localProv: 'vedia' | 'saavedra' | 'sas') {
-    if ((localProv === 'vedia' || localProv === 'saavedra') && localProv !== local) {
-      setLocal(localProv);
+    // En modo 'empresa' la lista ya trae todos los locales, así que no hace falta
+    // cambiar de local (y así también saltamos a proveedores 'sas', que antes no
+    // navegaban a ningún lado). Solo cambiamos el local si el tab está filtrado a
+    // uno puntual y el proveedor es de otro.
+    if (
+      pagosLocal !== 'empresa' &&
+      (localProv === 'vedia' || localProv === 'saavedra') &&
+      localProv !== pagosLocal
+    ) {
+      setPagosLocal(localProv);
     }
     setFiltroProveedor(proveedor);
     setProveedorObjetivo(proveedor.toLowerCase());
@@ -781,9 +818,21 @@ export function ComprasPage() {
       pagadosMes: Gasto[];
       cantPagadosMes: number;
       totalPagadoMes: number;
+      // Saldo pendiente separado por local (para el desglose informativo cuando
+      // el proveedor abastece a más de un local). Solo tiene sentido en modo
+      // 'empresa'; en Vedia/Saavedra queda todo en un único local.
+      porLocal: Record<'vedia' | 'saavedra' | 'sas', number>;
     }
     const grupoMain: GrupoProveedor[] = [...grupos.entries()].map(([proveedor, gastos]) => {
       const total = gastos.reduce((s, g) => s + saldoGasto(g), 0);
+      const porLocal: Record<'vedia' | 'saavedra' | 'sas', number> = {
+        vedia: 0,
+        saavedra: 0,
+        sas: 0,
+      };
+      for (const g of gastos) {
+        if (g.local in porLocal) porLocal[g.local] += saldoGasto(g);
+      }
       const venc = gastos.filter(
         (g) => g.fecha_vencimiento && g.fecha_vencimiento < hoy,
       );
@@ -819,6 +868,7 @@ export function ComprasPage() {
         pagadosMes,
         cantPagadosMes: pagadosMes.length,
         totalPagadoMes,
+        porLocal,
       };
     });
     return grupoMain
@@ -842,6 +892,7 @@ export function ComprasPage() {
             pagadosMes: sorted,
             cantPagadosMes: sorted.length,
             totalPagadoMes: sorted.reduce((s, g) => s + g.importe_total, 0),
+            porLocal: { vedia: 0, saavedra: 0, sas: 0 },
           };
         }),
       )
@@ -968,7 +1019,17 @@ export function ComprasPage() {
     }
     setBulkGuardando(true);
     try {
-      const carpeta = `${local}/${bulkFecha.substring(0, 7)}`;
+      // Carpeta de storage del comprobante. En modo Empresa el pago puede mezclar
+      // locales; si todos los gastos son del mismo local usamos esa carpeta, si no
+      // 'empresa'. (Solo organiza el archivo; el link firmado anda igual.)
+      const localesPago = new Set(seleccionInfo.gastos.map((g) => g.local));
+      const folderLocal =
+        pagosLocal !== 'empresa'
+          ? pagosLocal
+          : localesPago.size === 1
+            ? [...localesPago][0]
+            : 'empresa';
+      const carpeta = `${folderLocal}/${bulkFecha.substring(0, 7)}`;
 
       // Subir comprobante de pago una sola vez
       let pathComprobantePago: string | null = null;
@@ -1072,6 +1133,8 @@ export function ComprasPage() {
       qc.invalidateQueries({ queryKey: ['gastos_pagos'] });
       qc.invalidateQueries({ queryKey: ['pagos_gastos_compras'] });
       qc.invalidateQueries({ queryKey: ['pagos_gastos'] });
+      qc.invalidateQueries({ queryKey: ['cta_cte_calendario_consolidado'] });
+      qc.invalidateQueries({ queryKey: ['cta_cte_pagos_ejecutados'] });
     } catch (e) {
       setBulkError((e as Error).message ?? 'Error al guardar el pago');
     } finally {
@@ -1378,8 +1441,10 @@ export function ComprasPage() {
       <div className="mb-4 flex flex-wrap items-center gap-4">
         {/* El tab Gastos tiene su propio filtro con opción "Empresa"
             (vedia + saavedra + sas), que el global no puede expresar.
-            Para evitar dos filtros que se pisan, escondemos el global acá. */}
-        {tab !== 'gastos' && (
+            El tab Pagos es siempre consolidado (una sola lista de cuenta
+            corriente, sin distinguir local). En ambos escondemos el global
+            para no mostrar un filtro Vedia/Saavedra que no aplica. */}
+        {tab !== 'gastos' && tab !== 'pagos' && (
           <LocalSelector
             value={local}
             onChange={(v) => {
@@ -2771,15 +2836,19 @@ export function ComprasPage() {
 
           {/* Resumen mensual — compacto (1 línea). El detalle de qué pagar y
               cuándo ya vive en el calendario de arriba; esto es solo el pulso
-              del mes de compra del local seleccionado. */}
+              del mes de compra del alcance seleccionado. */}
           <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-surface-border bg-white px-4 py-2.5">
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
               <span className="font-semibold text-gray-700">
-                {local === 'vedia' ? 'Rodziny Vedia' : 'Rodziny Saavedra'}
+                {pagosLocal === 'empresa'
+                  ? 'Rodziny (Empresa)'
+                  : pagosLocal === 'vedia'
+                    ? 'Rodziny Vedia'
+                    : 'Rodziny Saavedra'}
               </span>
               <span
                 className="text-[11px] text-gray-400"
-                title="Pulso del mes de compra del local seleccionado. La deuda total a pagar está arriba, en el calendario de cuenta corriente."
+                title="Pulso del mes de compra del alcance seleccionado. La deuda total a pagar está arriba, en el calendario de cuenta corriente."
               >
                 (resumen del mes · no es la deuda total)
               </span>
@@ -3094,6 +3163,8 @@ export function ComprasPage() {
                                   qc.invalidateQueries({ queryKey: ['gastos_pagos'] });
                                   qc.invalidateQueries({ queryKey: ['pagos_gastos_compras'] });
                                   qc.invalidateQueries({ queryKey: ['pagos_gastos'] });
+                                  qc.invalidateQueries({ queryKey: ['cta_cte_calendario_consolidado'] });
+                                  qc.invalidateQueries({ queryKey: ['cta_cte_pagos_ejecutados'] });
                                   qc.invalidateQueries({ queryKey: ['gastos_listado'] });
                                   qc.invalidateQueries({ queryKey: ['movimientos_bancarios'] });
                                 }}
@@ -3124,7 +3195,7 @@ export function ComprasPage() {
                       : 'Sin gastos pendientes de pago'}
             </div>
           ) : (
-            <div className="space-y-2">
+            <div className="space-y-1.5">
               {gruposPendientes.map((grupo) => {
                 // Grupo "objetivo": al que se saltó desde el calendario. Se matchea
                 // por el nombre crudo del gasto (mismo string que usa el calendario).
@@ -3142,15 +3213,15 @@ export function ComprasPage() {
                     key={grupo.proveedor}
                     id={esObjetivo ? 'lista-pagos-objetivo' : undefined}
                     className={cn(
-                      'overflow-hidden rounded-lg border bg-white transition-colors',
+                      'overflow-hidden rounded-md border bg-white transition-colors',
                       esObjetivo
-                        ? 'border-rodziny-400 ring-2 ring-rodziny-300'
+                        ? 'border-rodziny-400 ring-1 ring-rodziny-300'
                         : grupo.cantVencidos > 0
-                          ? 'border-red-200'
-                          : 'border-surface-border',
+                          ? 'border-red-100'
+                          : 'border-gray-100',
                     )}
                   >
-                    <div className="flex items-center gap-3 px-4 py-3">
+                    <div className="flex items-center gap-2.5 px-3 py-2">
                       <input
                         type="checkbox"
                         checked={todosTildados}
@@ -3160,38 +3231,31 @@ export function ComprasPage() {
                         onChange={() =>
                           toggleSeleccionarTodosProveedor(grupo.proveedor, grupo.gastos)
                         }
-                        className="h-4 w-4 cursor-pointer accent-rodziny-500"
+                        className="h-3.5 w-3.5 cursor-pointer accent-rodziny-500"
                         title="Tildar/destildar todos del proveedor"
                       />
                       <button
                         onClick={() => toggleProveedorExpandido(grupo.proveedor)}
                         className="flex flex-1 items-center justify-between gap-3 text-left"
                       >
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="text-gray-400">{expandido ? '▼' : '▶'}</span>
-                          <span className="font-medium text-gray-900">{grupo.proveedor}</span>
-                          {/* Badges no solapados: gris = pendientes AL DÍA (no vencidos),
-                              rojo = vencidos. Antes ambos contaban el mismo gasto y se
-                              leía como si fueran ítems distintos ("1 pendiente 1 vencido"). */}
-                          {grupo.cantPendientes - grupo.cantVencidos > 0 && (
-                            <span className="rounded bg-gray-100 px-1.5 py-0.5 text-xs text-gray-600">
-                              {grupo.cantPendientes - grupo.cantVencidos} a pagar
-                            </span>
-                          )}
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="text-[10px] text-gray-400">
+                            {expandido ? '▼' : '▶'}
+                          </span>
+                          <span className="text-sm font-medium text-gray-900">
+                            {grupo.proveedor}
+                          </span>
+                          {/* Solo marcamos lo urgente (vencidos). El conteo de gastos
+                              a pagar y el desglose por local viven dentro del expand
+                              para que la fila quede limpia. */}
                           {grupo.cantVencidos > 0 && (
-                            <span className="rounded bg-red-100 px-1.5 py-0.5 text-xs font-medium text-red-700">
+                            <span className="rounded bg-red-50 px-1.5 py-0.5 text-[11px] font-medium text-red-600">
                               {grupo.cantVencidos} vencido
                               {grupo.cantVencidos !== 1 ? 's' : ''}
                             </span>
                           )}
-                          {grupo.cantPagadosMes > 0 && (
-                            <span className="rounded bg-green-100 px-1.5 py-0.5 text-xs font-medium text-green-700">
-                              {grupo.cantPagadosMes} pagado
-                              {grupo.cantPagadosMes !== 1 ? 's' : ''} en el mes
-                            </span>
-                          )}
                           {grupo.proxVenc && (
-                            <span className="text-xs text-gray-500">
+                            <span className="text-[11px] text-gray-400">
                               Próx. vto:{' '}
                               {new Date(
                                 grupo.proxVenc + 'T12:00:00',
@@ -3203,11 +3267,10 @@ export function ComprasPage() {
                           )}
                         </div>
                         <div className="text-right">
-                          <p className="text-[10px] text-gray-500">Saldo total</p>
                           <p
                             className={cn(
-                              'text-base font-bold',
-                              grupo.cantVencidos > 0 ? 'text-red-600' : 'text-gray-900',
+                              'text-sm font-semibold tabular-nums',
+                              grupo.cantVencidos > 0 ? 'text-red-600' : 'text-gray-800',
                             )}
                           >
                             {formatARS(grupo.total)}
@@ -3218,6 +3281,47 @@ export function ComprasPage() {
 
                     {expandido && (
                       <div className="border-t border-gray-100 bg-gray-50/50">
+                        {/* Resumen del proveedor: desglose de la deuda por local (cuando
+                            abastece a más de uno) + lo pagado en el mes. Antes iba inline
+                            en la fila y metía ruido; acá vive dentro del detalle. */}
+                        {(() => {
+                          const locs = PAGOS_LOCALES.filter((l) => grupo.porLocal[l] > 0.01);
+                          const mostrarDesglose = locs.length >= 2;
+                          if (!mostrarDesglose && grupo.cantPagadosMes === 0) return null;
+                          return (
+                            <div className="flex flex-wrap items-center gap-x-5 gap-y-1 border-b border-gray-100 px-4 py-2 text-[11px]">
+                              {mostrarDesglose && (
+                                <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                                  <span className="text-gray-400">Deuda por local:</span>
+                                  {locs.map((l) => (
+                                    <span
+                                      key={l}
+                                      className="inline-flex items-center gap-1 text-gray-500"
+                                    >
+                                      <span
+                                        className={cn(
+                                          'h-2 w-2 rounded-full',
+                                          PAGOS_LOCAL_DOT[l],
+                                        )}
+                                      />
+                                      {PAGOS_LOCAL_LABEL[l]}{' '}
+                                      <strong className="text-gray-700">
+                                        {formatARS(grupo.porLocal[l])}
+                                      </strong>
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                              {grupo.cantPagadosMes > 0 && (
+                                <span className="text-green-600">
+                                  {grupo.cantPagadosMes} pagado
+                                  {grupo.cantPagadosMes !== 1 ? 's' : ''} en el mes ·{' '}
+                                  {formatARS(grupo.totalPagadoMes)}
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })()}
                         {grupo.cantPendientes > 0 && (
                         <table className="w-full text-sm">
                           <thead>
@@ -3284,6 +3388,25 @@ export function ComprasPage() {
                                     )}
                                   </td>
                                   <td className="px-3 py-1.5 text-xs text-gray-600">
+                                    {/* En modo Empresa marcamos el local de cada gasto
+                                        para distinguir Vedia vs Saavedra dentro del
+                                        mismo proveedor. */}
+                                    {pagosLocal === 'empresa' && (
+                                      <span
+                                        className="mr-1.5 inline-flex items-center gap-1 align-middle"
+                                        title={PAGOS_LOCAL_LABEL[g.local] ?? g.local}
+                                      >
+                                        <span
+                                          className={cn(
+                                            'h-2 w-2 rounded-full',
+                                            PAGOS_LOCAL_DOT[g.local] ?? 'bg-gray-300',
+                                          )}
+                                        />
+                                        <span className="text-[10px] text-gray-400">
+                                          {PAGOS_LOCAL_LABEL[g.local] ?? g.local}
+                                        </span>
+                                      </span>
+                                    )}
                                     {g.subcategoria || g.categoria}
                                   </td>
                                   <td className="px-3 py-1.5 text-right font-medium text-gray-900">

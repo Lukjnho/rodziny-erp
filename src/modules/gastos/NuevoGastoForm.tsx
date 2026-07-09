@@ -1521,6 +1521,12 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
       qc.invalidateQueries({ queryKey: ['gastos_resumen_kpis'] });
       qc.invalidateQueries({ queryKey: ['gastos_pagos_map'] });
       qc.invalidateQueries({ queryKey: ['pagos_gastos'] });
+      // Tab Pagos (cuenta corriente consolidada) + su calendario: sin esto un
+      // gasto recién cargado no aparecía en la deuda hasta refrescar/reenfocar.
+      qc.invalidateQueries({ queryKey: ['gastos_pagos'] });
+      qc.invalidateQueries({ queryKey: ['pagos_gastos_compras'] });
+      qc.invalidateQueries({ queryKey: ['cta_cte_calendario_consolidado'] });
+      qc.invalidateQueries({ queryKey: ['cta_cte_pagos_ejecutados'] });
       qc.invalidateQueries({ queryKey: ['productos_stock'] });
       qc.invalidateQueries({ queryKey: ['productos-para-gasto'] });
       qc.invalidateQueries({ queryKey: ['subcategorias-con-productos'] });
