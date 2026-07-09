@@ -7,6 +7,7 @@ import {
   nombreProveedor,
   type ProveedoresMap,
 } from '@/modules/gastos/proveedorDisplay';
+import { esCategoriaCtaCte } from '../ctaCteExclusiones';
 
 // Vista consolidada (ambos locales + SAS) de la deuda de cuenta corriente con
 // proveedores: cuánto hay que abonar atrasado y cuánto cae cada uno de los
@@ -223,15 +224,15 @@ export function CalendarioPagosCtaCte({
         .order('fecha_vencimiento', { ascending: true, nullsFirst: false })
         .limit(5000);
       if (error) throw error;
-      // Solo deuda viva (no pagada). Excluimos:
+      // Solo deuda viva (no pagada) y comercial. Excluimos:
       //  - "Pago fijo:" → tienen su propio flujo en Finanzas > Pagos Fijos.
-      //  - categoría "Inversiones" (capex/bienes de uso) → no son deuda de
-      //    cuenta corriente operativa; se manejan por amortización + su plan de
-      //    cheques en Pagos Fijos. Meterlos acá mezcla e infla la deuda de proveedores.
+      //  - categorías no-comerciales (Inversiones, RRHH, Aguinaldo, Impuestos,
+      //    Intereses) → no son deuda con proveedores e inflaban el total. Ver
+      //    ctaCteExclusiones (misma regla que la lista del tab Pagos).
       return ((data ?? []) as (GastoPend & { estado_pago?: string })[])
         .filter((g) => (g.estado_pago ?? '').toLowerCase() !== 'pagado')
         .filter((g) => !(g.comentario ?? '').startsWith('Pago fijo:'))
-        .filter((g) => (g.categoria ?? '') !== 'Inversiones');
+        .filter((g) => esCategoriaCtaCte(g.categoria));
     },
     staleTime: 60_000,
   });

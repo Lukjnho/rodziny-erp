@@ -27,6 +27,7 @@ import { CierreInventarioModal } from './components/CierreInventarioModal';
 import { PastasTerminadasPanel } from './components/PastasTerminadasPanel';
 import { CalendarioPagosCtaCte } from './components/CalendarioPagosCtaCte';
 import { ConciliacionTab } from './ConciliacionTab';
+import { esCategoriaCtaCte } from './ctaCteExclusiones';
 import type { MedioPago, Gasto } from '@/modules/gastos/types';
 import { MEDIO_PAGO_LABEL, medioRequiereComprobante } from '@/modules/gastos/types';
 import { PagarGastoModal } from '@/modules/gastos/PagarGastoModal';
@@ -351,11 +352,11 @@ export function ComprasPage() {
         .limit(1500);
       // Excluir del tab Pagos (vista de cuenta corriente de proveedores):
       //  - "Pago fijo:" → su propio flujo en Finanzas > Pagos Fijos.
-      //  - categoría "Inversiones" (capex/bienes de uso) → no son deuda de cta cte
-      //    operativa; van por amortización + plan de cheques en Pagos Fijos.
+      //  - categorías no-comerciales (Inversiones, RRHH, Aguinaldo, Impuestos,
+      //    Intereses) → no son deuda con proveedores. Ver ctaCteExclusiones.
       return ((data ?? []) as Gasto[])
         .filter((g) => !(g.comentario ?? '').startsWith('Pago fijo:'))
-        .filter((g) => (g.categoria ?? '') !== 'Inversiones');
+        .filter((g) => esCategoriaCtaCte(g.categoria));
     },
     enabled: tab === 'pagos',
   });
