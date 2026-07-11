@@ -201,7 +201,8 @@ export function ChecklistPagos() {
 
   useEffect(() => {
     if (!toast) return;
-    const t = setTimeout(() => setToast(null), 5000);
+    // El toast de "pagado" trae el aviso del puente (no recargar en Gastos) → más tiempo.
+    const t = setTimeout(() => setToast(null), toast.tipo === 'pagado' ? 8000 : 5000);
     return () => clearTimeout(t);
   }, [toast]);
 
@@ -1204,6 +1205,12 @@ export function ChecklistPagos() {
                     ? `"${toast.concepto}" se movió a ${toast.destino ? labelMes(toast.destino) : 'otro mes'}. Cambiá al mes destino para verlo.`
                     : `Se eliminó el gasto de "${toast.concepto}" de Flujo de Caja y EdR.`}
               </p>
+              {toast.tipo === 'pagado' && (
+                <p className="mt-1.5 rounded border border-amber-300 bg-amber-50 px-2 py-1 text-[11px] font-medium text-amber-900">
+                  ⚠ El gasto contable ya quedó registrado. <strong>No lo cargues de nuevo</strong> en
+                  Compras-Gastos.
+                </p>
+              )}
             </div>
             <button
               onClick={() => setToast(null)}
