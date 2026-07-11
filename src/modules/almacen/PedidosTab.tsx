@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
+import { hoyAR } from '@/lib/fechaAR';
 
 interface Pedido {
   id: string;
@@ -53,14 +54,14 @@ const MEDIOS_PAGO = [
 ];
 
 function hoy() {
-  const d = new Date();
-  return d.toISOString().substring(0, 10);
+  return hoyAR();
 }
 
 function manana() {
-  const d = new Date();
-  d.setDate(d.getDate() + 1);
-  return d.toISOString().substring(0, 10);
+  // Sumamos un día al día operativo AR usando aritmética en UTC para no
+  // reintroducir el corrimiento de zona horaria que evita hoyAR().
+  const [y, m, d] = hoyAR().split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d + 1)).toISOString().substring(0, 10);
 }
 
 function formatFecha(f: string) {
@@ -126,7 +127,13 @@ export function PedidosTab() {
       return p.estado === filtroEstado;
     }) ?? [];
 
-  // Agrupar: hoy, mañana, próximos, pasados
+  // Agrupar: atrasados, hoy, mañana, próximos, completados.
+  // "Atrasados" son pedidos cuya fecha de entrega ya pasó pero siguen sin
+  // entregarse ni cancelarse. Antes caían en un limbo (no entraban en ningún
+  // grupo) pero SÍ se contaban en el KPI "Para hoy", que usa `<= hoy()`.
+  const grupoAtrasados = pedidosFiltrados.filter(
+    (p) => p.fecha_entrega < hoy() && p.estado !== 'entregado' && p.estado !== 'cancelado',
+  );
   const grupoHoy = pedidosFiltrados.filter(
     (p) => p.fecha_entrega === hoy() && p.estado !== 'entregado' && p.estado !== 'cancelado',
   );
@@ -226,6 +233,19 @@ export function PedidosTab() {
         </div>
       ) : (
         <div className="space-y-4">
+          {grupoAtrasados.length > 0 && (
+            <GrupoPedidos
+              titulo="Atrasados"
+              badge={grupoAtrasados.length}
+              color="red"
+              pedidos={grupoAtrasados}
+              onCambiarEstado={(id, est) => cambiarEstado.mutate({ id, estado: est })}
+              onEditar={(p) => {
+                setEditando(p);
+                setModalAbierto(true);
+              }}
+            />
+          )}
           {grupoHoy.length > 0 && (
             <GrupoPedidos
               titulo="Hoy"
