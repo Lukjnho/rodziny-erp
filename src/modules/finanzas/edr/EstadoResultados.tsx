@@ -544,7 +544,9 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
             loc,
             ok: true,
             tickets: resp.data.ticketsImportados as number,
-            dividendos: resp.data.dividendosImportados as number,
+            // Cobros con el POSnet de Lucas detectados en Fudo. El import ya no
+            // crea el dividendo (lo crea el cierre de caja) — esto es informativo.
+            dividendos: resp.data.mpLucasDetectados as number,
             errores: (resp.data.errores ?? []) as string[],
           };
         }),

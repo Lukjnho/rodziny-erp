@@ -157,6 +157,60 @@ Deno.serve(async (req) => {
       }
     }
 
+    // Balance de la cuenta MP. El export de MP no trae saldo (a diferencia de los
+    // extractos de Galicia/ICBC), así que sin esto el Flujo de Caja no puede saber
+    // cuánta plata hay realmente disponible — y MP es la cuenta principal de salida.
+    // Si falla, no rompemos el sync: los pagos ya se guardaron.
+    let saldoMP: number | null = null
+    try {
+      const auth = { Authorization: `Bearer ${mpToken}` }
+
+      // `/users/me/mercadopago_account/balance` devuelve 403 con este token, así que
+      // resolvemos primero el user_id y pegamos al endpoint con id explícito, que sí
+      // lo acepta. Se prueban las dos variantes por si MP cambia el comportamiento.
+      const resMe = await fetch(`${MP_API}/users/me`, { headers: auth })
+      const userId = resMe.ok ? (await resMe.json()).id : null
+
+      const candidatos = [
+        userId ? `${MP_API}/users/${userId}/mercadopago_account/balance` : null,
+        `${MP_API}/users/me/mercadopago_account/balance`,
+      ].filter(Boolean) as string[]
+
+      const fallos: string[] = []
+      for (const url of candidatos) {
+        const resBal = await fetch(url, { headers: auth })
+        if (!resBal.ok) {
+          fallos.push(`HTTP ${resBal.status}`)
+          continue
+        }
+        const bal = await resBal.json()
+        // `available_balance` = plata que se puede usar ya (excluye lo no liberado).
+        const disponible = Number(bal.available_balance ?? bal.total_amount ?? 0)
+        if (!Number.isFinite(disponible)) {
+          fallos.push('respuesta sin balance numérico')
+          continue
+        }
+        saldoMP = disponible
+        const { error: errSaldo } = await supabase.from('saldos_cuentas').upsert(
+          {
+            cuenta: 'mercadopago',
+            fecha: new Date().toISOString().slice(0, 10),
+            saldo: disponible,
+            fuente: 'api',
+          },
+          { onConflict: 'cuenta,fecha' },
+        )
+        if (errSaldo) fallos.push(errSaldo.message)
+        break
+      }
+
+      // Que no se traiga el saldo NO invalida el sync: los pagos ya se guardaron.
+      // Se reporta aparte para que la UI ofrezca cargarlo a mano.
+      if (saldoMP === null) errores.push(`Saldo MP no disponible (${fallos.join(' · ')})`)
+    } catch (e) {
+      errores.push(`Saldo MP: ${(e as Error).message}`)
+    }
+
     return new Response(
       JSON.stringify({
         ok: errores.length === 0,
@@ -164,6 +218,7 @@ Deno.serve(async (req) => {
         total_api: totalFromApi,
         unicos: uniqueRows.length,
         sincronizados: insertados,
+        saldo_mp: saldoMP,
         errores,
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },

@@ -7,6 +7,16 @@ import { procesarComprobantePago } from '@/lib/ocrComprobantePago';
 import { useAuth } from '@/lib/auth';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { useProveedoresMap, nombreProveedor } from '@/modules/gastos/proveedorDisplay';
+import { hoyAR } from '@/lib/fechaAR';
+import { parseDecimal } from '@/lib/numero';
+import {
+  esPagoEjecutado,
+  clasificarDebito,
+  esVentaMP,
+  tipoIngresoMPNoVenta,
+  CLASE_DEBITO_LABEL,
+  type ClaseDebito,
+} from '@/lib/flujoCaja';
 
 // ── tipos ────────────────────────────────────────────────────────────────────
 
@@ -84,6 +94,10 @@ interface PagoRealizado {
   fecha_pago: string;
   monto: number;
   medio_pago: string;
+  // `programado` marca echeq/tarjeta con fecha futura. No se usa para decidir si
+  // el pago ya salió (nadie apaga el flag al debitarse) — solo para etiquetarlo
+  // en la UI. La decisión la toma la fecha. Ver src/lib/flujoCaja.ts.
+  programado: boolean | null;
   // datos del gasto asociado
   gasto: {
     local: string;
@@ -173,12 +187,9 @@ const GRUPO_EGRESO_LABEL: Record<string, string> = {
   otros: 'Otros egresos',
 };
 
-// Sub-labels para débitos bancarios
-const GRUPO_DEBITO_LABEL: Record<string, string> = {
-  mercadopago: 'MercadoPago (comisiones y retenciones)',
-  galicia: 'Galicia (cheques, débitos automáticos, impuestos)',
-  icbc: 'ICBC (Visa, impuestos, comisiones)',
-};
+// Los débitos bancarios ya no se agrupan por cuenta sino por naturaleza
+// (costo financiero / sin registrar). Agruparlos por banco mezclaba plata que se
+// fue de verdad con plata que ya estaba contada por otro lado. Ver src/lib/flujoCaja.ts.
 
 function tipoEdrAGrupo(tipo: string | null): string {
   if (!tipo) return 'otros';
@@ -243,6 +254,13 @@ export function FlujoCaja({ onNavigateToTab }: { onNavigateToTab?: (tab: string)
   const [ingresosOpen, setIngresosOpen] = useState(true);
   const [bannerCerrado, setBannerCerrado] = useState(false);
   const [egresosOpen, setEgresosOpen] = useState(true);
+  const [comprometidoOpen, setComprometidoOpen] = useState(false);
+  // Saldo de MercadoPago a mano: la API devuelve 403 al pedir el balance (el
+  // access token no tiene ese scope), y el export de MP tampoco trae saldo. Es la
+  // única cuenta que no se puede automatizar, y sin ella la liquidez no cierra.
+  // El sync sigue intentando traerlo: si algún día se habilita el permiso, pisa
+  // este valor con fuente 'api' y el input deja de hacer falta.
+  const [saldoMPInput, setSaldoMPInput] = useState('');
   const [dividendosOpen, setDividendosOpen] = useState(false);
   const [noOperativoOpen, setNoOperativoOpen] = useState(false);
   const [showDivForm, setShowDivForm] = useState(false);
@@ -312,6 +330,53 @@ export function FlujoCaja({ onNavigateToTab }: { onNavigateToTab?: (tab: string)
     },
   });
 
+  // Saldo actual de cada cuenta. Galicia e ICBC lo traen en el extracto (la
+  // columna `saldo` del último movimiento). MercadoPago no lo trae nunca, así que
+  // sale de saldos_cuentas, que puebla el sync vía API. Ver migración 129.
+  const { data: saldosCuentas } = useQuery({
+    queryKey: ['fc_saldos_cuentas'],
+    queryFn: async () => {
+      const out: { cuenta: string; fecha: string; saldo: number; fuente: string }[] = [];
+
+      for (const cuenta of ['galicia', 'icbc'] as const) {
+        const { data } = await supabase
+          .from('movimientos_bancarios')
+          .select('fecha, saldo')
+          .eq('cuenta', cuenta)
+          .not('saldo', 'is', null)
+          .order('fecha', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (data?.saldo != null) {
+          out.push({
+            cuenta,
+            fecha: data.fecha as string,
+            saldo: Number(data.saldo),
+            fuente: 'extracto',
+          });
+        }
+      }
+
+      const { data: mp } = await supabase
+        .from('saldos_cuentas')
+        .select('cuenta, fecha, saldo, fuente')
+        .eq('cuenta', 'mercadopago')
+        .order('fecha', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (mp) {
+        out.push({
+          cuenta: 'mercadopago',
+          fecha: mp.fecha as string,
+          saldo: Number(mp.saldo),
+          fuente: mp.fuente as string,
+        });
+      }
+
+      return out;
+    },
+  });
+
   const { data: cierres } = useQuery({
     queryKey: ['fc_cierres', periodo],
     queryFn: async () => {
@@ -338,12 +403,42 @@ export function FlujoCaja({ onNavigateToTab }: { onNavigateToTab?: (tab: string)
       const { data } = await supabase
         .from('pagos_gastos')
         .select(
-          'id, gasto_id, fecha_pago, monto, medio_pago, gasto:gastos!inner(local, proveedor, proveedor_id, categoria, subcategoria, categoria_id, cancelado)',
+          'id, gasto_id, fecha_pago, monto, medio_pago, programado, gasto:gastos!inner(local, proveedor, proveedor_id, categoria, subcategoria, categoria_id, cancelado)',
         )
         .gte('fecha_pago', `${periodo}-01`)
         .lte('fecha_pago', `${periodo}-${lastDay}`)
         .neq('gasto.cancelado', true);
       return (data ?? []) as unknown as PagoRealizado[];
+    },
+  });
+
+  // Movimientos bancarios que YA están contados por el lado del ERP.
+  // Las 3 tablas tienen `conciliado_movimiento_id` desde hace rato; el Flujo solo
+  // miraba `gasto_id` y por eso los sueldos por transferencia y los dividendos
+  // conciliados se contaban dos veces (una por el ERP, otra por el extracto).
+  const { data: movsYaContados } = useQuery({
+    queryKey: ['fc_movs_ya_contados', periodo],
+    queryFn: async () => {
+      const [pg, ps, dv] = await Promise.all([
+        supabase
+          .from('pagos_gastos')
+          .select('conciliado_movimiento_id')
+          .not('conciliado_movimiento_id', 'is', null),
+        supabase
+          .from('pagos_sueldos')
+          .select('conciliado_movimiento_id')
+          .not('conciliado_movimiento_id', 'is', null),
+        supabase
+          .from('dividendos')
+          .select('conciliado_movimiento_id')
+          .not('conciliado_movimiento_id', 'is', null),
+      ]);
+      const ids = new Set<string>();
+      for (const row of [...(pg.data ?? []), ...(ps.data ?? []), ...(dv.data ?? [])]) {
+        const id = (row as { conciliado_movimiento_id: string | null }).conciliado_movimiento_id;
+        if (id) ids.add(id);
+      }
+      return ids;
     },
   });
 
@@ -425,6 +520,7 @@ export function FlujoCaja({ onNavigateToTab }: { onNavigateToTab?: (tab: string)
       setSyncResult(data);
       qc.invalidateQueries({ queryKey: ['fc_pagos_mp'] });
       qc.invalidateQueries({ queryKey: ['fc_ultima_sync_mp'] });
+      qc.invalidateQueries({ queryKey: ['fc_saldos_cuentas'] });
     } catch (e) {
       setSyncResult({ ok: false, error: (e as Error).message });
     } finally {
@@ -529,6 +625,24 @@ export function FlujoCaja({ onNavigateToTab }: { onNavigateToTab?: (tab: string)
     },
   });
 
+  const guardarSaldoMP = useMutation({
+    mutationFn: async () => {
+      const saldo = parseDecimal(saldoMPInput);
+      if (saldo === null) throw new Error('Saldo inválido');
+      const { error } = await supabase
+        .from('saldos_cuentas')
+        .upsert(
+          { cuenta: 'mercadopago', fecha: hoyAR(), saldo, fuente: 'manual' },
+          { onConflict: 'cuenta,fecha' },
+        );
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['fc_saldos_cuentas'] });
+      setSaldoMPInput('');
+    },
+  });
+
   const eliminarDiv = useMutation({
     mutationFn: async (id: string) => {
       await supabase.from('dividendos').delete().eq('id', id);
@@ -538,8 +652,21 @@ export function FlujoCaja({ onNavigateToTab }: { onNavigateToTab?: (tab: string)
 
   // ── data consolidada (sin filtro de local) ────────────────────────────────
   const cierresFiltrados = cierres ?? [];
-  const pagosFiltrados = pagosRealizados ?? [];
   const divsFiltrados = dividendos ?? [];
+
+  // Ejecutado vs comprometido. Un echeq con fecha 23/07 o un consumo que se
+  // debita con el resumen de la tarjeta el 22/07 NO son egresos de hoy: la plata
+  // sigue en la cuenta. Contarlos como salida hundía el saldo del mes en curso
+  // ($4,5M solo en julio-2026) y metía días futuros en el gráfico.
+  const hoy = hoyAR();
+  const pagosFiltrados = useMemo(
+    () => (pagosRealizados ?? []).filter((p) => esPagoEjecutado(p.fecha_pago, hoy)),
+    [pagosRealizados, hoy],
+  );
+  const pagosComprometidos = useMemo(
+    () => (pagosRealizados ?? []).filter((p) => !esPagoEjecutado(p.fecha_pago, hoy)),
+    [pagosRealizados, hoy],
+  );
 
   // Filas a mostrar en la tabla de dividendos: aplica el filtro por socio y
   // colapsa todos los cobros de POSnet de Lucas en una única línea total.
@@ -599,65 +726,59 @@ export function FlujoCaja({ onNavigateToTab }: { onNavigateToTab?: (tab: string)
 
   const movimientosClasificados = useMemo(() => {
     const movs = movimientos ?? [];
+    const yaContados = movsYaContados ?? new Set<string>();
 
-    // Créditos del extracto MP — son los cobros individuales que ya tenemos
-    // duplicados en pagos_mp (API MP). No los mostramos para no confundir.
-    // Si en el futuro necesitamos ver las liquidaciones reales (MP → banco),
-    // habría que filtrar por descripción específica del extracto.
+    // ── DÉBITOS ──
+    // Antes se sumaba como egreso TODO débito sin gasto_id. Eso contaba dos veces
+    // los sueldos por transferencia ("ACRED. HABERES", ya en pagos_sueldos), el
+    // pago del resumen de la tarjeta (sus consumos ya son gastos) y las
+    // transferencias entre cuentas propias (que ni siquiera son un egreso).
+    // Solo en junio-2026 eso inflaba los egresos en ~$17M.
+    // Ahora cada débito se clasifica y solo suman los que son plata que se fue de
+    // verdad y nadie más contó. Ver src/lib/flujoCaja.ts.
+    const porClase: Record<ClaseDebito, MovBancario[]> = {
+      interna: [],
+      ya_registrado: [],
+      costo_bancario: [],
+      sin_registrar: [],
+    };
+    for (const m of movs) {
+      if (Number(m.debito) <= 0) continue;
+      porClase[clasificarDebito(m, yaContados)].push(m);
+    }
 
-    // Egresos bancarios SOLO los que NO tienen gasto vinculado — sino se duplica
-    // con pagos_gastos. Aplicamos !gasto_id en las 3 cuentas (Galicia, ICBC, MP).
-    // En MP además requerimos tipo='cargo_mp' para limitar a impuesto al débito y
-    // comisiones (los débitos MP por venta-cobro son liquidaciones, no egresos).
-    const debitosGalicia = movs.filter(
-      (m) => m.cuenta === 'galicia' && Number(m.debito) > 0 && !m.gasto_id,
+    // ── CRÉDITOS ──
+    // Los créditos del extracto MP se ignoran: son los cobros individuales, que ya
+    // vienen por la API en pagos_mp. EXCEPCIÓN: retiros desde la cuenta comitente
+    // (IOL) directo a MP — se muestran como no operativo para no perderles el rastro.
+    const creditosMPCapital = movs.filter(
+      (m) => m.cuenta === 'mercadopago' && Number(m.credito) > 0 && esMovCapital(m),
     );
-    const debitosICBC = movs.filter(
-      (m) => m.cuenta === 'icbc' && Number(m.debito) > 0 && !m.gasto_id,
-    );
-    const debitosMP = movs.filter(
-      (m) =>
-        m.cuenta === 'mercadopago' &&
-        Number(m.debito) > 0 &&
-        m.tipo === 'cargo_mp' &&
-        !m.gasto_id,
-    );
-
-    // Créditos Galicia/ICBC: clasificar cada uno
     const creditosGalICBC = movs.filter(
       (m) => (m.cuenta === 'galicia' || m.cuenta === 'icbc') && Number(m.credito) > 0,
     );
 
-    // Créditos del extracto MP por defecto se ignoran (cobros ya cubiertos por
-    // pagos_mp API). EXCEPCIÓN: créditos con patrón capital (retiros desde IOL
-    // directo a MP) — los sumamos a "no operativo" para no perder trazabilidad.
-    const creditosMPCapital = movs.filter(
-      (m) => m.cuenta === 'mercadopago' && Number(m.credito) > 0 && esMovCapital(m),
-    );
-
-    const capital: MovBancario[] = [...creditosMPCapital];
-    const transferenciasInternas: MovBancario[] = [];
+    const capital: MovBancario[] = [...creditosMPCapital, ...porClase.interna.filter(esMovCapital)];
+    const transferenciasInternas: MovBancario[] = porClase.interna.filter((m) => !esMovCapital(m));
     const creditosOperativos: MovBancario[] = []; // dev. impuestos, cheques rechazados, etc.
 
     for (const m of creditosGalICBC) {
-      if (esMovCapital(m)) {
-        capital.push(m);
-      } else if (esTransfInterna(m)) {
-        transferenciasInternas.push(m);
-      } else {
-        creditosOperativos.push(m); // es un ingreso operativo menor (dev. impuesto, etc.)
-      }
+      if (esMovCapital(m)) capital.push(m);
+      else if (esTransfInterna(m)) transferenciasInternas.push(m);
+      else creditosOperativos.push(m); // ingreso operativo menor (dev. impuesto, etc.)
     }
 
     return {
       creditosOperativos,
-      debitosGalicia,
-      debitosICBC,
-      debitosMP,
+      // Suman al egreso: costos financieros + salidas que el ERP no conoce.
+      debitosCostoBancario: porClase.costo_bancario,
+      debitosSinRegistrar: porClase.sin_registrar,
+      // No suman: ya los contó el ERP, o es plata entre cuentas propias.
+      debitosYaRegistrados: porClase.ya_registrado,
       transferenciasInternas,
       capital,
     };
-  }, [movimientos]);
+  }, [movimientos, movsYaContados]);
 
   // ── INGRESOS ─────────────────────────────────────────────────────────────────
 
@@ -686,15 +807,20 @@ export function FlujoCaja({ onNavigateToTab }: { onNavigateToTab?: (tab: string)
       }
     }
 
-    // Ventas MP — cuenta única SAS, no se desglosa por local
-    const ventasMPBruto = pagosMPFiltrados.reduce((s, p) => s + Number(p.monto), 0);
+    // Ventas MP — cuenta única SAS, no se desglosa por local.
+    // Solo los cobros que son VENTAS. Lo que entra a la cuenta MP y no pasó por
+    // el POS (retiros de InvertirOnline, transferencias entre cuentas propias) no
+    // es ingreso del negocio: eran $22,4M de los "ingresos" de julio-2026.
+    const ventasMP = pagosMPFiltrados.filter(esVentaMP);
+    const ventasMPBruto = ventasMP.reduce((s, p) => s + Number(p.monto), 0);
     const ventasMPPorMedio = new Map<string, number>();
-    for (const p of pagosMPFiltrados) {
+    for (const p of ventasMP) {
       ventasMPPorMedio.set(
         p.medio_pago,
         (ventasMPPorMedio.get(p.medio_pago) ?? 0) + Number(p.monto),
       );
     }
+    const cantVentasMP = ventasMP.length;
 
     // Otros ingresos: créditos operativos de Galicia/ICBC (devoluciones, cheques)
     const otrosIngresos = movimientosClasificados.creditosOperativos.reduce(
@@ -711,10 +837,28 @@ export function FlujoCaja({ onNavigateToTab }: { onNavigateToTab?: (tab: string)
       cajaFuerte,
       ventasMPBruto,
       ventasMPPorMedio,
+      cantVentasMP,
       otrosIngresos,
       total,
     };
   }, [cierresFiltrados, movimientosClasificados, pagosMPFiltrados]);
+
+  // Plata que entró a MercadoPago pero NO es una venta: retiros de la cuenta
+  // comitente (InvertirOnline) y transferencias entre cuentas propias. Se muestra
+  // en "no operativo" para no perderle el rastro, pero no suma al ingreso.
+  const ingresosMPNoVenta = useMemo(() => {
+    const noVenta = pagosMPFiltrados.filter((p) => !esVentaMP(p));
+    const capital = noVenta.filter((p) => tipoIngresoMPNoVenta(p) === 'capital');
+    const propias = noVenta.filter((p) => tipoIngresoMPNoVenta(p) === 'transferencia_propia');
+    const sum = (arr: PagoMP[]) => arr.reduce((s, p) => s + Number(p.monto), 0);
+    return {
+      capital,
+      propias,
+      totalCapital: sum(capital),
+      totalPropias: sum(propias),
+      total: sum(noVenta),
+    };
+  }, [pagosMPFiltrados]);
 
   // ── EGRESOS ──────────────────────────────────────────────────────────────────
 
@@ -748,75 +892,56 @@ export function FlujoCaja({ onNavigateToTab }: { onNavigateToTab?: (tab: string)
       else entry.items.push({ nombre: label, monto: Number(p.monto) });
     }
 
-    // 2) Costos financieros (comisiones MP desde API + débitos Galicia/ICBC desde extractos
-    //    + cargos MP sobre pagos egresos: impuesto al débito, comisiones por enviar plata).
-    const { debitosGalicia, debitosICBC, debitosMP } = movimientosClasificados;
+    // 2) Egresos que vienen del banco y NO están ya contados por el ERP:
+    //    (a) costos financieros — comisiones MP (API) + impuesto al débito, IVA, intereses
+    //    (b) débitos sin registrar — salió plata y no hay gasto/sueldo/dividendo detrás
+    const { debitosCostoBancario, debitosSinRegistrar } = movimientosClasificados;
     const bancarios: {
       nombre: string;
       monto: number;
       items: { nombre: string; monto: number }[];
     }[] = [];
 
-    // Comisiones e impuestos MP: combinamos costos sobre cobros (pagos_mp) con costos
-    // sobre pagos egresos (cargo_mp en movimientos_bancarios). Todo va al mismo grupo
-    // bancario para no fragmentar la vista.
+    const agruparPorDescripcion = (movs: MovBancario[]) => {
+      const acc = new Map<string, number>();
+      for (const m of movs) {
+        const key = m.descripcion?.trim() || 'Sin descripción';
+        acc.set(key, (acc.get(key) ?? 0) + Number(m.debito));
+      }
+      return [...acc.entries()]
+        .map(([nombre, monto]) => ({ nombre, monto }))
+        .sort((a, b) => b.monto - a.monto);
+    };
+
+    // Costos financieros: comisiones/retenciones sobre cobros (pagos_mp, vía API)
+    // + cargos bancarios del extracto (impuesto al débito, IVA, mantenimiento).
     const comisionesMPCobros = pagosMPFiltrados.reduce((s, p) => s + Number(p.comision_mp), 0);
     const impuestosMPCobros = pagosMPFiltrados.reduce((s, p) => s + Number(p.impuestos), 0);
-    const cargosMPPagos = debitosMP.reduce((s, m) => s + Number(m.debito), 0);
-    const totalCostosMP = comisionesMPCobros + impuestosMPCobros + cargosMPPagos;
-    if (totalCostosMP > 0) {
-      const mpItems: { nombre: string; monto: number }[] = [];
+    const cargosExtracto = debitosCostoBancario.reduce((s, m) => s + Number(m.debito), 0);
+    const totalCostosFin = comisionesMPCobros + impuestosMPCobros + cargosExtracto;
+    if (totalCostosFin > 0) {
+      const items: { nombre: string; monto: number }[] = [];
       if (comisionesMPCobros > 0)
-        mpItems.push({ nombre: 'Comisiones MP (sobre ventas)', monto: comisionesMPCobros });
+        items.push({ nombre: 'Comisiones MP (sobre ventas)', monto: comisionesMPCobros });
       if (impuestosMPCobros > 0)
-        mpItems.push({ nombre: 'Retenciones impositivas MP', monto: impuestosMPCobros });
-      if (debitosMP.length > 0) {
-        const cargosByDescr = new Map<string, number>();
-        for (const m of debitosMP) {
-          const key = m.descripcion?.trim() || 'Impuesto al débito MP';
-          cargosByDescr.set(key, (cargosByDescr.get(key) ?? 0) + Number(m.debito));
-        }
-        for (const [nombre, monto] of cargosByDescr) {
-          mpItems.push({ nombre, monto });
-        }
-      }
+        items.push({ nombre: 'Retenciones impositivas MP', monto: impuestosMPCobros });
+      items.push(...agruparPorDescripcion(debitosCostoBancario));
       bancarios.push({
-        nombre: GRUPO_DEBITO_LABEL.mercadopago,
-        monto: totalCostosMP,
-        items: mpItems.sort((a, b) => b.monto - a.monto),
+        nombre: 'Costos bancarios y financieros',
+        monto: totalCostosFin,
+        items: items.sort((a, b) => b.monto - a.monto),
       });
     }
 
-    if (debitosGalicia.length > 0) {
-      const totalGal = debitosGalicia.reduce((s, m) => s + Number(m.debito), 0);
-      // Agrupar por descripción
-      const galItems = new Map<string, number>();
-      for (const m of debitosGalicia) {
-        const key = m.descripcion ?? 'Otros';
-        galItems.set(key, (galItems.get(key) ?? 0) + Number(m.debito));
-      }
+    // Débitos que el ERP no conoce. Son egresos reales (la plata salió) pero hay
+    // que cargarlos o conciliarlos — se muestran aparte con un CTA, no escondidos
+    // dentro de "otros", para que no queden como un agujero permanente.
+    const totalSinRegistrar = debitosSinRegistrar.reduce((s, m) => s + Number(m.debito), 0);
+    if (totalSinRegistrar > 0) {
       bancarios.push({
-        nombre: GRUPO_DEBITO_LABEL.galicia,
-        monto: totalGal,
-        items: [...galItems.entries()]
-          .map(([nombre, monto]) => ({ nombre, monto }))
-          .sort((a, b) => b.monto - a.monto),
-      });
-    }
-
-    if (debitosICBC.length > 0) {
-      const totalICBC = debitosICBC.reduce((s, m) => s + Number(m.debito), 0);
-      const icbcItems = new Map<string, number>();
-      for (const m of debitosICBC) {
-        const key = m.descripcion ?? 'Otros';
-        icbcItems.set(key, (icbcItems.get(key) ?? 0) + Number(m.debito));
-      }
-      bancarios.push({
-        nombre: GRUPO_DEBITO_LABEL.icbc,
-        monto: totalICBC,
-        items: [...icbcItems.entries()]
-          .map(([nombre, monto]) => ({ nombre, monto }))
-          .sort((a, b) => b.monto - a.monto),
+        nombre: CLASE_DEBITO_LABEL.sin_registrar,
+        monto: totalSinRegistrar,
+        items: agruparPorDescripcion(debitosSinRegistrar),
       });
     }
 
@@ -872,11 +997,67 @@ export function FlujoCaja({ onNavigateToTab }: { onNavigateToTab?: (tab: string)
     proveedoresMap,
   ]);
 
+  // ── COMPROMETIDO (todavía no salió) ────────────────────────────────────────
+  // Echeq, cheques diferidos y consumos de tarjeta con fecha futura. La plata
+  // sigue en la cuenta, así que NO son egresos del mes — pero están vendidos:
+  // se restan de la liquidez disponible para saber con cuánto contás de verdad.
+  const comprometido = useMemo(() => {
+    const items = pagosComprometidos
+      .map((p) => ({
+        id: p.id,
+        fecha: p.fecha_pago,
+        proveedor: p.gasto ? nombreProveedor(p.gasto, proveedoresMap, 'Sin proveedor') : '—',
+        categoria: p.gasto?.categoria ?? null,
+        medio: p.medio_pago,
+        monto: Number(p.monto),
+      }))
+      .sort((a, b) => a.fecha.localeCompare(b.fecha));
+    return { items, total: items.reduce((s, i) => s + i.monto, 0) };
+  }, [pagosComprometidos, proveedoresMap]);
+
+  // ── LIQUIDEZ REAL ──────────────────────────────────────────────────────────
+  // Lo que el módulo llamaba "liquidez" era en realidad el resultado de caja del
+  // mes (ingresos − egresos). Eso no dice cuánta plata HAY. Un mes puede cerrar
+  // negativo con la cuenta llena, o positivo estando en rojo. La liquidez es un
+  // stock, no un flujo: hay que partir de los saldos.
+  const liquidez = useMemo(() => {
+    const porCuenta = new Map<string, { saldo: number; fecha: string; fuente: string }>();
+    for (const s of saldosCuentas ?? []) {
+      porCuenta.set(s.cuenta, { saldo: Number(s.saldo), fecha: s.fecha, fuente: s.fuente });
+    }
+    const bancos = [...porCuenta.values()].reduce((s, c) => s + c.saldo, 0);
+    // El efectivo en custodia es plata de la empresa tanto como la del banco.
+    const efectivo = ingresos.cajaChica + ingresos.cajaFuerte;
+    const total = bancos + efectivo;
+    // Libre = lo que queda después de honrar los cheques y consumos ya emitidos.
+    const libre = total - comprometido.total;
+    // La liquidez vale lo que valga el dato más viejo que la compone.
+    const fechas = [...porCuenta.values()].map((c) => c.fecha).sort();
+    return {
+      porCuenta,
+      bancos,
+      efectivo,
+      total,
+      libre,
+      desactualizada: fechas.length === 0 || fechas[0] < hoy,
+      fechaMasVieja: fechas[0] ?? null,
+      faltanCuentas: (['galicia', 'icbc', 'mercadopago'] as const).filter(
+        (c) => !porCuenta.has(c),
+      ),
+    };
+  }, [saldosCuentas, ingresos.cajaChica, ingresos.cajaFuerte, comprometido.total, hoy]);
+
   // ── NO OPERATIVO ───────────────────────────────────────────────────────────
 
   const noOperativo = useMemo(() => {
     const { transferenciasInternas, capital } = movimientosClasificados;
-    const totalTransf = transferenciasInternas.reduce((s, m) => s + Number(m.credito), 0);
+    // Ahora la lista trae las dos patas: la salida de una cuenta (débito) y la
+    // entrada en la otra (crédito). Antes solo se veían los créditos y los débitos
+    // se colaban como egreso ($6,79M en junio-2026).
+    const totalTransf = transferenciasInternas.reduce(
+      (s, m) => s + Math.max(Number(m.credito), Number(m.debito)),
+      0,
+    );
     const capitalIn = capital
       .filter((m) => Number(m.credito) > 0)
       .reduce((s, m) => s + Number(m.credito), 0);
@@ -900,19 +1081,34 @@ export function FlujoCaja({ onNavigateToTab }: { onNavigateToTab?: (tab: string)
     const ratioCobertura = egresos.total > 0 ? ingresos.total / egresos.total : 0;
     const [y, m] = periodo.split('-').map(Number);
     const diasMes = new Date(y, m, 0).getDate();
-    const burnRate = egresos.total / diasMes;
-    const diasCaja = burnRate > 0 ? saldoNeto / burnRate : 0;
+
+    // Burn rate y días de caja se miden sobre los días TRANSCURRIDOS, no sobre el
+    // mes entero. En el mes en curso, dividir por 31 cuando van 12 días subestima
+    // el burn y da una falsa sensación de holgura.
+    const esMesEnCurso = periodo === hoy.substring(0, 7);
+    const diasTranscurridos = esMesEnCurso ? Number(hoy.substring(8, 10)) : diasMes;
+    const burnRate = egresos.total / Math.max(1, diasTranscurridos);
+
+    // Días de caja = con la plata que HAY hoy, cuántos días de egresos aguantás.
+    // Antes se calculaba sobre el saldo del mes (ingresos − egresos), que no es
+    // plata disponible: daba "—" apenas el mes tenía resultado negativo.
+    const diasCaja = burnRate > 0 ? liquidez.libre / burnRate : 0;
+
     const divsPctIngreso = ingresos.total > 0 ? (egresos.totalDivs / ingresos.total) * 100 : 0;
     const cmvPctVentas =
       ingresos.total > 0 ? ((egresos.grupos.get('cmv')?.total ?? 0) / ingresos.total) * 100 : 0;
 
-    const difArqueo = cierresFiltrados.reduce((s, c) => s + (c.diferencia ?? 0), 0);
-    const totalEsperado = cierresFiltrados
-      .filter((c) => c.monto_esperado != null)
-      .reduce((s, c) => s + (c.monto_esperado ?? 0), 0);
+    // Arqueo: si no hay cierres con monto_esperado, no hay dato — no es que el
+    // desvío sea cero. Antes mostraba "$0 / 0,00%" en verde con 21 cierres sin
+    // verificar, que es justo la lectura opuesta a la real.
+    const cierresConArqueo = cierresFiltrados.filter((c) => c.monto_esperado != null);
+    const hayArqueo = cierresConArqueo.length > 0;
+    const difArqueo = cierresConArqueo.reduce((s, c) => s + (c.diferencia ?? 0), 0);
+    const totalEsperado = cierresConArqueo.reduce((s, c) => s + (c.monto_esperado ?? 0), 0);
     const difArqueoPct = totalEsperado > 0 ? Math.abs(difArqueo / totalEsperado) * 100 : 0;
 
     return {
+      hayArqueo,
       saldoNeto,
       margenCaja,
       ratioCobertura,
@@ -923,7 +1119,7 @@ export function FlujoCaja({ onNavigateToTab }: { onNavigateToTab?: (tab: string)
       difArqueo,
       difArqueoPct,
     };
-  }, [ingresos, egresos, periodo, cierresFiltrados]);
+  }, [ingresos, egresos, periodo, cierresFiltrados, liquidez, hoy]);
 
   // ── gráfico ────────────────────────────────────────────────────────────────
 
@@ -961,9 +1157,8 @@ export function FlujoCaja({ onNavigateToTab }: { onNavigateToTab?: (tab: string)
       byDay.set(p.fecha_pago, d);
     }
     for (const m of [
-      ...movimientosClasificados.debitosGalicia,
-      ...movimientosClasificados.debitosICBC,
-      ...movimientosClasificados.debitosMP,
+      ...movimientosClasificados.debitosCostoBancario,
+      ...movimientosClasificados.debitosSinRegistrar,
     ]) {
       const d = byDay.get(m.fecha) ?? { ingresos: 0, egresos: 0 };
       d.egresos += Number(m.debito);
@@ -975,13 +1170,28 @@ export function FlujoCaja({ onNavigateToTab }: { onNavigateToTab?: (tab: string)
       byDay.set(dv.fecha, d);
     }
 
-    let acum = 0;
-    return [...byDay.entries()]
+    // Anclar el gráfico al saldo real. Antes acumulaba desde cero, así que el
+    // primer día ya aparecía en -$11M (los pagos de cierre de mes caen el día 1) y
+    // la curva no significaba nada: no era el saldo, era el flujo acumulado.
+    //
+    // El saldo de apertura se deriva hacia atrás desde la liquidez de hoy:
+    //   apertura = liquidez_hoy − (lo que entró − lo que salió en el mes)
+    // Así la curva termina exactamente en la plata que hay. Solo tiene sentido en
+    // el mes en curso: para meses cerrados no guardamos el saldo histórico, y ahí
+    // el gráfico sigue siendo flujo acumulado (etiquetado como tal).
+    const esMesEnCurso = periodo === hoy.substring(0, 7);
+    const anclado = esMesEnCurso && (saldosCuentas?.length ?? 0) > 0;
+    const flujoDelMes = ingresos.total - egresos.total;
+    const apertura = anclado ? liquidez.total - flujoDelMes : 0;
+
+    let acum = apertura;
+    const data = [...byDay.entries()]
       .sort((a, b) => a[0].localeCompare(b[0]))
       .map(([fecha, vals]) => {
         acum += vals.ingresos - vals.egresos;
         return { fecha: fecha.substring(8), saldo: acum };
       });
+    return { data, anclado };
   }, [
     cierresFiltrados,
     movimientosClasificados,
@@ -989,6 +1199,12 @@ export function FlujoCaja({ onNavigateToTab }: { onNavigateToTab?: (tab: string)
     pagosFiltrados,
     sueldosFiltrados,
     divsFiltrados,
+    periodo,
+    hoy,
+    saldosCuentas,
+    liquidez.total,
+    ingresos.total,
+    egresos.total,
   ]);
 
   // ── banner exports desactualizados ─────────────────────────────────────────
@@ -1142,12 +1358,118 @@ export function FlujoCaja({ onNavigateToTab }: { onNavigateToTab?: (tab: string)
         </div>
       )}
 
-      {/* KPIs de liquidez y solvencia */}
+      {/* ═══ LIQUIDEZ — cuánta plata HAY ═══
+          Va primero y separada del resto: es la pregunta que el módulo tenía que
+          contestar y no contestaba. Los KPIs de abajo son del flujo del mes. */}
+      <div className="rounded-lg border border-surface-border bg-white p-4">
+        <div className="mb-3 flex items-baseline gap-2">
+          <h3 className="text-sm font-semibold text-gray-700">Liquidez — plata disponible hoy</h3>
+          {liquidez.desactualizada && (
+            <span
+              className="text-[10px] font-medium text-amber-700"
+              title={
+                liquidez.faltanCuentas.length
+                  ? `Sin saldo de: ${liquidez.faltanCuentas.join(', ')}`
+                  : `El saldo más viejo es del ${formatFecha(liquidez.fechaMasVieja ?? '')}`
+              }
+            >
+              ⚠️ saldos desactualizados
+            </span>
+          )}
+        </div>
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          <KPILiquidez
+            label="Liquidez libre"
+            value={formatARS(liquidez.libre)}
+            desc="Disponible después de honrar cheques y tarjeta ya emitidos"
+            color={liquidez.libre >= 0 ? 'green' : 'red'}
+          />
+          <KPILiquidez
+            label="En bancos"
+            value={formatARS(liquidez.bancos)}
+            desc={
+              liquidez.faltanCuentas.length
+                ? `Falta el saldo de ${liquidez.faltanCuentas.join(', ')}`
+                : 'Galicia + ICBC + MercadoPago'
+            }
+            color="neutral"
+          />
+          <KPILiquidez
+            label="Efectivo en custodia"
+            value={formatARS(liquidez.efectivo)}
+            desc="Caja chica (locales) + caja fuerte (casa)"
+            color="neutral"
+          />
+          <KPILiquidez
+            label="Comprometido"
+            value={comprometido.total > 0 ? `- ${formatARS(comprometido.total)}` : '$ 0'}
+            desc={`${comprometido.items.length} pago${comprometido.items.length !== 1 ? 's' : ''} con fecha futura (aún no salieron)`}
+            color={comprometido.total > liquidez.total ? 'red' : 'neutral'}
+          />
+        </div>
+
+        {/* Desglose por cuenta — para ver de dónde sale el número y qué tan viejo es */}
+        <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-gray-100 pt-2 text-[11px]">
+          {(['galicia', 'icbc', 'mercadopago'] as const).map((c) => {
+            const s = liquidez.porCuenta.get(c);
+            const nombre = c === 'mercadopago' ? 'MercadoPago' : c === 'icbc' ? 'ICBC' : 'Galicia';
+            if (!s) {
+              return (
+                <span key={c} className="text-amber-700">
+                  {nombre}: <strong>sin saldo</strong>
+                </span>
+              );
+            }
+            return (
+              <span key={c} className="text-gray-600">
+                {nombre}:{' '}
+                <strong className={s.saldo < 0 ? 'text-red-600' : 'text-gray-800'}>
+                  {formatARS(s.saldo)}
+                </strong>
+                <span className="ml-1 text-gray-400">
+                  ({s.fuente} · {formatFecha(s.fecha)})
+                </span>
+              </span>
+            );
+          })}
+        </div>
+
+        {/* MercadoPago no se puede automatizar: la API rechaza el pedido de balance
+            (403 — el access token no tiene ese scope) y el export tampoco trae saldo.
+            Es la cuenta principal de salida, así que sin este dato la liquidez no
+            cierra. Se carga a mano; el sync sigue intentando y lo pisa si algún día
+            se habilita el permiso. */}
+        {!liquidez.porCuenta.has('mercadopago') && (
+          <div className="mt-2 flex flex-wrap items-center gap-2 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-[11px]">
+            <span className="text-amber-800">
+              Falta el saldo de MercadoPago (la API no lo expone). Copialo de la app y pegalo acá:
+            </span>
+            <input
+              value={saldoMPInput}
+              onChange={(e) => setSaldoMPInput(e.target.value)}
+              placeholder="1.234.567,89"
+              className="w-32 rounded border border-amber-300 px-2 py-1 text-right tabular-nums focus:outline-none focus:ring-1 focus:ring-amber-400"
+            />
+            <button
+              onClick={() => guardarSaldoMP.mutate()}
+              disabled={!saldoMPInput.trim() || guardarSaldoMP.isPending}
+              className="rounded bg-amber-600 px-2 py-1 font-medium text-white hover:bg-amber-700 disabled:opacity-40"
+            >
+              {guardarSaldoMP.isPending ? 'Guardando…' : 'Guardar'}
+            </button>
+            {guardarSaldoMP.isError && (
+              <span className="text-red-600">{(guardarSaldoMP.error as Error).message}</span>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* KPIs del flujo del mes */}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <KPILiquidez
-          label="Saldo neto del período"
+          label="Saldo del período"
           value={formatARS(kpis.saldoNeto)}
-          desc="Ingresos - Egresos totales del mes"
+          desc="Ingresos − Egresos ya ejecutados del mes (no es la plata que hay)"
           color={kpis.saldoNeto >= 0 ? 'green' : 'red'}
         />
         <KPILiquidez
@@ -1165,13 +1487,13 @@ export function FlujoCaja({ onNavigateToTab }: { onNavigateToTab?: (tab: string)
         <KPILiquidez
           label="Burn rate diario"
           value={formatARS(kpis.burnRate)}
-          desc="Egresos totales / días del mes"
+          desc="Egresos / días transcurridos del mes"
           color="neutral"
         />
         <KPILiquidez
           label="Días de caja"
           value={kpis.diasCaja > 0 ? `${kpis.diasCaja.toFixed(0)} días` : '—'}
-          desc="Cuántos días se cubre con el saldo actual"
+          desc="Días que aguanta la liquidez libre al ritmo de gasto actual"
           color={semaforoColor(kpis.diasCaja, [30, 999], [15, 30])}
         />
         <KPILiquidez
@@ -1188,20 +1510,31 @@ export function FlujoCaja({ onNavigateToTab }: { onNavigateToTab?: (tab: string)
         />
         <KPILiquidez
           label="Diferencia de arqueo"
-          value={formatARS(kpis.difArqueo)}
-          desc={`${kpis.difArqueoPct.toFixed(2)}% desvío vs esperado`}
-          color={semaforoColor(100 - kpis.difArqueoPct, [99, 100], [98, 99])}
+          value={kpis.hayArqueo ? formatARS(kpis.difArqueo) : '—'}
+          desc={
+            kpis.hayArqueo
+              ? `${kpis.difArqueoPct.toFixed(2)}% desvío vs esperado`
+              : 'Sin cierres verificados en el período'
+          }
+          color={kpis.hayArqueo ? semaforoColor(100 - kpis.difArqueoPct, [99, 100], [98, 99]) : 'neutral'}
         />
       </div>
 
       {/* Gráfico evolución diaria */}
-      {chartData.length > 0 && (
+      {chartData.data.length > 0 && (
         <div className="rounded-lg border border-surface-border bg-white p-5">
           <h3 className="mb-4 text-sm font-semibold text-gray-700">
-            Evolución diaria del saldo operativo — {periodo}
+            {chartData.anclado
+              ? `Evolución del saldo de caja — ${periodo}`
+              : `Flujo acumulado del mes — ${periodo}`}
+            {!chartData.anclado && (
+              <span className="ml-2 font-normal text-[10px] text-gray-400">
+                arranca en cero — no hay saldo de apertura para este período
+              </span>
+            )}
           </h3>
           <ResponsiveContainer width="100%" height={220}>
-            <AreaChart data={chartData}>
+            <AreaChart data={chartData.data}>
               <defs>
                 <linearGradient id="saldoGradFC" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="5%" stopColor="#65a832" stopOpacity={0.3} />
@@ -1275,7 +1608,7 @@ export function FlujoCaja({ onNavigateToTab }: { onNavigateToTab?: (tab: string)
             </div>
           </div>
           <GrupoEgreso
-            label={`Ventas digitales — MercadoPago (${pagosMPFiltrados.length} pagos)`}
+            label={`Ventas digitales — MercadoPago (${ingresos.cantVentasMP} pagos)`}
             total={ingresos.ventasMPBruto}
             items={[...ingresos.ventasMPPorMedio.entries()]
               .map(([medio, monto]) => ({ nombre: MEDIO_PAGO_MP_LABEL[medio] || medio, monto }))
@@ -1336,8 +1669,51 @@ export function FlujoCaja({ onNavigateToTab }: { onNavigateToTab?: (tab: string)
         </div>
       </SeccionExpandible>
 
+      {/* ═══ COMPROMETIDO ═══
+          Plata que ya tiene fecha y dueño pero todavía está en la cuenta. Antes se
+          restaba como si hubiera salido y hundía el saldo del mes en curso. */}
+      {comprometido.items.length > 0 && (
+        <SeccionExpandible
+          titulo="COMPROMETIDO (todavía no salió)"
+          total={-comprometido.total}
+          open={comprometidoOpen}
+          onToggle={() => setComprometidoOpen(!comprometidoOpen)}
+          color="blue"
+        >
+          <div className="p-4">
+            <p className="mb-3 text-[10px] text-gray-500">
+              Cheques, echeq y consumos de tarjeta con fecha de débito futura. La plata sigue en la
+              cuenta: no son egresos del mes, pero se descuentan de la liquidez libre.
+            </p>
+            <div className="overflow-hidden rounded-lg bg-gray-50">
+              <table className="w-full text-xs">
+                <tbody>
+                  {comprometido.items.map((i) => (
+                    <tr key={i.id} className="border-t border-gray-100">
+                      <td className="whitespace-nowrap px-3 py-1.5 text-gray-500">
+                        {formatFecha(i.fecha)}
+                      </td>
+                      <td className="max-w-[220px] truncate px-3 py-1.5 text-gray-700">
+                        {i.proveedor}
+                      </td>
+                      <td className="px-3 py-1.5 text-gray-500">{i.categoria ?? '—'}</td>
+                      <td className="px-3 py-1.5 text-gray-500">{i.medio}</td>
+                      <td className="px-3 py-1.5 text-right font-medium tabular-nums text-gray-700">
+                        {formatARS(i.monto)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </SeccionExpandible>
+      )}
+
       {/* ═══ NO OPERATIVO ═══ */}
-      {(noOperativo.transferenciasInternas.length > 0 || noOperativo.capital.length > 0) && (
+      {(noOperativo.transferenciasInternas.length > 0 ||
+        noOperativo.capital.length > 0 ||
+        ingresosMPNoVenta.total > 0) && (
         <SeccionExpandible
           titulo="MOVIMIENTOS NO OPERATIVOS"
           total={0}
@@ -1351,29 +1727,74 @@ export function FlujoCaja({ onNavigateToTab }: { onNavigateToTab?: (tab: string)
               negocio — no afectan los KPIs.
             </p>
 
+            {/* Plata que entró a MercadoPago y NO es una venta. Antes se sumaba como
+                "Ventas digitales" e inflaba el ingreso ($22,4M en julio-2026). */}
+            {ingresosMPNoVenta.total > 0 && (
+              <div>
+                <h4 className="mb-2 text-xs font-semibold text-gray-700">
+                  Entradas a MercadoPago que no son ventas
+                </h4>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="rounded-lg bg-blue-50 p-2.5 text-center">
+                    <p className="text-[10px] text-gray-500">
+                      Cuenta comitente (InvertirOnline) — {ingresosMPNoVenta.capital.length} mov.
+                    </p>
+                    <p className="text-base font-bold text-blue-700">
+                      {formatARS(ingresosMPNoVenta.totalCapital)}
+                    </p>
+                  </div>
+                  <div className="rounded-lg bg-blue-50 p-2.5 text-center">
+                    <p className="text-[10px] text-gray-500">
+                      Transferencias de cuentas propias — {ingresosMPNoVenta.propias.length} mov.
+                    </p>
+                    <p className="text-base font-bold text-blue-700">
+                      {formatARS(ingresosMPNoVenta.totalPropias)}
+                    </p>
+                  </div>
+                </div>
+                <p className="mt-1 text-[10px] text-gray-400">
+                  No pasaron por el POS (sin caja asignada). Se excluyen de "Ventas digitales" para
+                  no inflar el ingreso ni el ticket promedio.
+                </p>
+              </div>
+            )}
+
             {/* Transferencias internas */}
             {noOperativo.transferenciasInternas.length > 0 && (
               <div>
                 <h4 className="mb-2 text-xs font-semibold text-gray-700">
-                  Transferencias internas (MP → Galicia / ICBC)
+                  Transferencias entre cuentas propias
                 </h4>
                 <div className="overflow-hidden rounded-lg bg-gray-50">
                   <table className="w-full text-xs">
                     <tbody>
-                      {noOperativo.transferenciasInternas.map((m) => (
-                        <tr key={m.id} className="border-t border-gray-100">
-                          <td className="px-3 py-1.5 text-gray-500">{formatFecha(m.fecha)}</td>
-                          <td className="px-3 py-1.5 text-gray-600">
-                            {m.cuenta === 'galicia' ? 'Galicia' : 'ICBC'}
-                          </td>
-                          <td className="max-w-[200px] truncate px-3 py-1.5 text-gray-500">
-                            {m.descripcion}
-                          </td>
-                          <td className="px-3 py-1.5 text-right font-medium tabular-nums text-gray-700">
-                            {formatARS(Number(m.credito))}
-                          </td>
-                        </tr>
-                      ))}
+                      {noOperativo.transferenciasInternas.map((m) => {
+                        // Ahora se listan las dos patas: la salida (débito) y la
+                        // entrada (crédito). Antes solo se veían los créditos y los
+                        // débitos se colaban como egreso del negocio.
+                        const esSalida = Number(m.debito) > 0;
+                        const monto = esSalida ? Number(m.debito) : Number(m.credito);
+                        const cuentaLabel =
+                          m.cuenta === 'galicia'
+                            ? 'Galicia'
+                            : m.cuenta === 'icbc'
+                              ? 'ICBC'
+                              : 'MercadoPago';
+                        return (
+                          <tr key={m.id} className="border-t border-gray-100">
+                            <td className="px-3 py-1.5 text-gray-500">{formatFecha(m.fecha)}</td>
+                            <td className="px-3 py-1.5 text-gray-600">
+                              {esSalida ? `↑ sale de ${cuentaLabel}` : `↓ entra a ${cuentaLabel}`}
+                            </td>
+                            <td className="max-w-[200px] truncate px-3 py-1.5 text-gray-500">
+                              {m.descripcion}
+                            </td>
+                            <td className="px-3 py-1.5 text-right font-medium tabular-nums text-gray-700">
+                              {formatARS(monto)}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>

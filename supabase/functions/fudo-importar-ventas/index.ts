@@ -367,16 +367,13 @@ Deno.serve(async (req) => {
     const ticketsRows: TicketRow[] = []
     const pagosRows: PagoRow[] = []
     const ventasItemsRows: VentaItemRow[] = []
-    const dividendosRows: {
-      socio: string
-      fecha: string
-      monto: number
-      medio_pago: string
-      concepto: string
-      local: string
-      periodo: string
-      creado_por: string
-    }[] = []
+    // Los cobros con el POSnet personal de Lucas se marcan acá (ventas_pagos.es_dividendo)
+    // pero NO generan filas en `dividendos`: la fuente única de ese dividendo es el
+    // cierre de caja (cierres_caja.fudo_mp_lucas → cierres_caja.dividendo_id).
+    // Antes los creaban los dos y el mismo cobro se contaba dos veces en el Flujo
+    // de Caja. Ver migración 128. Se sigue contando para reportarlo en la respuesta
+    // y para que el Flujo pueda avisar si hay cobros MP Lucas sin cierre cargado.
+    let mpLucasDetectados = 0
 
     let countPorEstado: Record<string, number> = {}
 
@@ -450,19 +447,8 @@ Deno.serve(async (req) => {
           es_dividendo: pmName.toLowerCase().includes('mercadopago lucas'),
         })
 
-        // Si es MP Lucas, generar dividendo automático
-        if (pmName.toLowerCase().includes('mercadopago lucas')) {
-          dividendosRows.push({
-            socio: 'lucas',
-            fecha,
-            monto,
-            medio_pago: 'Mercadopago Lucas',
-            concepto: 'Cobro de venta con posnet personal — autoasignado',
-            local,
-            periodo,
-            creado_por: 'import_fudo',
-          })
-        }
+        // El dividendo NO se crea acá — lo crea el cierre de caja (fuente única).
+        if (pmName.toLowerCase().includes('mercadopago lucas')) mpLucasDetectados++
       }
 
       const esDividendoCompleto = mpLucas > 0 && mpLucas >= total - 0.01
@@ -555,12 +541,10 @@ Deno.serve(async (req) => {
     await supabase.from('ventas_tickets').delete().eq('local', local).in('periodo', meses)
     await supabase.from('ventas_pagos').delete().eq('local', local).in('periodo', meses)
     await supabase.from('ventas_items').delete().eq('local', local).in('periodo', meses)
-    await supabase
-      .from('dividendos')
-      .delete()
-      .eq('local', local)
-      .in('periodo', meses)
-      .eq('creado_por', 'import_fudo')
+    // OJO: no se borran dividendos acá. El import ya no es dueño de esa tabla
+    // (la fuente es el cierre de caja). Borrar por creado_por='import_fudo'
+    // volaría los dividendos históricos de abr/may-2026, que se cargaron por este
+    // camino cuando era la única fuente y ya no se recrean. Ver migración 128.
 
     const errores: string[] = []
 
@@ -607,7 +591,6 @@ Deno.serve(async (req) => {
       await insertChunk('ventas_items', ventasItemsRows)
       await marcarProgreso(`Insertados ${ventasItemsRows.length} items`)
     }
-    if (dividendosRows.length) await insertChunk('dividendos', dividendosRows)
 
     // Cortesías y descuentos en edr_partidas (informativo, no afecta cálculos del EdR).
     // Upsert por (local, periodo, concepto) — reemplaza el monto del año entero.
@@ -644,7 +627,7 @@ Deno.serve(async (req) => {
           finished_at: new Date().toISOString(),
           status: errores.length === 0 ? 'ok' : 'error',
           tickets_importados: ticketsRows.length,
-          dividendos_importados: dividendosRows.length,
+          dividendos_importados: 0, // el import ya no crea dividendos (fuente: cierre de caja)
           errores: errores,
           error_msg: errores.length > 0 ? errores[0] : null,
         })
@@ -660,7 +643,7 @@ Deno.serve(async (req) => {
           ticketsImportados: ticketsRows.length,
           pagosImportados: pagosRows.length,
           itemsImportados: ventasItemsRows.length,
-          dividendosImportados: dividendosRows.length,
+          mpLucasDetectados, // cobros con POSnet personal — el dividendo lo crea el cierre de caja
           partidasImportadas: partidasRows.length,
           countPorEstado,
           resumenPorMes,
