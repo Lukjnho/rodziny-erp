@@ -255,6 +255,7 @@ export function FlujoCaja({ onNavigateToTab }: { onNavigateToTab?: (tab: string)
   const [bannerCerrado, setBannerCerrado] = useState(false);
   const [egresosOpen, setEgresosOpen] = useState(true);
   const [comprometidoOpen, setComprometidoOpen] = useState(false);
+  const [masIndicadoresOpen, setMasIndicadoresOpen] = useState(false);
   // Saldo de MercadoPago a mano: la API devuelve 403 al pedir el balance (el
   // access token no tiene ese scope), y el export de MP tampoco trae saldo. Es la
   // única cuenta que no se puede automatizar, y sin ella la liquidez no cierra.
@@ -1135,7 +1136,10 @@ export function FlujoCaja({ onNavigateToTab }: { onNavigateToTab?: (tab: string)
     for (const p of pagosMPFiltrados) {
       const fecha = p.fecha.substring(0, 10);
       const d = byDay.get(fecha) ?? { ingresos: 0, egresos: 0 };
-      d.ingresos += Number(p.monto);
+      // Solo las ventas suman al saldo. Los retiros de InvertirOnline y las
+      // transferencias entre cuentas propias entran a MP pero no son ingresos —
+      // si se acumulan acá, la curva termina muy por encima de la plata real.
+      if (esVentaMP(p)) d.ingresos += Number(p.monto);
       d.egresos += Number(p.comision_mp) + Number(p.impuestos);
       byDay.set(fecha, d);
     }
@@ -1358,57 +1362,62 @@ export function FlujoCaja({ onNavigateToTab }: { onNavigateToTab?: (tab: string)
         </div>
       )}
 
-      {/* ═══ LIQUIDEZ — cuánta plata HAY ═══
-          Va primero y separada del resto: es la pregunta que el módulo tenía que
-          contestar y no contestaba. Los KPIs de abajo son del flujo del mes. */}
-      <div className="rounded-lg border border-surface-border bg-white p-4">
-        <div className="mb-3 flex items-baseline gap-2">
-          <h3 className="text-sm font-semibold text-gray-700">Liquidez — plata disponible hoy</h3>
-          {liquidez.desactualizada && (
-            <span
-              className="text-[10px] font-medium text-amber-700"
-              title={
-                liquidez.faltanCuentas.length
-                  ? `Sin saldo de: ${liquidez.faltanCuentas.join(', ')}`
-                  : `El saldo más viejo es del ${formatFecha(liquidez.fechaMasVieja ?? '')}`
-              }
+      {/* ═══ NIVEL 1 — LA PREGUNTA: ¿cuánta plata hay? ═══
+          Va sola y grande. Antes competía con otras 11 tarjetas del mismo tamaño,
+          así que el dato que decide (liquidez) pesaba igual que "Dividendos/Ingreso". */}
+      <div className="rounded-lg border border-surface-border bg-white p-5">
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] font-medium uppercase tracking-wide text-gray-500">
+                Liquidez libre
+              </span>
+              {liquidez.desactualizada && (
+                <span
+                  className="text-[10px] font-medium text-amber-700"
+                  title={
+                    liquidez.faltanCuentas.length
+                      ? `Sin saldo de: ${liquidez.faltanCuentas.join(', ')}`
+                      : `El saldo más viejo es del ${formatFecha(liquidez.fechaMasVieja ?? '')}`
+                  }
+                >
+                  ⚠️ saldos desactualizados
+                </span>
+              )}
+            </div>
+            <p
+              className={cn(
+                'mt-1 text-3xl font-bold tabular-nums',
+                liquidez.libre >= 0 ? 'text-gray-900' : 'text-red-600',
+              )}
             >
-              ⚠️ saldos desactualizados
+              {formatARS(liquidez.libre)}
+            </p>
+            <p className="mt-0.5 text-xs text-gray-500">
+              Disponible después de honrar cheques y tarjeta ya emitidos
+            </p>
+          </div>
+          <div className="text-right">
+            <span className="text-[11px] font-medium uppercase tracking-wide text-gray-500">
+              Días de caja
             </span>
-          )}
-        </div>
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-          <KPILiquidez
-            label="Liquidez libre"
-            value={formatARS(liquidez.libre)}
-            desc="Disponible después de honrar cheques y tarjeta ya emitidos"
-            color={liquidez.libre >= 0 ? 'green' : 'red'}
-          />
-          <KPILiquidez
-            label="En bancos"
-            value={formatARS(liquidez.bancos)}
-            desc={
-              liquidez.faltanCuentas.length
-                ? `Falta el saldo de ${liquidez.faltanCuentas.join(', ')}`
-                : 'Galicia + ICBC + MercadoPago'
-            }
-            color="neutral"
-          />
-          <KPILiquidez
-            label="Efectivo en custodia"
-            value={formatARS(liquidez.efectivo)}
-            desc="Caja chica (locales) + caja fuerte (casa)"
-            color="neutral"
-          />
-          <KPILiquidez
-            label="Comprometido"
-            value={comprometido.total > 0 ? `- ${formatARS(comprometido.total)}` : '$ 0'}
-            desc={`${comprometido.items.length} pago${comprometido.items.length !== 1 ? 's' : ''} con fecha futura (aún no salieron)`}
-            color={comprometido.total > liquidez.total ? 'red' : 'neutral'}
-          />
+            <p
+              className={cn(
+                'text-2xl font-bold tabular-nums',
+                kpis.diasCaja >= 30
+                  ? 'text-green-600'
+                  : kpis.diasCaja >= 15
+                    ? 'text-amber-600'
+                    : 'text-red-600',
+              )}
+            >
+              {kpis.diasCaja > 0 ? `${kpis.diasCaja.toFixed(0)} días` : '—'}
+            </p>
+            <p className="text-[10px] text-gray-400">al ritmo de gasto actual</p>
+          </div>
         </div>
 
-        {/* Desglose por cuenta — para ver de dónde sale el número y qué tan viejo es */}
+        {/* De dónde sale el número y qué tan fresco es cada pedazo */}
         <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-gray-100 pt-2 text-[11px]">
           {(['galicia', 'icbc', 'mercadopago'] as const).map((c) => {
             const s = liquidez.porCuenta.get(c);
@@ -1432,6 +1441,22 @@ export function FlujoCaja({ onNavigateToTab }: { onNavigateToTab?: (tab: string)
               </span>
             );
           })}
+          <span className="text-gray-600">
+            Efectivo: <strong className="text-gray-800">{formatARS(liquidez.efectivo)}</strong>
+            <span className="ml-1 text-gray-400">(caja chica + caja fuerte)</span>
+          </span>
+          {comprometido.total > 0 && (
+            <button
+              onClick={() => setComprometidoOpen(!comprometidoOpen)}
+              className="text-gray-600 underline decoration-dotted underline-offset-2 hover:text-gray-900"
+            >
+              Comprometido:{' '}
+              <strong className="text-red-600">− {formatARS(comprometido.total)}</strong>
+              <span className="ml-1 text-gray-400">
+                ({comprometido.items.length} pago{comprometido.items.length !== 1 ? 's' : ''})
+              </span>
+            </button>
+          )}
         </div>
 
         {/* MercadoPago no se puede automatizar: la API rechaza el pedido de balance
@@ -1464,25 +1489,25 @@ export function FlujoCaja({ onNavigateToTab }: { onNavigateToTab?: (tab: string)
         )}
       </div>
 
-      {/* KPIs del flujo del mes */}
+      {/* ═══ NIVEL 2 — el mes ═══ */}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <KPILiquidez
+          label="Ingresos del mes"
+          value={formatARS(ingresos.total)}
+          desc="Ventas cobradas (efectivo + MercadoPago)"
+          color="neutral"
+        />
+        <KPILiquidez
+          label="Egresos del mes"
+          value={formatARS(egresos.total)}
+          desc="Plata que ya salió (no incluye lo comprometido)"
+          color="neutral"
+        />
         <KPILiquidez
           label="Saldo del período"
           value={formatARS(kpis.saldoNeto)}
-          desc="Ingresos − Egresos ya ejecutados del mes (no es la plata que hay)"
+          desc="Ingresos − Egresos del mes (no es la plata que hay)"
           color={kpis.saldoNeto >= 0 ? 'green' : 'red'}
-        />
-        <KPILiquidez
-          label="Margen de caja"
-          value={`${kpis.margenCaja.toFixed(1)}%`}
-          desc="% de ingresos que queda después de egresos"
-          color={semaforoColor(kpis.margenCaja, [15, 999], [5, 15])}
-        />
-        <KPILiquidez
-          label="Ratio de cobertura"
-          value={kpis.ratioCobertura.toFixed(2)}
-          desc="Cuántos $ de ingreso por cada $ de egreso"
-          color={semaforoColor(kpis.ratioCobertura, [1.2, 999], [1.0, 1.2])}
         />
         <KPILiquidez
           label="Burn rate diario"
@@ -1490,35 +1515,60 @@ export function FlujoCaja({ onNavigateToTab }: { onNavigateToTab?: (tab: string)
           desc="Egresos / días transcurridos del mes"
           color="neutral"
         />
-        <KPILiquidez
-          label="Días de caja"
-          value={kpis.diasCaja > 0 ? `${kpis.diasCaja.toFixed(0)} días` : '—'}
-          desc="Días que aguanta la liquidez libre al ritmo de gasto actual"
-          color={semaforoColor(kpis.diasCaja, [30, 999], [15, 30])}
-        />
-        <KPILiquidez
-          label="Dividendos / Ingreso"
-          value={`${kpis.divsPctIngreso.toFixed(1)}%`}
-          desc="% de ingresos que se retiran como dividendos"
-          color={semaforoColor(100 - kpis.divsPctIngreso, [85, 100], [75, 85])}
-        />
-        <KPILiquidez
-          label="CMV / Ventas"
-          value={`${kpis.cmvPctVentas.toFixed(1)}%`}
-          desc="% de ingresos destinado a materia prima"
-          color={semaforoColor(100 - kpis.cmvPctVentas, [60, 100], [55, 60])}
-        />
-        <KPILiquidez
-          label="Diferencia de arqueo"
-          value={kpis.hayArqueo ? formatARS(kpis.difArqueo) : '—'}
-          desc={
-            kpis.hayArqueo
-              ? `${kpis.difArqueoPct.toFixed(2)}% desvío vs esperado`
-              : 'Sin cierres verificados en el período'
-          }
-          color={kpis.hayArqueo ? semaforoColor(100 - kpis.difArqueoPct, [99, 100], [98, 99]) : 'neutral'}
-        />
       </div>
+
+      {/* ═══ NIVEL 3 — el resto, a un clic ═══
+          Son ratios de gestión, no de caja: se consultan, no se vigilan. Tenerlos
+          siempre a la vista hacía que el número que importa se perdiera entre ellos. */}
+      <div>
+        <button
+          onClick={() => setMasIndicadoresOpen(!masIndicadoresOpen)}
+          className="flex items-center gap-1 text-xs font-medium text-gray-500 hover:text-gray-800"
+        >
+          <span className={cn('transition-transform', masIndicadoresOpen && 'rotate-90')}>▸</span>
+          {masIndicadoresOpen ? 'Ocultar indicadores' : 'Ver más indicadores'}
+        </button>
+        {masIndicadoresOpen && (
+          <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-4">
+            <KPILiquidez
+              label="Margen de caja"
+              value={`${kpis.margenCaja.toFixed(1)}%`}
+              desc="% de ingresos que queda después de egresos"
+              color={semaforoColor(kpis.margenCaja, [15, 999], [5, 15])}
+            />
+            <KPILiquidez
+              label="Ratio de cobertura"
+              value={kpis.ratioCobertura.toFixed(2)}
+              desc="Cuántos $ de ingreso por cada $ de egreso"
+              color={semaforoColor(kpis.ratioCobertura, [1.2, 999], [1.0, 1.2])}
+            />
+            <KPILiquidez
+              label="Dividendos / Ingreso"
+              value={`${kpis.divsPctIngreso.toFixed(1)}%`}
+              desc="% de ingresos que se retiran como dividendos"
+              color={semaforoColor(100 - kpis.divsPctIngreso, [85, 100], [75, 85])}
+            />
+            <KPILiquidez
+              label="CMV / Ventas"
+              value={`${kpis.cmvPctVentas.toFixed(1)}%`}
+              desc="% de ingresos destinado a materia prima"
+              color={semaforoColor(100 - kpis.cmvPctVentas, [60, 100], [55, 60])}
+            />
+          </div>
+        )}
+      </div>
+
+      {/* El arqueo es una alerta, no un KPI: si no hay desvío no hay nada que mirar.
+          Antes ocupaba una tarjeta fija mostrando "$0 / 0,00%" en verde. */}
+      {kpis.hayArqueo && Math.abs(kpis.difArqueo) > 0 && (
+        <div className="flex items-center gap-2 rounded border border-amber-200 bg-amber-50 px-3 py-1.5 text-[11px] text-amber-800">
+          <span>⚠️</span>
+          <span>
+            Diferencia de arqueo: <strong>{formatARS(kpis.difArqueo)}</strong> (
+            {kpis.difArqueoPct.toFixed(2)}% de desvío vs lo esperado en los cierres de caja)
+          </span>
+        </div>
+      )}
 
       {/* Gráfico evolución diaria */}
       {chartData.data.length > 0 && (
