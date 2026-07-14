@@ -148,8 +148,17 @@ function labelMes(p: string): string {
   return `${meses[m - 1]} ${y}`;
 }
 
+// Fecha de HOY en Argentina (UTC-3). `toISOString()` a secas devuelve UTC: entre las
+// 21:00 y las 23:59 AR ya está en el día siguiente, así que un pago cargado el 31 a la
+// noche se registraba con fecha del 1° del mes siguiente y el Flujo de Caja y la
+// conciliación bancaria lo imputaban al mes equivocado.
+//
+// No usamos hoyAR() de lib/fechaAR: ese además resta el corte de jornada de cocina
+// (5 AM), y para finanzas un pago cargado a las 2 AM es de hoy, no de ayer.
 function hoy(): string {
-  return new Date().toISOString().split('T')[0];
+  const ahora = new Date();
+  const ar = new Date(ahora.getTime() - 3 * 60 * 60 * 1000);
+  return ar.toISOString().split('T')[0];
 }
 
 // Comparador: vencimiento ASC, nulls al final
@@ -374,45 +383,70 @@ export function ChecklistPagos() {
         .eq('periodo', pAnterior);
       if (!anterior?.length) throw new Error(`No hay datos en ${labelMes(pAnterior)}`);
 
+      // Lo que YA existe en este mes no se toca. Antes esto era un upsert por
+      // (periodo, concepto): al copiar dos veces, una fila ya PAGADA volvía a
+      // pagado=false con gasto_id=null — el gasto quedaba huérfano en el EdR y la
+      // fila invitaba a pagarla de nuevo, duplicando el gasto. Además pisaba el
+      // monto corregido con el del mes anterior.
+      const { data: yaExisten } = await supabase
+        .from('pagos_fijos')
+        .select('concepto')
+        .eq('periodo', periodo);
+      const existentes = new Set((yaExisten ?? []).map((r) => r.concepto));
+
       const [y, m] = periodo.split('-').map(Number);
       const ultimoDiaNuevo = new Date(y, m, 0).getDate();
 
-      const rows = anterior.map((a: PagoFijo) => {
-        // Recalcular fecha vencimiento para el nuevo mes.
-        // Si el vencimiento anterior era el último día del mes (ej. 28-feb o
-        // 30-abr), preservar "último día" en el nuevo mes en vez de tomar el
-        // número literal — un cheque que vence el 28-feb en marzo debería
-        // vencer el 31, no el 28.
-        let fechaVto: string | null = null;
-        if (a.fecha_vencimiento) {
-          const fOrig = new Date(a.fecha_vencimiento + 'T12:00:00');
-          const diaOrig = fOrig.getDate();
-          const ultimoDiaOrig = new Date(fOrig.getFullYear(), fOrig.getMonth() + 1, 0).getDate();
-          const dia =
-            diaOrig === ultimoDiaOrig ? ultimoDiaNuevo : Math.min(diaOrig, ultimoDiaNuevo);
-          fechaVto = `${periodo}-${String(dia).padStart(2, '0')}`;
-        }
-        return {
-          periodo,
-          local: a.local,
-          concepto: a.concepto,
-          categoria: a.categoria,
-          categoria_gasto_id: a.categoria_gasto_id,
-          monto: a.monto,
-          fecha_vencimiento: fechaVto,
-          pagado: false,
-          fecha_pago: null,
-          medio_pago: null,
-          gasto_id: null,
-          notas: null,
-        };
-      });
-      const { error } = await supabase
-        .from('pagos_fijos')
-        .upsert(rows, { onConflict: 'periodo,concepto' });
+      const rows = anterior
+        .filter((a: PagoFijo) => !existentes.has(a.concepto))
+        .map((a: PagoFijo) => {
+          // Recalcular fecha vencimiento para el nuevo mes.
+          // Si el vencimiento anterior era el último día del mes (ej. 28-feb o
+          // 30-abr), preservar "último día" en el nuevo mes en vez de tomar el
+          // número literal — un cheque que vence el 28-feb en marzo debería
+          // vencer el 31, no el 28.
+          let fechaVto: string | null = null;
+          if (a.fecha_vencimiento) {
+            const fOrig = new Date(a.fecha_vencimiento + 'T12:00:00');
+            const diaOrig = fOrig.getDate();
+            const ultimoDiaOrig = new Date(fOrig.getFullYear(), fOrig.getMonth() + 1, 0).getDate();
+            const dia =
+              diaOrig === ultimoDiaOrig ? ultimoDiaNuevo : Math.min(diaOrig, ultimoDiaNuevo);
+            fechaVto = `${periodo}-${String(dia).padStart(2, '0')}`;
+          }
+          return {
+            periodo,
+            local: a.local,
+            concepto: a.concepto,
+            categoria: a.categoria,
+            categoria_gasto_id: a.categoria_gasto_id,
+            monto: a.monto,
+            fecha_vencimiento: fechaVto,
+            pagado: false,
+            fecha_pago: null,
+            medio_pago: null,
+            gasto_id: null,
+            notas: null,
+          };
+        });
+      const salteados = anterior.length - rows.length;
+      if (rows.length === 0) {
+        throw new Error(
+          `Todos los pagos de ${labelMes(pAnterior)} ya están en este mes. No se copió nada.`,
+        );
+      }
+      const { error } = await supabase.from('pagos_fijos').insert(rows);
       if (error) throw error;
+      return { creados: rows.length, salteados };
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['pagos_fijos', periodo] }),
+    onSuccess: (r) => {
+      qc.invalidateQueries({ queryKey: ['pagos_fijos', periodo] });
+      if (r && r.salteados > 0) {
+        window.alert(
+          `Se copiaron ${r.creados} pagos. Los otros ${r.salteados} ya estaban cargados en este mes y quedaron como estaban (no se pisó ninguno pagado).`,
+        );
+      }
+    },
   });
 
   // Marcar como pagado: crea gasto + pago_gasto. Si llega numeroOperacion, se
@@ -428,6 +462,17 @@ export function ChecklistPagos() {
     comprobantePathPreSubido: string | null = null,
     reusarDeCorreos: boolean = false,
   ) {
+    // Sin monto no se puede pagar: se creaba un gasto de $0 en el EdR y en el Flujo,
+    // la fila quedaba tachada como "hecha" y el importe real no entraba nunca a la
+    // contabilidad. Es el mismo agujero que el "falta" ámbar de la fila, pero por el
+    // lado de la escritura.
+    if (pago.monto == null || pago.monto <= 0) {
+      window.alert(
+        `"${pago.concepto}" no tiene monto cargado. Poné el importe antes de marcarlo como pagado: si no, se crea un gasto de $0 y el pago real nunca entra al EdR.`,
+      );
+      return;
+    }
+
     // Regla uniforme: pago bancarizado (no efectivo / cta cte) exige N° op + comprobante.
     if (
       medioRequiereComprobante(medioPago) &&
@@ -561,6 +606,10 @@ export function ChecklistPagos() {
     qc.invalidateQueries({ queryKey: ['pagos_fijos', periodo] });
     qc.invalidateQueries({ queryKey: ['fc_pagos'] });
     qc.invalidateQueries({ queryKey: ['edr_gastos_resumen'] });
+    // El banner de "urgentes en otros meses" y el badge de la flecha viven de este
+    // hook (staleTime 5 min): sin invalidarlo, seguían mostrando como deuda lo que
+    // acabás de pagar. moverPago sí lo hacía; acá faltaba.
+    qc.invalidateQueries({ queryKey: ['pagos_alertas_global'] });
     setToast({ tipo: 'pagado', concepto: pago.concepto, monto: pago.monto ?? 0 });
   }
 
@@ -583,6 +632,7 @@ export function ChecklistPagos() {
     qc.invalidateQueries({ queryKey: ['pagos_fijos', periodo] });
     qc.invalidateQueries({ queryKey: ['fc_pagos'] });
     qc.invalidateQueries({ queryKey: ['edr_gastos_resumen'] });
+    qc.invalidateQueries({ queryKey: ['pagos_alertas_global'] });
     setToast({ tipo: 'desmarcado', concepto: pago.concepto, monto: pago.monto ?? 0 });
   }
 
@@ -718,9 +768,11 @@ export function ChecklistPagos() {
     let totalEstimado = 0,
       totalPagado = 0,
       itemsPagados = 0,
-      itemsTotal = 0;
+      itemsTotal = 0,
+      sinMonto = 0;
     for (const p of pagos ?? []) {
       itemsTotal++;
+      if (p.monto == null) sinMonto++;
       const m = p.monto ?? 0;
       totalEstimado += m;
       if (p.pagado) {
@@ -744,6 +796,7 @@ export function ChecklistPagos() {
       pendiente: totalEstimado - totalPagado,
       itemsPagados,
       itemsTotal,
+      sinMonto,
     };
   }, [pagos, programados]);
 
@@ -906,6 +959,13 @@ export function ChecklistPagos() {
             <p className="text-lg font-semibold text-gray-800">
               {formatARS(resumen.totalEstimado)}
             </p>
+            {/* El total se queda corto en silencio si hay filas sin importe. Decilo. */}
+            {resumen.sinMonto > 0 && (
+              <p className="mt-1 text-[11px] font-medium text-amber-700">
+                ⚠ {resumen.sinMonto} pago{resumen.sinMonto > 1 ? 's' : ''} sin monto: el total es
+                mayor
+              </p>
+            )}
           </div>
           <div className="rounded-lg border border-surface-border bg-white p-4">
             <p className="mb-1 text-xs text-gray-500">Total Pagado</p>
@@ -1018,8 +1078,20 @@ export function ChecklistPagos() {
                 {(programados ?? []).length})
               </span>
             </div>
-            <span className="text-sm font-semibold text-purple-800">
-              {formatARS((programados ?? []).reduce((s, p) => s + Number(p.monto ?? 0), 0))}
+            {/* El número grande al lado de "programados" se lee como deuda pendiente:
+                que muestre lo que FALTA debitar, y el total del mes en chico. */}
+            <span className="flex items-baseline gap-2">
+              <span className="text-sm font-semibold text-purple-800">
+                {formatARS(
+                  (programados ?? [])
+                    .filter((p) => p.programado)
+                    .reduce((s, p) => s + Number(p.monto ?? 0), 0),
+                )}
+              </span>
+              <span className="text-xs text-purple-400">
+                pendiente ·{' '}
+                {formatARS((programados ?? []).reduce((s, p) => s + Number(p.monto ?? 0), 0))} total
+              </span>
             </span>
           </div>
           <div className="overflow-x-auto">
