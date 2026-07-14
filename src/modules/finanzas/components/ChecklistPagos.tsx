@@ -48,7 +48,12 @@ interface PagoProgramado {
   medio_pago: string | null;
   numero_operacion: string | null;
   programado: boolean;
-  gastos: { proveedor: string | null; proveedor_id: string | null; local: string | null } | null;
+  gastos: {
+    proveedor: string | null;
+    proveedor_id: string | null;
+    local: string | null;
+    cancelado?: boolean | null;
+  } | null;
 }
 
 // ── constantes ───────────────────────────────────────────────────────────────
@@ -234,11 +239,14 @@ export function ChecklistPagos() {
   const { data: programados } = useQuery({
     queryKey: ['pagos_programados', periodo],
     queryFn: async () => {
+      // `!inner` + filtro sobre el embed: si el gasto padre fue cancelado (borrado
+      // lógico), sus echeqs son deuda fantasma y no tienen que listarse ni sumar.
       const { data, error } = await supabase
         .from('pagos_gastos')
         .select(
-          'id, gasto_id, fecha_pago, monto, medio_pago, numero_operacion, programado, gastos(proveedor, proveedor_id, local)',
+          'id, gasto_id, fecha_pago, monto, medio_pago, numero_operacion, programado, gastos!inner(proveedor, proveedor_id, local, cancelado)',
         )
+        .eq('gastos.cancelado', false)
         .or('programado.eq.true,medio_pago.eq.cheque_galicia')
         .gte('fecha_pago', rangoMes.desde)
         .lte('fecha_pago', rangoMes.hasta)

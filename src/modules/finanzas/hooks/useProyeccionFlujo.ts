@@ -163,9 +163,12 @@ export function useProyeccionFlujo(): ProyeccionResult {
   const { data: echeqsProg, isLoading: loadEch } = useQuery({
     queryKey: ['proy_echeqs_programados'],
     queryFn: async () => {
+      // `!inner` sobre gastos: los echeqs de un gasto cancelado (borrado lógico) no
+      // van a debitar nunca — si se cuentan, la proyección resta plata fantasma.
       const { data, error } = await supabase
         .from('pagos_gastos')
-        .select('fecha_pago, monto')
+        .select('fecha_pago, monto, gastos!inner(cancelado)')
+        .eq('gastos.cancelado', false)
         .eq('programado', true);
       if (error) throw error;
       const map = new Map<string, number>();
