@@ -114,6 +114,25 @@ function normPeriodo(p: string | null | undefined): string | null {
   if (m) return `${m[1]}-${m[2]}`;
   return null;
 }
+// 'YYYY-MM' -> el mes anterior. La fila manual del F931 suele estar cargada en el mes
+// del impuesto, y el VEP cae en el mes en que se paga (uno después).
+function mesAnterior(periodo: string): string {
+  const [y, m] = periodo.split('-').map(Number);
+  return m === 1
+    ? `${y - 1}-12`
+    : `${y}-${String(m - 1).padStart(2, '0')}`;
+}
+
+// Con qué conceptos ya cargados a mano puede corresponderse este VEP.
+function patronesConcepto(esCarga: boolean, impuesto: string | null | undefined): string[] {
+  if (esCarga) {
+    return ['concepto.ilike.%931%', 'concepto.ilike.%carga%social%'];
+  }
+  const imp = (impuesto ?? '').trim();
+  // Con menos de 4 letras (ej. "IVA" sí, "F" no) el ilike matchearía cualquier cosa.
+  return imp.length >= 4 ? [`concepto.ilike.%${imp}%`] : ['concepto.ilike.%__nunca__%'];
+}
+
 // 'YYYY-MM' (o 'YYYYMM') -> 'Abril 2026'
 function mesNombre(periodo: string | null): string {
   const norm = normPeriodo(periodo);
@@ -314,17 +333,44 @@ export function IntegracionesPage() {
         // UNIQUE(periodo, concepto) rechazaría el segundo como falso duplicado. El
         // número los distingue; el anti-duplicado real es por vep_numero (arriba).
         const concepto = v?.numero ? `${base} · VEP ${v.numero}` : base;
-        const { error } = await supabase.from('pagos_fijos').insert({
+
+        // El VEP es la fuente de verdad, pero la fila puede haberla cargado alguien a
+        // mano antes de que llegara el comprobante. En ese caso la VINCULAMOS (le
+        // pegamos número, monto real y comprobante) en vez de crear una segunda: así
+        // entró tres veces el F931 y quedó $8,7M de gasto fantasma en el EdR.
+        //
+        // Solo se vincula si NO hay ambigüedad: un único candidato y el monto coincide.
+        // El monto es el desempate que importa — la serie "F931 $7.000.000" de la
+        // moratoria también matchea por nombre y pisarla borraría la deuda vieja.
+        const { data: candidatos } = await supabase
+          .from('pagos_fijos')
+          .select('id, concepto, periodo, monto')
+          .is('vep_numero', null)
+          .eq('pagado', false)
+          .in('periodo', [periodoPago, mesAnterior(periodoPago)])
+          .or(patronesConcepto(carga, v?.impuesto).join(','));
+
+        const montoVep = v?.monto ?? null;
+        const coincideMonto = (m: number | null) =>
+          montoVep == null || m == null || Math.abs(m - montoVep) <= montoVep * 0.02;
+        const vinculables = (candidatos ?? []).filter((c) => coincideMonto(c.monto));
+        const aVincular = vinculables.length === 1 ? vinculables[0] : null;
+
+        const fila = {
           periodo: periodoPago,
           concepto,
           categoria: cat.nombre,
           categoria_gasto_id: cat.id,
-          monto: v?.monto ?? null,
+          monto: montoVep,
           fecha_vencimiento: venc ?? fechaPagoVep,
           comprobante_path: path,
           vep_numero: v?.numero ?? null,
           notas: `${base}${v?.numero ? ` · VEP N° ${v.numero}` : ''}${v?.impuesto ? ` · ${v.impuesto}` : ''}`.trim(),
-        });
+        };
+
+        const { error } = aVincular
+          ? await supabase.from('pagos_fijos').update(fila).eq('id', aVincular.id)
+          : await supabase.from('pagos_fijos').insert(fila);
         if (error) {
           // 23505 = viola un UNIQUE: el número de VEP (pagos_fijos_vep_numero_uidx) o
           // período+concepto. En ambos casos es el mismo VEP recargado: no duplicamos,
@@ -340,10 +386,20 @@ export function IntegracionesPage() {
           }
           throw error;
         }
+        // Cuando quedaron VARIOS candidatos (o el monto no coincidió con ninguno) no
+        // vinculamos nada, pero hay que decirlo: si no, el duplicado vuelve callado.
+        const sospechosos = (candidatos ?? []).filter((c) => c.id !== aVincular?.id);
+        const aviso =
+          aVincular != null
+            ? ` · se vinculó al pago que ya estaba cargado a mano ("${aVincular.concepto}", ${mesNombre(aVincular.periodo)}): no se duplicó`
+            : sospechosos.length > 0
+              ? ` · ⚠️ ojo: hay ${sospechosos.length} pago(s) parecido(s) cargado(s) a mano (${sospechosos.map((c) => `"${c.concepto}"`).join(', ')}). Si es el mismo, borrá el manual.`
+              : '';
+
         setItem({
           estado: 'ok',
           tipo: 'vep',
-          resultado: `VEP ${v?.impuesto ?? ''} → Finanzas → Pagos Fijos (${mesNombre(periodoPago)})${venc ? ` · vence ${venc}` : ''}`,
+          resultado: `VEP ${v?.impuesto ?? ''} → Finanzas → Pagos Fijos (${mesNombre(periodoPago)})${venc ? ` · vence ${venc}` : ''}${aviso}`,
         });
         qc.invalidateQueries({ queryKey: ['pagos_fijos'] });
         qc.invalidateQueries({ queryKey: ['pagos_alertas_global'] });
