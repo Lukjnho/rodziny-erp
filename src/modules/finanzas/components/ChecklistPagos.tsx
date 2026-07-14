@@ -1310,6 +1310,7 @@ function FilaPago({
         <input
           type="text"
           value={conceptoLocal}
+          title={pago.concepto}
           onChange={(e) => setConceptoLocal(e.target.value)}
           onBlur={() => {
             const t = conceptoLocal.trim();
@@ -1318,7 +1319,9 @@ function FilaPago({
           }}
           className={cn(
             ghost,
-            'max-w-[200px] text-sm font-medium text-gray-800',
+            // Sin max-w: la columna es la más ancha y el concepto largo se cortaba
+            // ("Pago cargas sociales Octub…"). El title muestra el texto completo.
+            'text-sm font-medium text-gray-800',
             pago.pagado && 'text-gray-400 line-through',
           )}
         />
@@ -1349,7 +1352,16 @@ function FilaPago({
       </td>
       <td className="px-4 py-1">
         <select
-          className={cn(ghost, 'max-w-[150px] text-xs text-gray-500')}
+          className={cn(
+            ghost,
+            'max-w-[150px] text-xs text-gray-500',
+            // Sin categoría el pago no entra en el EdR: que se note.
+            !pago.categoria_gasto_id && 'text-amber-700',
+          )}
+          title={
+            subcategorias.find((s) => s.id === pago.categoria_gasto_id)?.nombre ??
+            'Sin asignar — este pago no impacta el EdR'
+          }
           value={pago.categoria_gasto_id ?? ''}
           onChange={(e) => onUpdate({ categoria_gasto_id: e.target.value || null })}
         >
@@ -1368,11 +1380,15 @@ function FilaPago({
         </select>
       </td>
       <td className="px-4 py-1">
+        {/* Sin monto NO es monto cero: la fila no suma a la deuda y el total del mes
+            queda corto. El placeholder "0" hacía pasar el agujero por un importe. */}
         <MontoInput
           className={cn(
             ghost,
             'max-w-[130px] text-right text-sm font-medium tabular-nums text-gray-800',
+            pago.monto == null && 'bg-amber-50 text-amber-700 placeholder:text-amber-600',
           )}
+          placeholder={pago.monto == null ? 'falta' : '0'}
           value={pago.monto}
           onChange={() => {}}
           onCommit={(num) => {
@@ -1382,7 +1398,9 @@ function FilaPago({
         />
       </td>
       <td className="px-4 py-1 text-center">
-        <div className="flex items-center justify-center gap-1.5">
+        {/* flex-nowrap + whitespace-nowrap: el chip se partía en dos renglones y
+            estiraba la fila al doble de alto. */}
+        <div className="flex flex-nowrap items-center justify-center gap-1.5">
           <input
             type="date"
             className={cn(ghost, 'w-auto text-xs text-gray-600')}
@@ -1390,17 +1408,17 @@ function FilaPago({
             onChange={(e) => onUpdate({ fecha_vencimiento: e.target.value || null })}
           />
           {!pago.pagado && urg === 'vencido' && (
-            <span className="rounded bg-red-200 px-1.5 py-0.5 text-[10px] font-bold text-red-800">
+            <span className="whitespace-nowrap rounded bg-red-200 px-1.5 py-0.5 text-[10px] font-bold text-red-800">
               VENCIDO
             </span>
           )}
           {!pago.pagado && urg === 'hoy' && (
-            <span className="rounded bg-amber-200 px-1.5 py-0.5 text-[10px] font-bold text-amber-800">
+            <span className="whitespace-nowrap rounded bg-amber-200 px-1.5 py-0.5 text-[10px] font-bold text-amber-800">
               HOY
             </span>
           )}
           {!pago.pagado && urg === 'semana' && (
-            <span className="rounded bg-orange-200 px-1.5 py-0.5 text-[10px] font-bold text-orange-800">
+            <span className="whitespace-nowrap rounded bg-orange-200 px-1.5 py-0.5 text-[10px] font-bold text-orange-800">
               7 días
             </span>
           )}
@@ -1431,7 +1449,8 @@ function FilaPago({
       <td className="px-4 py-1">
         <input
           type="text"
-          className={cn(ghost, 'max-w-[150px] text-sm text-gray-500')}
+          className={cn(ghost, 'text-xs text-gray-500')}
+          title={pago.notas ?? ''}
           value={notasLocal}
           onChange={(e) => setNotasLocal(e.target.value)}
           onBlur={() => {
