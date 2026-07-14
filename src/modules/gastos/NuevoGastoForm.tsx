@@ -30,6 +30,8 @@ import {
 } from './types';
 import type { PrefillGasto } from './NuevoGastoModal';
 import { displayProveedor } from './proveedorDisplay';
+import { useDuplicadosGasto } from './useDuplicados';
+import { AvisoDuplicadosGasto } from './AvisoDuplicados';
 
 // Normaliza un nombre para matchear: minúsculas, sin acentos, sin espacios de más.
 function normNombreProv(s: string): string {
@@ -370,6 +372,18 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
 
   // Derivado: el importe como numero, parseado del input texto
   const importeTotal = useMemo(() => parseNumeroAR(importeTexto) ?? 0, [importeTexto]);
+
+  // ¿Esta factura ya está cargada? Corre siempre, también en la carga manual —
+  // `duplicados` (arriba) solo se llena cuando el gasto entra por OCR, y la
+  // extrusora de Saavedra se triplicó justamente cargándola a mano.
+  // Avisa; no bloquea. Ver useDuplicados.ts.
+  const { data: dupsCarga } = useDuplicadosGasto({
+    proveedorId,
+    nroComprobante,
+    importeTotal,
+    fecha,
+    enabled: open,
+  });
 
   // Plan de pagos: suma de las cuotas y cuánto falta asignar contra el total.
   const totalPlan = useMemo(
@@ -2397,6 +2411,8 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
                   )}
                 </div>
               )}
+
+              <AvisoDuplicadosGasto duplicados={dupsCarga ?? []} />
 
               {/* Importe */}
               <Field label="Importe total *">

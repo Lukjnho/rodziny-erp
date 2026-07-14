@@ -21,6 +21,8 @@ import { procesarComprobantePago } from '@/lib/ocrComprobantePago';
 import { MEDIO_PAGO_LABEL, medioRequiereComprobante, type MedioPago, type Gasto, type PagoGasto } from './types';
 import { recomputarEstadoGasto } from './recomputarEstadoGasto';
 import { useProveedoresMap, nombreProveedor } from './proveedorDisplay';
+import { useDuplicadosPago } from './useDuplicados';
+import { AvisoDuplicadosPago } from './AvisoDuplicados';
 
 interface Props {
   open: boolean;
@@ -112,6 +114,14 @@ export function PagarGastoModal({ open, gasto, onClose }: Props) {
   const [notas, setNotas] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
   const [guardando, setGuardando] = useState(false);
+
+  // ¿Este N° de operación / echeq ya lo usó otro gasto? Avisa; no bloquea (una
+  // misma transferencia puede pagar varias facturas). Ver useDuplicados.ts.
+  const { data: pagosConMismoNumero } = useDuplicadosPago({
+    numeroOperacion: nOperacion,
+    gastoId: gasto?.id ?? null,
+    enabled: open,
+  });
 
   // Pagos previos del gasto — para calcular saldo pendiente
   const { data: pagosPrevios = [] } = useQuery<(PagoGasto & { descuento?: number | null })[]>({
@@ -634,6 +644,9 @@ export function PagarGastoModal({ open, gasto, onClose }: Props) {
                     ? 'Copialo del comprobante MercadoPago.'
                     : 'Copialo del comprobante. Se usa para conciliar con el extracto bancario.'}
               </p>
+              <div className="mt-2">
+                <AvisoDuplicadosPago duplicados={pagosConMismoNumero ?? []} />
+              </div>
             </Field>
           )}
 

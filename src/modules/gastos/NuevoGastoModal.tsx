@@ -17,6 +17,8 @@ import type {
 import { TIPO_COMPROBANTE_LABEL, MEDIO_PAGO_LABEL, medioRequiereComprobante } from './types';
 import { PagarGastoModal } from './PagarGastoModal';
 import { displayProveedor } from './proveedorDisplay';
+import { useDuplicadosGasto } from './useDuplicados';
+import { AvisoDuplicadosGasto } from './AvisoDuplicados';
 
 export interface PrefillGasto {
   recepcion_id?: string;
@@ -458,6 +460,17 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
   ]);
 
   const usarSplit = splitPorSubcat.length >= 1 && form.vincular_stock && !gastoEditando;
+
+  // ¿Esta factura ya está cargada? Avisa; no bloquea. Ver useDuplicados.ts.
+  const { data: duplicados } = useDuplicadosGasto({
+    gastoId: gastoEditando?.id ?? null,
+    proveedorId: form.proveedor_id,
+    proveedorTexto: form.proveedor_libre,
+    nroComprobante: form.nro_comprobante,
+    importeTotal: parseFloat(form.importe_total.replace(',', '.')) || 0,
+    fecha: form.fecha,
+    enabled: open,
+  });
 
   function agregarProducto(productoId: string) {
     const p = productos?.find((x: any) => x.id === productoId);
@@ -1074,6 +1087,8 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
               )}
             </div>
           </div>
+
+          <AvisoDuplicadosGasto duplicados={duplicados ?? []} />
 
           {/* Sección 3: Importes */}
           <div>
