@@ -58,6 +58,7 @@ interface PagoProgramado {
     proveedor_id: string | null;
     local: string | null;
     cancelado?: boolean | null;
+    comentario?: string | null;
   } | null;
 }
 
@@ -253,7 +254,7 @@ export function ChecklistPagos() {
       const { data, error } = await supabase
         .from('pagos_gastos')
         .select(
-          'id, gasto_id, fecha_pago, monto, medio_pago, numero_operacion, programado, gastos!inner(proveedor, proveedor_id, local, cancelado)',
+          'id, gasto_id, fecha_pago, monto, medio_pago, numero_operacion, programado, gastos!inner(proveedor, proveedor_id, local, cancelado, comentario)',
         )
         .eq('gastos.cancelado', false)
         .or('programado.eq.true,medio_pago.eq.cheque_galicia')
@@ -263,13 +264,24 @@ export function ChecklistPagos() {
       if (error) throw error;
       // El embed `gastos` puede venir como objeto o como array de 1 según la versión
       // de supabase-js: lo normalizamos a objeto.
-      return (data ?? []).map((r) => {
-        const row = r as unknown as Omit<PagoProgramado, 'gastos'> & {
-          gastos: PagoProgramado['gastos'] | PagoProgramado['gastos'][];
-        };
-        const g = Array.isArray(row.gastos) ? (row.gastos[0] ?? null) : row.gastos;
-        return { ...row, gastos: g } as PagoProgramado;
-      });
+      return (data ?? [])
+        .filter((r) => {
+          // Un pago fijo tildado con cheque Galicia genera un gasto "Pago fijo: X",
+          // cuyo pago cae acá por el `medio_pago.eq.cheque_galicia`. Pero ese pago YA
+          // está en la tabla de arriba con su propia fila: listarlo de nuevo lo cuenta
+          // DOS VECES en Total Estimado y Total Pagado (en julio-2026: $8,27M de más).
+          const g = (Array.isArray(r.gastos) ? r.gastos[0] : r.gastos) as {
+            comentario?: string | null;
+          } | null;
+          return !(g?.comentario ?? '').startsWith('Pago fijo:');
+        })
+        .map((r) => {
+          const row = r as unknown as Omit<PagoProgramado, 'gastos'> & {
+            gastos: PagoProgramado['gastos'] | PagoProgramado['gastos'][];
+          };
+          const g = Array.isArray(row.gastos) ? (row.gastos[0] ?? null) : row.gastos;
+          return { ...row, gastos: g } as PagoProgramado;
+        });
     },
   });
 
