@@ -5,7 +5,12 @@ import { procesarComprobantePago } from '@/lib/ocrComprobantePago';
 import { formatARS, cn } from '@/lib/utils';
 import { MontoInput } from '@/components/ui/MontoInput';
 import { type MedioPago, MEDIO_PAGO_LABEL, medioRequiereComprobante } from '@/modules/gastos/types';
-import { urgenciaPago, usePagosAlertas, type UrgenciaPago } from '@/modules/finanzas/hooks/usePagosAlertas';
+import {
+  urgenciaPago,
+  diasHastaVto,
+  usePagosAlertas,
+  type UrgenciaPago,
+} from '@/modules/finanzas/hooks/usePagosAlertas';
 import { recomputarEstadoGasto } from '@/modules/gastos/recomputarEstadoGasto';
 import {
   useProveedoresMap,
@@ -147,7 +152,11 @@ function hoy(): string {
 }
 
 // Comparador: vencimiento ASC, nulls al final
+// Los pagados caen al fondo del grupo: ya no son deuda, no compiten por tu atención.
+// Arriba, lo pendiente ordenado por vencimiento — primero lo que vence antes (y lo
+// vencido, que tiene fecha vieja, encabeza). Sin fecha, al final de su bloque.
 function compararPorVencimiento(a: PagoFijo, b: PagoFijo): number {
+  if (a.pagado !== b.pagado) return a.pagado ? 1 : -1;
   if (!a.fecha_vencimiento && !b.fecha_vencimiento) return 0;
   if (!a.fecha_vencimiento) return 1;
   if (!b.fecha_vencimiento) return -1;
@@ -366,11 +375,7 @@ export function ChecklistPagos() {
         if (a.fecha_vencimiento) {
           const fOrig = new Date(a.fecha_vencimiento + 'T12:00:00');
           const diaOrig = fOrig.getDate();
-          const ultimoDiaOrig = new Date(
-            fOrig.getFullYear(),
-            fOrig.getMonth() + 1,
-            0,
-          ).getDate();
+          const ultimoDiaOrig = new Date(fOrig.getFullYear(), fOrig.getMonth() + 1, 0).getDate();
           const dia =
             diaOrig === ultimoDiaOrig ? ultimoDiaNuevo : Math.min(diaOrig, ultimoDiaNuevo);
           fechaVto = `${periodo}-${String(dia).padStart(2, '0')}`;
@@ -596,7 +601,7 @@ export function ChecklistPagos() {
         const subcat = subcategorias.find((c) => c.id === fields.categoria_gasto_id);
         const catPadre = subcat?.parent_id ? (padres.get(subcat.parent_id) ?? '') : '';
         updateGasto.categoria = catPadre;
-        updateGasto.subcategoria = subcat?.nombre ?? (fields.concepto ?? pago.concepto);
+        updateGasto.subcategoria = subcat?.nombre ?? fields.concepto ?? pago.concepto;
       }
       if ('medio_pago' in fields) {
         updateGasto.medio_pago = fields.medio_pago;
@@ -607,10 +612,7 @@ export function ChecklistPagos() {
         await supabase.from('gastos').update(updateGasto).eq('id', pago.gasto_id);
       }
       if (Object.keys(updatePagoGasto).length > 0) {
-        await supabase
-          .from('pagos_gastos')
-          .update(updatePagoGasto)
-          .eq('gasto_id', pago.gasto_id);
+        await supabase.from('pagos_gastos').update(updatePagoGasto).eq('gasto_id', pago.gasto_id);
       }
     }
 
@@ -861,8 +863,7 @@ export function ChecklistPagos() {
             >
               <span>
                 <strong>{labelMes(u.periodo)}</strong> — {u.cantidad}{' '}
-                {u.cantidad === 1 ? 'pago' : 'pagos'} · deuda{' '}
-                <strong>{formatARS(u.monto)}</strong>
+                {u.cantidad === 1 ? 'pago' : 'pagos'} · deuda <strong>{formatARS(u.monto)}</strong>
               </span>
               <button
                 onClick={() => setPeriodo(u.periodo)}
@@ -1022,51 +1023,60 @@ export function ChecklistPagos() {
                 </tr>
               </thead>
               <tbody>
-                {(programados ?? []).map((pg) => {
-                  const pagado = !pg.programado;
-                  return (
-                    <tr
-                      key={pg.id}
-                      className={cn('border-b border-gray-50', pagado && 'bg-green-50/40')}
-                    >
-                      <td className="px-4 py-1 text-gray-800">
-                        <ProveedorLabel
-                          value={resolverProveedor(pg.gastos ?? {}, proveedoresMap, '—')}
-                        />
-                      </td>
-                      <td className="px-4 py-1 text-center text-gray-600">
-                        {new Date(pg.fecha_pago + 'T12:00:00').toLocaleDateString('es-AR', {
-                          day: '2-digit',
-                          month: '2-digit',
-                        })}
-                      </td>
-                      <td className="px-4 py-1 text-gray-600">
-                        {pg.medio_pago
-                          ? (MEDIO_PAGO_LABEL[pg.medio_pago as MedioPago] ?? pg.medio_pago)
-                          : '—'}
-                      </td>
-                      <td className="px-4 py-1 text-gray-500">{pg.numero_operacion ?? '—'}</td>
-                      <td className="px-4 py-1 text-right font-medium text-gray-800">
-                        {formatARS(Number(pg.monto ?? 0))}
-                      </td>
-                      <td className="px-4 py-1 text-center">
-                        <input
-                          type="checkbox"
-                          checked={pagado}
-                          disabled={toggleProgramado.isPending}
-                          onChange={(e) =>
-                            toggleProgramado.mutate({
-                              id: pg.id,
-                              gasto_id: pg.gasto_id,
-                              pagar: e.target.checked,
-                            })
-                          }
-                          className="h-4 w-4 cursor-pointer rounded"
-                        />
-                      </td>
-                    </tr>
-                  );
-                })}
+                {[...(programados ?? [])]
+                  // Mismo criterio que los pagos fijos: lo pagado al fondo, lo que
+                  // debita antes arriba. (`programado=false` = ya se pagó.)
+                  .sort((a, b) => {
+                    const pa = !a.programado,
+                      pb = !b.programado;
+                    if (pa !== pb) return pa ? 1 : -1;
+                    return (a.fecha_pago ?? '').localeCompare(b.fecha_pago ?? '');
+                  })
+                  .map((pg) => {
+                    const pagado = !pg.programado;
+                    return (
+                      <tr
+                        key={pg.id}
+                        className={cn('border-b border-gray-50', pagado && 'bg-green-50/40')}
+                      >
+                        <td className="px-4 py-1 text-gray-800">
+                          <ProveedorLabel
+                            value={resolverProveedor(pg.gastos ?? {}, proveedoresMap, '—')}
+                          />
+                        </td>
+                        <td className="px-4 py-1 text-center text-gray-600">
+                          {new Date(pg.fecha_pago + 'T12:00:00').toLocaleDateString('es-AR', {
+                            day: '2-digit',
+                            month: '2-digit',
+                          })}
+                        </td>
+                        <td className="px-4 py-1 text-gray-600">
+                          {pg.medio_pago
+                            ? (MEDIO_PAGO_LABEL[pg.medio_pago as MedioPago] ?? pg.medio_pago)
+                            : '—'}
+                        </td>
+                        <td className="px-4 py-1 text-gray-500">{pg.numero_operacion ?? '—'}</td>
+                        <td className="px-4 py-1 text-right font-medium text-gray-800">
+                          {formatARS(Number(pg.monto ?? 0))}
+                        </td>
+                        <td className="px-4 py-1 text-center">
+                          <input
+                            type="checkbox"
+                            checked={pagado}
+                            disabled={toggleProgramado.isPending}
+                            onChange={(e) =>
+                              toggleProgramado.mutate({
+                                id: pg.id,
+                                gasto_id: pg.gasto_id,
+                                pagar: e.target.checked,
+                              })
+                            }
+                            className="h-4 w-4 cursor-pointer rounded"
+                          />
+                        </td>
+                      </tr>
+                    );
+                  })}
               </tbody>
             </table>
           </div>
@@ -1215,8 +1225,8 @@ export function ChecklistPagos() {
               </p>
               {toast.tipo === 'pagado' && (
                 <p className="mt-1.5 rounded border border-amber-300 bg-amber-50 px-2 py-1 text-[11px] font-medium text-amber-900">
-                  ⚠ El gasto contable ya quedó registrado. <strong>No lo cargues de nuevo</strong> en
-                  Compras-Gastos.
+                  ⚠ El gasto contable ya quedó registrado. <strong>No lo cargues de nuevo</strong>{' '}
+                  en Compras-Gastos.
                 </p>
               )}
             </div>
@@ -1237,7 +1247,13 @@ export function ChecklistPagos() {
           medioInicial={medioPagoModal.medioInicial}
           comprobanteInicial={medioPagoModal.comprobantePathExistente}
           subfolder={`pagos-fijos/${derivarLocal(medioPagoModal.concepto)}`}
-          onConfirmar={(medio, numeroOperacion, archivo, comprobantePathPreSubido, reusarDeCorreos) => {
+          onConfirmar={(
+            medio,
+            numeroOperacion,
+            archivo,
+            comprobantePathPreSubido,
+            reusarDeCorreos,
+          ) => {
             const pago = (pagos ?? []).find((p) => p.id === medioPagoModal.pagoId);
             if (pago)
               marcarPagado(
@@ -1284,6 +1300,7 @@ function FilaPago({
   }, [pago.concepto]);
 
   const urg: UrgenciaPago = pago.pagado ? 'ok' : urgenciaPago(pago.fecha_vencimiento);
+  const dias = diasHastaVto(pago.fecha_vencimiento);
 
   // Campo "fantasma": se ve como texto plano y solo muestra caja al hover/foco.
   const ghost =
@@ -1408,8 +1425,11 @@ function FilaPago({
             onChange={(e) => onUpdate({ fecha_vencimiento: e.target.value || null })}
           />
           {!pago.pagado && urg === 'vencido' && (
-            <span className="whitespace-nowrap rounded bg-red-200 px-1.5 py-0.5 text-[10px] font-bold text-red-800">
-              VENCIDO
+            <span
+              className="whitespace-nowrap rounded bg-red-200 px-1.5 py-0.5 text-[10px] font-bold text-red-800"
+              title={dias != null ? `Vencido hace ${Math.abs(dias)} día(s)` : 'Vencido'}
+            >
+              {dias != null && dias < -1 ? `VENCIDO ${Math.abs(dias)}d` : 'VENCIDO'}
             </span>
           )}
           {!pago.pagado && urg === 'hoy' && (
@@ -1417,9 +1437,11 @@ function FilaPago({
               HOY
             </span>
           )}
-          {!pago.pagado && urg === 'semana' && (
+          {/* Los días que FALTAN, no la etiqueta del rango: decía "7 días" para
+              cualquier vencimiento dentro de la semana. */}
+          {!pago.pagado && urg === 'semana' && dias != null && (
             <span className="whitespace-nowrap rounded bg-orange-200 px-1.5 py-0.5 text-[10px] font-bold text-orange-800">
-              7 días
+              {dias === 1 ? 'MAÑANA' : `${dias} días`}
             </span>
           )}
         </div>
@@ -1831,8 +1853,8 @@ function ModalMedioPago({
               </label>
               {comprobanteReusado && (
                 <p className="mb-1 rounded border border-green-200 bg-green-50 px-2 py-1 text-[11px] text-green-800">
-                  ✓ Ya hay un comprobante adjunto (del documento subido). No hace falta
-                  resubirlo. Si querés reemplazarlo, elegí otro archivo.
+                  ✓ Ya hay un comprobante adjunto (del documento subido). No hace falta resubirlo.
+                  Si querés reemplazarlo, elegí otro archivo.
                 </p>
               )}
               <input

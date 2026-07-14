@@ -16,13 +16,19 @@ export interface UrgentesEnPeriodo {
 
 export type UrgenciaPago = 'vencido' | 'hoy' | 'semana' | 'proximo' | 'ok';
 
-export function urgenciaPago(fechaVto: string | null): UrgenciaPago {
-  if (!fechaVto) return 'ok';
+// Días que faltan para el vencimiento. Negativo = ya venció. null = sin fecha.
+export function diasHastaVto(fechaVto: string | null): number | null {
+  if (!fechaVto) return null;
   const hoy = new Date();
   hoy.setHours(0, 0, 0, 0);
   const vto = new Date(fechaVto + 'T12:00:00');
   vto.setHours(0, 0, 0, 0);
-  const diffDias = Math.floor((vto.getTime() - hoy.getTime()) / (1000 * 60 * 60 * 24));
+  return Math.floor((vto.getTime() - hoy.getTime()) / (1000 * 60 * 60 * 24));
+}
+
+export function urgenciaPago(fechaVto: string | null): UrgenciaPago {
+  const diffDias = diasHastaVto(fechaVto);
+  if (diffDias == null) return 'ok';
 
   if (diffDias < 0) return 'vencido';
   if (diffDias === 0) return 'hoy';
