@@ -986,7 +986,7 @@ export function ChecklistPagos() {
       {/* Echeqs y pagos programados del mes (de pagos_gastos.programado) */}
       {hayProgramados && (
         <div className="overflow-hidden rounded-lg border border-purple-200 bg-white">
-          <div className="flex items-center justify-between bg-purple-50 px-4 py-3">
+          <div className="flex items-center justify-between bg-purple-50 px-4 py-2">
             <div className="flex items-center gap-2">
               <span className="text-sm">📝</span>
               <span className="text-sm font-semibold text-purple-900">
@@ -1005,12 +1005,12 @@ export function ChecklistPagos() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-gray-100 text-xs uppercase text-gray-400">
-                  <th className="px-4 py-2 text-left font-medium">Proveedor</th>
-                  <th className="px-4 py-2 text-center font-medium">Fecha débito</th>
-                  <th className="px-4 py-2 text-left font-medium">Medio</th>
-                  <th className="px-4 py-2 text-left font-medium">N° echeq/op</th>
-                  <th className="px-4 py-2 text-right font-medium">Monto</th>
-                  <th className="px-4 py-2 text-center font-medium">Pagado</th>
+                  <th className="px-4 py-1.5 text-left font-medium">Proveedor</th>
+                  <th className="px-4 py-1.5 text-center font-medium">Fecha débito</th>
+                  <th className="px-4 py-1.5 text-left font-medium">Medio</th>
+                  <th className="px-4 py-1.5 text-left font-medium">N° echeq/op</th>
+                  <th className="px-4 py-1.5 text-right font-medium">Monto</th>
+                  <th className="px-4 py-1.5 text-center font-medium">Pagado</th>
                 </tr>
               </thead>
               <tbody>
@@ -1021,27 +1021,27 @@ export function ChecklistPagos() {
                       key={pg.id}
                       className={cn('border-b border-gray-50', pagado && 'bg-green-50/40')}
                     >
-                      <td className="px-4 py-2 text-gray-800">
+                      <td className="px-4 py-1 text-gray-800">
                         <ProveedorLabel
                           value={resolverProveedor(pg.gastos ?? {}, proveedoresMap, '—')}
                         />
                       </td>
-                      <td className="px-4 py-2 text-center text-gray-600">
+                      <td className="px-4 py-1 text-center text-gray-600">
                         {new Date(pg.fecha_pago + 'T12:00:00').toLocaleDateString('es-AR', {
                           day: '2-digit',
                           month: '2-digit',
                         })}
                       </td>
-                      <td className="px-4 py-2 text-gray-600">
+                      <td className="px-4 py-1 text-gray-600">
                         {pg.medio_pago
                           ? (MEDIO_PAGO_LABEL[pg.medio_pago as MedioPago] ?? pg.medio_pago)
                           : '—'}
                       </td>
-                      <td className="px-4 py-2 text-gray-500">{pg.numero_operacion ?? '—'}</td>
-                      <td className="px-4 py-2 text-right font-medium text-gray-800">
+                      <td className="px-4 py-1 text-gray-500">{pg.numero_operacion ?? '—'}</td>
+                      <td className="px-4 py-1 text-right font-medium text-gray-800">
                         {formatARS(Number(pg.monto ?? 0))}
                       </td>
-                      <td className="px-4 py-2 text-center">
+                      <td className="px-4 py-1 text-center">
                         <input
                           type="checkbox"
                           checked={pagado}
@@ -1080,7 +1080,7 @@ export function ChecklistPagos() {
             >
               <button
                 onClick={() => toggleSeccion(cat)}
-                className="flex w-full items-center justify-between bg-gray-50 px-4 py-3 text-left transition-colors hover:bg-gray-100"
+                className="flex w-full items-center justify-between bg-gray-50 px-4 py-2 text-left transition-colors hover:bg-gray-100"
               >
                 <div className="flex items-center gap-2">
                   <span className="text-sm">{abierta ? '▼' : '▶'}</span>
@@ -1098,14 +1098,14 @@ export function ChecklistPagos() {
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b border-gray-100 text-xs uppercase text-gray-400">
-                        <th className="px-4 py-2 text-left font-medium">Concepto</th>
-                        <th className="px-4 py-2 text-left font-medium">Cat. EdR</th>
-                        <th className="px-4 py-2 text-right font-medium">Monto</th>
-                        <th className="px-4 py-2 text-center font-medium">Vto.</th>
-                        <th className="px-4 py-2 text-center font-medium">Pagado</th>
-                        <th className="px-4 py-2 text-left font-medium">Medio</th>
-                        <th className="px-4 py-2 text-left font-medium">Notas</th>
-                        <th className="px-2 py-2"></th>
+                        <th className="px-4 py-1.5 text-left font-medium">Concepto</th>
+                        <th className="px-4 py-1.5 text-left font-medium">Cat. EdR</th>
+                        <th className="px-4 py-1.5 text-right font-medium">Monto</th>
+                        <th className="px-4 py-1.5 text-center font-medium">Vto.</th>
+                        <th className="px-4 py-1.5 text-center font-medium">Pagado</th>
+                        <th className="px-4 py-1.5 text-left font-medium">Medio</th>
+                        <th className="px-4 py-1.5 text-left font-medium">Notas</th>
+                        <th className="px-2 py-1.5"></th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1279,7 +1279,7 @@ function FilaPago({
 
   // Campo "fantasma": se ve como texto plano y solo muestra caja al hover/foco.
   const ghost =
-    'w-full rounded border border-transparent bg-transparent px-1.5 py-1 hover:border-gray-200 focus:border-rodziny-500 focus:bg-white focus:outline-none';
+    'w-full rounded border border-transparent bg-transparent px-1.5 py-0.5 hover:border-gray-200 focus:border-rodziny-500 focus:bg-white focus:outline-none';
 
   // Acento de urgencia: barrita de color a la izquierda en vez de pintar la fila.
   const acento =
@@ -1298,7 +1298,7 @@ function FilaPago({
         pago.pagado && 'bg-green-50/20',
       )}
     >
-      <td className={cn('px-4 py-2', acento)}>
+      <td className={cn('px-4 py-1', acento)}>
         <input
           type="text"
           value={conceptoLocal}
@@ -1315,7 +1315,7 @@ function FilaPago({
           )}
         />
         <select
-          className="mt-0.5 max-w-[200px] rounded border border-transparent bg-transparent px-1.5 py-0.5 text-[10px] text-gray-400 opacity-0 transition-opacity hover:border-gray-200 focus:border-rodziny-500 focus:bg-white focus:opacity-100 focus:outline-none group-hover:opacity-100"
+          className="max-w-[200px] rounded border border-transparent bg-transparent px-1.5 py-0 text-[10px] leading-tight text-gray-400 opacity-0 transition-opacity hover:border-gray-200 focus:border-rodziny-500 focus:bg-white focus:opacity-100 focus:outline-none group-hover:opacity-100"
           value={pago.categoria}
           onChange={(e) => onUpdate({ categoria: e.target.value })}
         >
@@ -1329,7 +1329,7 @@ function FilaPago({
           )}
         </select>
         <select
-          className="mt-0.5 ml-1 rounded border border-transparent bg-transparent px-1.5 py-0.5 text-[10px] text-gray-400 opacity-0 transition-opacity hover:border-gray-200 focus:border-rodziny-500 focus:bg-white focus:opacity-100 focus:outline-none group-hover:opacity-100"
+          className="ml-1 rounded border border-transparent bg-transparent px-1.5 py-0 text-[10px] leading-tight text-gray-400 opacity-0 transition-opacity hover:border-gray-200 focus:border-rodziny-500 focus:bg-white focus:opacity-100 focus:outline-none group-hover:opacity-100"
           value={pago.local ?? 'sas'}
           onChange={(e) => onUpdate({ local: e.target.value })}
           title="Local / destino del gasto"
@@ -1339,7 +1339,7 @@ function FilaPago({
           <option value="saavedra">Saavedra</option>
         </select>
       </td>
-      <td className="px-4 py-2">
+      <td className="px-4 py-1">
         <select
           className={cn(ghost, 'max-w-[150px] text-xs text-gray-500')}
           value={pago.categoria_gasto_id ?? ''}
@@ -1359,7 +1359,7 @@ function FilaPago({
           ))}
         </select>
       </td>
-      <td className="px-4 py-2">
+      <td className="px-4 py-1">
         <MontoInput
           className={cn(
             ghost,
@@ -1373,7 +1373,7 @@ function FilaPago({
           }}
         />
       </td>
-      <td className="px-4 py-2 text-center">
+      <td className="px-4 py-1 text-center">
         <div className="flex items-center justify-center gap-1.5">
           <input
             type="date"
@@ -1398,7 +1398,7 @@ function FilaPago({
           )}
         </div>
       </td>
-      <td className="px-4 py-2 text-center">
+      <td className="px-4 py-1 text-center">
         <input
           type="checkbox"
           checked={pago.pagado}
@@ -1406,7 +1406,7 @@ function FilaPago({
           className="h-4 w-4 cursor-pointer rounded border-gray-300 text-green-600 focus:ring-green-500"
         />
       </td>
-      <td className="px-4 py-2">
+      <td className="px-4 py-1">
         <select
           className={cn(ghost, 'text-xs text-gray-500')}
           value={pago.medio_pago ?? ''}
@@ -1420,7 +1420,7 @@ function FilaPago({
           ))}
         </select>
       </td>
-      <td className="px-4 py-2">
+      <td className="px-4 py-1">
         <input
           type="text"
           className={cn(ghost, 'max-w-[150px] text-sm text-gray-500')}
@@ -1432,7 +1432,7 @@ function FilaPago({
           placeholder="—"
         />
       </td>
-      <td className="px-2 py-2">
+      <td className="px-2 py-1">
         <div className="flex items-center gap-2">
           <select
             className="max-w-[110px] rounded border border-transparent bg-transparent px-1 py-0.5 text-[10px] text-gray-400 opacity-0 transition-opacity hover:border-gray-200 focus:border-rodziny-500 focus:bg-white focus:opacity-100 focus:outline-none group-hover:opacity-100"
