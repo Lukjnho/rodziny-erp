@@ -1,10 +1,23 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
+import { useAuth } from '@/lib/auth';
+import { esCuitValido, formatearCuit, normalizarCuit } from '@/lib/cuit';
+import { procesarFactura } from '@/lib/ocrFactura';
 import type { Proveedor, CategoriaGasto, CondicionIVA, MedioPago } from './types';
 import { MEDIO_PAGO_LABEL } from './types';
 import { displayProveedor, ProveedorLabel } from './proveedorDisplay';
+
+// Mapea la condición IVA que devuelve el OCR (texto libre) a nuestro enum.
+function condicionIvaDeOcr(txt: string | null | undefined): CondicionIVA | null {
+  const t = (txt ?? '').toLowerCase();
+  if (t.includes('responsable')) return 'responsable_inscripto';
+  if (t.includes('monotrib')) return 'monotributo';
+  if (t.includes('exento')) return 'exento';
+  if (t.includes('consumidor') || t.includes('final')) return 'consumidor_final';
+  return null;
+}
 
 const CONDICIONES: { value: CondicionIVA; label: string }[] = [
   { value: 'responsable_inscripto', label: 'Responsable Inscripto' },
@@ -102,9 +115,15 @@ function sanitizeCuit(s: string): string {
 
 export function ProveedoresPanel() {
   const qc = useQueryClient();
+  const { user } = useAuth();
   const [filtro, setFiltro] = useState('');
   const [verInactivos, setVerInactivos] = useState(false);
   const [editando, setEditando] = useState<Partial<Proveedor> | null>(null);
+  // "Proveedor informal (sin CUIT)": escape para feria/verdulería que no da factura.
+  // Sin esto, el CUIT es obligatorio y validado (evita duplicados por dato faltante).
+  const [sinCuit, setSinCuit] = useState(false);
+  const [leyendoFactura, setLeyendoFactura] = useState(false);
+  const facturaInputRef = useRef<HTMLInputElement>(null);
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [importando, setImportando] = useState(false);
@@ -287,6 +306,49 @@ export function ProveedoresPanel() {
     return lista;
   }, [proveedores, filtro, verInactivos]);
 
+  // Leer CUIT + razón social de una factura del proveedor vía OCR y autocompletar.
+  // Si el CUIT ya existe en el ERP, avisa en vez de crear un duplicado — que es
+  // justo lo que esto viene a evitar.
+  async function leerFactura(file: File) {
+    setLeyendoFactura(true);
+    setError(null);
+    try {
+      const res = await procesarFactura({ archivo: file, userId: user?.id ?? null });
+      if (res.error) {
+        setError(res.error);
+        return;
+      }
+      if (res.proveedor_match) {
+        const nom = res.proveedor_match.nombre_comercial ?? res.proveedor_match.razon_social;
+        setError(
+          `Ese CUIT (${res.proveedor_match.cuit}) ya está cargado como "${nom}". No lo dupliques: cerrá esto y editá el existente.`,
+        );
+        return;
+      }
+      const d = res.datos;
+      if (!d) {
+        setError('No se pudieron leer los datos de la factura. Cargalos a mano.');
+        return;
+      }
+      setEditando((prev) => ({
+        ...prev,
+        razon_social: d.emisor_razon_social ?? prev?.razon_social ?? '',
+        nombre_comercial: d.emisor_nombre_fantasia ?? prev?.nombre_comercial ?? null,
+        cuit: d.emisor_cuit ? formatearCuit(d.emisor_cuit) : prev?.cuit ?? null,
+        condicion_iva: condicionIvaDeOcr(d.emisor_condicion_iva) ?? prev?.condicion_iva ?? null,
+      }));
+      if (d.emisor_cuit && !esCuitValido(d.emisor_cuit)) {
+        setError('Ojo: el CUIT leído no pasa la validación. Revisalo contra la factura.');
+      } else {
+        setSinCuit(false);
+      }
+    } catch (e: any) {
+      setError(e.message ?? 'Error leyendo la factura');
+    } finally {
+      setLeyendoFactura(false);
+    }
+  }
+
   async function guardar() {
     if (!editando) return;
     setError(null);
@@ -295,12 +357,25 @@ export function ProveedoresPanel() {
       setError('Razón social requerida');
       return;
     }
+    // CUIT/CUIL obligatorio y validado, salvo que se marque "sin CUIT" (informal).
+    // El CUIT es la clave real del proveedor: exigirlo corta los duplicados de raíz.
+    const cuitNorm = normalizarCuit(editando.cuit);
+    if (!sinCuit) {
+      if (!cuitNorm) {
+        setError('El CUIT/CUIL es obligatorio. Si es un proveedor informal sin CUIT, marcá la casilla.');
+        return;
+      }
+      if (!esCuitValido(cuitNorm)) {
+        setError('El CUIT/CUIL no es válido (revisá los 11 dígitos y el verificador).');
+        return;
+      }
+    }
     setGuardando(true);
     try {
       const payload = {
         razon_social: razon,
         nombre_comercial: editando.nombre_comercial?.trim() || null,
-        cuit: editando.cuit?.trim() || null,
+        cuit: !sinCuit && cuitNorm ? formatearCuit(cuitNorm) : null,
         cuits_alt: (editando.cuits_alt ?? []).filter((c) => c.trim().length > 0),
         aliases: (editando.aliases ?? []).filter((a) => a.trim().length > 0),
         condicion_iva: editando.condicion_iva ?? null,
@@ -374,7 +449,11 @@ export function ProveedoresPanel() {
           {importando ? 'Importando…' : '📥 Importar desde histórico'}
         </button>
         <button
-          onClick={() => setEditando({ ...FORM_VACIO })}
+          onClick={() => {
+            setSinCuit(false);
+            setError(null);
+            setEditando({ ...FORM_VACIO });
+          }}
           className="rounded-md bg-rodziny-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-rodziny-800"
         >
           + Nuevo proveedor
@@ -452,7 +531,11 @@ export function ProveedoresPanel() {
                 </td>
                 <td className="px-3 py-2 text-right">
                   <button
-                    onClick={() => setEditando({ ...p })}
+                    onClick={() => {
+                      setSinCuit(!p.cuit);
+                      setError(null);
+                      setEditando({ ...p });
+                    }}
                     className="text-xs text-rodziny-700 hover:underline"
                   >
                     Editar
@@ -561,12 +644,33 @@ export function ProveedoresPanel() {
               <h3 className="font-semibold text-gray-900">
                 {editando.id ? 'Editar proveedor' : 'Nuevo proveedor'}
               </h3>
-              <button
-                onClick={() => setEditando(null)}
-                className="text-xl leading-none text-gray-400 hover:text-gray-600"
-              >
-                ×
-              </button>
+              <div className="flex items-center gap-3">
+                <input
+                  ref={facturaInputRef}
+                  type="file"
+                  accept="image/*,application/pdf"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) leerFactura(f);
+                    e.target.value = '';
+                  }}
+                />
+                <button
+                  onClick={() => facturaInputRef.current?.click()}
+                  disabled={leyendoFactura}
+                  className="rounded-md border border-rodziny-300 bg-rodziny-50 px-3 py-1.5 text-xs font-medium text-rodziny-800 transition-colors hover:bg-rodziny-100 disabled:opacity-50"
+                  title="Subí una factura del proveedor y la IA extrae CUIT y razón social"
+                >
+                  {leyendoFactura ? 'Leyendo…' : '📄 Leer de factura'}
+                </button>
+                <button
+                  onClick={() => setEditando(null)}
+                  className="text-xl leading-none text-gray-400 hover:text-gray-600"
+                >
+                  ×
+                </button>
+              </div>
             </div>
             <div className="space-y-4 p-5">
               <div className="grid grid-cols-2 gap-3">
@@ -595,14 +699,35 @@ export function ProveedoresPanel() {
                 </div>
                 <div>
                   <label className="mb-1 block text-xs font-medium text-gray-600">
-                    CUIT <span className="text-gray-400">(fiscal)</span>
+                    CUIT / CUIL {!sinCuit && <span className="text-red-500">*</span>}{' '}
+                    <span className="text-gray-400">(fiscal)</span>
                   </label>
                   <input
                     value={editando.cuit ?? ''}
                     onChange={(e) => setEditando({ ...editando, cuit: e.target.value })}
                     placeholder="20-12345678-9"
-                    className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                    disabled={sinCuit}
+                    className={cn(
+                      'w-full rounded border px-3 py-2 text-sm',
+                      sinCuit
+                        ? 'border-gray-200 bg-gray-50 text-gray-400'
+                        : editando.cuit && !esCuitValido(editando.cuit)
+                          ? 'border-amber-400 bg-amber-50'
+                          : 'border-gray-300',
+                    )}
                   />
+                  {!sinCuit && editando.cuit && !esCuitValido(editando.cuit) && (
+                    <p className="mt-1 text-[11px] text-amber-700">CUIT/CUIL inválido</p>
+                  )}
+                  <label className="mt-1.5 flex items-center gap-1.5 text-[11px] text-gray-500">
+                    <input
+                      type="checkbox"
+                      checked={sinCuit}
+                      onChange={(e) => setSinCuit(e.target.checked)}
+                      className="h-3.5 w-3.5 rounded border-gray-300"
+                    />
+                    Proveedor informal (sin CUIT)
+                  </label>
                 </div>
                 <div>
                   <label className="mb-1 block text-xs font-medium text-gray-600">

@@ -32,6 +32,7 @@ import type { PrefillGasto } from './NuevoGastoModal';
 import { displayProveedor } from './proveedorDisplay';
 import { useDuplicadosGasto } from './useDuplicados';
 import { AvisoDuplicadosGasto } from './AvisoDuplicados';
+import { esCuitValido } from '@/lib/cuit';
 
 // Normaliza un nombre para matchear: minúsculas, sin acentos, sin espacios de más.
 function normNombreProv(s: string): string {
@@ -245,6 +246,7 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
   const [nuevoProvRazon, setNuevoProvRazon] = useState('');
   const [nuevoProvCuit, setNuevoProvCuit] = useState('');
   const [nuevoProvCondicion, setNuevoProvCondicion] = useState<CondicionIVA | ''>('');
+  const [nuevoProvSinCuit, setNuevoProvSinCuit] = useState(false);
   const [nuevoProvGuardando, setNuevoProvGuardando] = useState(false);
   const [nuevoProvError, setNuevoProvError] = useState<string | null>(null);
   const [categoriaId, setCategoriaId] = useState<string | null>(null);
@@ -924,10 +926,22 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
       setNuevoProvError('La razón social es obligatoria');
       return;
     }
+    const cuitLimpio = nuevoProvCuit.replace(/\D/g, '') || null;
+    // Mismo criterio que el panel de Proveedores: CUIT obligatorio y validado, salvo
+    // que se marque informal. Cierra la puerta de duplicados también en la carga de gasto.
+    if (!nuevoProvSinCuit) {
+      if (!cuitLimpio) {
+        setNuevoProvError('El CUIT/CUIL es obligatorio. Si es informal (sin CUIT), marcá la casilla.');
+        return;
+      }
+      if (!esCuitValido(cuitLimpio)) {
+        setNuevoProvError('El CUIT/CUIL no es válido (revisá los 11 dígitos y el verificador).');
+        return;
+      }
+    }
     setNuevoProvError(null);
     setNuevoProvGuardando(true);
     try {
-      const cuitLimpio = nuevoProvCuit.replace(/\D/g, '') || null;
       const { data: nuevo, error: errNuevo } = await supabase
         .from('proveedores')
         .insert({
@@ -1940,8 +1954,16 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
                         inputMode="numeric"
                         value={nuevoProvCuit}
                         onChange={(e) => setNuevoProvCuit(e.target.value)}
-                        placeholder="CUIT (opcional)"
-                        className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm font-mono"
+                        placeholder={nuevoProvSinCuit ? 'sin CUIT' : 'CUIT / CUIL *'}
+                        disabled={nuevoProvSinCuit}
+                        className={cn(
+                          'w-full rounded border px-2 py-1.5 text-sm font-mono',
+                          nuevoProvSinCuit
+                            ? 'border-gray-200 bg-gray-50 text-gray-400'
+                            : nuevoProvCuit && !esCuitValido(nuevoProvCuit)
+                              ? 'border-amber-400 bg-amber-50'
+                              : 'border-gray-300',
+                        )}
                       />
                       <select
                         value={nuevoProvCondicion}
@@ -1955,6 +1977,15 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
                         <option value="consumidor_final">Consumidor Final</option>
                       </select>
                     </div>
+                    <label className="flex items-center gap-1.5 text-[11px] text-gray-500">
+                      <input
+                        type="checkbox"
+                        checked={nuevoProvSinCuit}
+                        onChange={(e) => setNuevoProvSinCuit(e.target.checked)}
+                        className="h-3.5 w-3.5 rounded border-gray-300"
+                      />
+                      Proveedor informal (sin CUIT)
+                    </label>
                     {nuevoProvError && (
                       <div className="rounded bg-red-50 px-2 py-1 text-xs text-red-700">{nuevoProvError}</div>
                     )}
