@@ -176,7 +176,9 @@ export function VacacionesTab() {
       const { data, error } = await supabase
         .from('fichadas')
         .select('empleado_id, fecha, tipo, minutos_diferencia')
-        .gte('fecha', ymd(d));
+        .gte('fecha', ymd(d))
+        // Excluir fichadas de eventos (Bienal): no cuentan para el cálculo del local.
+        .is('evento', null);
       if (error) throw error;
       return data as Fichada[];
     },

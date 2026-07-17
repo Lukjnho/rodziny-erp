@@ -1299,7 +1299,9 @@ function MiQuincena({ empleado, onVolver }: { empleado: Empleado; onVolver: () =
           .select('*')
           .eq('empleado_id', empleado.id)
           .gte('fecha', desde)
-          .lte('fecha', hasta),
+          .lte('fecha', hasta)
+          // "Mi quincena" es del local: no mezclar marcas de la Bienal.
+          .is('evento', null),
         supabase
           .from('cronograma')
           .select('*')

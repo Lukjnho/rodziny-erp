@@ -228,7 +228,9 @@ export function SueldosTab() {
         .from('fichadas')
         .select('id, empleado_id, fecha, tipo, minutos_diferencia, timestamp')
         .gte('fecha', fechaDesdeMes)
-        .lte('fecha', fechaHastaMes);
+        .lte('fecha', fechaHastaMes)
+        // Excluir fichadas de eventos (Bienal): no cuentan para el sueldo del local.
+        .is('evento', null);
       if (error) throw error;
       return data as Fichada[];
     },

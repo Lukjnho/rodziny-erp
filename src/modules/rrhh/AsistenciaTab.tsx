@@ -146,6 +146,8 @@ export function AsistenciaTab() {
         .select('*')
         .gte('fecha', fechaDesde)
         .lte('fecha', fechaHasta)
+        // Excluir fichadas de eventos (Bienal): la grilla de asistencia es del local.
+        .is('evento', null)
         .order('timestamp');
       if (error) throw error;
       return data as Fichada[];

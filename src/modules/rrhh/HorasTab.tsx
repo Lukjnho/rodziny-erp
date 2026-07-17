@@ -205,7 +205,9 @@ export function HorasTab() {
         .from('fichadas')
         .select('empleado_id, fecha, tipo, timestamp')
         .gte('fecha', fechaDesde)
-        .lte('fecha', fechaHasta);
+        .lte('fecha', fechaHasta)
+        // Excluir fichadas de eventos (Bienal): no cuentan para las horas del local.
+        .is('evento', null);
       if (error) throw error;
       return data as Fichada[];
     },

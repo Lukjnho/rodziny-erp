@@ -109,7 +109,9 @@ export function EvaluacionesTab() {
         .from('fichadas')
         .select('empleado_id, fecha, tipo, timestamp, minutos_diferencia')
         .gte('fecha', desde)
-        .lte('fecha', hasta);
+        .lte('fecha', hasta)
+        // Excluir fichadas de eventos (Bienal): no cuentan para la evaluación del local.
+        .is('evento', null);
       if (error) throw error;
       return data as Fichada[];
     },
