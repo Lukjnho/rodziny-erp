@@ -27,6 +27,25 @@ const FOTO_QUALITY = 0.7;
 
 type LocalKey = keyof typeof LOCALES;
 
+// ─── Modo Bienal (evento externo) ───────────────────────────────────────────
+// El QR de la Bienal apunta a /fichar?evento=bienal&stand=vedia|saavedra.
+// En ese modo NO se valida GPS (el predio está lejos de los locales y los dos
+// stands comparten ubicación) y las fichadas se etiquetan con evento='bienal'
+// para no contaminar las horas del local. Mismo login DNI+PIN de siempre.
+interface BienalCfg {
+  stand: LocalKey; // stand donde se ficha; se guarda en la columna `local`
+  label: string; // etiqueta visible, ej. "Bienal · Stand Vedia"
+}
+
+function leerBienalDeUrl(): BienalCfg | null {
+  if (typeof window === 'undefined') return null;
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('evento') !== 'bienal') return null;
+  const stand: LocalKey = params.get('stand') === 'saavedra' ? 'saavedra' : 'vedia';
+  const nombreStand = stand === 'saavedra' ? 'Saavedra' : 'Vedia';
+  return { stand, label: `Bienal · Stand ${nombreStand}` };
+}
+
 interface Empleado {
   id: string;
   nombre: string;
@@ -155,6 +174,8 @@ function leerSesion(): string | null {
 export function FicharPage() {
   const [empleado, setEmpleado] = useState<Empleado | null>(null);
   const [cargando, setCargando] = useState(true);
+  // Modo evento (Bienal). Fijo por URL, no cambia durante la sesión.
+  const [bienal] = useState<BienalCfg | null>(() => leerBienalDeUrl());
 
   // Auto-login si hay sesión guardada
   useEffect(() => {
@@ -176,7 +197,7 @@ export function FicharPage() {
 
   if (cargando) {
     return (
-      <Pantalla>
+      <Pantalla bienal={bienal}>
         <p className="text-sm text-gray-500">Cargando...</p>
       </Pantalla>
     );
@@ -185,6 +206,7 @@ export function FicharPage() {
   if (!empleado) {
     return (
       <Login
+        bienal={bienal}
         onLogin={(emp) => {
           guardarSesion(emp.id);
           setEmpleado(emp);
@@ -196,6 +218,7 @@ export function FicharPage() {
   return (
     <Home
       empleado={empleado}
+      bienal={bienal}
       onLogout={() => {
         localStorage.removeItem(LS_KEY);
         setEmpleado(null);
@@ -205,7 +228,13 @@ export function FicharPage() {
 }
 
 // ─── Layout base ────────────────────────────────────────────────────────────
-function Pantalla({ children }: { children: React.ReactNode }) {
+function Pantalla({
+  children,
+  bienal,
+}: {
+  children: React.ReactNode;
+  bienal?: BienalCfg | null;
+}) {
   return (
     <div className="flex min-h-screen flex-col bg-gray-50">
       <header className="flex items-center gap-2 bg-rodziny-800 px-4 py-3 text-white">
@@ -213,6 +242,11 @@ function Pantalla({ children }: { children: React.ReactNode }) {
           R
         </div>
         <span className="text-sm font-semibold">Rodziny · Fichaje</span>
+        {bienal && (
+          <span className="ml-auto rounded-full bg-amber-400 px-2 py-0.5 text-[11px] font-bold text-amber-950">
+            🎪 {bienal.label}
+          </span>
+        )}
       </header>
       <main className="mx-auto w-full max-w-md flex-1 p-4">{children}</main>
     </div>
@@ -220,7 +254,13 @@ function Pantalla({ children }: { children: React.ReactNode }) {
 }
 
 // ─── Login ──────────────────────────────────────────────────────────────────
-function Login({ onLogin }: { onLogin: (e: Empleado) => void }) {
+function Login({
+  onLogin,
+  bienal,
+}: {
+  onLogin: (e: Empleado) => void;
+  bienal?: BienalCfg | null;
+}) {
   const [dni, setDni] = useState('');
   const [pin, setPin] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -256,7 +296,12 @@ function Login({ onLogin }: { onLogin: (e: Empleado) => void }) {
   }
 
   return (
-    <Pantalla>
+    <Pantalla bienal={bienal}>
+      {bienal && (
+        <div className="mt-4 rounded-lg border border-amber-300 bg-amber-50 p-3 text-center text-xs text-amber-900">
+          Estás fichando en <strong>{bienal.label}</strong>. Ingresá con tu DNI y PIN de siempre.
+        </div>
+      )}
       <div className="mt-6 rounded-lg border border-gray-200 bg-white p-5">
         <h2 className="mb-1 text-lg font-semibold text-gray-900">Ingresar</h2>
         <p className="mb-4 text-xs text-gray-500">Tu DNI y un PIN de 4 dígitos que te dio RRHH</p>
@@ -299,7 +344,15 @@ function Login({ onLogin }: { onLogin: (e: Empleado) => void }) {
 // ─── Home (logueado) ────────────────────────────────────────────────────────
 type Vista = 'inicio' | 'fichando' | 'mis_horarios' | 'mi_quincena';
 
-function Home({ empleado, onLogout }: { empleado: Empleado; onLogout: () => void }) {
+function Home({
+  empleado,
+  onLogout,
+  bienal,
+}: {
+  empleado: Empleado;
+  onLogout: () => void;
+  bienal?: BienalCfg | null;
+}) {
   const [vista, setVista] = useState<Vista>('inicio');
   const [refrescador, setRefrescador] = useState(0);
   // Última marca recién hecha: se la pasamos al Inicio para que la muestre al
@@ -308,7 +361,7 @@ function Home({ empleado, onLogout }: { empleado: Empleado; onLogout: () => void
   const [ultimaMarca, setUltimaMarca] = useState<FichadaMin | null>(null);
 
   return (
-    <Pantalla>
+    <Pantalla bienal={bienal}>
       <div className="mb-3 mt-2 rounded-lg border border-gray-200 bg-white p-4">
         <div className="flex items-start justify-between">
           <div>
@@ -326,6 +379,7 @@ function Home({ empleado, onLogout }: { empleado: Empleado; onLogout: () => void
       {vista === 'inicio' && (
         <Inicio
           empleado={empleado}
+          bienal={bienal}
           key={refrescador}
           marcaRecien={ultimaMarca}
           onIrAFichar={() => setVista('fichando')}
@@ -336,6 +390,7 @@ function Home({ empleado, onLogout }: { empleado: Empleado; onLogout: () => void
       {vista === 'fichando' && (
         <Fichando
           empleado={empleado}
+          bienal={bienal}
           onCancelar={() => setVista('inicio')}
           onListo={(marca) => {
             setUltimaMarca(marca);
@@ -357,12 +412,14 @@ function Home({ empleado, onLogout }: { empleado: Empleado; onLogout: () => void
 // ─── Inicio ─────────────────────────────────────────────────────────────────
 function Inicio({
   empleado,
+  bienal,
   marcaRecien,
   onIrAFichar,
   onIrAHorarios,
   onIrAQuincena,
 }: {
   empleado: Empleado;
+  bienal?: BienalCfg | null;
   marcaRecien?: FichadaMin | null;
   onIrAFichar: () => void;
   onIrAHorarios: () => void;
@@ -385,33 +442,35 @@ function Inicio({
 
   useEffect(() => {
     (async () => {
+      // Fichadas del día: en modo Bienal solo las del evento; en modo local solo
+      // las del local (evento IS NULL), así ninguna vista mezcla las dos cosas.
+      const fichadasDia = (fecha: string) => {
+        const q = supabase
+          .from('fichadas')
+          .select('*')
+          .eq('empleado_id', empleado.id)
+          .eq('fecha', fecha);
+        return (bienal ? q.eq('evento', 'bienal') : q.is('evento', null)).order('timestamp');
+      };
+      // En la Bienal no hay cronograma cargado: la entrada/salida se decide por
+      // alternancia de la última marca (cronograma nulo).
+      const cronoDia = (fecha: string) =>
+        bienal
+          ? Promise.resolve({ data: null as Cronograma | null })
+          : supabase
+              .from('cronograma')
+              .select('*')
+              .eq('empleado_id', empleado.id)
+              .eq('fecha', fecha)
+              .maybeSingle();
+
       const [{ data: c }, { data: cAyer }, { data: f }, { data: fAyer }] = await Promise.all([
-        supabase
-          .from('cronograma')
-          .select('*')
-          .eq('empleado_id', empleado.id)
-          .eq('fecha', hoy)
-          .maybeSingle(),
+        cronoDia(hoy),
         // Cronograma de ayer: por turnos nocturnos que cierran hoy de madrugada
-        supabase
-          .from('cronograma')
-          .select('*')
-          .eq('empleado_id', empleado.id)
-          .eq('fecha', ayer)
-          .maybeSingle(),
-        supabase
-          .from('fichadas')
-          .select('*')
-          .eq('empleado_id', empleado.id)
-          .eq('fecha', hoy)
-          .order('timestamp'),
+        cronoDia(ayer),
+        fichadasDia(hoy),
         // Fichadas de ayer para detectar entrada sin salida (turno nocturno)
-        supabase
-          .from('fichadas')
-          .select('*')
-          .eq('empleado_id', empleado.id)
-          .eq('fecha', ayer)
-          .order('timestamp'),
+        fichadasDia(ayer),
       ]);
       setCrono((c as Cronograma) || null);
       setCronoAyer((cAyer as Cronograma) || null);
@@ -524,7 +583,7 @@ function Inicio({
         );
       }
     })();
-  }, [empleado.id, hoy, debugOn]);
+  }, [empleado.id, hoy, debugOn, bienal]);
 
   // El próximo tipo se decide mirando la ÚLTIMA marca + el cronograma (robusto
   // ante marcas faltantes/sobrantes). Excluimos entradas fantasma de madrugada
@@ -556,24 +615,34 @@ function Inicio({
 
   return (
     <>
-      <div className="mb-3 rounded-lg border border-gray-200 bg-white p-4">
-        <p className="mb-1 text-xs text-gray-500">Tu turno hoy</p>
-        {crono?.es_franco ? (
-          <p className="text-base font-semibold text-blue-700">FRANCO</p>
-        ) : crono?.hora_entrada ? (
-          <p className="text-base font-semibold text-gray-900">
-            {formatTurnos(crono.turnos, crono.hora_entrada, crono.hora_salida)}
+      {bienal ? (
+        <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-4">
+          <p className="mb-1 text-xs text-amber-700">Evento</p>
+          <p className="text-base font-semibold text-amber-900">🎪 {bienal.label}</p>
+          <p className="mt-1 text-[11px] text-amber-700">
+            Fichá tu entrada y tu salida en cada turno del stand.
           </p>
-        ) : (
-          <p className="text-sm text-gray-500">No tenés turno asignado hoy</p>
-        )}
-        {crono && !crono.publicado && (
-          <div className="mt-2 rounded border border-amber-200 bg-amber-50 px-2 py-1.5 text-[11px] text-amber-800">
-            ⚠️ Tu horario todavía está en <strong>borrador</strong> (sin publicar por el encargado).
-            Podés fichar igual, pero sin horario de referencia.
-          </div>
-        )}
-      </div>
+        </div>
+      ) : (
+        <div className="mb-3 rounded-lg border border-gray-200 bg-white p-4">
+          <p className="mb-1 text-xs text-gray-500">Tu turno hoy</p>
+          {crono?.es_franco ? (
+            <p className="text-base font-semibold text-blue-700">FRANCO</p>
+          ) : crono?.hora_entrada ? (
+            <p className="text-base font-semibold text-gray-900">
+              {formatTurnos(crono.turnos, crono.hora_entrada, crono.hora_salida)}
+            </p>
+          ) : (
+            <p className="text-sm text-gray-500">No tenés turno asignado hoy</p>
+          )}
+          {crono && !crono.publicado && (
+            <div className="mt-2 rounded border border-amber-200 bg-amber-50 px-2 py-1.5 text-[11px] text-amber-800">
+              ⚠️ Tu horario todavía está en <strong>borrador</strong> (sin publicar por el
+              encargado). Podés fichar igual, pero sin horario de referencia.
+            </div>
+          )}
+        </div>
+      )}
 
       {fichadasHoy.length > 0 && (
         <div className="mb-3 rounded-lg border border-gray-200 bg-white p-3 text-xs text-gray-700">
@@ -616,20 +685,22 @@ function Inicio({
       )}
       {(cargando || !decision.horarioTramo) && <div className="mb-3" />}
 
-      <div className="grid grid-cols-2 gap-2">
-        <button
-          onClick={onIrAHorarios}
-          className="rounded-lg border border-gray-200 bg-white py-3 text-xs text-gray-700 hover:bg-gray-50"
-        >
-          Mis horarios
-        </button>
-        <button
-          onClick={onIrAQuincena}
-          className="rounded-lg border border-gray-200 bg-white py-3 text-xs text-gray-700 hover:bg-gray-50"
-        >
-          Mi quincena
-        </button>
-      </div>
+      {!bienal && (
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            onClick={onIrAHorarios}
+            className="rounded-lg border border-gray-200 bg-white py-3 text-xs text-gray-700 hover:bg-gray-50"
+          >
+            Mis horarios
+          </button>
+          <button
+            onClick={onIrAQuincena}
+            className="rounded-lg border border-gray-200 bg-white py-3 text-xs text-gray-700 hover:bg-gray-50"
+          >
+            Mi quincena
+          </button>
+        </div>
+      )}
 
       {debugOn && debugInfo && (
         <pre className="mt-4 overflow-x-auto whitespace-pre-wrap break-all rounded bg-gray-900 p-2 text-[10px] text-green-300">
@@ -645,14 +716,17 @@ type PasoFichaje = 'gps' | 'gps_bloqueado' | 'foto' | 'subiendo' | 'ok' | 'error
 
 function Fichando({
   empleado,
+  bienal,
   onCancelar,
   onListo,
 }: {
   empleado: Empleado;
+  bienal?: BienalCfg | null;
   onCancelar: () => void;
   onListo: (marca: FichadaMin) => void;
 }) {
-  const [paso, setPaso] = useState<PasoFichaje>('gps');
+  // En la Bienal no se valida GPS: se salta directo a la foto.
+  const [paso, setPaso] = useState<PasoFichaje>(bienal ? 'foto' : 'gps');
   const [mensaje, setMensaje] = useState<string>('');
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [localDetectado, setLocalDetectado] = useState<LocalKey | null>(null);
@@ -808,27 +882,30 @@ function Fichando({
       ayerDt2.setDate(ayerDt2.getDate() - 1);
       const fechaAyer = ymd(ayerDt2);
 
-      // Traer marcas y cronogramas de ayer+hoy en un solo viaje.
+      // Traer marcas (y cronogramas, salvo en Bienal) de ayer+hoy en un solo viaje.
+      // Las marcas se acotan al mismo ámbito que la fichada que se va a insertar:
+      // en Bienal solo cuentan las del evento; en el local solo las del local.
+      const marcasQuery = supabase
+        .from('fichadas')
+        .select('id, tipo, timestamp, fecha')
+        .eq('empleado_id', empleado.id)
+        .in('fecha', [fechaAyer, fechaHoy]);
+      const cronoDiaRaw = (fecha: string) =>
+        bienal
+          ? Promise.resolve({ data: null as Cronograma | null })
+          : supabase
+              .from('cronograma')
+              .select('hora_entrada, hora_salida, turnos, es_franco, publicado')
+              .eq('empleado_id', empleado.id)
+              .eq('fecha', fecha)
+              .maybeSingle();
       const [{ data: fichHoyAyer }, { data: cronoHoyRaw }, { data: cronoAyerRaw }] =
         await Promise.all([
-          supabase
-            .from('fichadas')
-            .select('id, tipo, timestamp, fecha')
-            .eq('empleado_id', empleado.id)
-            .in('fecha', [fechaAyer, fechaHoy])
-            .order('timestamp'),
-          supabase
-            .from('cronograma')
-            .select('hora_entrada, hora_salida, turnos, es_franco, publicado')
-            .eq('empleado_id', empleado.id)
-            .eq('fecha', fechaHoy)
-            .maybeSingle(),
-          supabase
-            .from('cronograma')
-            .select('hora_entrada, hora_salida, turnos, es_franco, publicado')
-            .eq('empleado_id', empleado.id)
-            .eq('fecha', fechaAyer)
-            .maybeSingle(),
+          (bienal ? marcasQuery.eq('evento', 'bienal') : marcasQuery.is('evento', null)).order(
+            'timestamp',
+          ),
+          cronoDiaRaw(fechaHoy),
+          cronoDiaRaw(fechaAyer),
         ]);
 
       // Última marca real (ignoramos entradas fantasma de madrugada de datos viejos).
@@ -881,13 +958,16 @@ function Fichando({
       // Cronograma del día al que se imputa la marca (para la diferencia vs horario).
       const cronoImputado = fechaFichada === fechaHoy ? cronoHoyRaw : cronoAyerRaw;
       const turnosDia = (cronoImputado?.turnos as TurnoCrono[] | null) ?? null;
-      const minutosDif = diffMinutosVsTurnos(
-        ahora,
-        turnosDia,
-        tipo,
-        cronoImputado?.hora_entrada ?? null,
-        cronoImputado?.hora_salida ?? null,
-      );
+      // En la Bienal no hay horario de referencia → no se calcula diferencia.
+      const minutosDif = bienal
+        ? null
+        : diffMinutosVsTurnos(
+            ahora,
+            turnosDia,
+            tipo,
+            cronoImputado?.hora_entrada ?? null,
+            cronoImputado?.hora_salida ?? null,
+          );
       const tieneHorario = (turnosDia && turnosDia.length > 0) || !!cronoImputado?.hora_entrada;
 
       // Warnings (no bloquean)
@@ -895,7 +975,7 @@ function Fichando({
       if (cronoImputado?.es_franco) w = 'Hoy figurás de franco. Quedará registrado igual.';
       else if (cronoImputado && !cronoImputado.publicado)
         w = 'Tu horario está en borrador (sin publicar). Queda registrado igual.';
-      else if (!tieneHorario && !w) w = 'No tenés horario asignado para hoy.';
+      else if (!bienal && !tieneHorario && !w) w = 'No tenés horario asignado para hoy.';
       else if (!w && minutosDif !== null && Math.abs(minutosDif) > TOLERANCIA_MIN)
         w = `Estás ${minutosDif > 0 ? 'tarde' : 'antes'} ${Math.abs(minutosDif)} min vs tu horario.`;
       setWarning(w);
@@ -909,8 +989,9 @@ function Fichando({
         .upload(path, comprimida, { contentType: 'image/jpeg', upsert: false });
       if (upErr) throw upErr;
 
-      // Detectar local más cercano (si GPS llegó) — solo informativo
-      const localParaGuardar = localDetectado ?? (empleado.local as LocalKey);
+      // Local a guardar: en Bienal es el stand del QR; en el local, el detectado
+      // por GPS (o el del empleado como fallback informativo).
+      const localParaGuardar = bienal ? bienal.stand : (localDetectado ?? (empleado.local as LocalKey));
 
       // Insertar fichada
       const { error: insErr } = await supabase.from('fichadas').insert({
@@ -923,7 +1004,8 @@ function Fichando({
         lng: coords?.lng ?? null,
         foto_path: path,
         minutos_diferencia: minutosDif,
-        origen: 'pwa',
+        origen: bienal ? 'pwa-bienal' : 'pwa',
+        evento: bienal ? 'bienal' : null,
       });
       if (insErr) {
         await supabase.storage
@@ -1076,7 +1158,9 @@ function Fichando({
                   : `${resultado.minutos} min vs horario`}
             </p>
           )}
-          {sinUbicacion ? (
+          {bienal ? (
+            <p className="mt-2 text-[10px] text-amber-600">🎪 {bienal.label} · foto registrada</p>
+          ) : sinUbicacion ? (
             <p className="mt-2 text-[10px] text-amber-600">
               ⚠ Fichaste sin ubicación (GPS no disponible)
             </p>
