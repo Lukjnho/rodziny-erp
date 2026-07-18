@@ -37,13 +37,67 @@ interface BienalCfg {
   label: string; // etiqueta visible, ej. "Bienal · Stand Vedia"
 }
 
+function bienalCfgDeStand(stand: LocalKey): BienalCfg {
+  const nombreStand = stand === 'saavedra' ? 'Saavedra' : 'Vedia';
+  return { stand, label: `Bienal · Stand ${nombreStand}` };
+}
+
 function leerBienalDeUrl(): BienalCfg | null {
   if (typeof window === 'undefined') return null;
   const params = new URLSearchParams(window.location.search);
   if (params.get('evento') !== 'bienal') return null;
   const stand: LocalKey = params.get('stand') === 'saavedra' ? 'saavedra' : 'vedia';
-  const nombreStand = stand === 'saavedra' ? 'Saavedra' : 'Vedia';
-  return { stand, label: `Bienal · Stand ${nombreStand}` };
+  return bienalCfgDeStand(stand);
+}
+
+// ─── Persistencia del modo Bienal ───────────────────────────────────────────
+// El modo evento venía SOLO de la URL. Como la sesión del empleado sí se guarda
+// 30 días, al reabrir la app sin el QR (ícono PWA, historial, autocompletar) se
+// perdía el modo Bienal y la SALIDA caía en el ledger del local: la entrada de
+// Bienal quedaba abierta ("no marca salida") y encima ensuciaba las horas del
+// local. Persistimos el modo hasta el próximo corte de jornada (05:00) para que
+// la salida del mismo turno caiga en el ledger correcto sin quedar pegado al día
+// siguiente. El QR (`?evento=bienal`) siempre renueva; el logout y la salida de
+// Bienal lo limpian.
+const LS_BIENAL_KEY = 'rodziny_fichaje_evento';
+const CORTE_JORNADA_H = 5;
+
+function guardarModoBienal(cfg: BienalCfg) {
+  try {
+    localStorage.setItem(LS_BIENAL_KEY, JSON.stringify({ stand: cfg.stand, ts: Date.now() }));
+  } catch {
+    /* localStorage no disponible: seguimos en modo Bienal solo por esta sesión */
+  }
+}
+
+function limpiarModoBienal() {
+  try {
+    localStorage.removeItem(LS_BIENAL_KEY);
+  } catch {
+    /* noop */
+  }
+}
+
+function leerModoBienalPersistido(): BienalCfg | null {
+  try {
+    const raw = localStorage.getItem(LS_BIENAL_KEY);
+    if (!raw) return null;
+    const { stand, ts } = JSON.parse(raw);
+    // Expira en el primer corte de jornada (05:00 local) posterior a cuando se
+    // guardó: cubre cualquier turno del día (incluso nocturno) y se limpia solo
+    // al arrancar el día siguiente.
+    const guardado = new Date(ts);
+    const corte = new Date(guardado);
+    corte.setHours(CORTE_JORNADA_H, 0, 0, 0);
+    if (corte.getTime() <= guardado.getTime()) corte.setDate(corte.getDate() + 1);
+    if (Date.now() >= corte.getTime()) {
+      limpiarModoBienal();
+      return null;
+    }
+    return bienalCfgDeStand(stand === 'saavedra' ? 'saavedra' : 'vedia');
+  } catch {
+    return null;
+  }
 }
 
 interface Empleado {
@@ -174,8 +228,17 @@ function leerSesion(): string | null {
 export function FicharPage() {
   const [empleado, setEmpleado] = useState<Empleado | null>(null);
   const [cargando, setCargando] = useState(true);
-  // Modo evento (Bienal). Fijo por URL, no cambia durante la sesión.
-  const [bienal] = useState<BienalCfg | null>(() => leerBienalDeUrl());
+  // Modo evento (Bienal). Se toma del QR (?evento=bienal) y se persiste hasta el
+  // próximo corte de jornada; si se reabre la app sin el QR, se recupera del
+  // almacenamiento para que la salida del turno caiga en el ledger de Bienal.
+  const [bienal, setBienal] = useState<BienalCfg | null>(() => {
+    const deUrl = leerBienalDeUrl();
+    if (deUrl) {
+      guardarModoBienal(deUrl);
+      return deUrl;
+    }
+    return leerModoBienalPersistido();
+  });
 
   // Auto-login si hay sesión guardada
   useEffect(() => {
@@ -221,7 +284,12 @@ export function FicharPage() {
       bienal={bienal}
       onLogout={() => {
         localStorage.removeItem(LS_KEY);
+        limpiarModoBienal();
         setEmpleado(null);
+      }}
+      onSalirEvento={() => {
+        limpiarModoBienal();
+        setBienal(null);
       }}
     />
   );
@@ -347,10 +415,12 @@ type Vista = 'inicio' | 'fichando' | 'mis_horarios' | 'mi_quincena';
 function Home({
   empleado,
   onLogout,
+  onSalirEvento,
   bienal,
 }: {
   empleado: Empleado;
   onLogout: () => void;
+  onSalirEvento: () => void;
   bienal?: BienalCfg | null;
 }) {
   const [vista, setVista] = useState<Vista>('inicio');
@@ -385,6 +455,7 @@ function Home({
           onIrAFichar={() => setVista('fichando')}
           onIrAHorarios={() => setVista('mis_horarios')}
           onIrAQuincena={() => setVista('mi_quincena')}
+          onSalirEvento={onSalirEvento}
         />
       )}
       {vista === 'fichando' && (
@@ -393,6 +464,9 @@ function Home({
           bienal={bienal}
           onCancelar={() => setVista('inicio')}
           onListo={(marca) => {
+            // Al cerrar el turno de Bienal, soltamos el modo evento persistido: la
+            // próxima reapertura arranca en modo local salvo que reescanee el QR.
+            if (bienal && marca.tipo === 'salida') limpiarModoBienal();
             setUltimaMarca(marca);
             setRefrescador((x) => x + 1);
             setVista('inicio');
@@ -417,6 +491,7 @@ function Inicio({
   onIrAFichar,
   onIrAHorarios,
   onIrAQuincena,
+  onSalirEvento,
 }: {
   empleado: Empleado;
   bienal?: BienalCfg | null;
@@ -424,6 +499,7 @@ function Inicio({
   onIrAFichar: () => void;
   onIrAHorarios: () => void;
   onIrAQuincena: () => void;
+  onSalirEvento: () => void;
 }) {
   const [crono, setCrono] = useState<Cronograma | null>(null);
   const [cronoAyer, setCronoAyer] = useState<Cronograma | null>(null);
@@ -616,12 +692,19 @@ function Inicio({
   return (
     <>
       {bienal ? (
-        <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-4">
-          <p className="mb-1 text-xs text-amber-700">Evento</p>
-          <p className="text-base font-semibold text-amber-900">🎪 {bienal.label}</p>
+        <div className="mb-3 rounded-lg border-2 border-amber-400 bg-amber-50 p-4">
+          <p className="mb-1 text-xs font-medium text-amber-700">Estás fichando en el EVENTO</p>
+          <p className="text-lg font-bold text-amber-900">🎪 {bienal.label}</p>
           <p className="mt-1 text-[11px] text-amber-700">
-            Fichá tu entrada y tu salida en cada turno del stand.
+            Fichá <strong>entrada y salida</strong> del turno acá mismo. Si vas al local, tocá
+            «No estoy en la Bienal».
           </p>
+          <button
+            onClick={onSalirEvento}
+            className="mt-2 rounded border border-amber-300 bg-white px-2 py-1 text-[11px] font-medium text-amber-800 hover:bg-amber-100"
+          >
+            No estoy en la Bienal
+          </button>
         </div>
       ) : (
         <div className="mb-3 rounded-lg border border-gray-200 bg-white p-4">
