@@ -17,6 +17,7 @@ import {
   resolverProveedor,
   ProveedorLabel,
 } from '@/modules/gastos/proveedorDisplay';
+import { CalendarioPagosFijos } from './CalendarioPagosFijos';
 
 // ── tipos ────────────────────────────────────────────────────────────────────
 interface PagoFijo {
@@ -802,26 +803,6 @@ export function ChecklistPagos() {
 
   const hayProgramados = (programados?.length ?? 0) > 0;
 
-  // Alertas por urgencia (solo pagos no pagados del mes actual)
-  const alertasUrgencia = useMemo(() => {
-    const pendientes = (pagos ?? []).filter((p) => !p.pagado && p.fecha_vencimiento);
-    const porUrgencia = {
-      vencido: [] as PagoFijo[],
-      hoy: [] as PagoFijo[],
-      semana: [] as PagoFijo[],
-    };
-    for (const p of pendientes) {
-      const u = urgenciaPago(p.fecha_vencimiento);
-      if (u === 'vencido') porUrgencia.vencido.push(p);
-      else if (u === 'hoy') porUrgencia.hoy.push(p);
-      else if (u === 'semana') porUrgencia.semana.push(p);
-    }
-    return porUrgencia;
-  }, [pagos]);
-
-  const tieneAlertas =
-    alertasUrgencia.vencido.length + alertasUrgencia.hoy.length + alertasUrgencia.semana.length > 0;
-
   const tieneItems = (pagos?.length ?? 0) > 0;
 
   function toggleSeccion(cat: string) {
@@ -995,63 +976,10 @@ export function ChecklistPagos() {
         </div>
       )}
 
-      {/* Banner de alertas por urgencia */}
-      {tieneAlertas && (
-        <div className="space-y-2">
-          {alertasUrgencia.vencido.length > 0 && (
-            <div className="flex items-start gap-3 rounded-lg border border-red-300 bg-red-50 p-3">
-              <div className="text-xl">🔴</div>
-              <div className="flex-1">
-                <p className="text-sm font-semibold text-red-900">
-                  {alertasUrgencia.vencido.length} pago
-                  {alertasUrgencia.vencido.length > 1 ? 's' : ''} vencido
-                  {alertasUrgencia.vencido.length > 1 ? 's' : ''}
-                </p>
-                <p className="mt-0.5 text-xs text-red-700">
-                  {alertasUrgencia.vencido.map((p) => p.concepto).join(', ')}
-                </p>
-              </div>
-              <div className="text-sm font-bold text-red-900">
-                {formatARS(alertasUrgencia.vencido.reduce((s, p) => s + (p.monto ?? 0), 0))}
-              </div>
-            </div>
-          )}
-          {alertasUrgencia.hoy.length > 0 && (
-            <div className="flex items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 p-3">
-              <div className="text-xl">⚠️</div>
-              <div className="flex-1">
-                <p className="text-sm font-semibold text-amber-900">
-                  {alertasUrgencia.hoy.length} pago{alertasUrgencia.hoy.length > 1 ? 's' : ''} vence
-                  {alertasUrgencia.hoy.length > 1 ? 'n' : ''} HOY
-                </p>
-                <p className="mt-0.5 text-xs text-amber-700">
-                  {alertasUrgencia.hoy.map((p) => p.concepto).join(', ')}
-                </p>
-              </div>
-              <div className="text-sm font-bold text-amber-900">
-                {formatARS(alertasUrgencia.hoy.reduce((s, p) => s + (p.monto ?? 0), 0))}
-              </div>
-            </div>
-          )}
-          {alertasUrgencia.semana.length > 0 && (
-            <div className="flex items-start gap-3 rounded-lg border border-orange-300 bg-orange-50 p-3">
-              <div className="text-xl">📅</div>
-              <div className="flex-1">
-                <p className="text-sm font-semibold text-orange-900">
-                  {alertasUrgencia.semana.length} pago{alertasUrgencia.semana.length > 1 ? 's' : ''}{' '}
-                  próximo{alertasUrgencia.semana.length > 1 ? 's' : ''} a vencer (7 días)
-                </p>
-                <p className="mt-0.5 text-xs text-orange-700">
-                  {alertasUrgencia.semana.map((p) => p.concepto).join(', ')}
-                </p>
-              </div>
-              <div className="text-sm font-bold text-orange-900">
-                {formatARS(alertasUrgencia.semana.reduce((s, p) => s + (p.monto ?? 0), 0))}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
+      {/* Calendario de pagos fijos (atrasado + próximos 7 días + mes completo).
+          Reemplaza los antiguos banners de urgencia: cruza todos los meses, no
+          solo el que estás viendo, con el mismo diseño que Compras. */}
+      <CalendarioPagosFijos onIrAPeriodo={setPeriodo} />
 
       {/* Estado vacío */}
       {!tieneItems && !hayProgramados && !isLoading && (
