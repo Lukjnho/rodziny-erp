@@ -58,13 +58,35 @@ export function CalendarioPagosFijos({
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
   }, []);
 
+  // Horizonte del calendario: "atrasado + mes en curso". El total tiene que ser la
+  // DEUDA REAL de ahora, no la proyección de costos fijos de los próximos meses (que
+  // ya están pre-cargados). Sin este tope, sumaba 6 meses futuros y el "pendiente"
+  // daba ~$196M en vez de la deuda real (~$20-25M). Los meses siguientes son
+  // proyección y viven en el módulo Proyección de Flujo, no acá.
+  //  - `periodoActual` (YYYY-MM de hoy): tope para los pagos fijos (se agrupan por período).
+  //  - `finMesActual` (último día del mes): tope para los echeqs (se ubican por fecha de débito).
+  const { periodoActual, finMesActual } = useMemo(() => {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = d.getMonth(); // 0-based
+    const ultimoDia = new Date(y, m + 1, 0).getDate();
+    return {
+      periodoActual: `${y}-${String(m + 1).padStart(2, '0')}`,
+      finMesActual: `${y}-${String(m + 1).padStart(2, '0')}-${String(ultimoDia).padStart(2, '0')}`,
+    };
+  }, []);
+
   const { data: pagosFijos, isLoading: loadingPF } = useQuery({
-    queryKey: ['pagos_fijos_calendario'],
+    queryKey: ['pagos_fijos_calendario', periodoActual],
     queryFn: async () => {
       const { data, error } = await supabase
         .from('pagos_fijos')
         .select('id, periodo, local, concepto, monto, fecha_vencimiento')
         .eq('pagado', false)
+        // Solo períodos hasta el mes en curso inclusive: capta todo lo atrasado (que
+        // vive en meses anteriores) + lo del mes actual, sin arrastrar la proyección
+        // de los meses siguientes ya pre-cargados.
+        .lte('periodo', periodoActual)
         .order('fecha_vencimiento', { ascending: true, nullsFirst: false })
         .limit(2000);
       if (error) throw error;
@@ -74,17 +96,19 @@ export function CalendarioPagosFijos({
   });
 
   const { data: programados, isLoading: loadingProg } = useQuery({
-    queryKey: ['pagos_fijos_calendario_programados', desde],
+    queryKey: ['pagos_fijos_calendario_programados', desde, finMesActual],
     queryFn: async () => {
       // Solo echeqs aún NO debitados (programado=true) y de gastos vivos. Excluimos
       // los "Pago fijo:" — ese cheque ya está representado por su fila de pago fijo,
       // listarlo de nuevo lo contaría dos veces (mismo criterio que ChecklistPagos).
+      // Tope en fin de mes: mismo horizonte "atrasado + mes en curso" que los fijos.
       const { data, error } = await supabase
         .from('pagos_gastos')
         .select('id, fecha_pago, monto, gastos!inner(proveedor, proveedor_id, local, cancelado, comentario)')
         .eq('programado', true)
         .eq('gastos.cancelado', false)
         .gte('fecha_pago', desde)
+        .lte('fecha_pago', finMesActual)
         .order('fecha_pago')
         .limit(2000);
       if (error) throw error;
@@ -138,8 +162,8 @@ export function CalendarioPagosFijos({
       items={items}
       isLoading={loadingPF || loadingProg}
       titulo="🗓 Calendario de pagos fijos"
-      subtitulo="Impuestos, servicios, cheques y demás pagos fijos pendientes — de todos los meses, no solo el que estás viendo."
-      totalLabel="Total pendiente"
+      subtitulo="Lo vencido + lo que vence este mes (impuestos, servicios, cheques). Los meses siguientes son proyección — se ven en Proyección de Flujo."
+      totalLabel="Total pendiente (vencido + este mes)"
       ctaAyuda="ir al mes →"
       onSelectGrupo={(g) => {
         const periodo = g.items[0]?.payload?.periodo;
