@@ -27,13 +27,12 @@ import { CierreInventarioBanner } from './components/CierreInventarioBanner';
 import { CierreInventarioModal } from './components/CierreInventarioModal';
 import { PastasTerminadasPanel } from './components/PastasTerminadasPanel';
 import { CalendarioPagosCtaCte } from './components/CalendarioPagosCtaCte';
-import { ConciliacionTab } from './ConciliacionTab';
 import { esCategoriaCtaCte } from './ctaCteExclusiones';
 import type { MedioPago, Gasto } from '@/modules/gastos/types';
 import { MEDIO_PAGO_LABEL, medioRequiereComprobante } from '@/modules/gastos/types';
 import { PagarGastoModal } from '@/modules/gastos/PagarGastoModal';
 
-type Tab = 'gastos' | 'stock' | 'movimientos' | 'recepcion' | 'pagos' | 'proveedores' | 'conciliacion';
+type Tab = 'gastos' | 'stock' | 'movimientos' | 'recepcion' | 'pagos' | 'proveedores';
 type FiltroEstado = 'todos' | 'bajo_minimo' | 'sin_stock' | 'inactivos';
 
 // "Hoy + N días" en fecha operativa AR (mismo huso que hoyAR). Evita el desfase
@@ -114,16 +113,6 @@ const ayudaPorTab: Record<Tab, { titulo: string; pasos: string[] }> = {
       'Esto actualiza el stock Y guarda los gastos para el tab de Pagos.',
     ],
   },
-  conciliacion: {
-    titulo: 'Conciliación de extractos',
-    pasos: [
-      'Compara los movimientos del extracto bancario (Galicia, ICBC, MercadoPago) con los gastos cargados.',
-      'Vista 1 — Auto-match: vincula gastos manuales con su movimiento del extracto cuando coinciden por N° de operación.',
-      'Vista 2 — Cargos automáticos: genera gastos de "Impuestos y comisiones bancarias" (Empresa) para impuestos Ley 25.413, comisiones MP, IVA bancario, etc.',
-      'Vista 3 — Sin conciliar: muestra los egresos del extracto que no matchean por N° op ni son cargos automáticos. Cargalos a mano desde Gastos.',
-      'Recomendado: ejecutar "Conciliar ahora" después de cada carga de gastos nuevos, y "Crear cargos automáticos" una vez por mes.',
-    ],
-  },
   pagos: {
     titulo: 'Pagos a proveedores',
     pasos: [
@@ -189,7 +178,6 @@ const TAB_IDS: Tab[] = [
   'recepcion',
   'pagos',
   'proveedores',
-  'conciliacion',
 ];
 
 // Color/etiqueta por local para el desglose informativo del tab Pagos.
@@ -1434,7 +1422,7 @@ export function ComprasPage() {
   return (
     <PageContainer title="Gastos-Compras" subtitle="Gastos, stock, proveedores y pagos">
       {/* Banner: avisa si hace >15 días que no importás algún extracto */}
-      <ExtractosAlerta variant="banner" to="/compras" />
+      <ExtractosAlerta variant="banner" to="/finanzas?tab=conciliacion" />
 
       {/* Banner del cierre mensual de inventario (en ventana del cierre o feedback aprobado) */}
       <CierreInventarioBanner local={local} />
@@ -1464,7 +1452,6 @@ export function ComprasPage() {
               ['movimientos', '📋 Movimientos'],
               ['recepcion', '📬 Recepción'],
               ['pagos', '💰 Pagos'],
-              ['conciliacion', '🔗 Conciliación'],
               ['proveedores', '🏢 Proveedores'],
             ] as [Tab, string][]
           ).map(([t, label]) => (
@@ -3601,8 +3588,6 @@ export function ComprasPage() {
       )}
 
       {/* ═══ TAB: PROVEEDORES ═══ */}
-      {tab === 'conciliacion' && <ConciliacionTab />}
-
       {tab === 'proveedores' && <ProveedoresPanel />}
 
       {/* Pantalla nueva: Nuevo gasto con OCR (flujo simple para los 3 admins).

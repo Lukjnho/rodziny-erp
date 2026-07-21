@@ -10,6 +10,7 @@ import { EstadoResultados } from './edr/EstadoResultados';
 import { AmortizacionesPage } from './amortizaciones/AmortizacionesPage';
 import { ChecklistPagos } from './components/ChecklistPagos';
 import { CierreMesPanel } from './components/CierreMesPanel';
+import { ConciliacionTab } from '@/modules/compras/ConciliacionTab';
 import { useAuth, type Modulo } from '@/lib/auth';
 import { cn } from '@/lib/utils';
 
@@ -17,6 +18,7 @@ type Tab =
   | 'compras'
   | 'edr'
   | 'flujo'
+  | 'conciliacion'
   | 'proyeccion'
   | 'cierre_mes'
   | 'amortizaciones'
@@ -52,6 +54,13 @@ const TABS: TabDef[] = [
     label: 'Flujo de caja',
     icon: '💰',
     subtitle: 'Movimientos bancarios y efectivo',
+    modulo: 'flujo_caja',
+  },
+  {
+    id: 'conciliacion',
+    label: 'Conciliación',
+    icon: '🔗',
+    subtitle: 'Cruce del extracto bancario con los gastos cargados',
     modulo: 'flujo_caja',
   },
   {
@@ -152,6 +161,7 @@ export function FinanzasPage() {
       {tab === 'compras' && <GastosPage embedded />}
       {tab === 'edr' && <EstadoResultados embedded />}
       {tab === 'flujo' && <FlujoCaja onNavigateToTab={(t) => setTab(t as Tab)} />}
+      {tab === 'conciliacion' && <ConciliacionTab />}
       {tab === 'proyeccion' && <ProyeccionFlujo />}
       {tab === 'cierre_mes' && (
         <CierreMesPanel onNavigateToTab={(t) => setTab(t as Tab)} />

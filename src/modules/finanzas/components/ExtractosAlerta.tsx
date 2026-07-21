@@ -17,7 +17,7 @@ import {
 
 interface Props {
   variant: 'card' | 'banner';
-  /** ruta a la que llevar al hacer click. Default: '/compras' (tab Conciliación). */
+  /** ruta a la que llevar al hacer click. Default: '/finanzas?tab=conciliacion'. */
   to?: string;
 }
 
@@ -42,7 +42,7 @@ function formatDias(d: number, est: EstadoFrescura): string {
   return `última transacción hace ${d} días`;
 }
 
-export function ExtractosAlerta({ variant, to = '/compras' }: Props) {
+export function ExtractosAlerta({ variant, to = '/finanzas?tab=conciliacion' }: Props) {
   const { data: frescura, isLoading } = useExtractosFrescura();
 
   if (isLoading || !frescura) return null;

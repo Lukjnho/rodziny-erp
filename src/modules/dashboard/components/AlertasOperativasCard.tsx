@@ -194,7 +194,7 @@ export function AlertasOperativasCard() {
         detalle: maxDate
           ? `Último movimiento cargado: ${max} (${diasAtraso} día${diasAtraso !== 1 ? 's' : ''} de atraso)`
           : 'No hay movimientos cargados.',
-        link: '/compras?tab=conciliacion',
+        link: '/finanzas?tab=conciliacion',
         cta: 'Importar extracto',
       });
     }
@@ -230,7 +230,7 @@ export function AlertasOperativasCard() {
         icono: '🏦',
         titulo: `${data.movsPendientes.toLocaleString('es-AR')} egreso${data.movsPendientes > 1 ? 's' : ''} sin conciliar este mes`,
         detalle: 'Débitos del extracto que todavía no están vinculados a un gasto.',
-        link: '/compras?tab=conciliacion',
+        link: '/finanzas?tab=conciliacion',
         cta: 'Conciliar',
       });
     }
