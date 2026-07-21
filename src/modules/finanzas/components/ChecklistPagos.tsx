@@ -101,6 +101,8 @@ function iconoGrupo(cat: string): string {
 const MEDIOS: MedioPago[] = [
   'efectivo',
   'transferencia_mp',
+  'transferencia_galicia',
+  'transferencia_icbc',
   'cheque_galicia',
   'tarjeta_icbc',
   'otro',
