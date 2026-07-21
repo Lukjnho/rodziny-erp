@@ -15,6 +15,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { comprimirImagen } from '@/lib/comprimirImagen';
 import { useAuth } from '@/lib/auth';
 import { cn, formatARS } from '@/lib/utils';
 import { procesarComprobantePago } from '@/lib/ocrComprobantePago';
@@ -309,7 +310,7 @@ export function PagarGastoModal({ open, gasto, onClose }: Props) {
         const path = `${carpeta}/pago_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
         const { error: errUp } = await supabase.storage
           .from('gastos-comprobantes')
-          .upload(path, archivoComprobante, {
+          .upload(path, await comprimirImagen(archivoComprobante), {
             contentType: archivoComprobante.type || 'application/octet-stream',
           });
         if (errUp) throw errUp;
@@ -323,7 +324,7 @@ export function PagarGastoModal({ open, gasto, onClose }: Props) {
         const path = `${carpeta}/factura_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
         const { error: errUp } = await supabase.storage
           .from('gastos-comprobantes')
-          .upload(path, archivoFactura, {
+          .upload(path, await comprimirImagen(archivoFactura), {
             contentType: archivoFactura.type || 'application/octet-stream',
           });
         if (errUp) throw errUp;

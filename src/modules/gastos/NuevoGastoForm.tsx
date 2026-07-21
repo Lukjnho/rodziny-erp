@@ -13,6 +13,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../../lib/supabase';
+import { comprimirImagen } from '../../lib/comprimirImagen';
 import { useAuth } from '../../lib/auth';
 import { sha256File } from '../../lib/hashFile';
 import { procesarFactura } from '../../lib/ocrFactura';
@@ -749,7 +750,7 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
 
       const { error: errUp } = await supabase.storage
         .from('gastos-comprobantes')
-        .upload(path, selected, {
+        .upload(path, await comprimirImagen(selected), {
           contentType: selected.type || 'application/octet-stream',
         });
 
@@ -1304,7 +1305,7 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
         facturaPath = `${local}/${periodo}/factura_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
         const { error: errFac } = await supabase.storage
           .from('gastos-comprobantes')
-          .upload(facturaPath, facturaFile, {
+          .upload(facturaPath, await comprimirImagen(facturaFile), {
             contentType: facturaFile.type || 'application/octet-stream',
           });
         if (errFac) throw errFac;

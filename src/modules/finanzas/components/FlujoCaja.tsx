@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { comprimirImagen } from '@/lib/comprimirImagen';
 import { formatARS, formatFecha, cn } from '@/lib/utils';
 import { procesarComprobantePago } from '@/lib/ocrComprobantePago';
 import { useAuth } from '@/lib/auth';
@@ -593,7 +594,7 @@ export function FlujoCaja({ onNavigateToTab }: { onNavigateToTab?: (tab: string)
         comprobantePath = `${carpeta}/${divSocio}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
         const { error: errUp } = await supabase.storage
           .from('gastos-comprobantes')
-          .upload(comprobantePath, divComprobante, {
+          .upload(comprobantePath, await comprimirImagen(divComprobante), {
             contentType: divComprobante.type || 'application/octet-stream',
           });
         if (errUp) throw errUp;

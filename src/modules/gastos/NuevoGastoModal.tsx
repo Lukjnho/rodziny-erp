@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { comprimirImagen } from '@/lib/comprimirImagen';
 import { useAuth } from '@/lib/auth';
 import { cn, formatARS, formatFecha } from '@/lib/utils';
 import { MontoInput } from '@/components/ui/MontoInput';
@@ -628,7 +629,7 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
         const path = `${form.local}/${form.fecha.substring(0, 7)}/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
         const { error: errUp } = await supabase.storage
           .from('gastos-comprobantes')
-          .upload(path, comprobante, {
+          .upload(path, await comprimirImagen(comprobante), {
             contentType: comprobante.type || 'application/octet-stream',
           });
         if (errUp) throw errUp;
@@ -645,7 +646,9 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
         const path = `${form.local}/${form.fecha.substring(0, 7)}/factura_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
         const { error: errUp } = await supabase.storage
           .from('gastos-comprobantes')
-          .upload(path, factura, { contentType: factura.type || 'application/octet-stream' });
+          .upload(path, await comprimirImagen(factura), {
+            contentType: factura.type || 'application/octet-stream',
+          });
         if (errUp) throw errUp;
         pathFactura = path;
       }

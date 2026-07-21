@@ -2,6 +2,7 @@ import { useState, useMemo, Component, type ReactNode, type ErrorInfo } from 're
 import { useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import { supabaseAnon as supabase } from '@/lib/supabaseAnon';
+import { comprimirImagen } from '@/lib/comprimirImagen';
 import { cn } from '@/lib/utils';
 import { normalizarDecimal, parseDecimal, formatNum, equivalenteKgGramos } from '@/lib/numero';
 
@@ -223,7 +224,7 @@ function RecepcionPageInner() {
       const fotoPath = `${local}/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
       const { error: errFoto } = await supabase.storage
         .from('recepciones-fotos')
-        .upload(fotoPath, foto, { contentType: foto.type || 'image/jpeg' });
+        .upload(fotoPath, await comprimirImagen(foto), { contentType: 'image/jpeg' });
       if (errFoto) throw errFoto;
 
       // 1) Recepción + suma de stock + movimientos en una sola transacción atómica.

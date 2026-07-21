@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { comprimirImagen } from '@/lib/comprimirImagen';
 import { formatARS, cn } from '@/lib/utils';
 import { KPICard } from '@/components/ui/KPICard';
 import type { Empleado } from './RRHHPage';
@@ -515,7 +516,7 @@ function ModalAguinaldo({
           .slice(2, 8)}.${ext}`;
         const { error: errUp } = await supabase.storage
           .from('gastos-comprobantes')
-          .upload(path, comprobante, {
+          .upload(path, await comprimirImagen(comprobante), {
             contentType: comprobante.type || 'application/octet-stream',
           });
         if (errUp) throw errUp;

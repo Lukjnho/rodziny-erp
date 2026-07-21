@@ -13,6 +13,7 @@
 // Si el upload falla: error fatal (el modal muestra el error).
 
 import { supabase } from './supabase';
+import { comprimirImagen } from './comprimirImagen';
 import { sha256File } from './hashFile';
 
 interface OcrFacturaExtraido {
@@ -100,7 +101,9 @@ export async function procesarFactura(
 
     const { error: errUp } = await supabase.storage
       .from('gastos-comprobantes')
-      .upload(path, archivo, { contentType: archivo.type || 'application/octet-stream' });
+      .upload(path, await comprimirImagen(archivo), {
+        contentType: archivo.type || 'application/octet-stream',
+      });
     if (errUp) {
       return {
         ok: false,

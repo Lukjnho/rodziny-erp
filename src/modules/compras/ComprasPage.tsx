@@ -2,6 +2,7 @@ import { useState, useRef, useMemo, useCallback, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { comprimirImagen } from '@/lib/comprimirImagen';
 import { PageContainer } from '@/components/layout/PageContainer';
 import { LocalSelector } from '@/components/ui/LocalSelector';
 import { formatARS, cn } from '@/lib/utils';
@@ -1039,7 +1040,7 @@ export function ComprasPage() {
         const path = `${carpeta}/pago_bulk_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
         const { error } = await supabase.storage
           .from('gastos-comprobantes')
-          .upload(path, bulkComprobante, {
+          .upload(path, await comprimirImagen(bulkComprobante), {
             contentType: bulkComprobante.type || 'application/octet-stream',
           });
         if (error) throw error;
@@ -1053,7 +1054,7 @@ export function ComprasPage() {
         const path = `${carpeta}/factura_bulk_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
         const { error } = await supabase.storage
           .from('gastos-comprobantes')
-          .upload(path, bulkFactura, {
+          .upload(path, await comprimirImagen(bulkFactura), {
             contentType: bulkFactura.type || 'application/octet-stream',
           });
         if (error) throw error;
