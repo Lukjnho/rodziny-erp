@@ -21,6 +21,9 @@ const CREDENCIALES: Record<string, { apiKey: string; apiSecret: string }> = {
     apiSecret: 'uiCQBxoCRoMa8BSrIvYGWq5mQlrRVMiS',
   },
 }
+// Bienal 2026: los 2 stands se facturan por cajas (CashRegister 3=Stand Saavedra,
+// 4=Stand Vedia) del MISMO Fudo de Saavedra. Comparte credenciales y mapeo de PM.
+CREDENCIALES.bienal = CREDENCIALES.saavedra
 
 const AUTH_URL = 'https://auth.fu.do/api'
 const BASE_URL = 'https://api.fu.do/v1alpha1'
@@ -46,6 +49,8 @@ const PM_POR_LOCAL: Record<string, Record<string, string>> = {
     ctaCte: '2',
   },
 }
+// Bienal comparte los IDs de medios de pago de Saavedra (misma cuenta Fudo).
+PM_POR_LOCAL.bienal = PM_POR_LOCAL.saavedra
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',

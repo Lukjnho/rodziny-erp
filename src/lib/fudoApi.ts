@@ -39,6 +39,11 @@ export const CAJA_FUDO_ID: Record<string, Record<string, string>> = {
     // Completar cuando Saavedra tenga API habilitada
     'Caja Principal': '1',
   },
+  // Bienal 2026: cajas del Fudo de Saavedra (mismos CashRegister IDs).
+  bienal: {
+    'Stand Saavedra': '3',
+    'Stand Vedia': '4',
+  },
 };
 
 // ── Resultado agrupado por medio de pago ────────────────────────────────────

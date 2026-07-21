@@ -53,7 +53,7 @@ const CAJEROS_FUDO: Record<string, { id: string; nombre: string }[]> = {
     { id: '18', nombre: 'Emanuel' },
     { id: '19', nombre: 'Gerardo' },
   ],
-  // Bienal: carga manual (no se tira de la API de Fudo), solo "Todos".
+  // Bienal: se sincroniza por caja/stand (CashRegister), no por cajero → solo "Todos".
   bienal: [{ id: '', nombre: 'Todos' }],
 };
 
@@ -134,12 +134,6 @@ export function CierreCaja() {
   const [fudoResumen, setFudoResumen] = useState<VentasFudoResumen | null>(null);
 
   async function cargarDesdeFudo() {
-    // Bienal no tiene credenciales de Fudo propias (los stands se facturan por
-    // cajas del Fudo de Saavedra). Se cargan los montos a mano.
-    if (local === 'bienal') {
-      setFudoError('Bienal: cargá los montos manualmente desde el arqueo del stand.');
-      return;
-    }
     setFudoCargando(true);
     setFudoError('');
     setFudoProgreso('Conectando con Fudo...');
@@ -841,19 +835,15 @@ export function CierreCaja() {
                 <button
                   type="button"
                   onClick={cargarDesdeFudo}
-                  disabled={fudoCargando || local === 'bienal'}
+                  disabled={fudoCargando}
                   className={cn(
                     'rounded-md px-3 py-1 text-xs font-medium transition-colors',
-                    fudoCargando || local === 'bienal'
-                      ? 'cursor-not-allowed bg-gray-100 text-gray-400'
+                    fudoCargando
+                      ? 'cursor-wait bg-gray-100 text-gray-400'
                       : 'bg-blue-600 text-white hover:bg-blue-700',
                   )}
                 >
-                  {local === 'bienal'
-                    ? 'Carga manual (Bienal)'
-                    : fudoCargando
-                      ? fudoProgreso || 'Cargando...'
-                      : 'Cargar desde Fudo API'}
+                  {fudoCargando ? fudoProgreso || 'Cargando...' : 'Cargar desde Fudo API'}
                 </button>
               </div>
               {fudoError && (
