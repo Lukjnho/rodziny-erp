@@ -1,5 +1,6 @@
-// ConciliacionTab — sub-tab del módulo Compras para conciliar el extracto bancario
-// con los gastos cargados.
+// ConciliacionTab — sub-tab del módulo Finanzas para conciliar el extracto bancario
+// con los gastos cargados. (El archivo vive en modules/compras por historia; se
+// renderiza desde FinanzasPage.)
 //
 // 3 vistas:
 //  1) Auto-match por N° de operación: vincula gastos manuales con su movimiento
