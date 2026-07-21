@@ -11,6 +11,9 @@ import { useAuth } from '@/lib/auth';
 const CAJAS: Record<string, string[]> = {
   vedia: ['Principal Pastas 1', 'Barra Bebidas'],
   saavedra: ['Caja Principal'],
+  // Bienal 2026: 2 stands facturados por cajas separadas del Fudo de Saavedra.
+  // Cada stand tiene su propia caja para que los cierres no se pisen entre sí.
+  bienal: ['Stand Vedia', 'Stand Saavedra'],
 };
 
 const TURNOS: Record<
@@ -25,6 +28,8 @@ const TURNOS: Record<
     { key: 'manana', label: 'Mañana (7:30 a 15:30h)', horaDesde: '07:00', horaHasta: '15:30' },
     { key: 'tarde', label: 'Tarde-Noche (17 a 00:30h)', horaDesde: '16:30', horaHasta: '00:30' },
   ],
+  // Bienal: un solo cierre por stand por día (evento).
+  bienal: [{ key: 'jornada', label: 'Jornada (todo el día)', horaDesde: '10:00', horaHasta: '23:59' }],
 };
 
 // Cajeros de Fudo por local (nombre → ID de usuario en Fudo)
@@ -48,6 +53,8 @@ const CAJEROS_FUDO: Record<string, { id: string; nombre: string }[]> = {
     { id: '18', nombre: 'Emanuel' },
     { id: '19', nombre: 'Gerardo' },
   ],
+  // Bienal: carga manual (no se tira de la API de Fudo), solo "Todos".
+  bienal: [{ id: '', nombre: 'Todos' }],
 };
 
 interface CierreRow {
@@ -92,7 +99,7 @@ const FONDO_CAMBIO_DEFAULT = 12000;
 export function CierreCaja() {
   const { perfil } = useAuth();
   const esAdmin = perfil?.es_admin ?? false;
-  const [local, setLocal] = useState<'vedia' | 'saavedra'>('vedia');
+  const [local, setLocal] = useState<'vedia' | 'saavedra' | 'bienal'>('vedia');
   const [periodo, setPeriodo] = useState(() => new Date().toISOString().substring(0, 7));
   const [formOpen, setFormOpen] = useState(false);
   const [editandoId, setEditandoId] = useState<string | null>(null);
@@ -127,6 +134,12 @@ export function CierreCaja() {
   const [fudoResumen, setFudoResumen] = useState<VentasFudoResumen | null>(null);
 
   async function cargarDesdeFudo() {
+    // Bienal no tiene credenciales de Fudo propias (los stands se facturan por
+    // cajas del Fudo de Saavedra). Se cargan los montos a mano.
+    if (local === 'bienal') {
+      setFudoError('Bienal: cargá los montos manualmente desde el arqueo del stand.');
+      return;
+    }
     setFudoCargando(true);
     setFudoError('');
     setFudoProgreso('Conectando con Fudo...');
@@ -582,8 +595,9 @@ export function CierreCaja() {
       <div className="flex flex-wrap items-center gap-4">
         <LocalSelector
           value={local}
+          options={['vedia', 'saavedra', 'bienal']}
           onChange={(v) => {
-            setLocal(v as 'vedia' | 'saavedra');
+            setLocal(v as 'vedia' | 'saavedra' | 'bienal');
             setFTurno(TURNOS[v]?.[0]?.key ?? '');
             setFCajeroId('');
           }}
@@ -827,15 +841,19 @@ export function CierreCaja() {
                 <button
                   type="button"
                   onClick={cargarDesdeFudo}
-                  disabled={fudoCargando}
+                  disabled={fudoCargando || local === 'bienal'}
                   className={cn(
                     'rounded-md px-3 py-1 text-xs font-medium transition-colors',
-                    fudoCargando
-                      ? 'cursor-wait bg-gray-100 text-gray-400'
+                    fudoCargando || local === 'bienal'
+                      ? 'cursor-not-allowed bg-gray-100 text-gray-400'
                       : 'bg-blue-600 text-white hover:bg-blue-700',
                   )}
                 >
-                  {fudoCargando ? fudoProgreso || 'Cargando...' : 'Cargar desde Fudo API'}
+                  {local === 'bienal'
+                    ? 'Carga manual (Bienal)'
+                    : fudoCargando
+                      ? fudoProgreso || 'Cargando...'
+                      : 'Cargar desde Fudo API'}
                 </button>
               </div>
               {fudoError && (

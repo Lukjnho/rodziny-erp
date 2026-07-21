@@ -1,6 +1,6 @@
 import { cn } from '@/lib/utils';
 
-type LocalOption = 'vedia' | 'saavedra' | 'ambos' | 'consolidado' | 'sas';
+type LocalOption = 'vedia' | 'saavedra' | 'bienal' | 'ambos' | 'consolidado' | 'sas';
 
 interface Props {
   value: string;
@@ -11,6 +11,7 @@ interface Props {
 const LABELS: Record<LocalOption, string> = {
   vedia: 'Rodziny Vedia',
   saavedra: 'Rodziny Saavedra',
+  bienal: 'Bienal',
   ambos: 'Empresa',
   consolidado: 'Empresa',
   sas: 'Empresa',
