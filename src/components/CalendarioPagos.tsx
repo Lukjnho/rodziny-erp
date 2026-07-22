@@ -194,6 +194,7 @@ function DetalleGruposBody<T>({
 
 export function CalendarioPagos<T = unknown>({
   items,
+  itemsMesCompleto,
   titulo,
   subtitulo,
   totalLabel = 'Total a pagar (toda la deuda)',
@@ -201,7 +202,13 @@ export function CalendarioPagos<T = unknown>({
   onSelectGrupo,
   ctaAyuda,
 }: {
+  // Ítems que alimentan el TOTAL, el bloque de atrasados y la grilla de 7 días.
+  // Deben ser "lo que hay que pagar ahora" (para que el total sea fiable).
   items: ItemCalendario<T>[];
+  // Ítems para el modal "Ver mes completo" — puede ser un universo más amplio que
+  // `items` (ej. incluir meses futuros que NO cuentan al total pero sí se navegan
+  // mes a mes). Si no se pasa, el modal usa `items`.
+  itemsMesCompleto?: ItemCalendario<T>[];
   titulo: string;
   subtitulo: string;
   totalLabel?: string;
@@ -295,10 +302,12 @@ export function CalendarioPagos<T = unknown>({
   }, [abierto, atrasado, sinVenc, porDia]);
 
   // Todos los vencimientos agrupados por fecha exacta — alimenta el modal de mes
-  // completo (cualquier mes, sin otra query: usamos los mismos ítems ya traídos).
+  // completo. Usa `itemsMesCompleto` (universo ampliado, ej. meses futuros) si se
+  // pasó; si no, los mismos `items` del total.
+  const itemsModal = itemsMesCompleto ?? items;
   const porFecha = useMemo(() => {
     const map = new Map<string, Bucket<T>>();
-    for (const g of items) {
+    for (const g of itemsModal) {
       if (!g.fecha_vencimiento) continue;
       let b = map.get(g.fecha_vencimiento);
       if (!b) {
@@ -313,7 +322,7 @@ export function CalendarioPagos<T = unknown>({
       b.items.push(g);
     }
     return map;
-  }, [items]);
+  }, [itemsModal]);
 
   // Grilla del mes en vista (semana arranca lunes) + total del mes.
   const mesGrid = useMemo(() => {
