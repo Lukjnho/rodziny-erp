@@ -4,6 +4,8 @@ import { supabase } from '@/lib/supabase';
 import { comprimirImagen } from '@/lib/comprimirImagen';
 import { useAuth } from '@/lib/auth';
 import { cn, formatARS, formatFecha } from '@/lib/utils';
+import { hoyAR } from '@/lib/fechaAR';
+import { esPagoEjecutado, esPagoComprometido } from '@/lib/flujoCaja';
 import { MontoInput } from '@/components/ui/MontoInput';
 import type {
   Proveedor,
@@ -1317,7 +1319,18 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
               Estado del pago
             </h4>
             {gastoEditando && pagosRegistrados && pagosRegistrados.length > 0 && (() => {
-              const totalPagado = pagosRegistrados.reduce((s, p) => s + Number(p.monto || 0), 0);
+              const hoy = hoyAR();
+              // "Pagado" = plata que YA salió → la decide la FECHA del pago, no el
+              // flag `programado` (nadie lo apaga cuando el echeq/tarjeta se
+              // debita). Los "a vencer" (fecha futura) se muestran aparte y NO
+              // saldan el gasto. Misma regla única que el listado de Compras y el
+              // Flujo de Caja — ver src/lib/flujoCaja.ts.
+              const totalPagado = pagosRegistrados
+                .filter((p) => esPagoEjecutado(p.fecha_pago, hoy))
+                .reduce((s, p) => s + Number(p.monto || 0), 0);
+              const aVencer = pagosRegistrados
+                .filter((p) => esPagoComprometido(p.fecha_pago, hoy))
+                .reduce((s, p) => s + Number(p.monto || 0), 0);
               const saldo = Number(gastoEditando.importe_total || 0) - totalPagado;
               return (
                 <div className="mb-3 rounded border border-gray-200 bg-gray-50 p-2">
@@ -1332,7 +1345,7 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
                             {MEDIO_PAGO_LABEL[p.medio_pago] ?? p.medio_pago}
                           </span>
                           <span className="text-gray-500">{formatFecha(p.fecha_pago)}</span>
-                          {p.programado && (
+                          {esPagoComprometido(p.fecha_pago, hoy) && (
                             <span className="rounded bg-amber-100 px-1 text-[10px] text-amber-800">
                               a vencer
                             </span>
@@ -1352,6 +1365,9 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
                   <div className="mt-1.5 flex items-center justify-between border-t border-gray-200 pt-1.5 text-xs">
                     <span className="text-gray-500">
                       Pagado {formatARS(totalPagado)}
+                      {aVencer > 0.01 && (
+                        <> · A vencer <span className="font-medium text-amber-700">{formatARS(aVencer)}</span></>
+                      )}
                       {saldo > 0.01 && (
                         <> · Saldo <span className="font-medium text-amber-700">{formatARS(saldo)}</span></>
                       )}

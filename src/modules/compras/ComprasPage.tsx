@@ -31,6 +31,7 @@ import { esCategoriaCtaCte } from './ctaCteExclusiones';
 import type { MedioPago, Gasto } from '@/modules/gastos/types';
 import { MEDIO_PAGO_LABEL, medioRequiereComprobante } from '@/modules/gastos/types';
 import { PagarGastoModal } from '@/modules/gastos/PagarGastoModal';
+import { esPagoEjecutado } from '@/lib/flujoCaja';
 
 type Tab = 'gastos' | 'stock' | 'movimientos' | 'recepcion' | 'pagos' | 'proveedores';
 type FiltroEstado = 'todos' | 'bajo_minimo' | 'sin_stock' | 'inactivos';
@@ -407,13 +408,16 @@ export function ComprasPage() {
     return m;
   }, [pagosGastosData]);
 
-  // Suma de pagos EJECUTADOS (no programados) por gasto: monto + descuento.
-  // Los echeq programados (a futuro) no se descuentan porque la plata todavía
-  // no salió — siguen siendo deuda a pagar.
+  // Suma de pagos EJECUTADOS por gasto: monto + descuento.
+  // "Ejecutado" = la plata ya salió, y eso lo decide la FECHA del pago, no el
+  // flag `programado` (nadie lo apaga cuando el echeq/tarjeta se debita, así que
+  // un pago a vencer con fecha ya pasada seguiría descartándose para siempre).
+  // Misma regla única que el Flujo de Caja — ver src/lib/flujoCaja.ts.
   const pagadoRealMap = useMemo(() => {
+    const hoy = hoyAR();
     const m = new Map<string, number>();
     for (const p of pagosGastosData ?? []) {
-      if (p.programado) continue;
+      if (!esPagoEjecutado(p.fecha_pago, hoy)) continue; // fecha futura = a vencer
       m.set(p.gasto_id, (m.get(p.gasto_id) ?? 0) + p.monto + p.descuento);
     }
     return m;
@@ -424,6 +428,20 @@ export function ComprasPage() {
   // que resta, no por el importe completo.
   const saldoGasto = useCallback(
     (g: Gasto) => Math.max(0, g.importe_total - (pagadoRealMap.get(g.id) ?? 0)),
+    [pagadoRealMap],
+  );
+
+  // ¿Este gasto está saldado? Regla ÚNICA en todo el módulo: lo está si la
+  // columna estado_pago lo dice —verdad para gastos al contado / históricos que
+  // no tienen fila en pagos_gastos— O si los pagos ejecutados por fecha ya
+  // cubren el total. Es ADITIVO: solo puede mover un gasto HACIA pagado, nunca
+  // sacarlo, así los ~745 pagados sin fila de pago no retroceden a pendiente.
+  // Así el badge deja de contradecir al modal cuando un echeq/tarjeta ya se
+  // debitó pero nadie apagó el flag `programado`.
+  const estaPagado = useCallback(
+    (g: Gasto) =>
+      g.estado_pago?.toLowerCase() === 'pagado' ||
+      (g.importe_total > 0.01 && (pagadoRealMap.get(g.id) ?? 0) >= g.importe_total - 0.01),
     [pagadoRealMap],
   );
 
@@ -644,7 +662,7 @@ export function ComprasPage() {
     }
 
     if (filtroPagos === 'pendientes')
-      lista = lista.filter((g) => g.estado_pago?.toLowerCase() !== 'pagado');
+      lista = lista.filter((g) => !estaPagado(g));
     else if (filtroPagos === 'pagados') {
       // Filtrar por el mes en que efectivamente se pagó (fecha del pago real,
       // no la fecha del gasto), para que coincida con el flujo de caja.
@@ -653,7 +671,7 @@ export function ComprasPage() {
       // compras al contado del mismo día quedan fuera de este tab y solo
       // aparecen en el listado de gastos.
       lista = lista.filter((g) => {
-        if (g.estado_pago?.toLowerCase() !== 'pagado') return false;
+        if (!estaPagado(g)) return false;
         const pago = pagosGastosMap.get(g.id);
         if (!pago) return false;
         if (pago.fecha_pago <= g.fecha) return false;
@@ -671,30 +689,24 @@ export function ComprasPage() {
       });
     } else if (filtroPagos === 'vencidos')
       lista = lista.filter(
-        (g) =>
-          g.estado_pago?.toLowerCase() !== 'pagado' &&
-          g.fecha_vencimiento &&
-          g.fecha_vencimiento < hoy,
+        (g) => !estaPagado(g) && g.fecha_vencimiento && g.fecha_vencimiento < hoy,
       );
     else if (filtroPagos === 'hoy')
       // "Vence hoy" incluye atrasados: todo lo urgente que hay que pagar ya.
       lista = lista.filter(
-        (g) =>
-          g.estado_pago?.toLowerCase() !== 'pagado' &&
-          g.fecha_vencimiento &&
-          g.fecha_vencimiento <= hoy,
+        (g) => !estaPagado(g) && g.fecha_vencimiento && g.fecha_vencimiento <= hoy,
       );
     else if (filtroPagos === 'semana')
       lista = lista.filter(
         (g) =>
-          g.estado_pago?.toLowerCase() !== 'pagado' &&
+          !estaPagado(g) &&
           g.fecha_vencimiento &&
           g.fecha_vencimiento >= hoy &&
           g.fecha_vencimiento <= en7dias,
       );
 
     return lista;
-  }, [gastosPagos, filtroPagos, filtroProveedor, pagosGastosMap, mesPagos]);
+  }, [gastosPagos, filtroPagos, filtroProveedor, pagosGastosMap, mesPagos, estaPagado]);
 
   const [vistaResumenProv, setVistaResumenProv] = useState<'mes' | 'año'>('mes');
 
@@ -724,9 +736,9 @@ export function ComprasPage() {
     // Pendiente: SIEMPRE total (lo que se debe no depende del período seleccionado).
     // Por saldo neto: excluye gastos ya cubiertos por pagos ejecutados.
     const pendientesTotal = todosDelProveedor.filter(
-      (g) => g.estado_pago?.toLowerCase() !== 'pagado' && saldoGasto(g) > 0.01,
+      (g) => !estaPagado(g) && saldoGasto(g) > 0.01,
     );
-    const pagados = delProveedor.filter((g) => g.estado_pago?.toLowerCase() === 'pagado');
+    const pagados = delProveedor.filter((g) => estaPagado(g));
 
     return {
       nombre: todosDelProveedor[0] ? proveedorDisplay(todosDelProveedor[0]) : filtroProveedor,
@@ -737,7 +749,7 @@ export function ComprasPage() {
       totalPagado: pagados.reduce((s, g) => s + g.importe_total, 0),
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gastosPagos, filtroProveedor, vistaResumenProv, mesPagos, proveedoresMap, saldoGasto]);
+  }, [gastosPagos, filtroProveedor, vistaResumenProv, mesPagos, proveedoresMap, saldoGasto, estaPagado]);
 
   // Agrupación de PENDIENTES por proveedor para vista bulk.
   // También adjunta los gastos PAGADOS del mes seleccionado por proveedor,
@@ -746,7 +758,7 @@ export function ComprasPage() {
     const hoy = hoyAR();
     const en7dias = hoyMasDiasAR(7);
     let lista = (gastosPagos ?? []).filter(
-      (g) => g.estado_pago?.toLowerCase() !== 'pagado' && saldoGasto(g) > 0.01,
+      (g) => !estaPagado(g) && saldoGasto(g) > 0.01,
     );
 
     if (filtroPagos === 'vencidos') {
@@ -782,7 +794,7 @@ export function ComprasPage() {
     // del pago real (no la del gasto). Mismo criterio que el KPI Pagado.
     const pagadosMesPorProveedor = new Map<string, Gasto[]>();
     for (const g of gastosPagos ?? []) {
-      if (g.estado_pago?.toLowerCase() !== 'pagado') continue;
+      if (!estaPagado(g)) continue;
       const pago = pagosGastosMap.get(g.id);
       if (!pago || !pago.fecha_pago.startsWith(mesPagos)) continue;
       const key = proveedorDisplay(g) || '(Sin proveedor)';
@@ -892,7 +904,7 @@ export function ComprasPage() {
         return b.totalPagadoMes - a.totalPagadoMes;
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gastosPagos, filtroPagos, filtroProveedor, pagosGastosMap, mesPagos, proveedoresMap, saldoGasto]);
+  }, [gastosPagos, filtroPagos, filtroProveedor, pagosGastosMap, mesPagos, proveedoresMap, saldoGasto, estaPagado]);
 
   // Proveedores con deuda viva vs. los que solo tienen pagos del mes (saldo $0).
   // Estos últimos se colapsan en una sola sección "✓ Pagados en el mes" al final
@@ -1139,7 +1151,7 @@ export function ComprasPage() {
     // Deuda viva = estado != pagado Y con saldo pendiente > 0. El saldo>0 filtra
     // gastos ya cubiertos por pagos ejecutados aunque el estado esté sin recalcular.
     const pendientes = todos.filter(
-      (g) => g.estado_pago?.toLowerCase() !== 'pagado' && saldoGasto(g) > 0.01,
+      (g) => !estaPagado(g) && saldoGasto(g) > 0.01,
     );
     const vencidos = pendientes.filter((g) => g.fecha_vencimiento && g.fecha_vencimiento < hoy);
     const venceHoy = pendientes.filter((g) => g.fecha_vencimiento === hoy);
@@ -1152,16 +1164,14 @@ export function ComprasPage() {
     // Pagados del mes: de los gastos DEL mes (fecha del gasto en el mes),
     // cuántos ya están pagados. Así "Comprado - Pagado = Resta pagar"
     // siempre cierra positivo y el corte es coherente con el período.
-    const pagadosDelMes = delMes.filter(
-      (g) => g.estado_pago?.toLowerCase() === 'pagado',
-    );
+    const pagadosDelMes = delMes.filter((g) => estaPagado(g));
     // Pagados cta cte: pagos hechos en el mes sobre gastos cargados antes
     // (cuenta corriente real). Filtra por la fecha del PAGO en el mes y
     // que el pago haya sido posterior al gasto. Sirve para ver cuánta
     // plata real salió en el mes por cta cte, independiente de cuándo se
     // compró.
     const pagadosCtaCteDelMes = todos.filter((g) => {
-      if (g.estado_pago?.toLowerCase() !== 'pagado') return false;
+      if (!estaPagado(g)) return false;
       const pago = pagosGastosMap.get(g.id);
       if (!pago) return false;
       if (!pago.fecha_pago.startsWith(mesPagos)) return false;
@@ -1186,7 +1196,7 @@ export function ComprasPage() {
       pagadoCtaCteMes: pagadosCtaCteDelMes.reduce((s, g) => s + g.importe_total, 0),
       cantPagadoCtaCteMes: pagadosCtaCteDelMes.length,
     };
-  }, [gastosPagos, mesPagos, pagosGastosMap, saldoGasto]);
+  }, [gastosPagos, mesPagos, pagosGastosMap, saldoGasto, estaPagado]);
 
   // ── Filtrar productos ──────────────────────────────────────────────────────
   const productosFiltrados = useMemo(() => {
@@ -3038,7 +3048,7 @@ export function ComprasPage() {
                     pagosFiltrados.map((g) => {
                       const hoy = hoyAR();
                       const en7dias = hoyMasDiasAR(7);
-                      const pagado = g.estado_pago?.toLowerCase() === 'pagado';
+                      const pagado = estaPagado(g);
                       const vencido = !pagado && g.fecha_vencimiento && g.fecha_vencimiento < hoy;
                       const proxSemana =
                         !pagado &&

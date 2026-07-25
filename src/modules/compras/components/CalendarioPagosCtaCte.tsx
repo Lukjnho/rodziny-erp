@@ -3,6 +3,8 @@ import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { useProveedoresMap, nombreProveedor } from '@/modules/gastos/proveedorDisplay';
 import { esCategoriaCtaCte } from '../ctaCteExclusiones';
+import { hoyAR } from '@/lib/fechaAR';
+import { esPagoEjecutado } from '@/lib/flujoCaja';
 import { CalendarioPagos, type ItemCalendario, type LocalKey } from '@/components/CalendarioPagos';
 
 // Vista consolidada (ambos locales + SAS) de la deuda de cuenta corriente con
@@ -59,20 +61,22 @@ export function CalendarioPagosCtaCte({
     staleTime: 60_000,
   });
 
-  // Pagos ya EJECUTADOS (no programados) por gasto. Un gasto "Parcial" —o con un
-  // plan de echeqs a medio ejecutar— sigue vivo pero solo por su SALDO, no por el
-  // importe completo. Sin esto la deuda queda inflada por lo ya abonado.
+  // Pagos ya EJECUTADOS por gasto. Un gasto "Parcial" —o con un plan de echeqs a
+  // medio ejecutar— sigue vivo pero solo por su SALDO, no por el importe completo.
+  // "Ejecutado" lo decide la FECHA del pago, no el flag `programado` (nadie lo
+  // apaga al debitarse). Misma regla que Compras y el Flujo — src/lib/flujoCaja.ts.
   const { data: pagadoRealMap } = useQuery({
     queryKey: ['cta_cte_pagos_ejecutados'],
     queryFn: async () => {
+      const hoy = hoyAR();
       const { data, error } = await supabase
         .from('pagos_gastos')
-        .select('gasto_id, monto, descuento, programado')
+        .select('gasto_id, fecha_pago, monto, descuento, programado')
         .limit(20000);
       if (error) throw error;
       const m = new Map<string, number>();
       for (const p of data ?? []) {
-        if ((p as { programado?: boolean }).programado) continue; // echeq a futuro: aún no salió
+        if (!esPagoEjecutado(p.fecha_pago as string, hoy)) continue; // fecha futura: aún no salió
         const id = p.gasto_id as string;
         m.set(id, (m.get(id) ?? 0) + Number(p.monto ?? 0) + Number(p.descuento ?? 0));
       }
