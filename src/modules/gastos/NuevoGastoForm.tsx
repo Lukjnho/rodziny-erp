@@ -252,6 +252,10 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
   const [nuevoProvError, setNuevoProvError] = useState<string | null>(null);
   const [categoriaId, setCategoriaId] = useState<string | null>(null);
   const [fecha, setFecha] = useState<string>('');
+  // ¿El usuario editó la fecha a mano? Los flujos cta cte/efectivo/plan pre-setean
+  // `fecha = hoy` como default; ese default NO debe bloquear a la fecha real que trae
+  // el OCR de la factura. Solo si el usuario la tocó a mano respetamos su valor.
+  const [fechaManual, setFechaManual] = useState(false);
   const [nOperacion, setNOperacion] = useState<string>('');
   const [medioPago, setMedioPago] = useState<MedioPago>('transferencia_mp');
   const [comentario, setComentario] = useState<string>('');
@@ -326,6 +330,7 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
       setCategoriaId(null);
       setImporteTexto('');
       setFecha('');
+      setFechaManual(false);
       setNOperacion('');
       setMedioPago('transferencia_mp');
       setComentario('');
@@ -1098,7 +1103,8 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
     } else if (datos.numero_comprobante && !nroComprobante) {
       setNroComprobante(datos.numero_comprobante);
     }
-    if (datos.fecha_emision && !fecha) {
+    if (datos.fecha_emision && !fechaManual) {
+      // Pisa el default "hoy" del flujo cta cte, pero no lo que el usuario eligió a mano.
       setFecha(datos.fecha_emision);
     }
     if (datos.fecha_vencimiento && !fechaVencimiento) {
@@ -1121,22 +1127,52 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
       setAlicuotaIVA(alicValida);
     }
 
-    // Proveedor: si OCR matcheó uno existente, seleccionarlo
-    if (res.proveedor_match && !proveedorId) {
-      const provExistente = proveedores.find((p) => p.id === res.proveedor_match!.id);
-      if (provExistente) {
-        aplicarProveedorMatch(provExistente, `🔗 Proveedor detectado por CUIT en la factura: ${provExistente.razon_social}`);
+    // Proveedor: matcheo en cascada, sin pisar lo que el usuario ya eligió.
+    if (!proveedorId) {
+      // 1) Match server-side por CUIT (cuando la edge function lo encontró).
+      if (res.proveedor_match) {
+        const provExistente = proveedores.find((p) => p.id === res.proveedor_match!.id);
+        if (provExistente) {
+          aplicarProveedorMatch(provExistente, `🔗 Proveedor detectado por CUIT en la factura: ${provExistente.razon_social}`);
+        } else {
+          // El proveedor existe en DB pero no está en la cache local — usar el match directo
+          setProveedorId(res.proveedor_match.id);
+          setMensajeProveedor(`🔗 Proveedor detectado por CUIT: ${res.proveedor_match.razon_social ?? res.proveedor_match.nombre_comercial}`);
+        }
       } else {
-        // El proveedor existe en DB pero no está en la cache local — usar el match directo
-        setProveedorId(res.proveedor_match.id);
-        setMensajeProveedor(`🔗 Proveedor detectado por CUIT: ${res.proveedor_match.razon_social ?? res.proveedor_match.nombre_comercial}`);
+        // 2) Fallback local: el match del server compara el CUIT como string exacto,
+        //    pero los proveedores están guardados con guiones ("30-xxxxxxxx-x") y el OCR
+        //    devuelve 11 dígitos pelados → nunca calzan. Acá normalizamos ambos lados
+        //    (igual que el flujo digital en autoMatchOCrearProveedor).
+        const cuitOcr = datos.emisor_cuit ? datos.emisor_cuit.replace(/\D/g, '') : null;
+        let matchLocal: Proveedor | undefined;
+        if (cuitOcr) {
+          matchLocal = proveedores.find((p) => {
+            const c = (p.cuit ?? '').replace(/\D/g, '');
+            const alt = (p.cuits_alt ?? []).map((x) => (x ?? '').replace(/\D/g, ''));
+            return c === cuitOcr || alt.includes(cuitOcr);
+          });
+        }
+        // 3) Fallback por nombre/alias normalizado (razón social, comercial o algún alias).
+        if (!matchLocal && datos.emisor_razon_social) {
+          const n = normNombreProv(datos.emisor_razon_social);
+          matchLocal = proveedores.find((p) =>
+            [p.razon_social, p.nombre_comercial, ...(p.aliases ?? [])]
+              .filter(Boolean)
+              .map((s) => normNombreProv(s as string))
+              .includes(n),
+          );
+        }
+        if (matchLocal) {
+          aplicarProveedorMatch(matchLocal, `🔗 Proveedor detectado en la factura: ${matchLocal.razon_social}`);
+        } else if (cuitOcr && datos.emisor_razon_social) {
+          // 4) No matchea nada → recién ahí sugerir crear uno nuevo.
+          setCrearProveedorSugerido({
+            razon_social: datos.emisor_razon_social,
+            cuit: cuitOcr,
+          });
+        }
       }
-    } else if (datos.emisor_cuit && datos.emisor_razon_social && !res.proveedor_match && !proveedorId) {
-      // CUIT detectado pero no matchea ningún proveedor → sugerir crear uno
-      setCrearProveedorSugerido({
-        razon_social: datos.emisor_razon_social,
-        cuit: datos.emisor_cuit.replace(/\D/g, ''),
-      });
     }
 
     setOcrFacturaWarning(res.warning);
@@ -2515,7 +2551,10 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
                 <input
                   type="date"
                   value={fecha}
-                  onChange={(e) => setFecha(e.target.value)}
+                  onChange={(e) => {
+                    setFecha(e.target.value);
+                    setFechaManual(true);
+                  }}
                   className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
                 />
                 <p className="mt-1 text-[11px] text-gray-500">
