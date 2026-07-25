@@ -3,6 +3,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { procesarComprobantePago } from '@/lib/ocrComprobantePago';
 import { formatARS, cn } from '@/lib/utils';
+import { hoyAR } from '@/lib/fechaAR';
+import { esPagoEjecutado } from '@/lib/flujoCaja';
 import { MontoInput } from '@/components/ui/MontoInput';
 import { type MedioPago, MEDIO_PAGO_LABEL, medioRequiereComprobante } from '@/modules/gastos/types';
 import {
@@ -333,22 +335,27 @@ export function ChecklistPagos() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['pagos_fijos', periodo] }),
   });
 
-  // Marcar/desmarcar pagado un echeq programado: flipea programado y recalcula el
-  // estado del gasto (Parcial → Pagado cuando el cheque deja de estar "a futuro").
+  // Confirmar el débito de un echeq/cheque a futuro. Como ahora "pagado" lo decide
+  // la FECHA del pago en todo el ERP (Compras, Flujo, recomputarEstadoGasto), no
+  // alcanza con apagar el flag: si el débito se adelanta, ponemos fecha_pago=hoy
+  // para que el gasto y el flujo lo cuenten YA. Al desmarcar volvemos a programado.
   const toggleProgramado = useMutation({
     mutationFn: async ({
       id,
       gasto_id,
       pagar,
+      fecha_pago,
     }: {
       id: string;
       gasto_id: string;
       pagar: boolean;
+      fecha_pago: string;
     }) => {
-      const { error } = await supabase
-        .from('pagos_gastos')
-        .update({ programado: !pagar })
-        .eq('id', id);
+      const hoy = hoyAR();
+      const update: { programado: boolean; fecha_pago?: string } = { programado: !pagar };
+      // Débito adelantado: la plata sale hoy, no en la fecha futura agendada.
+      if (pagar && fecha_pago > hoy) update.fecha_pago = hoy;
+      const { error } = await supabase.from('pagos_gastos').update(update).eq('id', id);
       if (error) throw error;
       await recomputarEstadoGasto(gasto_id);
     },
@@ -783,12 +790,16 @@ export function ChecklistPagos() {
         itemsPagados++;
       }
     }
-    // Los echeqs/cheques del mes también suman al checklist: pendiente = programado.
+    // Los echeqs/cheques del mes también suman al checklist. Pagado = la plata ya
+    // salió, y eso lo decide la FECHA del pago (no el flag), igual que Compras y el
+    // Flujo — ver src/lib/flujoCaja.ts. Así un echeq ya debitado suma al Pagado sin
+    // depender de que alguien lo tilde a mano.
+    const hoy = hoyAR();
     for (const pg of programados ?? []) {
       itemsTotal++;
       const m = Number(pg.monto ?? 0);
       totalEstimado += m;
-      if (!pg.programado) {
+      if (esPagoEjecutado(pg.fecha_pago, hoy)) {
         totalPagado += m;
         itemsPagados++;
       }
@@ -804,6 +815,9 @@ export function ChecklistPagos() {
   }, [pagos, programados]);
 
   const hayProgramados = (programados?.length ?? 0) > 0;
+  // Fecha operativa para decidir qué echeqs/cheques ya se debitaron (misma regla
+  // que Compras y el Flujo). Se recalcula en cada render, que es lo que queremos.
+  const hoyChecklist = hoyAR();
 
   const tieneItems = (pagos?.length ?? 0) > 0;
 
@@ -1004,8 +1018,12 @@ export function ChecklistPagos() {
                 Echeqs y pagos programados
               </span>
               <span className="text-xs text-purple-400">
-                ({(programados ?? []).filter((p) => !p.programado).length}/
-                {(programados ?? []).length})
+                (
+                {
+                  (programados ?? []).filter((p) => esPagoEjecutado(p.fecha_pago, hoyChecklist))
+                    .length
+                }
+                /{(programados ?? []).length})
               </span>
             </div>
             {/* El número grande al lado de "programados" se lee como deuda pendiente:
@@ -1014,7 +1032,7 @@ export function ChecklistPagos() {
               <span className="text-sm font-semibold text-purple-800">
                 {formatARS(
                   (programados ?? [])
-                    .filter((p) => p.programado)
+                    .filter((p) => !esPagoEjecutado(p.fecha_pago, hoyChecklist))
                     .reduce((s, p) => s + Number(p.monto ?? 0), 0),
                 )}
               </span>
@@ -1039,15 +1057,18 @@ export function ChecklistPagos() {
               <tbody>
                 {[...(programados ?? [])]
                   // Mismo criterio que los pagos fijos: lo pagado al fondo, lo que
-                  // debita antes arriba. (`programado=false` = ya se pagó.)
+                  // debita antes arriba. Pagado = la fecha ya pasó (la plata salió).
                   .sort((a, b) => {
-                    const pa = !a.programado,
-                      pb = !b.programado;
+                    const pa = esPagoEjecutado(a.fecha_pago, hoyChecklist),
+                      pb = esPagoEjecutado(b.fecha_pago, hoyChecklist);
                     if (pa !== pb) return pa ? 1 : -1;
                     return (a.fecha_pago ?? '').localeCompare(b.fecha_pago ?? '');
                   })
                   .map((pg) => {
-                    const pagado = !pg.programado;
+                    // Ya debitado si la fecha llegó (igual que Compras/Flujo). Esos
+                    // quedan tildados y bloqueados: no se "des-debitan" desde acá.
+                    const yaDebitado = esPagoEjecutado(pg.fecha_pago, hoyChecklist);
+                    const pagado = yaDebitado;
                     return (
                       <tr
                         key={pg.id}
@@ -1077,15 +1098,28 @@ export function ChecklistPagos() {
                           <input
                             type="checkbox"
                             checked={pagado}
-                            disabled={toggleProgramado.isPending}
-                            onChange={(e) =>
+                            disabled={yaDebitado || toggleProgramado.isPending}
+                            title={
+                              yaDebitado
+                                ? 'Ya debitado (la fecha del pago ya pasó)'
+                                : 'Confirmar débito adelantado: la plata sale hoy'
+                            }
+                            onChange={(e) => {
+                              if (
+                                e.target.checked &&
+                                !window.confirm(
+                                  `¿Confirmás que este pago de ${formatARS(Number(pg.monto ?? 0))} ya se debitó?\n\nSe marca con fecha de hoy y pasa a contar en Compras y en el Flujo.`,
+                                )
+                              )
+                                return;
                               toggleProgramado.mutate({
                                 id: pg.id,
                                 gasto_id: pg.gasto_id,
                                 pagar: e.target.checked,
-                              })
-                            }
-                            className="h-4 w-4 cursor-pointer rounded"
+                                fecha_pago: pg.fecha_pago,
+                              });
+                            }}
+                            className="h-4 w-4 cursor-pointer rounded disabled:cursor-default disabled:opacity-60"
                           />
                         </td>
                       </tr>
