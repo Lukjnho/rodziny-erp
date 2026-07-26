@@ -220,6 +220,10 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
   // y autocompleta tipo/nro/fecha/total/IVA/proveedor. Si falla, el archivo igual
   // quedó subido y el usuario puede seguir manual.
   const [facturaPathPreSubido, setFacturaPathPreSubido] = useState<string | null>(null);
+  // Comprobante de la factura creado por procesarFactura. Se guarda para vincularlo
+  // al gasto al confirmar (si no, la fila de `comprobantes` queda huérfana para siempre
+  // y el bloqueo de duplicado por hash no aplica a facturas).
+  const [facturaComprobanteId, setFacturaComprobanteId] = useState<string | null>(null);
   const [ocrFacturaEjecutando, setOcrFacturaEjecutando] = useState(false);
   const [ocrFacturaInfo, setOcrFacturaInfo] = useState<string | null>(null);
   const [ocrFacturaWarning, setOcrFacturaWarning] = useState<string | null>(null);
@@ -311,6 +315,7 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
       setFilePath(null);
       setFacturaFile(null);
       setFacturaPathPreSubido(null);
+      setFacturaComprobanteId(null);
       setOcrFacturaEjecutando(false);
       setOcrFacturaInfo(null);
       setOcrFacturaWarning(null);
@@ -919,7 +924,10 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
   function aplicarProveedorMatch(prov: Proveedor, mensaje: string | null) {
     setProveedorId(prov.id);
     if (prov.categoria_default_id) setCategoriaId(prov.categoria_default_id);
-    if (prov.medio_pago_default) setMedioPago(prov.medio_pago_default);
+    // No pisar el medio cuando el flujo lo tiene fijo en efectivo: si no, un proveedor
+    // con medio_pago_default ≠ efectivo hacía que el pago se guardara con otro medio
+    // aunque la UI mostrara "💵 Efectivo".
+    if (prov.medio_pago_default && tipoGasto !== 'efectivo') setMedioPago(prov.medio_pago_default);
     setMensajeProveedor(mensaje);
   }
 
@@ -1085,6 +1093,7 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
       return;
     }
     if (res.factura_path) setFacturaPathPreSubido(res.factura_path);
+    if (res.comprobante_id) setFacturaComprobanteId(res.comprobante_id);
 
     const datos = res.datos;
     if (!datos) {
@@ -1533,6 +1542,16 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
           .from('comprobantes')
           .update({ gasto_id: gastosCreados[0], estado: 'vinculado' })
           .eq('id', comprobanteId);
+      }
+
+      // 3.b) Vincular también el comprobante de la FACTURA (si se adjuntó con OCR).
+      //      Sin esto la fila de `comprobantes` de la factura quedaba huérfana para
+      //      siempre y el bloqueo de duplicado por hash no aplicaba a facturas.
+      if (facturaComprobanteId && facturaComprobanteId !== comprobanteId && gastosCreados.length > 0) {
+        await supabase
+          .from('comprobantes')
+          .update({ gasto_id: gastosCreados[0], estado: 'vinculado' })
+          .eq('id', facturaComprobanteId);
       }
 
       // 4) Self-learning de categoria_gasto_id y costo en productos. NO toca stock:
@@ -2716,6 +2735,7 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
                       onClick={() => {
                         setFacturaFile(null);
                         setFacturaPathPreSubido(null);
+                        setFacturaComprobanteId(null);
                         setOcrFacturaInfo(null);
                         setOcrFacturaWarning(null);
                         setCrearProveedorSugerido(null);
