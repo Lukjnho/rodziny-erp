@@ -880,41 +880,17 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
       }
     }
 
-    // 3. No hay match: auto-crear si tenemos CUIT + nombre
+    // 3. No hay match. NUNCA creamos en automático: sugerimos y que el usuario decida.
+    //    A veces el emisor de la factura no es a quién se le paga — un monotributista
+    //    con nombre de fantasía ("Gráfica al Palo") distinto al titular de la cuenta a
+    //    la que se transfiere. Mostramos la sugerencia (banner al lado del Proveedor)
+    //    para que Lucas cree el proveedor revisándolo, o mapee a uno existente.
     if (cuitLimpio && nombreOcr) {
-      const { data: nuevo, error: errIns } = await supabase
-        .from('proveedores')
-        .insert({
-          razon_social: nombreOcr,
-          cuit: cuitLimpio,
-          dias_pago: 0,
-          activo: true,
-        })
-        .select('*')
-        .single();
-
-      if (errIns) {
-        // Si el insert fallo por unique constraint, buscar el que ya existe
-        const { data: existente } = await supabase
-          .from('proveedores')
-          .select('*')
-          .eq('cuit', cuitLimpio)
-          .maybeSingle();
-        if (existente) {
-          aplicarProveedorMatch(existente as Proveedor, null);
-        }
-        return;
-      }
-
-      const nuevoProveedor = nuevo as Proveedor;
-      setProveedorRecienCreado(nuevoProveedor);
-      aplicarProveedorMatch(nuevoProveedor, `Proveedor creado automáticamente: ${nuevoProveedor.razon_social}`);
-      // Refrescar la lista global
-      qc.invalidateQueries({ queryKey: ['proveedores-activos'] });
+      setCrearProveedorSugerido({ razon_social: nombreOcr, cuit: cuitLimpio });
       return;
     }
 
-    // 4. Solo nombre sin CUIT: no creamos automaticamente (riesgoso, podria duplicar)
+    // 4. Solo nombre sin CUIT: no sugerimos crear (sin CUIT no podemos validar).
     //    El usuario seleccionara manualmente del dropdown.
     if (nombreOcr) {
       setMensajeProveedor(`OCR detectó: "${nombreOcr}" — seleccionalo del listado o creá uno nuevo si no existe.`);
@@ -1982,6 +1958,46 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
                   </div>
                 )}
 
+                {/* Sugerencia del OCR: CUIT leído que NO está agendado. No creamos solos —
+                    Lucas revisa y crea (form prellenado, valida CUIT) o mapea a uno existente
+                    del listado (caso monotributista que cobra en el alias del dueño). */}
+                {crearProveedorSugerido && !proveedorId && !nuevoProvOpen && (
+                  <div className="mt-1.5 rounded border border-blue-200 bg-blue-50 px-2.5 py-2 text-xs">
+                    <div className="text-blue-900">
+                      🔎 El OCR leyó <strong>{crearProveedorSugerido.razon_social}</strong> (CUIT{' '}
+                      {crearProveedorSugerido.cuit}) y <strong>no está agendado</strong>.
+                    </div>
+                    <div className="mt-1 flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setNuevoProvRazon(crearProveedorSugerido.razon_social);
+                          setNuevoProvCuit(crearProveedorSugerido.cuit);
+                          setNuevoProvCondicion('');
+                          setNuevoProvSinCuit(false);
+                          setNuevoProvError(null);
+                          setNuevoProvOpen(true);
+                          setCrearProveedorSugerido(null);
+                        }}
+                        className="rounded bg-blue-600 px-2.5 py-1 font-medium text-white hover:bg-blue-700"
+                      >
+                        Revisar y crear
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setCrearProveedorSugerido(null)}
+                        className="rounded border border-gray-300 px-2.5 py-1 text-gray-600 hover:bg-gray-50"
+                      >
+                        No, ya está en el listado
+                      </button>
+                    </div>
+                    <div className="mt-1 text-[11px] text-blue-800">
+                      Si le pagás al alias/cuenta del dueño (no a la empresa), buscalo en el listado
+                      de arriba en vez de crearlo.
+                    </div>
+                  </div>
+                )}
+
                 {/* Alta manual de proveedor nuevo (sin salir del form) */}
                 {!nuevoProvOpen ? (
                   <button
@@ -2771,39 +2787,8 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
                     {ocrFacturaWarning}
                   </div>
                 )}
-                {crearProveedorSugerido && !proveedorId && (
-                  <div className="mt-1.5 flex items-center justify-between gap-2 rounded border border-blue-200 bg-blue-50 px-2 py-1.5 text-xs">
-                    <span className="text-blue-900">
-                      ➕ <strong>{crearProveedorSugerido.razon_social}</strong> (CUIT {crearProveedorSugerido.cuit}) no está cargado.
-                    </span>
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        const { data: nuevo, error: errNuevo } = await supabase
-                          .from('proveedores')
-                          .insert({
-                            razon_social: crearProveedorSugerido.razon_social,
-                            cuit: crearProveedorSugerido.cuit,
-                            activo: true,
-                          })
-                          .select('*')
-                          .single();
-                        if (errNuevo) {
-                          window.alert(`No se pudo crear: ${errNuevo.message}`);
-                          return;
-                        }
-                        const nuevoProv = nuevo as Proveedor;
-                        setProveedorRecienCreado(nuevoProv);
-                        aplicarProveedorMatch(nuevoProv, `✅ Proveedor creado: ${nuevoProv.razon_social}`);
-                        setCrearProveedorSugerido(null);
-                        qc.invalidateQueries({ queryKey: ['proveedores-activos'] });
-                      }}
-                      className="whitespace-nowrap rounded bg-blue-600 px-2 py-0.5 text-white hover:bg-blue-700"
-                    >
-                      Crear ahora
-                    </button>
-                  </div>
-                )}
+                {/* La sugerencia de crear proveedor se muestra arriba, al lado del campo
+                    Proveedor (banner unificado que abre el alta prellenada con validación). */}
               </Field>
             </div>
           )}
