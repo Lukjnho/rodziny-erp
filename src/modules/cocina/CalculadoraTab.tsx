@@ -54,6 +54,7 @@ export function CalculadoraTab() {
   const [multStr, setMultStr] = useState('1');
   const [plan, setPlan] = useState<ItemPlan[]>([]);
   const [expandido, setExpandido] = useState<number | null>(null);
+  const [insumoAbierto, setInsumoAbierto] = useState<string | null>(null);
   const nextKey = useRef(1);
 
   // Todas las recetas (necesito TODAS para resolver subrecetas anidadas).
@@ -203,12 +204,53 @@ export function CalculadoraTab() {
     });
   }, [plan, recetaPorId, explotar]);
 
+  // Materia prima total del plan: suma las hojas de TODO el plan, guardando de
+  // qué receta (subreceta del plan) sale cada parte para el desglose al tocar.
+  const consolidado = useMemo(() => {
+    const mapa = new Map<
+      string,
+      { clave: string; nombre: string; unidad: string; cantidad: number; porReceta: Map<string, number> }
+    >();
+    for (const pc of planCalculado) {
+      const recetaNombre = pc.sub?.nombre ?? '—';
+      const recorrer = (nodos: NodoInsumo[]) => {
+        for (const n of nodos) {
+          if (n.esSubreceta && n.expandida) {
+            recorrer(n.hijos);
+          } else {
+            const clave = `${n.clave}|${n.unidad}`;
+            let e = mapa.get(clave);
+            if (!e) {
+              e = { clave, nombre: n.nombre, unidad: n.unidad, cantidad: 0, porReceta: new Map() };
+              mapa.set(clave, e);
+            }
+            e.cantidad += n.cantidad;
+            e.porReceta.set(recetaNombre, (e.porReceta.get(recetaNombre) ?? 0) + n.cantidad);
+          }
+        }
+      };
+      recorrer(pc.arbol);
+    }
+    return [...mapa.values()]
+      .map((e) => ({
+        clave: e.clave,
+        nombre: e.nombre,
+        unidad: e.unidad,
+        cantidad: e.cantidad,
+        porReceta: [...e.porReceta.entries()]
+          .map(([receta, cantidad]) => ({ receta, cantidad }))
+          .sort((a, b) => b.cantidad - a.cantidad),
+      }))
+      .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
+  }, [planCalculado]);
+
   const cargando = cargandoRecetas || cargandoIngredientes;
 
   return (
-    <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
-      {/* ══ Columna izquierda: agregar al plan ══ */}
-      <div className="space-y-4">
+    <div className="space-y-6">
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
+        {/* ══ Columna izquierda: agregar al plan ══ */}
+        <div className="space-y-4">
         <div className="rounded-lg border border-surface-border bg-white p-4">
           <h3 className="mb-3 text-sm font-bold text-gray-700">Agregar subreceta al plan</h3>
           <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -355,6 +397,60 @@ export function CalculadoraTab() {
           )}
         </div>
       </div>
+      </div>
+
+      {/* ══ Materia prima total del plan (ancho completo, abajo) ══ */}
+      {consolidado.length > 0 && (
+        <div className="rounded-lg border border-emerald-200 bg-white p-4">
+          <h3 className="text-sm font-bold text-emerald-800">Materia prima total del plan</h3>
+          <p className="mb-3 text-xs text-gray-400">
+            Suma los insumos de todo el plan. Tocá un insumo para ver de qué recetas sale.
+            Referencia — no descuenta stock.
+          </p>
+          <div className="overflow-hidden rounded-md border border-emerald-100">
+            {consolidado.map((m) => {
+              const abierto = insumoAbierto === m.clave;
+              return (
+                <div key={m.clave} className="border-b border-emerald-50 last:border-b-0">
+                  <button
+                    onClick={() => setInsumoAbierto((c) => (c === m.clave ? null : m.clave))}
+                    className={cn(
+                      'flex w-full items-center justify-between px-3 py-2 text-left text-sm transition-colors',
+                      abierto ? 'bg-emerald-50' : 'bg-emerald-50/40 hover:bg-emerald-50',
+                    )}
+                    title={m.porReceta
+                      .map((r) => `${r.receta}: ${formatNum(r.cantidad)} ${m.unidad}`)
+                      .join('  ·  ')}
+                  >
+                    <span className="flex items-center gap-1.5 text-gray-700">
+                      <span className="text-emerald-500">{abierto ? '▾' : '▸'}</span>
+                      {m.nombre}
+                    </span>
+                    <span className="whitespace-nowrap font-semibold text-emerald-800">
+                      {formatNum(m.cantidad)} {m.unidad}
+                    </span>
+                  </button>
+                  {abierto && (
+                    <div className="bg-white px-3 pb-2 pl-8 pt-1">
+                      {m.porReceta.map((r) => (
+                        <div
+                          key={r.receta}
+                          className="flex items-center justify-between py-0.5 text-xs text-gray-500"
+                        >
+                          <span>{r.receta}</span>
+                          <span className="whitespace-nowrap font-medium text-gray-600">
+                            {formatNum(r.cantidad)} {m.unidad}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
