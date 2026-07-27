@@ -25,22 +25,90 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 }
 
+// ── Token de Fudo ────────────────────────────────────────────────────────────
+// Fudo limita los logins: cuando varias pantallas piden datos a la vez, a las
+// que se loguean juntas les contesta 429 "Retry later" y la demanda quedaba en
+// "sin ventas Fudo". El token dura 24 h, así que se guarda en la tabla
+// fudo_tokens y lo comparten TODAS las invocaciones: se hace un login por día,
+// no uno por llamada. La cache en memoria evita ir a la base en cada request.
 const tokenCache: Record<string, { token: string; exp: number }> = {}
+
+const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
+const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+const TOKENS_URL = `${SUPABASE_URL}/rest/v1/fudo_tokens`
+const dbHeaders = {
+  apikey: SERVICE_KEY,
+  Authorization: `Bearer ${SERVICE_KEY}`,
+  'Content-Type': 'application/json',
+}
+
+// Margen: renovamos 30 min antes del vencimiento real.
+const vigente = (exp: number) => exp * 1000 - Date.now() > 30 * 60 * 1000
+
+async function tokenDeDB(local: string): Promise<string | null> {
+  try {
+    const res = await fetch(`${TOKENS_URL}?local=eq.${local}&select=token,exp`, {
+      headers: dbHeaders,
+    })
+    if (!res.ok) return null
+    const filas = (await res.json()) as { token: string; exp: number }[]
+    const fila = filas[0]
+    if (!fila || !vigente(Number(fila.exp))) return null
+    tokenCache[local] = { token: fila.token, exp: Number(fila.exp) }
+    return fila.token
+  } catch {
+    return null // si la base falla, seguimos con login normal
+  }
+}
+
+async function guardarToken(local: string, token: string, exp: number) {
+  try {
+    await fetch(TOKENS_URL, {
+      method: 'POST',
+      headers: { ...dbHeaders, Prefer: 'resolution=merge-duplicates' },
+      body: JSON.stringify({ local, token, exp, actualizado_at: new Date().toISOString() }),
+    })
+  } catch {
+    // Guardar es best-effort: si falla, la próxima invocación se loguea de nuevo.
+  }
+}
 
 async function autenticar(local: string): Promise<string> {
   const cached = tokenCache[local]
-  if (cached && cached.exp * 1000 - Date.now() > 5 * 60 * 1000) return cached.token
+  if (cached && vigente(cached.exp)) return cached.token
   const creds = CREDENCIALES[local]
   if (!creds) throw new Error(`Sin credenciales para local "${local}"`)
-  const res = await fetch(AUTH_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(creds),
-  })
-  if (!res.ok) throw new Error(`Auth Fudo falló: ${res.status}`)
-  const { token, exp } = await res.json()
-  tokenCache[local] = { token, exp }
-  return token
+
+  const guardado = await tokenDeDB(local)
+  if (guardado) return guardado
+
+  // Nadie tiene token vigente: hay que loguearse. Si justo coincidimos con otra
+  // invocación, Fudo tira 429 → esperamos (con jitter, para no volver a chocar)
+  // y reintentamos, mirando primero si la otra ya dejó el token en la base.
+  const INTENTOS = 4
+  let ultimoStatus = 0
+  for (let intento = 0; intento < INTENTOS; intento++) {
+    if (intento > 0) {
+      await new Promise((r) => setTimeout(r, 500 * 2 ** (intento - 1) + Math.random() * 400))
+      const reciente = await tokenDeDB(local)
+      if (reciente) return reciente
+    }
+    const res = await fetch(AUTH_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(creds),
+    })
+    if (res.ok) {
+      const { token, exp } = await res.json()
+      tokenCache[local] = { token, exp }
+      await guardarToken(local, token, exp)
+      return token
+    }
+    ultimoStatus = res.status
+    // 429 (rate limit) y 5xx son transitorios; el resto (credenciales) no.
+    if (res.status !== 429 && res.status < 500) break
+  }
+  throw new Error(`Auth Fudo falló: ${ultimoStatus}`)
 }
 
 async function fudoGet(token: string, endpoint: string, params: Record<string, string> = {}) {
