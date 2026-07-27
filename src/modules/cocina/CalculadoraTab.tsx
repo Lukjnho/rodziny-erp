@@ -293,9 +293,9 @@ export function CalculadoraTab() {
                   setPlan([]);
                   setExpandido(null);
                 }}
-                className="text-xs text-gray-400 hover:text-red-500"
+                className="rounded-md border border-red-200 px-2.5 py-1 text-xs font-medium text-red-600 transition-colors hover:bg-red-50"
               >
-                Vaciar
+                Vaciar todo
               </button>
             )}
           </div>
@@ -328,15 +328,16 @@ export function CalculadoraTab() {
                     )}
                     <button
                       onClick={() => setExpandido((e) => (e === item.key ? null : item.key))}
-                      className="px-1 text-gray-400 hover:text-gray-700"
+                      className="rounded p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700"
                       title="Ver insumos de este ítem"
                     >
                       {expandido === item.key ? '▾' : '▸'}
                     </button>
                     <button
                       onClick={() => quitar(item.key)}
-                      className="px-1 text-gray-400 hover:text-red-500"
-                      title="Quitar"
+                      className="flex h-7 w-7 items-center justify-center rounded-md bg-red-50 text-base font-bold text-red-500 transition-colors hover:bg-red-500 hover:text-white"
+                      title="Quitar del plan"
+                      aria-label="Quitar del plan"
                     >
                       ✕
                     </button>
