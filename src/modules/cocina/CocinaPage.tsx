@@ -8,6 +8,7 @@ import { TraspasosTab } from './TraspasosTab';
 import { AnalisisTab } from './AnalisisTab';
 import { CalendarioTab } from './CalendarioTab';
 import { CierresTab } from './CierresTab';
+import { CalculadoraTab } from './CalculadoraTab';
 
 type Tab =
   | 'dashboard'
@@ -16,7 +17,8 @@ type Tab =
   | 'cierres'
   | 'traspasos'
   | 'analisis'
-  | 'calendario';
+  | 'calendario'
+  | 'calculadora';
 
 const ayudaPorTab: Record<Tab, { titulo: string; pasos: string[] }> = {
   dashboard: {
@@ -82,6 +84,16 @@ const ayudaPorTab: Record<Tab, { titulo: string; pasos: string[] }> = {
       'Las "recurrentes mensuales" (ej. Día del Ñoqui 29) aparecen en cada mes sin tener que duplicar.',
     ],
   },
+  calculadora: {
+    titulo: 'Calculadora de recetas',
+    pasos: [
+      'Herramienta de referencia: elegí una subreceta y un multiplicador ×N para ver cuánta materia prima necesitás.',
+      'El multiplicador escala toda la receta: ×2 es el doble de cada insumo.',
+      'Si una subreceta usa otra (ej. Pomodoro dentro de Amatriciana), muestra "N kg de Pomodoro Base" y debajo los insumos para esa cantidad.',
+      'Al final arma la lista de compra consolidada sumando todas las materias primas.',
+      'No toca stock ni guarda nada: es solo para calcular y planificar compras.',
+    ],
+  },
 };
 
 export function CocinaPage() {
@@ -112,6 +124,9 @@ export function CocinaPage() {
         <TabButton activo={tab === 'calendario'} onClick={() => setTab('calendario')}>
           Calendario
         </TabButton>
+        <TabButton activo={tab === 'calculadora'} onClick={() => setTab('calculadora')}>
+          Calculadora
+        </TabButton>
         <button
           onClick={() => setAyudaAbierta(true)}
           className="hover:bg-rodziny-200 mb-2 ml-auto flex h-8 w-8 items-center justify-center rounded-full bg-rodziny-100 text-sm font-bold text-rodziny-700 transition-colors"
@@ -128,6 +143,7 @@ export function CocinaPage() {
       {tab === 'traspasos' && <TraspasosTab />}
       {tab === 'analisis' && <AnalisisTab />}
       {tab === 'calendario' && <CalendarioTab />}
+      {tab === 'calculadora' && <CalculadoraTab />}
 
       {ayudaAbierta && <AyudaPanel tab={tab} onClose={() => setAyudaAbierta(false)} />}
     </PageContainer>
