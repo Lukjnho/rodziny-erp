@@ -144,9 +144,18 @@ export function UploadFudo({ onSuccess }: { onSuccess?: () => void }) {
       // excluir canceladas/eliminadas igual que el script de Sheets
       .filter((t) => t.estado !== 'Cancelada' && t.estado !== 'Eliminada');
 
-    // Eliminar tickets del mismo local+periodo antes de reinsertar (evita acumulación de imports)
-    await supabase.from('ventas_tickets').delete().eq('local', loc).eq('periodo', data.periodo);
-    const { error: e1 } = await supabase.from('ventas_tickets').insert(ticketsRows);
+    // Eliminar tickets previos del local para TODOS los periodos presentes en el archivo.
+    // Un export puede abarcar >1 mes y, por zona horaria, un ticket de las 23:xx puede caer en
+    // el mes siguiente. Antes se borraba solo data.periodo (mes de la primera fila) → los tickets
+    // de otros meses sobrevivían y colisionaban contra la constraint única (local, fudo_id).
+    const periodosArchivo = [...new Set(ticketsRows.map((t) => t.periodo))];
+    if (periodosArchivo.length) {
+      await supabase.from('ventas_tickets').delete().eq('local', loc).in('periodo', periodosArchivo);
+    }
+    // upsert por (local, fudo_id): si algún ticket quedó bajo otro periodo, se actualiza en vez de romper.
+    const { error: e1 } = await supabase
+      .from('ventas_tickets')
+      .upsert(ticketsRows, { onConflict: 'local,fudo_id' });
     if (e1) errores.push(`Tickets: ${e1.message}`);
 
     console.log(

@@ -4698,8 +4698,10 @@ const TIPO_ORDEN_MERMA = [
 
 // Unidad de la cantidad de merma según el tipo
 function unidadMermaPorTipo(tipo: string): string {
-  if (tipo === 'salsa') return 'kg';
-  if (tipo === 'pasta' || tipo === 'relleno' || tipo === 'masa') return 'porciones';
+  // salsas, masas y rellenos se producen/pesan en kg (cocina_lotes_masa.kg_producidos,
+  // cocina_lotes_relleno.peso_total_kg), así que su merma también se carga en kg.
+  if (tipo === 'salsa' || tipo === 'masa' || tipo === 'relleno') return 'kg';
+  if (tipo === 'pasta') return 'porciones';
   return 'unidades'; // postre, panificado, pasteleria, panaderia
 }
 
