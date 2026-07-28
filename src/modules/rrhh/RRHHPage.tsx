@@ -13,12 +13,14 @@ import { EvaluacionesTab } from './EvaluacionesTab';
 import { VacacionesTab } from './VacacionesTab';
 import { AguinaldoTab } from './AguinaldoTab';
 import { RecibosTab } from './RecibosTab';
+import { BienalTab } from './BienalTab';
 
 type Tab =
   | 'legajos'
   | 'cronograma'
   | 'asistencia'
   | 'horas'
+  | 'bienal'
   | 'sueldos'
   | 'recibos'
   | 'evaluaciones'
@@ -99,6 +101,20 @@ const ayudaPorTab: Record<Tab, { titulo: string; pasos: string[] }> = {
       'Empleados sin cronograma cargado en el período aparecen con badge "sin cronograma" y NO suman al total de Empresa (solo se ven sus reales).',
       'Tildá "Solo con discrepancia" para filtrar empleados que tienen al menos un día con diferencia >30min.',
       'Las fichadas en días no programados (francos) suman a las reales pero no a las teóricas — quedan en verde.',
+    ],
+  },
+  bienal: {
+    titulo: 'Horas Bienal (eventos externos)',
+    pasos: [
+      'Horas fichadas con el QR de los stands de la Bienal. Van etiquetadas con evento="bienal" y NO entran en Horas, Asistencia, Sueldos ni Evaluaciones (esos tabs solo miran el local).',
+      'Este tab es de análisis: no liquida ni modifica nada. Sirve para revisar los números antes de decidir cómo se pagan.',
+      'Elegí el evento y el rango de fechas arriba. El rango arranca el 17/07 (día 1 real de la Bienal) aunque la primera marca por QR sea del 18.',
+      'Las horas se calculan igual que en el tab Horas: pares entrada→salida de la jornada, descartando doble-tap de menos de 90 segundos.',
+      'Un par de más de 16hs se considera "salida no fichada" y NO suma horas.',
+      'Click en una persona para ver turno por turno, con el stand de entrada y de salida.',
+      'Leé "Casos a revisar" antes de pagar: los turnos SIN SALIDA no están sumados (son horas que faltan) y los de más de 12h SÍ están sumados y probablemente sobren.',
+      'Las horas se imputan al stand por el que la persona ENTRÓ. Si entró por uno y salió por el otro, queda marcado con "cambia de stand".',
+      '"Exportar CSV" baja el detalle turno por turno para llevarlo a la reunión.',
     ],
   },
   sueldos: {
@@ -293,6 +309,9 @@ export function RRHHPage() {
         <TabButton activo={tab === 'horas'} onClick={() => setTab('horas')}>
           Horas
         </TabButton>
+        <TabButton activo={tab === 'bienal'} onClick={() => setTab('bienal')}>
+          Horas Bienal
+        </TabButton>
         <TabButton activo={tab === 'recibos'} onClick={() => setTab('recibos')}>
           Recibos
         </TabButton>
@@ -321,6 +340,7 @@ export function RRHHPage() {
       {tab === 'cronograma' && <CronogramaTab />}
       {tab === 'asistencia' && <AsistenciaTab />}
       {tab === 'horas' && <HorasTab />}
+      {tab === 'bienal' && <BienalTab />}
       {tab === 'sueldos' && <SueldosTab />}
       {tab === 'recibos' && <RecibosTab />}
       {tab === 'evaluaciones' && <EvaluacionesTab />}
