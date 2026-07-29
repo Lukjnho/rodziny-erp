@@ -195,6 +195,7 @@ function DetalleGruposBody<T>({
 export function CalendarioPagos<T = unknown>({
   items,
   itemsMesCompleto,
+  itemsFueraDelTotal,
   titulo,
   subtitulo,
   totalLabel = 'Total a pagar (toda la deuda)',
@@ -209,6 +210,12 @@ export function CalendarioPagos<T = unknown>({
   // `items` (ej. incluir meses futuros que NO cuentan al total pero sí se navegan
   // mes a mes). Si no se pasa, el modal usa `items`.
   itemsMesCompleto?: ItemCalendario<T>[];
+  // Ítems que se VEN (día que vencen, detalle, modal de mes, total de los 7 días)
+  // pero NO suman al KPI "Total a pagar" de la cabecera ni a su desglose por local.
+  // Para plata comprometida que no es del mismo tipo que la deuda que mide el
+  // total: en cta cte son los echeqs de capex, que hay que ver en el calendario
+  // sin que inflen "lo que le debo a proveedores". Vacío por defecto.
+  itemsFueraDelTotal?: ItemCalendario<T>[];
   titulo: string;
   subtitulo: string;
   totalLabel?: string;
@@ -265,11 +272,20 @@ export function CalendarioPagos<T = unknown>({
     let totalDeuda = 0;
     const deudaPorLocal: Record<LocalKey, number> = { vedia: 0, saavedra: 0, sas: 0 };
 
-    for (const g of items) {
+    // `cuentaAlTotal=false` para los itemsFueraDelTotal: se bucketean igual (así se
+    // ven en su día y en el detalle) pero no tocan el KPI de la cabecera.
+    const aRecorrer: [ItemCalendario<T>, boolean][] = [
+      ...items.map((g) => [g, true] as [ItemCalendario<T>, boolean]),
+      ...(itemsFueraDelTotal ?? []).map((g) => [g, false] as [ItemCalendario<T>, boolean]),
+    ];
+
+    for (const [g, cuentaAlTotal] of aRecorrer) {
       const local = g.local ?? 'sas';
       const monto = Number(g.monto);
-      totalDeuda += monto;
-      if (local in deudaPorLocal) deudaPorLocal[local] += monto;
+      if (cuentaAlTotal) {
+        totalDeuda += monto;
+        if (local in deudaPorLocal) deudaPorLocal[local] += monto;
+      }
 
       // Sin fecha de vencimiento: suma al total pero no cae en ningún día. Va a su
       // propio bucket para que el total cierre contra atrasado + días + más adelante.
@@ -286,7 +302,7 @@ export function CalendarioPagos<T = unknown>({
     }
 
     return { atrasado, porDia, masAdelante, sinVenc, totalDeuda, deudaPorLocal };
-  }, [items, dias7, hoy]);
+  }, [items, itemsFueraDelTotal, dias7, hoy]);
 
   const totalProx7 = useMemo(
     () => dias7.reduce((s, d) => s + (porDia.get(d)?.total ?? 0), 0),
@@ -303,8 +319,12 @@ export function CalendarioPagos<T = unknown>({
 
   // Todos los vencimientos agrupados por fecha exacta — alimenta el modal de mes
   // completo. Usa `itemsMesCompleto` (universo ampliado, ej. meses futuros) si se
-  // pasó; si no, los mismos `items` del total.
-  const itemsModal = itemsMesCompleto ?? items;
+  // pasó; si no, los mismos `items` del total. Los itemsFueraDelTotal se ven acá
+  // también: el modal es para navegar el calendario, no para medir la deuda.
+  const itemsModal = useMemo(
+    () => [...(itemsMesCompleto ?? items), ...(itemsFueraDelTotal ?? [])],
+    [itemsMesCompleto, items, itemsFueraDelTotal],
+  );
   const porFecha = useMemo(() => {
     const map = new Map<string, Bucket<T>>();
     for (const g of itemsModal) {
