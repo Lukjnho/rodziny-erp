@@ -546,7 +546,8 @@ function ModalPedido({
   );
 
   async function guardar() {
-    if (!form.producto_nombre || !form.cliente_nombre || !form.fecha_entrega) return;
+    if (!form.producto_nombre || !form.cliente_nombre || !form.fecha_entrega || !form.nro_ticket)
+      return;
     // No permitir agendar un pedido con fecha de entrega anterior a hoy.
     // Al editar un pedido viejo, sí permitimos mantener su fecha original.
     if (!editando && form.fecha_entrega < hoy()) {
@@ -774,7 +775,7 @@ function ModalPedido({
               />
             </div>
             <div>
-              <label className="mb-1 block text-xs font-medium text-gray-600">Nro. ticket</label>
+              <label className="mb-1 block text-xs font-medium text-gray-600">Nro. ticket *</label>
               <input
                 value={form.nro_ticket}
                 onChange={(e) => setForm({ ...form, nro_ticket: e.target.value })}
@@ -821,7 +822,11 @@ function ModalPedido({
           <button
             onClick={guardar}
             disabled={
-              guardando || !form.producto_nombre || !form.cliente_nombre || !form.fecha_entrega
+              guardando ||
+              !form.producto_nombre ||
+              !form.cliente_nombre ||
+              !form.fecha_entrega ||
+              !form.nro_ticket
             }
             className="rounded-md bg-rodziny-600 px-5 py-2 text-sm font-medium text-white transition-colors hover:bg-rodziny-700 disabled:opacity-50"
           >
