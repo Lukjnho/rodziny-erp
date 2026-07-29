@@ -5,7 +5,6 @@ import { DashboardTab } from './DashboardTab';
 import { ProduccionTab } from './ProduccionTab';
 import { StockTab } from './StockTab';
 import { TraspasosTab } from './TraspasosTab';
-import { AnalisisTab } from './AnalisisTab';
 import { CalendarioTab } from './CalendarioTab';
 import { CierresTab } from './CierresTab';
 import { CalculadoraTab } from './CalculadoraTab';
@@ -16,7 +15,6 @@ type Tab =
   | 'stock'
   | 'cierres'
   | 'traspasos'
-  | 'analisis'
   | 'calendario'
   | 'calculadora';
 
@@ -65,15 +63,6 @@ const ayudaPorTab: Record<Tab, { titulo: string; pasos: string[] }> = {
       'También podés registrar merma (rotura, vencimiento, etc.).',
     ],
   },
-  analisis: {
-    titulo: 'Análisis',
-    pasos: [
-      'Rendimiento real vs. teórico: compara lo que rindió cada receta contra lo que tendría que rendir según la ficha.',
-      'Desvíos >10% en rojo sugieren actualizar la receta o revisar el proceso.',
-      'Merma por producto: muestra qué se descarta más y por qué. Lo que aparece en rojo requiere atención.',
-      'Cambiá el período (7/30/90 días) para ver tendencias más o menos recientes.',
-    ],
-  },
   calendario: {
     titulo: 'Calendario de efemérides',
     pasos: [
@@ -118,9 +107,6 @@ export function CocinaPage() {
         <TabButton activo={tab === 'traspasos'} onClick={() => setTab('traspasos')}>
           Traspasos
         </TabButton>
-        <TabButton activo={tab === 'analisis'} onClick={() => setTab('analisis')}>
-          Análisis
-        </TabButton>
         <TabButton activo={tab === 'calendario'} onClick={() => setTab('calendario')}>
           Calendario
         </TabButton>
@@ -141,7 +127,6 @@ export function CocinaPage() {
       {tab === 'stock' && <StockTab />}
       {tab === 'cierres' && <CierresTab />}
       {tab === 'traspasos' && <TraspasosTab />}
-      {tab === 'analisis' && <AnalisisTab />}
       {tab === 'calendario' && <CalendarioTab />}
       {tab === 'calculadora' && <CalculadoraTab />}
 
