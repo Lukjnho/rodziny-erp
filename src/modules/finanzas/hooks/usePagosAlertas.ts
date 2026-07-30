@@ -10,8 +10,15 @@ interface PagoPendiente {
 }
 
 export interface UrgentesEnPeriodo {
+  // Pagos urgentes CON importe cargado: los únicos que suman a `monto`. Antes esto
+  // contaba también las filas sin monto (IVA/F931 vencidos cargados en $0), así que
+  // el banner decía "2 pagos · deuda $68.000" cuando la plata estaba en un solo
+  // pago — y el número no cerraba contra el calendario, que descarta monto <= 0.
   cantidad: number;
   monto: number;
+  // Urgentes sin importe cargado. No son deuda cuantificable, pero hay que
+  // completarlos: se muestran aparte en vez de esconderlos dentro de `cantidad`.
+  sinMonto: number;
 }
 
 export type UrgenciaPago = 'vencido' | 'hoy' | 'semana' | 'proximo' | 'ok';
@@ -58,9 +65,14 @@ export function usePagosAlertas() {
       const porPeriodo: Record<string, UrgentesEnPeriodo> = {};
       for (const p of urgentes) {
         if (!p.periodo) continue;
-        const agg = porPeriodo[p.periodo] ?? { cantidad: 0, monto: 0 };
-        agg.cantidad += 1;
-        agg.monto += p.monto ?? 0;
+        const agg = porPeriodo[p.periodo] ?? { cantidad: 0, monto: 0, sinMonto: 0 };
+        const monto = Number(p.monto ?? 0);
+        if (monto > 0) {
+          agg.cantidad += 1;
+          agg.monto += monto;
+        } else {
+          agg.sinMonto += 1;
+        }
         porPeriodo[p.periodo] = agg;
       }
 

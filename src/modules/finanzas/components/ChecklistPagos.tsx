@@ -219,7 +219,12 @@ export function ChecklistPagos() {
     // así que "Mayo: $20M" en realidad era Mayo + Julio juntos.
     const otros = Object.entries(pp)
       .filter(([p]) => p !== periodo)
-      .map(([p, v]) => ({ periodo: p, cantidad: v.cantidad, monto: v.monto }))
+      .map(([p, v]) => ({
+        periodo: p,
+        cantidad: v.cantidad,
+        monto: v.monto,
+        sinMonto: v.sinMonto,
+      }))
       .sort((a, b) => a.periodo.localeCompare(b.periodo));
     return otros.length ? otros : null;
   }, [alertas, periodo]);
@@ -864,9 +869,12 @@ export function ChecklistPagos() {
             className="relative rounded px-2 py-1 text-gray-500 hover:bg-gray-100 hover:text-gray-700"
           >
             ←
+            {/* El badge cuenta TODO lo urgente del mes vecino (con y sin importe):
+                es un "acá hay algo", no un total de plata. */}
             {alertas?.porPeriodo?.[periodoAnterior(periodo)] && (
               <span className="absolute -right-1 -top-1 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-amber-500 px-1 text-[9px] font-bold text-white">
-                {alertas.porPeriodo[periodoAnterior(periodo)].cantidad}
+                {alertas.porPeriodo[periodoAnterior(periodo)].cantidad +
+                  alertas.porPeriodo[periodoAnterior(periodo)].sinMonto}
               </span>
             )}
           </button>
@@ -880,7 +888,8 @@ export function ChecklistPagos() {
             →
             {alertas?.porPeriodo?.[periodoSiguiente(periodo)] && (
               <span className="absolute -right-1 -top-1 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-amber-500 px-1 text-[9px] font-bold text-white">
-                {alertas.porPeriodo[periodoSiguiente(periodo)].cantidad}
+                {alertas.porPeriodo[periodoSiguiente(periodo)].cantidad +
+                  alertas.porPeriodo[periodoSiguiente(periodo)].sinMonto}
               </span>
             )}
           </button>
@@ -947,8 +956,23 @@ export function ChecklistPagos() {
               className="flex items-center justify-between gap-3 pl-6 text-amber-900"
             >
               <span>
-                <strong>{labelMes(u.periodo)}</strong> — {u.cantidad}{' '}
-                {u.cantidad === 1 ? 'pago' : 'pagos'} · deuda <strong>{formatARS(u.monto)}</strong>
+                <strong>{labelMes(u.periodo)}</strong>
+                {u.cantidad > 0 && (
+                  <>
+                    {' '}
+                    — {u.cantidad} {u.cantidad === 1 ? 'pago' : 'pagos'} · deuda{' '}
+                    <strong>{formatARS(u.monto)}</strong>
+                  </>
+                )}
+                {/* Las filas sin importe se cuentan aparte: no son deuda medible,
+                    pero hay que completarlas. Metidas dentro de "N pagos" hacían
+                    que el conteo no cerrara contra el monto ni contra el calendario. */}
+                {u.sinMonto > 0 && (
+                  <span className="text-amber-700">
+                    {u.cantidad > 0 ? ' · ' : ' — '}
+                    {u.sinMonto} sin importe
+                  </span>
+                )}
               </span>
               <button
                 onClick={() => irAPeriodo(u.periodo)}
@@ -992,7 +1016,10 @@ export function ChecklistPagos() {
             <p className="text-lg font-semibold text-green-700">{formatARS(resumen.totalPagado)}</p>
           </div>
           <div className="rounded-lg border border-surface-border bg-white p-4">
-            <p className="mb-1 text-xs text-gray-500">Pendiente</p>
+            {/* "del mes": justo abajo está el calendario con su propio "Total
+                pendiente", que cruza meses. Dos números distintos con el mismo
+                nombre se leían como una contradicción. */}
+            <p className="mb-1 text-xs text-gray-500">Pendiente del mes</p>
             <p className="text-lg font-semibold text-red-600">{formatARS(resumen.pendiente)}</p>
           </div>
           <div className="rounded-lg border border-surface-border bg-white p-4">

@@ -60,11 +60,24 @@ interface Bucket<T = unknown> {
 }
 
 // YYYY-MM-DD en hora local (no UTC) para que "hoy" coincida con el huso de AR.
-function ymdLocal(d: Date): string {
+export function ymdLocal(d: Date): string {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${day}`;
+}
+
+// Días que muestra la grilla: hoy + los 6 siguientes.
+const DIAS_GRILLA = 7;
+
+// Ventana de la grilla, exportada para que quien arma los ítems decida con el MISMO
+// criterio qué tiene que entrar. Si cada punta calcula sus 7 días por separado, un
+// pago del borde (hoy+6) se pierde entre las dos y el día aparece vacío.
+export function ventanaGrilla(): { desde: string; hasta: string } {
+  const base = new Date();
+  const fin = new Date(base);
+  fin.setDate(base.getDate() + DIAS_GRILLA - 1);
+  return { desde: ymdLocal(base), hasta: ymdLocal(fin) };
 }
 
 function capitalizar(s: string): string {
@@ -253,7 +266,7 @@ export function CalendarioPagos<T = unknown>({
   const dias7 = useMemo(() => {
     const out: string[] = [];
     const base = new Date();
-    for (let i = 0; i < 7; i++) {
+    for (let i = 0; i < DIAS_GRILLA; i++) {
       const d = new Date(base);
       d.setDate(base.getDate() + i);
       out.push(ymdLocal(d));
@@ -261,48 +274,54 @@ export function CalendarioPagos<T = unknown>({
     return out;
   }, []);
 
-  const { atrasado, porDia, masAdelante, sinVenc, totalDeuda, deudaPorLocal } = useMemo(() => {
-    const atrasado = bucketVacio<T>();
-    const masAdelante = bucketVacio<T>();
-    const sinVenc = bucketVacio<T>();
-    const porDia = new Map<string, Bucket<T>>();
-    for (const d of dias7) porDia.set(d, bucketVacio<T>());
-    const dias7Set = new Set(dias7);
+  const { atrasado, porDia, masAdelante, sinVenc, totalDeuda, deudaPorLocal, totalVencido } =
+    useMemo(() => {
+      const atrasado = bucketVacio<T>();
+      const masAdelante = bucketVacio<T>();
+      const sinVenc = bucketVacio<T>();
+      const porDia = new Map<string, Bucket<T>>();
+      for (const d of dias7) porDia.set(d, bucketVacio<T>());
+      const dias7Set = new Set(dias7);
 
-    let totalDeuda = 0;
-    const deudaPorLocal: Record<LocalKey, number> = { vedia: 0, saavedra: 0, sas: 0 };
+      let totalDeuda = 0;
+      // Parte del total que ya venció. Sirve para desglosar el KPI de la cabecera:
+      // sin esto, cuando todo está vencido el total y el bloque rojo de atrasados
+      // muestran el mismo número y parece un dato repetido (o un doble conteo).
+      let totalVencido = 0;
+      const deudaPorLocal: Record<LocalKey, number> = { vedia: 0, saavedra: 0, sas: 0 };
 
-    // `cuentaAlTotal=false` para los itemsFueraDelTotal: se bucketean igual (así se
-    // ven en su día y en el detalle) pero no tocan el KPI de la cabecera.
-    const aRecorrer: [ItemCalendario<T>, boolean][] = [
-      ...items.map((g) => [g, true] as [ItemCalendario<T>, boolean]),
-      ...(itemsFueraDelTotal ?? []).map((g) => [g, false] as [ItemCalendario<T>, boolean]),
-    ];
+      // `cuentaAlTotal=false` para los itemsFueraDelTotal: se bucketean igual (así se
+      // ven en su día y en el detalle) pero no tocan el KPI de la cabecera.
+      const aRecorrer: [ItemCalendario<T>, boolean][] = [
+        ...items.map((g) => [g, true] as [ItemCalendario<T>, boolean]),
+        ...(itemsFueraDelTotal ?? []).map((g) => [g, false] as [ItemCalendario<T>, boolean]),
+      ];
 
-    for (const [g, cuentaAlTotal] of aRecorrer) {
-      const local = g.local ?? 'sas';
-      const monto = Number(g.monto);
-      if (cuentaAlTotal) {
-        totalDeuda += monto;
-        if (local in deudaPorLocal) deudaPorLocal[local] += monto;
+      for (const [g, cuentaAlTotal] of aRecorrer) {
+        const local = g.local ?? 'sas';
+        const monto = Number(g.monto);
+        if (cuentaAlTotal) {
+          totalDeuda += monto;
+          if (g.fecha_vencimiento && g.fecha_vencimiento < hoy) totalVencido += monto;
+          if (local in deudaPorLocal) deudaPorLocal[local] += monto;
+        }
+
+        // Sin fecha de vencimiento: suma al total pero no cae en ningún día. Va a su
+        // propio bucket para que el total cierre contra atrasado + días + más adelante.
+        let bucket: Bucket<T>;
+        if (!g.fecha_vencimiento) bucket = sinVenc;
+        else if (g.fecha_vencimiento < hoy) bucket = atrasado;
+        else if (dias7Set.has(g.fecha_vencimiento)) bucket = porDia.get(g.fecha_vencimiento)!;
+        else bucket = masAdelante;
+
+        bucket.total += monto;
+        bucket.cantidad += 1;
+        if (local in bucket.porLocal) bucket.porLocal[local] += monto;
+        bucket.items.push(g);
       }
 
-      // Sin fecha de vencimiento: suma al total pero no cae en ningún día. Va a su
-      // propio bucket para que el total cierre contra atrasado + días + más adelante.
-      let bucket: Bucket<T>;
-      if (!g.fecha_vencimiento) bucket = sinVenc;
-      else if (g.fecha_vencimiento < hoy) bucket = atrasado;
-      else if (dias7Set.has(g.fecha_vencimiento)) bucket = porDia.get(g.fecha_vencimiento)!;
-      else bucket = masAdelante;
-
-      bucket.total += monto;
-      bucket.cantidad += 1;
-      if (local in bucket.porLocal) bucket.porLocal[local] += monto;
-      bucket.items.push(g);
-    }
-
-    return { atrasado, porDia, masAdelante, sinVenc, totalDeuda, deudaPorLocal };
-  }, [items, itemsFueraDelTotal, dias7, hoy]);
+      return { atrasado, porDia, masAdelante, sinVenc, totalDeuda, deudaPorLocal, totalVencido };
+    }, [items, itemsFueraDelTotal, dias7, hoy]);
 
   const totalProx7 = useMemo(
     () => dias7.reduce((s, d) => s + (porDia.get(d)?.total ?? 0), 0),
@@ -385,7 +404,7 @@ export function CalendarioPagos<T = unknown>({
   );
 
   return (
-    <div className="mb-4 overflow-hidden rounded-lg border border-rodziny-200 bg-white">
+    <div className="border-rodziny-200 mb-4 overflow-hidden rounded-lg border bg-white">
       {/* Cabecera: total consolidado */}
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-rodziny-100 bg-rodziny-50 px-4 py-3">
         <div>
@@ -395,6 +414,20 @@ export function CalendarioPagos<T = unknown>({
         <div className="text-right">
           <p className="text-[11px] text-gray-500">{totalLabel}</p>
           <p className="text-2xl font-bold text-rodziny-900">{formatARS(totalDeuda)}</p>
+          {/* Desglose vencido / a vencer: si no, cuando está todo vencido este KPI y
+              el bloque rojo de atrasados repiten el mismo número sin explicar por qué. */}
+          {totalDeuda > 0 && (
+            <p className="mt-0.5 text-[11px] text-gray-500">
+              {totalDeuda - totalVencido > 0 ? (
+                <>
+                  <span className="text-red-600">vencido {formatARS(totalVencido)}</span> · a vencer{' '}
+                  {formatARS(totalDeuda - totalVencido)}
+                </>
+              ) : (
+                <span className="text-red-600">todo vencido</span>
+              )}
+            </p>
+          )}
           {localesConDeuda.length > 0 && (
             <div className="mt-1 flex flex-wrap justify-end gap-x-3 gap-y-0.5 text-[11px] text-gray-600">
               {localesConDeuda.map((l) => (
@@ -423,9 +456,7 @@ export function CalendarioPagos<T = unknown>({
             <div className="flex items-center gap-2">
               <span className="text-lg leading-none">🔴</span>
               <div>
-                <p className="text-sm font-semibold text-red-900">
-                  Atrasado ({atrasado.cantidad})
-                </p>
+                <p className="text-sm font-semibold text-red-900">Atrasado ({atrasado.cantidad})</p>
                 <p className="text-[11px] text-red-600">Vencimiento pasado — pagar cuanto antes</p>
               </div>
             </div>
@@ -449,9 +480,9 @@ export function CalendarioPagos<T = unknown>({
                 className={cn(
                   'flex flex-col rounded-lg border px-2.5 py-2 text-left transition-colors',
                   sel
-                    ? 'border-rodziny-500 bg-rodziny-50 ring-1 ring-rodziny-200'
+                    ? 'ring-rodziny-200 border-rodziny-500 bg-rodziny-50 ring-1'
                     : conMonto
-                      ? 'border-gray-200 bg-white hover:border-rodziny-300 hover:bg-rodziny-50/40'
+                      ? 'hover:border-rodziny-300 border-gray-200 bg-white hover:bg-rodziny-50/40'
                       : 'border-gray-100 bg-gray-50/60',
                   esHoy && !sel && 'border-rodziny-300',
                 )}
@@ -513,7 +544,7 @@ export function CalendarioPagos<T = unknown>({
           </div>
           <button
             onClick={abrirModalMes}
-            className="whitespace-nowrap rounded-md border border-rodziny-300 bg-white px-2.5 py-1 text-xs font-medium text-rodziny-700 transition-colors hover:bg-rodziny-50"
+            className="border-rodziny-300 whitespace-nowrap rounded-md border bg-white px-2.5 py-1 text-xs font-medium text-rodziny-700 transition-colors hover:bg-rodziny-50"
           >
             🗓 Ver mes completo
           </button>
@@ -618,11 +649,11 @@ export function CalendarioPagos<T = unknown>({
                       className={cn(
                         'flex min-h-[58px] flex-col rounded-md border p-1.5 text-left transition-colors',
                         sel
-                          ? 'border-rodziny-500 bg-rodziny-50 ring-1 ring-rodziny-200'
+                          ? 'ring-rodziny-200 border-rodziny-500 bg-rodziny-50 ring-1'
                           : conMonto
                             ? pasado
                               ? 'border-red-200 bg-red-50/60 hover:bg-red-50'
-                              : 'border-gray-200 bg-white hover:border-rodziny-300 hover:bg-rodziny-50/40'
+                              : 'hover:border-rodziny-300 border-gray-200 bg-white hover:bg-rodziny-50/40'
                             : 'border-gray-100 bg-gray-50/40',
                         esHoy && !sel && 'border-rodziny-400',
                       )}

@@ -1,7 +1,12 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
-import { CalendarioPagos, type ItemCalendario, type LocalKey } from '@/components/CalendarioPagos';
+import {
+  CalendarioPagos,
+  ventanaGrilla,
+  type ItemCalendario,
+  type LocalKey,
+} from '@/components/CalendarioPagos';
 
 // Calendario de pagos fijos: mismo diseño que el de cuenta corriente en Compras,
 // pero alimentado SOLO con la deuda de Finanzas > Pagos Fijos (impuestos, servicios,
@@ -12,13 +17,17 @@ import { CalendarioPagos, type ItemCalendario, type LocalKey } from '@/component
 // deuda de cuenta corriente / inversiones, vive en el calendario de Compras. Meterla
 // acá la duplicaba entre los dos calendarios y rompía la separación "2 espejo".
 //
-// Dos datasets a partir de la misma query:
-//  - `items` (vencido + mes en curso): alimenta el TOTAL, atrasados y los 7 días.
-//    Acotado para que el "Total pendiente" sea la deuda real de ahora y no sume la
-//    proyección de los meses futuros ya pre-cargados (daría ~$196M en vez de ~$25M).
-//  - `itemsMesCompleto` (todos los meses): alimenta el modal "Ver mes completo", para
-//    poder navegar y ver los pagos fijos de agosto, septiembre, etc. sin que sumen al
-//    total. Los meses futuros son proyección; se planifican acá pero no son deuda hoy.
+// Tres datasets a partir de la misma query:
+//  - `items` (vencido + mes en curso): alimenta el TOTAL y los atrasados. Acotado
+//    para que el "Total pendiente" sea la deuda real de ahora y no sume la proyección
+//    de los meses futuros ya pre-cargados (daría ~$196M en vez de ~$25M).
+//  - `itemsFueraDelTotal` (mes que viene, pero vence dentro de los 7 días): se VEN en
+//    la grilla sin sumar al total. Sin esto, el recorte por período también cegaba la
+//    grilla: el 30/7 los días 1, 4 y 5 de agosto decían "sin pagos" mientras el banner
+//    de urgentes de arriba avisaba de 7 pagos por $4,9M esos mismos días.
+//  - `itemsMesCompleto` (el resto): alimenta el modal "Ver mes completo", para navegar
+//    agosto, septiembre, etc. sin que sumen al total. Los meses futuros son proyección;
+//    se planifican acá pero no son deuda hoy.
 
 interface PagoFijoCal {
   id: string;
@@ -67,8 +76,12 @@ export function CalendarioPagosFijos({
     staleTime: 60_000,
   });
 
-  // Universo completo (todos los meses) → modal "Ver mes completo".
-  const itemsMesCompleto = useMemo<ItemCalendario<PagoFijoPayload>[]>(() => {
+  // Ventana de la grilla de próximos días, calculada por el componente compartido
+  // para que no se nos escape un pago del borde por diferencias de redondeo.
+  const ventana = useMemo(() => ventanaGrilla(), []);
+
+  // Universo completo (todos los meses), antes de repartirlo en los tres datasets.
+  const todos = useMemo<ItemCalendario<PagoFijoPayload>[]>(() => {
     const out: ItemCalendario<PagoFijoPayload>[] = [];
     for (const p of pagosFijos ?? []) {
       const monto = Number(p.monto ?? 0);
@@ -86,19 +99,41 @@ export function CalendarioPagosFijos({
     return out;
   }, [pagosFijos]);
 
-  // Acotado a "vencido + mes en curso" → total, atrasados y grilla de 7 días.
+  // Acotado a "vencido + mes en curso" → total y atrasados.
   const items = useMemo<ItemCalendario<PagoFijoPayload>[]>(
-    () => itemsMesCompleto.filter((i) => (i.payload?.periodo ?? '') <= periodoActual),
-    [itemsMesCompleto, periodoActual],
+    () => todos.filter((i) => (i.payload?.periodo ?? '') <= periodoActual),
+    [todos, periodoActual],
   );
+
+  // Del mes que viene pero vence dentro de la grilla: se muestra, no suma al total.
+  const itemsFueraDelTotal = useMemo<ItemCalendario<PagoFijoPayload>[]>(
+    () =>
+      todos.filter(
+        (i) =>
+          (i.payload?.periodo ?? '') > periodoActual &&
+          !!i.fecha_vencimiento &&
+          i.fecha_vencimiento >= ventana.desde &&
+          i.fecha_vencimiento <= ventana.hasta,
+      ),
+    [todos, periodoActual, ventana],
+  );
+
+  // Modal de mes completo: todo MENOS lo que ya viaja en itemsFueraDelTotal. El
+  // componente concatena las dos listas para armar el modal, así que un pago que
+  // esté en ambas se contaría DOS VECES en el "A pagar en el mes" de agosto.
+  const itemsMesCompleto = useMemo<ItemCalendario<PagoFijoPayload>[]>(() => {
+    const fuera = new Set(itemsFueraDelTotal.map((i) => i.id));
+    return todos.filter((i) => !fuera.has(i.id));
+  }, [todos, itemsFueraDelTotal]);
 
   return (
     <CalendarioPagos
       items={items}
+      itemsFueraDelTotal={itemsFueraDelTotal}
       itemsMesCompleto={itemsMesCompleto}
       isLoading={isLoading}
       titulo="🗓 Calendario de pagos fijos"
-      subtitulo="Lo vencido + lo que vence este mes (impuestos, servicios, cargas sociales). 'Ver mes completo' muestra también los meses siguientes (proyección)."
+      subtitulo="Lo vencido + lo que vence este mes (impuestos, servicios, cargas sociales). La grilla de 7 días también muestra lo que cae la semana que viene aunque sea del mes siguiente: se ve, pero no suma al total. 'Ver mes completo' navega los meses de proyección."
       totalLabel="Total pendiente (vencido + este mes)"
       ctaAyuda="ir al mes →"
       onSelectGrupo={(g) => {
