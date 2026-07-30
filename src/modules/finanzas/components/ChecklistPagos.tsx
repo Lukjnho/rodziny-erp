@@ -1,5 +1,5 @@
-import { useState, useMemo, useEffect } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useState, useMemo, useEffect, useRef } from 'react';
+import { useQuery, useMutation, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { procesarComprobantePago } from '@/lib/ocrComprobantePago';
 import { formatARS, cn } from '@/lib/utils';
@@ -186,6 +186,17 @@ function derivarLocal(concepto: string): 'vedia' | 'saavedra' {
   return 'vedia';
 }
 
+// Invalidar TODO lo que vive de pagos_fijos: la lista del mes y el calendario.
+// El calendario (CalendarioPagosFijos) tiene su propia query ['pagos_fijos_calendario']
+// porque cruza todos los meses, no solo el que estás viendo. Al invalidar solo
+// ['pagos_fijos', periodo] la tabla se actualizaba pero el calendario de arriba
+// quedaba con la foto vieja: borrabas un pago de $7M y seguía contándolo en el
+// "Total pendiente" y en Atrasados hasta recargar la página.
+function invalidarPagosFijos(qc: QueryClient, periodo: string) {
+  qc.invalidateQueries({ queryKey: ['pagos_fijos', periodo] });
+  qc.invalidateQueries({ queryKey: ['pagos_fijos_calendario'] });
+}
+
 // ── componente ───────────────────────────────────────────────────────────────
 export function ChecklistPagos() {
   const qc = useQueryClient();
@@ -194,6 +205,8 @@ export function ChecklistPagos() {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
   });
+  // Selector de mes: adonde subimos al navegar a otro período (ver irAPeriodo).
+  const toolbarRef = useRef<HTMLDivElement>(null);
   const { data: alertas } = usePagosAlertas();
 
   // Urgentes en otros meses distintos al que estoy viendo (vencen en ≤7 días).
@@ -332,7 +345,7 @@ export function ChecklistPagos() {
       const { error } = await supabase.from('pagos_fijos').insert(pago);
       if (error) throw error;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['pagos_fijos', periodo] }),
+    onSuccess: () => invalidarPagosFijos(qc, periodo),
   });
 
   // Confirmar el débito de un echeq/cheque a futuro. Como ahora "pagado" lo decide
@@ -379,7 +392,7 @@ export function ChecklistPagos() {
       if (error) throw error;
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['pagos_fijos', periodo] });
+      invalidarPagosFijos(qc, periodo);
       qc.invalidateQueries({ queryKey: ['fc_pagos'] });
     },
   });
@@ -450,7 +463,7 @@ export function ChecklistPagos() {
       return { creados: rows.length, salteados };
     },
     onSuccess: (r) => {
-      qc.invalidateQueries({ queryKey: ['pagos_fijos', periodo] });
+      invalidarPagosFijos(qc, periodo);
       if (r && r.salteados > 0) {
         window.alert(
           `Se copiaron ${r.creados} pagos. Los otros ${r.salteados} ya estaban cargados en este mes y quedaron como estaban (no se pisó ninguno pagado).`,
@@ -613,7 +626,7 @@ export function ChecklistPagos() {
       })
       .eq('id', pago.id);
 
-    qc.invalidateQueries({ queryKey: ['pagos_fijos', periodo] });
+    invalidarPagosFijos(qc, periodo);
     qc.invalidateQueries({ queryKey: ['fc_pagos'] });
     qc.invalidateQueries({ queryKey: ['edr_gastos_resumen'] });
     // El banner de "urgentes en otros meses" y el badge de la flecha viven de este
@@ -639,7 +652,7 @@ export function ChecklistPagos() {
       })
       .eq('id', pago.id);
 
-    qc.invalidateQueries({ queryKey: ['pagos_fijos', periodo] });
+    invalidarPagosFijos(qc, periodo);
     qc.invalidateQueries({ queryKey: ['fc_pagos'] });
     qc.invalidateQueries({ queryKey: ['edr_gastos_resumen'] });
     qc.invalidateQueries({ queryKey: ['pagos_alertas_global'] });
@@ -688,7 +701,7 @@ export function ChecklistPagos() {
       }
     }
 
-    qc.invalidateQueries({ queryKey: ['pagos_fijos', periodo] });
+    invalidarPagosFijos(qc, periodo);
     qc.invalidateQueries({ queryKey: ['fc_pagos'] });
     qc.invalidateQueries({ queryKey: ['edr_gastos_resumen'] });
   }
@@ -719,7 +732,7 @@ export function ChecklistPagos() {
     if (pago.pagado && pago.gasto_id) {
       await supabase.from('gastos').update({ periodo: nuevoPeriodo }).eq('id', pago.gasto_id);
     }
-    qc.invalidateQueries({ queryKey: ['pagos_fijos', periodo] });
+    invalidarPagosFijos(qc, periodo);
     qc.invalidateQueries({ queryKey: ['pagos_fijos', nuevoPeriodo] });
     qc.invalidateQueries({ queryKey: ['pagos_alertas_global'] });
     qc.invalidateQueries({ queryKey: ['fc_pagos'] });
@@ -830,11 +843,21 @@ export function ChecklistPagos() {
     });
   }
 
+  // Ir al mes de un pago clickeado (calendario de pagos fijos, banner de urgentes).
+  // Cambiar el período solo no alcanzaba: el selector de mes está ARRIBA de esos
+  // bloques, así que al clickear "ir al mes →" el mes cambiaba fuera de la pantalla
+  // y parecía que el botón no hacía nada — y si el pago ya era del mes en curso, no
+  // cambiaba nada en absoluto. Subimos al selector para que se vea a dónde fuiste.
+  function irAPeriodo(p: string) {
+    setPeriodo(p);
+    toolbarRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
   // ── render ───────────────────────────────────────────────────────────────
   return (
     <div className="space-y-4">
       {/* Toolbar */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div ref={toolbarRef} className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <button
             onClick={() => setPeriodo(periodoAnterior(periodo))}
@@ -928,7 +951,7 @@ export function ChecklistPagos() {
                 {u.cantidad === 1 ? 'pago' : 'pagos'} · deuda <strong>{formatARS(u.monto)}</strong>
               </span>
               <button
-                onClick={() => setPeriodo(u.periodo)}
+                onClick={() => irAPeriodo(u.periodo)}
                 className="whitespace-nowrap rounded-md bg-amber-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-amber-700"
               >
                 Ver →
@@ -995,7 +1018,7 @@ export function ChecklistPagos() {
       {/* Calendario de pagos fijos (atrasado + próximos 7 días + mes completo).
           Reemplaza los antiguos banners de urgencia: cruza todos los meses, no
           solo el que estás viendo, con el mismo diseño que Compras. */}
-      <CalendarioPagosFijos onIrAPeriodo={setPeriodo} />
+      <CalendarioPagosFijos onIrAPeriodo={irAPeriodo} />
 
       {/* Estado vacío */}
       {!tieneItems && !hayProgramados && !isLoading && (
