@@ -57,13 +57,27 @@ export function usePagosAlertas() {
         .not('fecha_vencimiento', 'is', null);
       const pagos = (data ?? []) as PagoPendiente[];
 
-      const vencidos = pagos.filter((p) => urgenciaPago(p.fecha_vencimiento) === 'vencido');
-      const hoy = pagos.filter((p) => urgenciaPago(p.fecha_vencimiento) === 'hoy');
-      const semana = pagos.filter((p) => urgenciaPago(p.fecha_vencimiento) === 'semana');
+      // Los contadores (badge del sidebar, flechas del checklist) cuentan SOLO pagos
+      // con importe cargado: son los que representan plata a pagar. Las filas en $0
+      // (IVA/F931/cargas sociales cargadas sin monto) inflaban el badge —"21 urgentes"
+      // cuando la deuda medible eran menos— y no cerraban contra el calendario, que
+      // descarta monto <= 0. No se pierden: van a `sinMonto` por período y el banner
+      // del checklist las muestra como "N sin importe" para que se completen.
+      const conImporte = pagos.filter((p) => Number(p.monto ?? 0) > 0);
+      const vencidos = conImporte.filter((p) => urgenciaPago(p.fecha_vencimiento) === 'vencido');
+      const hoy = conImporte.filter((p) => urgenciaPago(p.fecha_vencimiento) === 'hoy');
+      const semana = conImporte.filter((p) => urgenciaPago(p.fecha_vencimiento) === 'semana');
       const urgentes = [...vencidos, ...hoy, ...semana];
 
+      // El desglose por período SÍ recorre todo (con y sin importe): separa las dos
+      // cosas en vez de esconder las filas sin monto.
+      const urgentesTodos = pagos.filter((p) => {
+        const u = urgenciaPago(p.fecha_vencimiento);
+        return u === 'vencido' || u === 'hoy' || u === 'semana';
+      });
+
       const porPeriodo: Record<string, UrgentesEnPeriodo> = {};
-      for (const p of urgentes) {
+      for (const p of urgentesTodos) {
         if (!p.periodo) continue;
         const agg = porPeriodo[p.periodo] ?? { cantidad: 0, monto: 0, sinMonto: 0 };
         const monto = Number(p.monto ?? 0);
@@ -80,7 +94,9 @@ export function usePagosAlertas() {
         vencidos: vencidos.length,
         hoy: hoy.length,
         semana: semana.length,
+        // Solo pagos con importe (ver arriba). Los sin monto: urgentesSinImporte.
         urgentesTotal: urgentes.length,
+        urgentesSinImporte: urgentesTodos.length - urgentes.length,
         montoVencido: vencidos.reduce((s, p) => s + (p.monto ?? 0), 0),
         montoUrgente: urgentes.reduce((s, p) => s + (p.monto ?? 0), 0),
         porPeriodo,

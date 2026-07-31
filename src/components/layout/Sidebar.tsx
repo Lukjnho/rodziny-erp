@@ -84,6 +84,11 @@ export function Sidebar() {
               <span className="flex-1">{label}</span>
               {mostrarBadge && (
                 <span
+                  title={`${alertas!.urgentesTotal} pago${alertas!.urgentesTotal === 1 ? '' : 's'} vencido${alertas!.urgentesTotal === 1 ? '' : 's'} o por vencer en ≤7 días${
+                    alertas!.urgentesSinImporte > 0
+                      ? ` · ${alertas!.urgentesSinImporte} sin importe cargado`
+                      : ''
+                  }`}
                   className={cn(
                     'flex h-5 min-w-[20px] items-center justify-center rounded-full px-1.5 text-[10px] font-bold text-white',
                     badgeColor,
