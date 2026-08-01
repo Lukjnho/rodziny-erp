@@ -491,6 +491,31 @@ export function PagarGastoModal({ open, gasto, onClose }: Props) {
             </div>
           </div>
 
+          {/* Guardarraíl anti doble-pago: el gasto ya trae un comprobante de PAGO
+              adjunto pero no tiene ninguna fila en pagos_gastos. Casi siempre significa
+              que se pagó y nunca se registró el pago — si se confirma acá, se transfiere
+              dos veces (caso Amarilla Gas 23-jul-2026). Avisamos y mandamos a mirar el
+              comprobante antes de confirmar. */}
+          {gasto?.comprobante_path && pagosPrevios.length === 0 && (
+            <div className="rounded border-2 border-red-300 bg-red-50 p-3 text-sm text-red-800">
+              <div className="font-semibold">⚠️ Ojo: este gasto ya tiene comprobante de pago</div>
+              <p className="mt-1 text-xs">
+                Figura impago pero tiene un comprobante de pago adjunto y ningún pago
+                registrado. Probablemente ya se pagó y solo falta registrarlo — si confirmás
+                un pago nuevo, se paga dos veces.{' '}
+                <button
+                  type="button"
+                  onClick={() => abrirArchivoStorage(gasto.comprobante_path!)}
+                  className="font-medium underline hover:text-red-900"
+                >
+                  Ver el comprobante
+                </button>{' '}
+                y, si es el de este gasto, registrá el pago con SU fecha y N° de operación
+                (no con los de hoy).
+              </p>
+            </div>
+          )}
+
           {/* Echeq programados (plan de pagos): cuotas a futuro sin debitar. */}
           {pagosProgramados.length > 0 && (
             <div className="rounded border border-blue-200 bg-blue-50/60 p-3 text-sm">

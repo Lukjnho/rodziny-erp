@@ -13,7 +13,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../../lib/supabase';
-import { comprimirImagen } from '../../lib/comprimirImagen';
+import { comprimirImagen, extensionDe, OPTS_OCR } from '../../lib/comprimirImagen';
 import { useAuth } from '../../lib/auth';
 import { sha256File } from '../../lib/hashFile';
 import { procesarFactura } from '../../lib/ocrFactura';
@@ -137,8 +137,10 @@ interface LineaPagoUI {
   numero: string; // N° de operación (transferencia) o N° de echeq
   comprobantePath: string | null; // path en Storage del comprobante ya subido (OCR)
   comprobanteNombre: string | null; // nombre del archivo para mostrar
+  comprobanteFile: File | null; // el archivo en sí, para poder reintentar el OCR sin re-adjuntar
   ocrEjecutando: boolean; // OCR en curso
   ocrInfo: string | null; // mensaje del OCR (✓ N° detectado…)
+  ocrAlerta: string | null; // alerta bloqueante-ish: duplicado de N° op, transferencia interna, error
 }
 
 let _lineaSeq = 0;
@@ -152,8 +154,10 @@ function nuevaLineaPago(medio: MedioPago = 'transferencia_mp', fecha = ''): Line
     numero: '',
     comprobantePath: null,
     comprobanteNombre: null,
+    comprobanteFile: null,
     ocrEjecutando: false,
     ocrInfo: null,
+    ocrAlerta: null,
   };
 }
 
@@ -752,17 +756,19 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
         .eq('hash_archivo', fileHash)
         .is('gasto_id', null);
 
-      // 3. Subir a Storage
+      // 3. Subir a Storage. Extensión/contentType/mime salen del archivo YA COMPRIMIDO:
+      // comprimirImagen re-encodea a JPEG, y declarar el mime del original hacía que la
+      // edge function mandara a la API de vision un media_type que no coincide con los bytes.
       setStep('processing');
-      const ext = selected.name.split('.').pop()?.toLowerCase() ?? 'bin';
+      const archivoSubir = await comprimirImagen(selected, OPTS_OCR);
+      const mimeSubido = archivoSubir.type || 'application/octet-stream';
+      const ext = extensionDe(archivoSubir);
       const periodo = new Date().toISOString().slice(0, 7); // YYYY-MM
       const path = `${local}/${periodo}/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
 
       const { error: errUp } = await supabase.storage
         .from('gastos-comprobantes')
-        .upload(path, await comprimirImagen(selected), {
-          contentType: selected.type || 'application/octet-stream',
-        });
+        .upload(path, archivoSubir, { contentType: mimeSubido });
 
       if (errUp) throw errUp;
       setFilePath(path);
@@ -773,8 +779,9 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
         .insert({
           hash_archivo: fileHash,
           file_path: path,
-          mime_type: selected.type || null,
-          tamano_bytes: selected.size,
+          // mime/tamaño del archivo REAL en Storage (el comprimido).
+          mime_type: mimeSubido,
+          tamano_bytes: archivoSubir.size,
           subido_por: user?.id ?? null,
           ocr_status: 'pending',
           estado: 'huerfano',
@@ -985,7 +992,14 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
     setLineasPago((prev) =>
       prev.map((l) =>
         l.key === key
-          ? { ...l, comprobanteNombre: file.name, ocrEjecutando: true, ocrInfo: null }
+          ? {
+              ...l,
+              comprobanteNombre: file.name,
+              comprobanteFile: file,
+              ocrEjecutando: true,
+              ocrInfo: null,
+              ocrAlerta: null,
+            }
           : l,
       ),
     );
@@ -999,7 +1013,7 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
       prev.map((l) => {
         if (l.key !== key) return l;
         if (!res.ok && res.error) {
-          return { ...l, ocrEjecutando: false, ocrInfo: `⚠ ${res.error}` };
+          return { ...l, ocrEjecutando: false, ocrInfo: null, ocrAlerta: `⚠ ${res.error}` };
         }
         const pct = Math.round((res.confianza ?? 0) * 100);
         // Autocompletamos N°, monto y fecha SIN pisar lo que el usuario ya tipeó.
@@ -1034,6 +1048,16 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
           detectado.length > 0
             ? `✓ Detectado: ${detectado.join(' · ')}${pct ? ` (${pct}%)` : ''}`
             : 'Archivo subido. Completá los datos manualmente.';
+        // Alertas del helper (N° op ya cargado en otro pago, transferencia interna,
+        // mismo archivo ya vinculado). Antes se perdían acá: solo las mostraban los
+        // modales de pago, y en el plan de pagos se cargaban duplicados a ciegas.
+        // Sumamos la de lectura floja, que es la que más ensucia datos.
+        let ocrAlerta = res.warning;
+        if (!ocrAlerta && detectado.length > 0 && pct > 0 && pct < 60) {
+          ocrAlerta = `⚠️ Lectura de baja confianza (${pct}%). Verificá N°, monto y fecha contra el comprobante.`;
+        } else if (!ocrAlerta && !nOpDetectado) {
+          ocrAlerta = '⚠️ No se pudo leer el N° de operación — cargalo a mano (sin él no concilia con el banco).';
+        }
         return {
           ...l,
           ocrEjecutando: false,
@@ -1042,6 +1066,7 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
           montoTexto,
           fecha,
           ocrInfo,
+          ocrAlerta,
         };
       }),
     );
@@ -1309,6 +1334,16 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
     // Si es cuenta corriente (no pagado), la fecha de vencimiento es obligatoria
     if (tipoGasto === 'cuenta_corriente' && !planPagos && !fechaVencimiento) {
       setError('Falta la fecha de vencimiento (cuándo hay que pagar)');
+      return;
+    }
+    // Guardarraíl anti doble-pago: comprobante de PAGO adjunto + gasto impago.
+    // El banner rojo del preview ofrece las dos salidas; acá bloqueamos el guardado
+    // por si se ignora. Ver el comentario del banner.
+    if (filePath && !pagado && !planPagos) {
+      setError(
+        'Este gasto tiene un comprobante de PAGO adjunto pero se guardaría como impago. ' +
+          'Elegí una de las dos opciones del recuadro rojo de arriba: registrar el pago, o quitar el comprobante.',
+      );
       return;
     }
 
@@ -1691,6 +1726,50 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
           {warning && step === 'preview' && (
             <div className="mb-3 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
               ⚠ {warning}
+            </div>
+          )}
+
+          {/* Guardarraíl anti doble-pago: hay un comprobante de PAGO adjunto pero el
+              gasto se guardaría como impago (cuenta corriente). Pasa cuando alguien
+              arranca por "Gasto digital", sube el comprobante, el OCR falla o vuelve
+              atrás, y termina eligiendo "Cuenta corriente": el archivo queda pegado y
+              nadie inserta la fila de pagos_gastos. El gasto queda en el tab Pagos como
+              vencido aunque ya se pagó, y se paga dos veces (caso Amarilla Gas 23-jul-2026).
+              No dejamos guardar hasta que se resuelva de una de las dos formas. */}
+          {step === 'preview' && !!filePath && !pagado && !planPagos && (
+            <div className="mb-3 rounded border-2 border-red-300 bg-red-50 px-3 py-3 text-sm text-red-800">
+              <div className="font-semibold">
+                ⚠️ Tiene comprobante de PAGO adjunto pero se guardaría como impago
+              </div>
+              <p className="mt-1 text-xs">
+                Si lo guardás así queda en cuenta corriente y va a figurar como pendiente en
+                Gastos-Compras &gt; Pagos, con riesgo de que alguien lo pague de nuevo.
+              </p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    // Pasa al flujo digital: pagado=true y pide medio + N° de operación
+                    // (el efecto de [step, tipoGasto] se encarga del resto).
+                    setTipoGasto('digital');
+                    setError(null);
+                  }}
+                  className="rounded bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-700"
+                >
+                  Ya está pagado → registrar el pago
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFilePath(null);
+                    setComprobanteId(null);
+                    setError(null);
+                  }}
+                  className="rounded border border-red-300 bg-white px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-100"
+                >
+                  No, quitar el comprobante
+                </button>
+              </div>
             </div>
           )}
 
@@ -3012,6 +3091,22 @@ function PlanPagosEditor({
                   )}
                   {l.ocrInfo && !l.ocrEjecutando && (
                     <div className="mt-0.5 text-[11px] text-green-700">{l.ocrInfo}</div>
+                  )}
+                  {l.ocrAlerta && !l.ocrEjecutando && (
+                    <div className="mt-0.5 rounded bg-amber-50 px-1.5 py-1 text-[11px] font-medium text-amber-800">
+                      {l.ocrAlerta}
+                    </div>
+                  )}
+                  {/* Reintentar sin re-adjuntar: reusa el mismo archivo (mismo hash →
+                      no se vuelve a subir a Storage, solo se re-corre la lectura). */}
+                  {l.comprobanteFile && !l.ocrEjecutando && (
+                    <button
+                      type="button"
+                      onClick={() => onSubirComprobante(l.key, l.comprobanteFile)}
+                      className="mt-0.5 text-[11px] text-rodziny-700 hover:underline"
+                    >
+                      🔄 Reintentar lectura
+                    </button>
                   )}
                 </div>
               )}

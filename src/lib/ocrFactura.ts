@@ -13,7 +13,7 @@
 // Si el upload falla: error fatal (el modal muestra el error).
 
 import { supabase } from './supabase';
-import { comprimirImagen } from './comprimirImagen';
+import { comprimirImagen, extensionDe, OPTS_OCR } from './comprimirImagen';
 import { sha256File } from './hashFile';
 
 interface OcrFacturaExtraido {
@@ -95,15 +95,17 @@ export async function procesarFactura(
       .eq('hash_archivo', fileHash)
       .is('gasto_id', null);
 
-    // Subir a Storage
-    const ext = archivo.name.split('.').pop()?.toLowerCase() ?? 'bin';
+    // Subir a Storage. Extensión/contentType/mime salen del archivo YA COMPRIMIDO
+    // (comprimirImagen re-encodea a JPEG) — si no, el media_type que recibe la API
+    // de vision no coincide con los bytes y la lectura falla.
+    const archivoSubir = await comprimirImagen(archivo, OPTS_OCR);
+    const mimeSubido = archivoSubir.type || 'application/octet-stream';
+    const ext = extensionDe(archivoSubir);
     const path = `${subfolder}/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
 
     const { error: errUp } = await supabase.storage
       .from('gastos-comprobantes')
-      .upload(path, await comprimirImagen(archivo), {
-        contentType: archivo.type || 'application/octet-stream',
-      });
+      .upload(path, archivoSubir, { contentType: mimeSubido });
     if (errUp) {
       return {
         ok: false,
@@ -120,8 +122,9 @@ export async function procesarFactura(
       .insert({
         hash_archivo: fileHash,
         file_path: path,
-        mime_type: archivo.type || null,
-        tamano_bytes: archivo.size,
+        // mime/tamaño del archivo REAL en Storage (el comprimido).
+        mime_type: mimeSubido,
+        tamano_bytes: archivoSubir.size,
         subido_por: userId,
         ocr_status: 'pending',
         estado: 'huerfano',

@@ -3111,6 +3111,16 @@ export function ComprasPage() {
                                 A pagar
                               </span>
                             )}
+                            {/* Impago con comprobante de pago adjunto → probable pago
+                                sin registrar. Mismo aviso que en la vista agrupada. */}
+                            {!pagado && g.comprobante_path && (
+                              <span
+                                className="ml-1 inline-block cursor-help rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800"
+                                title="Este gasto tiene un comprobante de PAGO adjunto pero figura impago. Revisá el comprobante antes de pagar: puede que ya se haya pagado y solo falte registrarlo."
+                              >
+                                ⚠️ ¿ya pagado?
+                              </span>
+                            )}
                           </td>
                           <td className="px-4 py-2 text-center text-xs text-gray-600">
                             {pagoInfo
@@ -3431,6 +3441,17 @@ export function ComprasPage() {
                                     ) : (
                                       <span className="inline-block rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-medium text-blue-700">
                                         A pagar
+                                      </span>
+                                    )}
+                                    {/* Figura impago PERO tiene comprobante de pago adjunto:
+                                        casi seguro ya se pagó y nunca se registró el pago.
+                                        Avisar antes de que alguien lo pague de nuevo. */}
+                                    {g.comprobante_path && (
+                                      <span
+                                        className="ml-1 inline-block cursor-help rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800"
+                                        title="Este gasto tiene un comprobante de PAGO adjunto pero figura impago. Revisá el comprobante antes de pagar: puede que ya se haya pagado y solo falte registrarlo."
+                                      >
+                                        ⚠️ ¿ya pagado?
                                       </span>
                                     )}
                                   </td>

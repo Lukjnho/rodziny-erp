@@ -14,7 +14,35 @@ export interface ComprimirOpts {
   quality?: number;
 }
 
+/**
+ * Preset para archivos que van a pasar por OCR (comprobantes de pago, facturas).
+ * Más resolución y menos compresión que el default: el "N° de operación" de
+ * Mercado Pago va en gris chico al pie y a 0.72 se borronea → el OCR devolvía null.
+ * No es el default global para no inflar Storage en fotos que nadie lee (recepciones,
+ * selfies de fichaje).
+ */
+export const OPTS_OCR: ComprimirOpts = { maxLado: 2400, quality: 0.88 };
+
 const ES_IMAGEN = /^image\/(jpe?g|png|webp)$/i;
+
+const EXT_POR_MIME: Record<string, string> = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+  'image/gif': 'gif',
+  'application/pdf': 'pdf',
+};
+
+/**
+ * Extensión coherente con el CONTENIDO del archivo, no con su nombre original.
+ * Necesario porque `comprimirImagen` re-encodea a JPEG: si tomábamos la extensión
+ * del nombre, un PNG comprimido quedaba guardado como `.png` con bytes JPEG.
+ */
+export function extensionDe(file: File): string {
+  const porMime = EXT_POR_MIME[(file.type || '').toLowerCase()];
+  if (porMime) return porMime;
+  return file.name.split('.').pop()?.toLowerCase() || 'bin';
+}
 
 /**
  * Comprime una imagen si conviene; si no es imagen o falla, devuelve el archivo original.

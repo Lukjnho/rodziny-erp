@@ -59,12 +59,17 @@ REGLAS — leer con atencion:
 3. monto: total final pagado, sin signo de pesos ni separadores.
 
 4. n_operacion CRITICO:
-   - En TRANSFERENCIAS/tickets/vouchers: buscar "N° operacion", "Numero de operacion", "Op.", "Autorizacion", "Ref.", "Comprobante N°", "transfer_id".
+   - En TRANSFERENCIAS/tickets/vouchers: buscar "N° operacion", "Numero de operacion", "Nro. de operacion", "Codigo de operacion", "ID de la transaccion", "ID de operacion", "Op.", "Autorizacion", "Ref.", "Referencia", "Comprobante N°", "transfer_id".
+   - MERCADO PAGO: el dato suele estar al PIE del comprobante, en letra chica gris, como "Numero de operacion" o "Codigo de operacion". Miralo con atencion antes de devolver null. Si el comprobante de MP solo muestra "ID de la transaccion", usa ese valor.
+   - Es un numero LARGO (9 a 15 digitos en MP/bancos). No confundir con el CUIT, el CBU, el monto ni el numero de cuenta.
+   - Si la imagen esta borrosa o cortada y no llegas a leerlo con certeza: devolve null y bajá la confianza. NUNCA inventes ni completes digitos a medias.
    - En CHEQUES/ECHEQ: usar SIEMPRE el "N° de cheque" / "Numero de cheque" (el numero corto) pero SIN ceros a la izquierda (ej: si el cheque dice "00000142", devolver "142"; si dice "00000130", devolver "130"). El extracto bancario referencia el echeq por ese numero sin ceros. NUNCA usar el "ID del cheque" (alfanumerico largo, ej "V8794WK4EVDNPEY"), ni el "ID Multicheque", ni el "CMC7".
 
 4b. id_cheque: SOLO para cheques/ECHEQ. Es el "ID del cheque" alfanumerico largo (ej "V8794WK4EVDNPEY"). Se guarda solo como referencia. Para transferencias, tickets, facturas y vouchers: devolver null.
 
 5. fecha en formato YYYY-MM-DD. En cheques/ECHEQ es la "Fecha de emision"; en transferencias/tickets es la fecha de la operacion.
+   - EL AÑO NO SE INVENTA. Si el comprobante muestra dia y mes pero NO el año (ej: "29 de julio", "29/07"), asumi el año en curso segun la fecha de hoy que figura mas abajo. Nunca pongas un año anterior "por defecto".
+   - Si no podes leer la fecha con certeza, devolve null y baja la confianza. Es preferible null a una fecha inventada.
 
 5b. fecha_pago_cheque: SOLO para cheques/ECHEQ. Es la "Fecha de pago" del cheque = la fecha de DEBITO FUTURO en que se cobra/debita (distinta de la "Fecha de emision"). Formato YYYY-MM-DD. Para transferencias, tickets, facturas y vouchers: devolver null.
 
@@ -180,7 +185,7 @@ Deno.serve(async (req) => {
               type: sourceType,
               source: { type: 'base64', media_type: mediaType, data: base64 },
             },
-            { type: 'text', text: OCR_PROMPT },
+            { type: 'text', text: `${OCR_PROMPT}\n\nFECHA DE HOY (referencia para resolver el año): ${hoyArgentina()}` },
           ],
         }],
       }),
@@ -258,6 +263,18 @@ Deno.serve(async (req) => {
 });
 
 // ----- Helpers -----
+
+// Fecha de hoy en hora Argentina (YYYY-MM-DD). Se le pasa al modelo para que resuelva
+// el año cuando el comprobante solo muestra dia y mes: sin esto inventaba años viejos.
+// No usar toISOString(): es UTC y de madrugada da el dia anterior.
+function hoyArgentina(): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Argentina/Buenos_Aires',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+}
 
 // Extrae el primer objeto JSON de la respuesta del modelo, ignorando fences
 // ```json``` y cualquier prosa que Claude agregue antes o despues (notas,

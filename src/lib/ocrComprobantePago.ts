@@ -14,7 +14,7 @@
 // puede continuar con datos manuales. Si el upload falla: error fatal.
 
 import { supabase } from './supabase';
-import { comprimirImagen } from './comprimirImagen';
+import { comprimirImagen, extensionDe, OPTS_OCR } from './comprimirImagen';
 import { sha256File } from './hashFile';
 
 interface OcrExtraidoMin {
@@ -110,16 +110,19 @@ export async function procesarComprobantePago(
       comprobanteId = existente.id;
       path = existente.file_path;
     } else {
-      // Subir a Storage
-      const ext = archivo.name.split('.').pop()?.toLowerCase() ?? 'bin';
+      // Subir a Storage. OJO: extensión, contentType y mime_type salen del archivo
+      // YA COMPRIMIDO, no del original. `comprimirImagen` re-encodea a JPEG, así que
+      // declarar el mime del original (ej: image/png) mandaba a la API de Anthropic
+      // bytes JPEG con media_type image/png → 400 y "no se pudo leer el comprobante".
+      const archivoSubir = await comprimirImagen(archivo, OPTS_OCR);
+      const mimeSubido = archivoSubir.type || 'application/octet-stream';
+      const ext = extensionDe(archivoSubir);
       const periodo = new Date().toISOString().slice(0, 7);
       path = `${subfolder}/${periodo}/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
 
       const { error: errUp } = await supabase.storage
         .from('gastos-comprobantes')
-        .upload(path, await comprimirImagen(archivo), {
-          contentType: archivo.type || 'application/octet-stream',
-        });
+        .upload(path, archivoSubir, { contentType: mimeSubido });
       if (errUp) {
         return {
           ok: false,
@@ -136,8 +139,10 @@ export async function procesarComprobantePago(
         .insert({
           hash_archivo: fileHash,
           file_path: path,
-          mime_type: archivo.type || null,
-          tamano_bytes: archivo.size,
+          // mime/tamaño del archivo REAL en Storage (el comprimido): la edge function
+          // usa mime_type como media_type al llamar a la API de vision.
+          mime_type: mimeSubido,
+          tamano_bytes: archivoSubir.size,
           subido_por: userId,
           ocr_status: 'pending',
           estado: 'huerfano',
