@@ -18,7 +18,7 @@ import { supabase } from '@/lib/supabase';
 import { comprimirImagen } from '@/lib/comprimirImagen';
 import { useAuth } from '@/lib/auth';
 import { cn, formatARS } from '@/lib/utils';
-import { procesarComprobantePago } from '@/lib/ocrComprobantePago';
+import { procesarComprobantePago, extraerNroOperacion } from '@/lib/ocrComprobantePago';
 import { MEDIO_PAGO_LABEL, medioRequiereComprobante, type MedioPago, type Gasto, type PagoGasto } from './types';
 import { recomputarEstadoGasto } from './recomputarEstadoGasto';
 import { useProveedoresMap, nombreProveedor } from './proveedorDisplay';
@@ -64,29 +64,8 @@ function formatError(e: unknown): string {
   return String(e);
 }
 
-// Extrae el N° de operación del nombre del archivo de comprobante.
-// MercadoPago descarga con nombre `mercadopago_comprobante_payment-NNNNNN.pdf`
-// (el ID es el numero de operación). Algunos bancos también lo incluyen.
-// Retorna null si no encuentra match — en ese caso el usuario tipea manual.
-function extraerNroOperacion(filename: string): string | null {
-  const sinExt = filename.replace(/\.[^.]+$/, '');
-  // Patrones de mayor a menor especificidad
-  const patrones = [
-    /payment[-_](\d{8,20})/i,
-    /comprobante[-_](\d{8,20})/i,
-    /mercadopago[-_]?(\d{8,20})/i,
-    /\bmp[-_](\d{8,20})/i,
-    /transfer(?:encia)?[-_](\d{8,20})/i,
-  ];
-  for (const re of patrones) {
-    const m = sinExt.match(re);
-    if (m) return m[1];
-  }
-  // Fallback: la última secuencia larga de dígitos del nombre
-  const matches = sinExt.match(/\d{10,20}/g);
-  if (matches && matches.length > 0) return matches[matches.length - 1];
-  return null;
-}
+// `extraerNroOperacion` vive en @/lib/ocrComprobantePago (misma lógica que usa el
+// pago bulk de Compras).
 
 async function abrirArchivoStorage(path: string) {
   const { data } = await supabase.storage

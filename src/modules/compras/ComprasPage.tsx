@@ -3,6 +3,8 @@ import { useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { comprimirImagen } from '@/lib/comprimirImagen';
+import { useAuth } from '@/lib/auth';
+import { procesarComprobantePago, extraerNroOperacion } from '@/lib/ocrComprobantePago';
 import { PageContainer } from '@/components/layout/PageContainer';
 import { LocalSelector } from '@/components/ui/LocalSelector';
 import { formatARS, fmtCantidad, cn } from '@/lib/utils';
@@ -30,7 +32,11 @@ import { CalendarioPagosCtaCte } from './components/CalendarioPagosCtaCte';
 import { esCategoriaCtaCte } from './ctaCteExclusiones';
 import { etiquetaParte, tituloParte } from './comprobantePartes';
 import type { MedioPago, Gasto } from '@/modules/gastos/types';
-import { MEDIO_PAGO_LABEL, medioRequiereComprobante } from '@/modules/gastos/types';
+import {
+  MEDIO_PAGO_LABEL,
+  medioRequiereComprobante,
+  mapearMedioPagoOcr,
+} from '@/modules/gastos/types';
 import { PagarGastoModal } from '@/modules/gastos/PagarGastoModal';
 import { esPagoEjecutado } from '@/lib/flujoCaja';
 
@@ -265,6 +271,8 @@ const PAGOS_LOCAL_LABEL: Record<string, string> = {
 const PAGOS_LOCALES: ('vedia' | 'saavedra' | 'sas')[] = ['vedia', 'saavedra', 'sas'];
 
 export function ComprasPage() {
+  // Para atribuir al usuario el comprobante que sube el OCR del pago bulk.
+  const { user } = useAuth();
   const [local, setLocal] = useState<'vedia' | 'saavedra'>('vedia');
   // Alcance del tab Pagos. Por defecto 'empresa' = deuda consolidada de cuenta
   // corriente (Vedia + Saavedra + SAS) en UNA sola lista agrupada por proveedor;
@@ -697,6 +705,12 @@ export function ComprasPage() {
   const [bulkFactura, setBulkFactura] = useState<File | null>(null);
   const [bulkGuardando, setBulkGuardando] = useState(false);
   const [bulkError, setBulkError] = useState<string | null>(null);
+  // OCR del comprobante del pago bulk: el helper ya sube el archivo, así que al
+  // confirmar reusamos este path en vez de volver a subirlo.
+  const [bulkComprobantePath, setBulkComprobantePath] = useState<string | null>(null);
+  const [bulkOcrEjecutando, setBulkOcrEjecutando] = useState(false);
+  const [bulkOcrInfo, setBulkOcrInfo] = useState<string | null>(null);
+  const [bulkOcrWarning, setBulkOcrWarning] = useState<string | null>(null);
 
   // Mes seleccionado para el resumen (default: mes actual)
   const [mesPagos, setMesPagos] = useState(() => {
@@ -1060,6 +1074,7 @@ export function ComprasPage() {
     setBulkComprobante(null);
     setBulkFactura(null);
     setBulkError(null);
+    limpiarOcrBulk();
     setBulkPagoOpen(true);
   }
 
@@ -1070,6 +1085,105 @@ export function ComprasPage() {
     setBulkReferencia('');
     setBulkNotas('');
     setBulkError(null);
+    limpiarOcrBulk();
+  }
+
+  function limpiarOcrBulk() {
+    setBulkComprobantePath(null);
+    setBulkOcrInfo(null);
+    setBulkOcrWarning(null);
+  }
+
+  // Carpeta de Storage del pago bulk. En modo Empresa la selección puede mezclar
+  // locales; si son todos del mismo usamos esa carpeta, si no 'empresa'.
+  function carpetaBulk(): string {
+    const localesPago = new Set(seleccionInfo.gastos.map((g) => g.local));
+    const folderLocal =
+      pagosLocal !== 'empresa'
+        ? pagosLocal
+        : localesPago.size === 1
+          ? [...localesPago][0]
+          : 'empresa';
+    return `${folderLocal}/${bulkFecha.substring(0, 7)}`;
+  }
+
+  // Igual que el pago individual: al elegir el comprobante lo mandamos a Claude
+  // (edge function ocr-comprobante) y completamos fecha, medio, N° de operación.
+  // El helper ya deja el archivo subido, así que `confirmarBulkPago` reusa el path
+  // en vez de subirlo de nuevo. Todo lo que autocompleta es editable a mano.
+  async function handleBulkComprobante(file: File | null) {
+    setBulkComprobante(file);
+    limpiarOcrBulk();
+    if (!file) return;
+
+    // Fallback instantáneo mientras corre el OCR (~3-5s): MercadoPago pone el N° de
+    // operación en el nombre del archivo.
+    if (!bulkReferencia.trim()) {
+      const delNombre = extraerNroOperacion(file.name);
+      if (delNombre) setBulkReferencia(delNombre);
+    }
+
+    setBulkOcrEjecutando(true);
+    try {
+      const res = await procesarComprobantePago({
+        archivo: file,
+        subfolder: carpetaBulk(),
+        userId: user?.id ?? null,
+      });
+      if (!res.ok && res.error) {
+        setBulkError(res.error);
+        return;
+      }
+      setBulkComprobantePath(res.file_path);
+
+      const leido: string[] = [];
+
+      // N° de operación: no pisamos lo que el usuario tipeó a mano, solo el valor
+      // que veníamos de sacar del nombre del archivo.
+      if (res.n_operacion) {
+        const actual = bulkReferencia.trim();
+        const vieneDelNombre = !actual || actual === extraerNroOperacion(file.name);
+        if (vieneDelNombre) setBulkReferencia(res.n_operacion);
+        leido.push(`N° ${res.n_operacion}`);
+      }
+
+      // Medio de pago: el OCR da el genérico + el banco, y el mapeo elige la opción
+      // del ERP. Si no alcanza para decidir, dejamos la que estaba.
+      const medio = mapearMedioPagoOcr(res.medio_pago_detectado, res.banco_origen_detectado);
+      if (medio) {
+        setBulkMedio(medio);
+        leido.push(MEDIO_PAGO_LABEL[medio]);
+      }
+
+      // Fecha del pago real. En un echeq la que importa es la del débito futuro,
+      // no la de emisión.
+      const fecha = res.fecha_pago_cheque_detectada ?? res.fecha_detectada;
+      if (fecha) {
+        setBulkFecha(fecha);
+        leido.push(new Date(fecha + 'T12:00:00').toLocaleDateString('es-AR'));
+      }
+
+      const pct = Math.round((res.confianza ?? 0) * 100);
+      setBulkOcrInfo(
+        leido.length
+          ? `✓ Leído: ${leido.join(' · ')}${pct ? ` (${pct}% confianza)` : ''}`
+          : 'Archivo subido, pero no se pudo extraer nada. Completá los datos a mano.',
+      );
+
+      // Control propio del bulk: el voucher es uno solo y tiene que cubrir el total
+      // de la selección. Si no coincide, casi seguro falta o sobra un gasto tildado.
+      if (res.monto_detectado && Math.abs(res.monto_detectado - seleccionInfo.total) > 1) {
+        setBulkOcrWarning(
+          `⚠️ El comprobante dice ${formatARS(res.monto_detectado)} y estás pagando ${formatARS(
+            seleccionInfo.total,
+          )} (diferencia ${formatARS(Math.abs(res.monto_detectado - seleccionInfo.total))}). Revisá la selección.`,
+        );
+      } else if (res.warning) {
+        setBulkOcrWarning(res.warning);
+      }
+    } finally {
+      setBulkOcrEjecutando(false);
+    }
   }
 
   async function confirmarBulkPago() {
@@ -1096,18 +1210,13 @@ export function ComprasPage() {
       // Carpeta de storage del comprobante. En modo Empresa el pago puede mezclar
       // locales; si todos los gastos son del mismo local usamos esa carpeta, si no
       // 'empresa'. (Solo organiza el archivo; el link firmado anda igual.)
-      const localesPago = new Set(seleccionInfo.gastos.map((g) => g.local));
-      const folderLocal =
-        pagosLocal !== 'empresa'
-          ? pagosLocal
-          : localesPago.size === 1
-            ? [...localesPago][0]
-            : 'empresa';
-      const carpeta = `${folderLocal}/${bulkFecha.substring(0, 7)}`;
+      const carpeta = carpetaBulk();
 
-      // Subir comprobante de pago una sola vez
-      let pathComprobantePago: string | null = null;
-      if (bulkComprobante) {
+      // Subir comprobante de pago una sola vez. Si el OCR ya lo subió al elegirlo
+      // (bulkComprobantePath), reusamos ese path: volver a subirlo duplicaría el
+      // archivo en Storage y chocaría contra el UNIQUE de hash en `comprobantes`.
+      let pathComprobantePago: string | null = bulkComprobantePath;
+      if (bulkComprobante && !pathComprobantePago) {
         const ext = bulkComprobante.name.split('.').pop()?.toLowerCase() || 'pdf';
         const path = `${carpeta}/pago_bulk_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
         const { error } = await supabase.storage
@@ -3883,7 +3992,7 @@ export function ComprasPage() {
       {/* Modal de pago BULK (varios gastos juntos) */}
       {bulkPagoOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/40 p-4">
-          <div className="my-4 w-full max-w-md space-y-3 rounded-xl bg-white p-6 shadow-xl">
+          <div className="my-4 w-full max-w-2xl space-y-3 rounded-xl bg-white p-6 shadow-xl">
             <div>
               <h3 className="text-sm font-semibold text-gray-800">
                 Pagar {seleccionInfo.gastos.length} gasto
@@ -3901,7 +4010,7 @@ export function ComprasPage() {
             </div>
 
             {/* Detalle de gastos a pagar */}
-            <div className="max-h-32 overflow-y-auto rounded-md border border-gray-200 bg-gray-50 px-2 py-1.5 text-[11px] text-gray-600">
+            <div className="max-h-56 overflow-y-auto rounded-md border border-gray-200 bg-gray-50 px-2 py-1.5 text-[11px] text-gray-600">
               {seleccionInfo.gastos.map((g) => (
                 <div key={g.id} className="flex items-center justify-between gap-2 py-0.5">
                   <span className="truncate">
@@ -3979,13 +4088,30 @@ export function ComprasPage() {
                 ) : (
                   <span className="text-red-600">* (voucher único)</span>
                 )}
+                <span className="ml-1 font-normal text-rodziny-600">
+                  — la IA lo lee y completa fecha, medio y N° de operación
+                </span>
               </label>
               <input
                 type="file"
                 accept="image/*,application/pdf"
-                onChange={(e) => setBulkComprobante(e.target.files?.[0] ?? null)}
+                onChange={(e) => handleBulkComprobante(e.target.files?.[0] ?? null)}
                 className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-xs file:mr-2 file:rounded file:border-0 file:bg-rodziny-50 file:px-2 file:py-1 file:text-rodziny-700"
               />
+              {bulkOcrEjecutando && (
+                <div className="mt-1 flex items-center gap-1 text-[11px] text-blue-700">
+                  <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-blue-300 border-t-blue-700" />
+                  🔍 Leyendo comprobante…
+                </div>
+              )}
+              {bulkOcrInfo && !bulkOcrEjecutando && (
+                <div className="mt-1 text-[11px] text-green-700">{bulkOcrInfo}</div>
+              )}
+              {bulkOcrWarning && (
+                <div className="mt-1 rounded bg-amber-50 px-2 py-1 text-[11px] text-amber-800">
+                  {bulkOcrWarning}
+                </div>
+              )}
             </div>
 
             <div>
@@ -4031,12 +4157,16 @@ export function ComprasPage() {
               </button>
               <button
                 onClick={confirmarBulkPago}
-                disabled={bulkGuardando}
+                // Bloqueado mientras corre el OCR: si se confirma antes, el path del
+                // archivo todavía no volvió y el comprobante se sube dos veces.
+                disabled={bulkGuardando || bulkOcrEjecutando}
                 className="rounded-md bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-50"
               >
                 {bulkGuardando
                   ? 'Guardando...'
-                  : `Confirmar pago · ${formatARS(seleccionInfo.total)}`}
+                  : bulkOcrEjecutando
+                    ? 'Leyendo comprobante…'
+                    : `Confirmar pago · ${formatARS(seleccionInfo.total)}`}
               </button>
             </div>
           </div>

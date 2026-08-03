@@ -23,9 +23,36 @@ interface OcrExtraidoMin {
   monto: number | null;
   fecha: string | null;
   fecha_pago_cheque?: string | null;
+  banco_origen?: string | null;
   confianza: number;
   es_transferencia_interna?: boolean;
   proveedor_cuit?: string | null;
+}
+
+// Extrae el N° de operación del NOMBRE del archivo. MercadoPago descarga como
+// `mercadopago_comprobante_payment-NNNNNN.pdf` (el ID es el N° de operación) y
+// varios bancos también lo meten en el nombre. Sirve de fallback inmediato: se
+// completa apenas se elige el archivo, antes de que vuelva el OCR (~3-5s), y el
+// OCR después lo pisa con lo que realmente dice el comprobante.
+// Retorna null si no encuentra match — en ese caso el usuario tipea manual.
+export function extraerNroOperacion(filename: string): string | null {
+  const sinExt = filename.replace(/\.[^.]+$/, '');
+  // Patrones de mayor a menor especificidad
+  const patrones = [
+    /payment[-_](\d{8,20})/i,
+    /comprobante[-_](\d{8,20})/i,
+    /mercadopago[-_]?(\d{8,20})/i,
+    /\bmp[-_](\d{8,20})/i,
+    /transfer(?:encia)?[-_](\d{8,20})/i,
+  ];
+  for (const re of patrones) {
+    const m = sinExt.match(re);
+    if (m) return m[1];
+  }
+  // Fallback: la última secuencia larga de dígitos del nombre
+  const matches = sinExt.match(/\d{10,20}/g);
+  if (matches && matches.length > 0) return matches[matches.length - 1];
+  return null;
 }
 
 interface OcrResponse {
@@ -44,6 +71,9 @@ export interface ProcesarComprobantePagoResult {
   n_operacion: string | null;
   /** Medio de pago detectado por OCR (transferencia, qr, etc.). */
   medio_pago_detectado: string | null;
+  /** Banco/billetera de origen que leyó el OCR. Junto con el medio permite elegir
+   *  la opción concreta del ERP (transferencia_mp vs transferencia_galicia…). */
+  banco_origen_detectado: string | null;
   /** Monto detectado por OCR (para advertir si no coincide con el saldo). */
   monto_detectado: number | null;
   /** Fecha detectada por OCR (YYYY-MM-DD). En cheques es la fecha de emisión. */
@@ -72,6 +102,7 @@ export interface ProcesarComprobantePagoOpts {
 const RESULT_VACIO: Omit<ProcesarComprobantePagoResult, 'ok' | 'error' | 'file_path' | 'comprobante_id'> = {
   n_operacion: null,
   medio_pago_detectado: null,
+  banco_origen_detectado: null,
   monto_detectado: null,
   fecha_detectada: null,
   fecha_pago_cheque_detectada: null,
@@ -200,6 +231,7 @@ export async function procesarComprobantePago(
       comprobante_id: comprobanteId,
       n_operacion: extraido.n_operacion,
       medio_pago_detectado: extraido.medio_pago,
+      banco_origen_detectado: extraido.banco_origen ?? null,
       monto_detectado: extraido.monto,
       fecha_detectada: extraido.fecha,
       fecha_pago_cheque_detectada: extraido.fecha_pago_cheque ?? null,
