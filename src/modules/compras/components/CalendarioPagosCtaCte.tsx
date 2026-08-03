@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { useProveedoresMap, nombreProveedor } from '@/modules/gastos/proveedorDisplay';
 import { esCategoriaCtaCte } from '../ctaCteExclusiones';
+import { claveComprobante } from '../comprobantePartes';
 import { hoyAR } from '@/lib/fechaAR';
 import { esPagoEjecutado } from '@/lib/flujoCaja';
 import { CalendarioPagos, type ItemCalendario, type LocalKey } from '@/components/CalendarioPagos';
@@ -31,6 +32,7 @@ interface GastoPend {
   fecha_vencimiento: string | null;
   comentario: string | null;
   categoria: string | null;
+  nro_comprobante: string | null;
 }
 
 // Fila de pagos_gastos con lo mínimo del gasto padre para decidir si su cuota
@@ -83,7 +85,7 @@ export function CalendarioPagosCtaCte({
       const { data, error } = await supabase
         .from('gastos')
         .select(
-          'id, local, proveedor, proveedor_id, importe_total, fecha, fecha_vencimiento, comentario, categoria, estado_pago',
+          'id, local, proveedor, proveedor_id, importe_total, fecha, fecha_vencimiento, comentario, categoria, nro_comprobante, estado_pago',
         )
         .eq('cancelado', false)
         .order('fecha_vencimiento', { ascending: true, nullsFirst: false })
@@ -189,7 +191,15 @@ export function CalendarioPagosCtaCte({
           const saldo = Number(g.importe_total) - (pagadoRealMap?.get(g.id) ?? 0);
           const nombre = nombreProveedor(g, proveedoresMap);
           const local = (g.local as LocalKey) ?? 'sas';
-          const base = { local, payload: { proveedor: nombre } };
+          // Todas las partes de una factura repartida en varias categorías comparten
+          // esta clave, así el calendario cuenta comprobantes y no renglones. Los
+          // ítems por echeq de un mismo gasto también la comparten: son un solo
+          // comprobante pagado en cuotas.
+          const base = {
+            local,
+            payload: { proveedor: nombre },
+            comprobanteKey: claveComprobante(g),
+          };
 
           // Con echeqs emitidos detrás, el gasto se PARTE: cada cheque cae el día que
           // el banco lo debita y por su monto, no todo junto en el vencimiento de la
@@ -284,6 +294,9 @@ export function CalendarioPagosCtaCte({
       items={items}
       itemsFueraDelTotal={itemsCuotas}
       isLoading={isLoading}
+      // Cuenta comprobantes: una factura que toca 3 categorías son 3 gastos y antes
+      // se leía como 3 facturas distintas ("48 pagos" para 27 comprobantes reales).
+      unidadLabel={{ sing: 'comprobante', plural: 'comprobantes', corto: 'comprob.' }}
       titulo="🗓 Calendario de pagos — Cuenta corriente (Empresa)"
       subtitulo="Total empresa, sumando Vedia + Saavedra + Empresa. Deuda viva con proveedores; los echeqs de inversiones se ven en su día, aparte del total."
       ctaAyuda="ver en lista ↓"

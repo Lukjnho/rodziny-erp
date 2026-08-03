@@ -33,8 +33,23 @@ export interface ItemCalendario<T = unknown> {
   monto: number;
   grupoKey: string;
   grupoLabel: string;
+  // Clave del comprobante al que pertenece el ítem. Varios ítems pueden compartirla:
+  // una factura repartida en varias categorías se carga como un gasto por parte, y
+  // sin esto el calendario contaba renglones ("48 pagos") en vez de facturas ("27
+  // comprobantes"). Los importes nunca se tocan — cada parte lleva su porción y
+  // suman el total real. Opcional: sin ella cada ítem cuenta de a uno (Pagos Fijos).
+  comprobanteKey?: string | null;
   payload?: T;
 }
+
+// Cómo nombrar lo que se cuenta. Cta cte cuenta comprobantes; Pagos Fijos, pagos.
+export interface UnidadLabel {
+  sing: string;
+  plural: string;
+  corto?: string; // para las celdas chicas del modal de mes
+}
+
+const UNIDAD_DEFAULT: UnidadLabel = { sing: 'pago', plural: 'pagos' };
 
 export interface GrupoDetalle<T = unknown> {
   key: string;
@@ -42,7 +57,53 @@ export interface GrupoDetalle<T = unknown> {
   local: LocalKey;
   total: number;
   cantidad: number;
+  // Comprobantes distintos del grupo (≤ cantidad) y cuántos de ellos vienen
+  // partidos en más de un renglón.
+  unidades: number;
+  partidos: number;
   items: ItemCalendario<T>[];
+}
+
+// Comprobantes distintos en una lista de ítems: los que comparten `comprobanteKey`
+// cuentan una sola vez, los que no la traen cuentan de a uno.
+function contarUnidades<T>(items: ItemCalendario<T>[]): number {
+  const claves = new Set<string>();
+  let sueltos = 0;
+  for (const x of items) {
+    if (x.comprobanteKey) claves.add(x.comprobanteKey);
+    else sueltos += 1;
+  }
+  return claves.size + sueltos;
+}
+
+// Cuántos comprobantes de la lista aparecen en más de un renglón (facturas
+// divididas por categoría).
+function contarPartidos<T>(items: ItemCalendario<T>[]): number {
+  const veces = new Map<string, number>();
+  for (const x of items) {
+    if (!x.comprobanteKey) continue;
+    veces.set(x.comprobanteKey, (veces.get(x.comprobanteKey) ?? 0) + 1);
+  }
+  let n = 0;
+  for (const v of veces.values()) if (v > 1) n += 1;
+  return n;
+}
+
+// "27 comprobantes" / "1 pago". `corto` la usa la grilla apretada del modal de mes.
+function textoUnidades(n: number, u: UnidadLabel, corto = false): string {
+  if (corto && u.corto) return `${n} ${u.corto}`;
+  return `${n} ${n === 1 ? u.sing : u.plural}`;
+}
+
+// Aviso de que el bucket tiene facturas divididas, para el tooltip de la celda.
+function tituloPartidos<T>(items: ItemCalendario<T>[], u: UnidadLabel): string | undefined {
+  const partidos = contarPartidos(items);
+  if (!partidos) return undefined;
+  return (
+    `${items.length} renglones = ${textoUnidades(contarUnidades(items), u)}: ` +
+    `${partidos} ${partidos === 1 ? 'factura está dividida' : 'facturas están divididas'} ` +
+    `en varias categorías. Los importes ya están sumados una sola vez.`
+  );
 }
 
 interface BucketDetalle<T = unknown> {
@@ -126,15 +187,22 @@ function resolverDetalle<T>(b: Bucket<T>): BucketDetalle<T> {
         local: x.local,
         total: x.monto,
         cantidad: 1,
+        unidades: 0, // se completa abajo, cuando el grupo ya tiene todos sus ítems
+        partidos: 0,
         items: [x],
       });
     }
   }
+  const grupos = [...map.values()].map((g) => ({
+    ...g,
+    unidades: contarUnidades(g.items),
+    partidos: contarPartidos(g.items),
+  }));
   return {
     total: b.total,
     cantidad: b.cantidad,
     porLocal: b.porLocal,
-    grupos: [...map.values()].sort((a, b) => b.total - a.total),
+    grupos: grupos.sort((a, b) => b.total - a.total),
   };
 }
 
@@ -144,10 +212,12 @@ function DetalleGruposBody<T>({
   detalle,
   onSelectGrupo,
   ctaAyuda,
+  unidad,
 }: {
   detalle: BucketDetalle<T>;
   onSelectGrupo?: (grupo: GrupoDetalle<T>) => void;
   ctaAyuda?: string;
+  unidad: UnidadLabel;
 }) {
   return (
     <>
@@ -170,7 +240,14 @@ function DetalleGruposBody<T>({
               key={g.key}
               onClick={() => onSelectGrupo?.(g)}
               disabled={!clickeable}
-              title={clickeable ? `${g.label} — ${ctaAyuda ?? 'ver detalle'}` : g.label}
+              title={
+                [
+                  clickeable ? `${g.label} — ${ctaAyuda ?? 'ver detalle'}` : g.label,
+                  tituloPartidos(g.items, unidad),
+                ]
+                  .filter(Boolean)
+                  .join('\n') || g.label
+              }
               className={cn(
                 'group flex w-full items-center justify-between gap-2 border-b border-gray-50 px-4 py-1.5 text-left last:border-0',
                 clickeable ? 'hover:bg-rodziny-50/60' : 'cursor-default',
@@ -189,7 +266,19 @@ function DetalleGruposBody<T>({
                 >
                   {g.label}
                 </span>
-                {g.cantidad > 1 && <span className="text-[10px] text-gray-400">×{g.cantidad}</span>}
+                {g.unidades > 1 && <span className="text-[10px] text-gray-400">×{g.unidades}</span>}
+                {/* Una factura repartida en varias categorías son varios renglones
+                    con la misma fecha y proveedor. Sin este chip, el ×N parecía
+                    "N facturas distintas" y no había forma de saber que 3 líneas
+                    eran una sola compra. */}
+                {g.partidos > 0 && (
+                  <span
+                    className="rounded bg-amber-50 px-1 py-px text-[9px] font-medium text-amber-700"
+                    title={tituloPartidos(g.items, unidad)}
+                  >
+                    {g.partidos === 1 ? '1 dividida' : `${g.partidos} divididas`} por categoría
+                  </span>
+                )}
                 {clickeable && ctaAyuda && (
                   <span className="text-[10px] text-rodziny-500 opacity-0 transition-opacity group-hover:opacity-100">
                     {ctaAyuda}
@@ -215,6 +304,7 @@ export function CalendarioPagos<T = unknown>({
   isLoading = false,
   onSelectGrupo,
   ctaAyuda,
+  unidadLabel = UNIDAD_DEFAULT,
 }: {
   // Ítems que alimentan el TOTAL, el bloque de atrasados y la grilla de 7 días.
   // Deben ser "lo que hay que pagar ahora" (para que el total sea fiable).
@@ -237,6 +327,9 @@ export function CalendarioPagos<T = unknown>({
   onSelectGrupo?: (grupo: GrupoDetalle<T>) => void;
   // Texto del "call to action" que aparece al hover de cada grupo (ej. "ver en lista ↓").
   ctaAyuda?: string;
+  // Cómo se llama lo que se cuenta en cada celda. Cta cte cuenta comprobantes
+  // (varias partes de una misma factura son un solo comprobante); el resto, pagos.
+  unidadLabel?: UnidadLabel;
 }) {
   // Bucket seleccionado para el panel de detalle: 'atrasado', 'sinvenc', o un
   // YYYY-MM-DD de los próximos 7. null = ninguno abierto.
@@ -379,7 +472,9 @@ export function CalendarioPagos<T = unknown>({
       const b = porFecha.get(fecha);
       if (b) {
         totalMes += b.total;
-        cantMes += b.cantidad;
+        // Comprobantes, no renglones. Una factura partida no puede caer en dos días
+        // (todas sus partes comparten vencimiento), así que sumar por día es exacto.
+        cantMes += contarUnidades(b.items);
       }
     }
     return { celdas, totalMes, cantMes };
@@ -456,7 +551,9 @@ export function CalendarioPagos<T = unknown>({
             <div className="flex items-center gap-2">
               <span className="text-lg leading-none">🔴</span>
               <div>
-                <p className="text-sm font-semibold text-red-900">Atrasado ({atrasado.cantidad})</p>
+                <p className="text-sm font-semibold text-red-900">
+                  Atrasado ({contarUnidades(atrasado.items)})
+                </p>
                 <p className="text-[11px] text-red-600">Vencimiento pasado — pagar cuanto antes</p>
               </div>
             </div>
@@ -472,11 +569,13 @@ export function CalendarioPagos<T = unknown>({
             const esHoy = d === hoy;
             const sel = abierto === d;
             const conMonto = b.total > 0;
+            const unidadesDia = contarUnidades(b.items);
             return (
               <button
                 key={d}
                 onClick={() => seleccionarBucket(d)}
                 disabled={!conMonto}
+                title={tituloPartidos(b.items, unidadLabel)}
                 className={cn(
                   'flex flex-col rounded-lg border px-2.5 py-2 text-left transition-colors',
                   sel
@@ -507,7 +606,7 @@ export function CalendarioPagos<T = unknown>({
                   {conMonto ? formatARS(b.total) : '—'}
                 </span>
                 <span className="mt-0.5 text-[10px] text-gray-400">
-                  {conMonto ? `${b.cantidad} pago${b.cantidad !== 1 ? 's' : ''}` : 'sin pagos'}
+                  {conMonto ? textoUnidades(unidadesDia, unidadLabel) : `sin ${unidadLabel.plural}`}
                 </span>
               </button>
             );
@@ -524,7 +623,7 @@ export function CalendarioPagos<T = unknown>({
               <span>
                 Después de los 7 días:{' '}
                 <strong className="text-gray-700">{formatARS(masAdelante.total)}</strong> (
-                {masAdelante.cantidad})
+                {contarUnidades(masAdelante.items)})
               </span>
             )}
             {sinVenc.total > 0 && (
@@ -538,7 +637,8 @@ export function CalendarioPagos<T = unknown>({
                 )}
                 title="Deuda cargada sin fecha de vencimiento — no cae en ningún día del calendario"
               >
-                ⚠ Sin fecha de vto: <strong>{formatARS(sinVenc.total)}</strong> ({sinVenc.cantidad})
+                ⚠ Sin fecha de vto: <strong>{formatARS(sinVenc.total)}</strong> (
+                {contarUnidades(sinVenc.items)})
               </button>
             )}
           </div>
@@ -573,6 +673,7 @@ export function CalendarioPagos<T = unknown>({
               detalle={detalleAbierto}
               onSelectGrupo={onSelectGrupo}
               ctaAyuda={ctaAyuda}
+              unidad={unidadLabel}
             />
           </div>
         )}
@@ -646,6 +747,7 @@ export function CalendarioPagos<T = unknown>({
                       key={fecha}
                       onClick={() => conMonto && setDiaModalSel(sel ? null : fecha)}
                       disabled={!conMonto}
+                      title={b ? tituloPartidos(b.items, unidadLabel) : undefined}
                       className={cn(
                         'flex min-h-[58px] flex-col rounded-md border p-1.5 text-left transition-colors',
                         sel
@@ -677,7 +779,7 @@ export function CalendarioPagos<T = unknown>({
                             {formatARS(b!.total, 0)}
                           </span>
                           <span className="text-[9px] text-gray-400">
-                            {b!.cantidad} pago{b!.cantidad !== 1 ? 's' : ''}
+                            {textoUnidades(contarUnidades(b!.items), unidadLabel, true)}
                           </span>
                         </>
                       )}
@@ -704,6 +806,7 @@ export function CalendarioPagos<T = unknown>({
                   <DetalleGruposBody
                     detalle={detalleMesSel}
                     ctaAyuda={ctaAyuda}
+                    unidad={unidadLabel}
                     onSelectGrupo={
                       onSelectGrupo
                         ? (g) => {

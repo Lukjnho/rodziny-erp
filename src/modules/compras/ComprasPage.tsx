@@ -28,6 +28,7 @@ import { CierreInventarioModal } from './components/CierreInventarioModal';
 import { PastasTerminadasPanel } from './components/PastasTerminadasPanel';
 import { CalendarioPagosCtaCte } from './components/CalendarioPagosCtaCte';
 import { esCategoriaCtaCte } from './ctaCteExclusiones';
+import { etiquetaParte, tituloParte } from './comprobantePartes';
 import type { MedioPago, Gasto } from '@/modules/gastos/types';
 import { MEDIO_PAGO_LABEL, medioRequiereComprobante } from '@/modules/gastos/types';
 import { PagarGastoModal } from '@/modules/gastos/PagarGastoModal';
@@ -103,6 +104,14 @@ function hoyMasDiasAR(dias: number): string {
   const d = new Date(hoyAR() + 'T12:00:00');
   d.setDate(d.getDate() + dias);
   return d.toISOString().slice(0, 10);
+}
+
+// Días entre dos YYYY-MM-DD (plazo pactado entre emisión y vencimiento). Mediodía
+// para que el cambio de horario no coma un día.
+function diasEntre(desde: string, hasta: string): number {
+  const a = new Date(desde + 'T12:00:00').getTime();
+  const b = new Date(hasta + 'T12:00:00').getTime();
+  return Math.round((b - a) / 86_400_000);
 }
 
 interface Producto {
@@ -3527,6 +3536,10 @@ export function ComprasPage() {
                           <thead>
                             <tr className="border-b border-gray-100 text-xs text-gray-500">
                               <th className="w-10 px-4 py-1.5"></th>
+                              {/* Fecha del comprobante: sin esto solo se veía el
+                                  vencimiento y no se podía saber de cuándo es la
+                                  compra ni qué plazo se pactó. */}
+                              <th className="px-3 py-1.5 text-left font-medium">Emitido</th>
                               <th className="px-3 py-1.5 text-left font-medium">
                                 Vencimiento
                               </th>
@@ -3564,6 +3577,24 @@ export function ComprasPage() {
                                       onChange={() => toggleSeleccion(g.id)}
                                       className="h-4 w-4 cursor-pointer accent-rodziny-500"
                                     />
+                                  </td>
+                                  <td className="px-3 py-1.5 text-xs text-gray-500">
+                                    {g.fecha ? (
+                                      <span
+                                        title={
+                                          g.fecha_vencimiento
+                                            ? `Emitido ${g.fecha} · vence ${g.fecha_vencimiento} (${diasEntre(g.fecha, g.fecha_vencimiento)} días de plazo)`
+                                            : `Emitido ${g.fecha}`
+                                        }
+                                      >
+                                        {new Date(g.fecha + 'T12:00:00').toLocaleDateString(
+                                          'es-AR',
+                                          { day: '2-digit', month: 'short' },
+                                        )}
+                                      </span>
+                                    ) : (
+                                      <span className="text-gray-300">—</span>
+                                    )}
                                   </td>
                                   <td className="px-3 py-1.5">
                                     {g.fecha_vencimiento ? (
@@ -3608,6 +3639,20 @@ export function ComprasPage() {
                                       </span>
                                     )}
                                     {g.subcategoria || g.categoria}
+                                    {/* Una factura que toca varias categorías se
+                                        carga como un gasto por parte. Sin el chip,
+                                        3 renglones del mismo día parecían 3 compras
+                                        distintas y el importe no cerraba contra la
+                                        factura que tiene el proveedor. */}
+                                    {etiquetaParte(g) && (
+                                      <span
+                                        className="ml-1.5 inline-block cursor-help rounded bg-amber-50 px-1 py-px text-[9px] font-medium text-amber-700 align-middle"
+                                        title={tituloParte(g)}
+                                      >
+                                        {etiquetaParte(g)}
+                                        {g.nro_comprobante ? ` · ${g.nro_comprobante}` : ''}
+                                      </span>
+                                    )}
                                   </td>
                                   <td className="px-3 py-1.5 text-right font-medium text-gray-900">
                                     {formatARS(saldoGasto(g))}
