@@ -42,6 +42,59 @@ function fmtStock(n: number): string {
   return fmtCantidad(n, Number.isInteger(n) ? 0 : 2);
 }
 
+/** Columnas ordenables de la grilla de stock. "valor" = stock x costo unitario:
+ *  sirve para ver que insumo pesa mas en el deposito. */
+type ColOrden = 'nombre' | 'stock' | 'costo' | 'valor';
+type Orden = { col: ColOrden; dir: 'asc' | 'desc' } | null;
+
+/** Cicla el orden de una columna: primero el sentido util (mayor a menor en las
+ *  numericas), despues el inverso, y al tercer click vuelve al orden por defecto. */
+function siguienteOrden(actual: Orden, col: ColOrden): Orden {
+  const inicial: 'asc' | 'desc' = col === 'nombre' ? 'asc' : 'desc';
+  if (!actual || actual.col !== col) return { col, dir: inicial };
+  if (actual.dir === inicial) return { col, dir: inicial === 'asc' ? 'desc' : 'asc' };
+  return null;
+}
+
+function ThOrden({
+  col,
+  label,
+  orden,
+  onOrdenar,
+  align = 'right',
+}: {
+  col: ColOrden;
+  label: string;
+  orden: Orden;
+  onOrdenar: (col: ColOrden) => void;
+  align?: 'left' | 'right';
+}) {
+  const activo = orden?.col === col;
+  return (
+    <th
+      className={cn(
+        'px-4 py-2.5 text-xs font-semibold',
+        align === 'right' ? 'text-right' : 'text-left',
+      )}
+    >
+      <button
+        type="button"
+        onClick={() => onOrdenar(col)}
+        title="Ordenar por esta columna"
+        className={cn(
+          'inline-flex items-center gap-1 hover:text-gray-900',
+          activo ? 'text-rodziny-700' : 'text-gray-600',
+        )}
+      >
+        {label}
+        <span className={cn('text-[9px]', activo ? 'opacity-100' : 'opacity-30')}>
+          {activo ? (orden.dir === 'desc' ? '▼' : '▲') : '↕'}
+        </span>
+      </button>
+    </th>
+  );
+}
+
 // "Hoy + N días" en fecha operativa AR (mismo huso que hoyAR). Evita el desfase
 // de toISOString() UTC, que de noche adelantaba el día y marcaba como vencido lo
 // que vencía hoy.
@@ -260,6 +313,9 @@ export function ComprasPage() {
   const [ayudaAbierta, setAyudaAbierta] = useState(false);
   const [filtro, setFiltro] = useState('');
   const [filtroEstado, setFiltroEstado] = useState<FiltroEstado>('todos');
+  const [filtroCategoria, setFiltroCategoria] = useState('todas');
+  // Sin orden explicito la grilla queda como viene de la query: categoria + nombre.
+  const [orden, setOrden] = useState<Orden>(null);
   const [editandoMin, setEditandoMin] = useState<string | null>(null); // producto id
   const [valorMin, setValorMin] = useState('');
   const qc = useQueryClient();
@@ -1223,6 +1279,9 @@ export function ComprasPage() {
       else if (filtroEstado === 'sin_minimo') lista = lista.filter((p) => p.stock_minimo <= 0);
     }
 
+    // Filtro por rubro
+    if (filtroCategoria !== 'todas') lista = lista.filter((p) => p.categoria === filtroCategoria);
+
     // Filtro por texto
     if (filtro) {
       const f = filtro
@@ -1238,8 +1297,37 @@ export function ComprasPage() {
       });
     }
 
+    // Orden: sin criterio explicito respeta el de la query (categoria + nombre).
+    if (orden) {
+      const clave = (p: Producto): number | string => {
+        if (orden.col === 'nombre') return p.nombre.toLowerCase();
+        if (orden.col === 'stock') return p.stock_actual;
+        if (orden.col === 'costo') return p.costo_unitario;
+        return p.stock_actual * p.costo_unitario;
+      };
+      const mult = orden.dir === 'asc' ? 1 : -1;
+      lista = [...lista].sort((a, b) => {
+        const ka = clave(a);
+        const kb = clave(b);
+        if (typeof ka === 'string' || typeof kb === 'string')
+          return String(ka).localeCompare(String(kb), 'es') * mult;
+        return (ka - kb) * mult;
+      });
+    }
+
     return lista;
-  }, [productos, filtro, filtroEstado]);
+  }, [productos, filtro, filtroEstado, filtroCategoria, orden]);
+
+  // Valor de lo que se esta viendo: con un filtro de rubro activo, el KPI global
+  // no responde "cuanto pesa este rubro".
+  const valorFiltrado = useMemo(
+    () => productosFiltrados.reduce((s, p) => s + p.stock_actual * p.costo_unitario, 0),
+    [productosFiltrados],
+  );
+
+  const ordenarPor = useCallback((col: ColOrden) => {
+    setOrden((actual) => siguienteOrden(actual, col));
+  }, []);
 
   // ── KPIs ───────────────────────────────────────────────────────────────────
   const kpis = useMemo(() => {
@@ -1750,6 +1838,23 @@ export function ComprasPage() {
               placeholder="Buscar producto, categoría o proveedor..."
               className="max-w-md flex-1 rounded-md border border-gray-300 px-4 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500"
             />
+            <select
+              value={filtroCategoria}
+              onChange={(e) => setFiltroCategoria(e.target.value)}
+              className={cn(
+                'rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500',
+                filtroCategoria !== 'todas'
+                  ? 'border-rodziny-500 bg-rodziny-50 font-medium text-rodziny-800'
+                  : 'border-gray-300',
+              )}
+            >
+              <option value="todas">Todas las categorías</option>
+              {categoriasExistentes.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
             {/* 'inactivos' tiene su propia píldora abajo; acá sólo los filtros de stock */}
             {filtroEstado !== 'todos' && filtroEstado !== 'inactivos' && (
               <span
@@ -2143,30 +2248,33 @@ export function ComprasPage() {
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b border-gray-200 bg-gray-50">
-                        <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600">
-                          Producto
-                        </th>
+                        <ThOrden
+                          col="nombre"
+                          label="Producto"
+                          align="left"
+                          orden={orden}
+                          onOrdenar={ordenarPor}
+                        />
                         <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600">
                           Marca
                         </th>
                         <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600">
                           Categoría
                         </th>
-                        <th className="px-4 py-2.5 text-right text-xs font-semibold text-gray-600">
-                          Stock
-                        </th>
+                        <ThOrden col="stock" label="Stock" orden={orden} onOrdenar={ordenarPor} />
                         <th className="px-4 py-2.5 text-right text-xs font-semibold text-gray-600">
                           Mínimo
                         </th>
                         <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600">
                           Proveedor
                         </th>
-                        <th className="px-4 py-2.5 text-right text-xs font-semibold text-gray-600">
-                          Costo unit.
-                        </th>
-                        <th className="px-4 py-2.5 text-right text-xs font-semibold text-gray-600">
-                          Valor
-                        </th>
+                        <ThOrden
+                          col="costo"
+                          label="Costo unit."
+                          orden={orden}
+                          onOrdenar={ordenarPor}
+                        />
+                        <ThOrden col="valor" label="Valor" orden={orden} onOrdenar={ordenarPor} />
                         <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-600">
                           Estado
                         </th>
@@ -2350,6 +2458,23 @@ export function ComprasPage() {
                         );
                       })}
                     </tbody>
+                    {productosFiltrados.length > 0 && (
+                      <tfoot>
+                        <tr className="border-t-2 border-gray-200 bg-gray-50">
+                          <td
+                            colSpan={7}
+                            className="px-4 py-2.5 text-right text-xs font-medium text-gray-500"
+                          >
+                            Valor de lo que estás viendo ({productosFiltrados.length}{' '}
+                            {productosFiltrados.length === 1 ? 'producto' : 'productos'})
+                          </td>
+                          <td className="px-4 py-2.5 text-right text-sm font-semibold text-gray-900">
+                            {formatARS(valorFiltrado)}
+                          </td>
+                          <td colSpan={3}></td>
+                        </tr>
+                      </tfoot>
+                    )}
                   </table>
                 </div>
               )}
