@@ -44,13 +44,14 @@ function fmtStock(n: number): string {
 
 /** Columnas ordenables de la grilla de stock. "valor" = stock x costo unitario:
  *  sirve para ver que insumo pesa mas en el deposito. */
-type ColOrden = 'nombre' | 'stock' | 'costo' | 'valor';
+type ColOrden = 'nombre' | 'proveedor' | 'stock' | 'costo' | 'valor';
 type Orden = { col: ColOrden; dir: 'asc' | 'desc' } | null;
 
-/** Cicla el orden de una columna: primero el sentido util (mayor a menor en las
- *  numericas), despues el inverso, y al tercer click vuelve al orden por defecto. */
+/** Cicla el orden de una columna: primero el sentido util (alfabetico en las de
+ *  texto, mayor a menor en las numericas), despues el inverso, y al tercer click
+ *  vuelve al orden por defecto. */
 function siguienteOrden(actual: Orden, col: ColOrden): Orden {
-  const inicial: 'asc' | 'desc' = col === 'nombre' ? 'asc' : 'desc';
+  const inicial: 'asc' | 'desc' = col === 'nombre' || col === 'proveedor' ? 'asc' : 'desc';
   if (!actual || actual.col !== col) return { col, dir: inicial };
   if (actual.dir === inicial) return { col, dir: inicial === 'asc' ? 'desc' : 'asc' };
   return null;
@@ -1301,6 +1302,7 @@ export function ComprasPage() {
     if (orden) {
       const clave = (p: Producto): number | string => {
         if (orden.col === 'nombre') return p.nombre.toLowerCase();
+        if (orden.col === 'proveedor') return (p.proveedor ?? '').trim().toLowerCase();
         if (orden.col === 'stock') return p.stock_actual;
         if (orden.col === 'costo') return p.costo_unitario;
         return p.stock_actual * p.costo_unitario;
@@ -1309,6 +1311,11 @@ export function ComprasPage() {
       lista = [...lista].sort((a, b) => {
         const ka = clave(a);
         const kb = clave(b);
+        // Los productos sin proveedor quedan al final en los dos sentidos: no
+        // sirven para armar un pedido, asi que no tienen por que encabezar.
+        if (typeof ka === 'string' && typeof kb === 'string' && orden.col === 'proveedor') {
+          if (!ka !== !kb) return ka ? -1 : 1;
+        }
         if (typeof ka === 'string' || typeof kb === 'string')
           return String(ka).localeCompare(String(kb), 'es') * mult;
         return (ka - kb) * mult;
@@ -2265,9 +2272,13 @@ export function ComprasPage() {
                         <th className="px-4 py-2.5 text-right text-xs font-semibold text-gray-600">
                           Mínimo
                         </th>
-                        <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600">
-                          Proveedor
-                        </th>
+                        <ThOrden
+                          col="proveedor"
+                          label="Proveedor"
+                          align="left"
+                          orden={orden}
+                          onOrdenar={ordenarPor}
+                        />
                         <ThOrden
                           col="costo"
                           label="Costo unit."
