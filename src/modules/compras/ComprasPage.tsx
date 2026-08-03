@@ -5,7 +5,7 @@ import { supabase } from '@/lib/supabase';
 import { comprimirImagen } from '@/lib/comprimirImagen';
 import { PageContainer } from '@/components/layout/PageContainer';
 import { LocalSelector } from '@/components/ui/LocalSelector';
-import { formatARS, cn } from '@/lib/utils';
+import { formatARS, fmtCantidad, cn } from '@/lib/utils';
 import { hoyAR } from '@/lib/fechaAR';
 import { parseDecimal, normalizarDecimal, equivalenteKgGramos } from '@/lib/numero';
 import {
@@ -34,7 +34,13 @@ import { PagarGastoModal } from '@/modules/gastos/PagarGastoModal';
 import { esPagoEjecutado } from '@/lib/flujoCaja';
 
 type Tab = 'gastos' | 'stock' | 'movimientos' | 'recepcion' | 'pagos' | 'proveedores';
-type FiltroEstado = 'todos' | 'bajo_minimo' | 'sin_stock' | 'inactivos';
+type FiltroEstado = 'todos' | 'bajo_minimo' | 'sin_stock' | 'sin_minimo' | 'inactivos';
+
+/** Cantidad de stock en formato AR: coma decimal y sin ",00" cuando es entero.
+ *  (Antes se renderizaba el número crudo y salía "36.6 kg" con punto). */
+function fmtStock(n: number): string {
+  return fmtCantidad(n, Number.isInteger(n) ? 0 : 2);
+}
 
 // "Hoy + N días" en fecha operativa AR (mismo huso que hoyAR). Evita el desfase
 // de toISOString() UTC, que de noche adelantaba el día y marcaba como vencido lo
@@ -1207,8 +1213,14 @@ export function ComprasPage() {
     else {
       lista = lista.filter((p) => p.activo); // por defecto solo activos
       if (filtroEstado === 'sin_stock') lista = lista.filter((p) => p.stock_actual <= 0);
+      // "Bajo mínimo" excluye los que están en cero: esos ya salen en "Sin stock".
+      // Si no, el mismo producto se contaba dos veces y la grilla mostraba filas
+      // con badge rojo "Sin stock" dentro del filtro naranja.
       else if (filtroEstado === 'bajo_minimo')
-        lista = lista.filter((p) => p.stock_minimo > 0 && p.stock_actual <= p.stock_minimo);
+        lista = lista.filter(
+          (p) => p.stock_minimo > 0 && p.stock_actual > 0 && p.stock_actual <= p.stock_minimo,
+        );
+      else if (filtroEstado === 'sin_minimo') lista = lista.filter((p) => p.stock_minimo <= 0);
     }
 
     // Filtro por texto
@@ -1234,15 +1246,22 @@ export function ComprasPage() {
     const todos = productos ?? [];
     const activos = todos.filter((p) => p.activo);
     const inactivos = todos.filter((p) => !p.activo);
-    const bajoMinimo = activos.filter(
-      (p) => p.stock_actual <= p.stock_minimo && p.stock_minimo > 0,
-    );
+    // Bajo mínimo y Sin stock son excluyentes: un producto en cero cuenta sólo
+    // como "Sin stock". Antes se solapaban e inflaban las dos tarjetas.
     const sinStock = activos.filter((p) => p.stock_actual <= 0);
+    const bajoMinimo = activos.filter(
+      (p) => p.stock_minimo > 0 && p.stock_actual > 0 && p.stock_actual <= p.stock_minimo,
+    );
+    // Sin mínimo cargado = producto que nadie controla: no puede disparar alerta.
+    const sinMinimo = activos.filter((p) => p.stock_minimo <= 0);
+    const sinCosto = activos.filter((p) => p.costo_unitario <= 0 && p.stock_actual > 0);
     const valorTotal = activos.reduce((s, p) => s + p.stock_actual * p.costo_unitario, 0);
     return {
       total: activos.length,
       bajoMinimo: bajoMinimo.length,
       sinStock: sinStock.length,
+      sinMinimo: sinMinimo.length,
+      sinCosto: sinCosto.length,
       valorTotal,
       inactivos: inactivos.length,
     };
@@ -1619,7 +1638,7 @@ export function ComprasPage() {
       {tab === 'stock' && (
         <>
           {/* KPIs clickeables */}
-          <div className="mb-4 grid grid-cols-4 gap-3">
+          <div className="mb-4 grid grid-cols-5 gap-3">
             <button
               onClick={() => setFiltroEstado('todos')}
               className={cn(
@@ -1672,9 +1691,34 @@ export function ComprasPage() {
                 {kpis.sinStock}
               </p>
             </button>
+            <button
+              onClick={() => setFiltroEstado(filtroEstado === 'sin_minimo' ? 'todos' : 'sin_minimo')}
+              title="Productos sin stock mínimo cargado: nunca van a avisarte que hay que reponer"
+              className={cn(
+                'rounded-lg border bg-white p-4 text-left transition-colors',
+                filtroEstado === 'sin_minimo'
+                  ? 'border-gray-500 bg-gray-50 ring-1 ring-gray-200'
+                  : 'border-surface-border hover:border-gray-300',
+              )}
+            >
+              <p className="mb-1 text-xs text-gray-500">Sin mínimo</p>
+              <p
+                className={cn(
+                  'text-lg font-semibold',
+                  kpis.sinMinimo > 0 ? 'text-gray-700' : 'text-green-600',
+                )}
+              >
+                {kpis.sinMinimo}
+              </p>
+            </button>
             <div className="rounded-lg border border-surface-border bg-white p-4">
               <p className="mb-1 text-xs text-gray-500">Valor inventario</p>
               <p className="text-lg font-semibold text-gray-900">{formatARS(kpis.valorTotal)}</p>
+              {kpis.sinCosto > 0 && (
+                <p className="mt-0.5 text-[11px] text-amber-600">
+                  {kpis.sinCosto} con stock y sin costo
+                </p>
+              )}
             </div>
           </div>
           {kpis.inactivos > 0 && (
@@ -1706,16 +1750,23 @@ export function ComprasPage() {
               placeholder="Buscar producto, categoría o proveedor..."
               className="max-w-md flex-1 rounded-md border border-gray-300 px-4 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500"
             />
-            {filtroEstado !== 'todos' && (
+            {/* 'inactivos' tiene su propia píldora abajo; acá sólo los filtros de stock */}
+            {filtroEstado !== 'todos' && filtroEstado !== 'inactivos' && (
               <span
                 className={cn(
                   'inline-flex items-center gap-1 rounded-full px-3 py-1.5 text-xs font-medium',
                   filtroEstado === 'bajo_minimo'
                     ? 'bg-orange-100 text-orange-700'
-                    : 'bg-red-100 text-red-700',
+                    : filtroEstado === 'sin_minimo'
+                      ? 'bg-gray-200 text-gray-700'
+                      : 'bg-red-100 text-red-700',
                 )}
               >
-                {filtroEstado === 'bajo_minimo' ? 'Bajo mínimo' : 'Sin stock'}
+                {filtroEstado === 'bajo_minimo'
+                  ? 'Bajo mínimo'
+                  : filtroEstado === 'sin_minimo'
+                    ? 'Sin mínimo cargado'
+                    : 'Sin stock'}
                 <button onClick={() => setFiltroEstado('todos')} className="ml-1 hover:opacity-70">
                   ✕
                 </button>
@@ -1924,7 +1975,7 @@ export function ComprasPage() {
                                   {p.nombre}
                                 </td>
                                 <td className="px-4 py-1.5 text-right text-gray-600">
-                                  {p.stock_actual}
+                                  {fmtStock(p.stock_actual)}
                                 </td>
                                 <td className="px-4 py-1.5 text-center">
                                   <input
@@ -2127,9 +2178,13 @@ export function ComprasPage() {
                     </thead>
                     <tbody>
                       {productosFiltrados.map((p) => {
-                        const bajoMin =
-                          p.activo && p.stock_minimo > 0 && p.stock_actual <= p.stock_minimo;
                         const sinStock = p.activo && p.stock_actual <= 0;
+                        // Excluyentes, igual que los KPIs: en cero manda "Sin stock".
+                        const bajoMin =
+                          p.activo &&
+                          p.stock_minimo > 0 &&
+                          p.stock_actual > 0 &&
+                          p.stock_actual <= p.stock_minimo;
                         return (
                           <tr
                             key={p.id}
@@ -2155,7 +2210,7 @@ export function ComprasPage() {
                                       : 'text-gray-900'
                                 }
                               >
-                                {p.stock_actual} {p.unidad}
+                                {fmtStock(p.stock_actual)} {p.unidad}
                               </span>
                             </td>
                             <td
@@ -2198,7 +2253,7 @@ export function ComprasPage() {
                               ) : (
                                 <span className="text-xs">
                                   {p.stock_minimo > 0 ? (
-                                    `${p.stock_minimo} ${p.unidad}`
+                                    `${fmtStock(p.stock_minimo)} ${p.unidad}`
                                   ) : (
                                     <span className="text-gray-300">editar</span>
                                   )}
@@ -2809,7 +2864,7 @@ export function ComprasPage() {
                                 .filter((p) => p.activo)
                                 .map((p) => (
                                   <option key={p.id} value={p.id}>
-                                    {p.nombre} ({p.stock_actual} {p.unidad})
+                                    {p.nombre} ({fmtStock(p.stock_actual)} {p.unidad})
                                   </option>
                                 ))}
                             </select>
@@ -3837,7 +3892,7 @@ function ModalProducto({
   const [nombre, setNombre] = useState(producto?.nombre ?? '');
   const [marca, setMarca] = useState(producto?.marca ?? '');
   const [categoria, setCategoria] = useState(producto?.categoria ?? '');
-  const [unidad, setUnidad] = useState(producto?.unidad ?? 'unidad');
+  const [unidad, setUnidad] = useState(producto?.unidad ?? 'unid.');
   const [stockMinimo, setStockMinimo] = useState(producto ? String(producto.stock_minimo) : '0');
   const [proveedor, setProveedor] = useState(producto?.proveedor ?? '');
   const [costoUnitario, setCostoUnitario] = useState(
@@ -3855,7 +3910,8 @@ function ModalProducto({
   // El campo aparece para envases discretos. "kg" y "litro" no lo necesitan
   // porque ya están en una unidad medible.
   const unidadEsEnvase = [
-    'unidad',
+    'unid.',
+    'unidad', // legado: productos viejos guardados antes de unificar la unidad
     'paquete',
     'caja',
     'bolsa',
@@ -3887,7 +3943,7 @@ function ModalProducto({
       nombre: nombre.trim(),
       marca: marca.trim() || null,
       categoria: categoria.trim(),
-      unidad: unidad.trim() || 'unidad',
+      unidad: unidad.trim() || 'unid.',
       stock_minimo: parseFloat(stockMinimo.replace(',', '.')) || 0,
       proveedor: proveedor.trim() || '',
       costo_unitario: parseFloat(costoUnitario.replace(',', '.')) || 0,
@@ -3973,9 +4029,11 @@ function ModalProducto({
               onChange={(e) => setUnidad(e.target.value)}
               className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm"
             >
-              <option value="unidad">unidad</option>
+              {/* Los values son los canónicos del stock ("unid.", "L"): si acá se
+                  guardaba "unidad"/"litro" se creaban variantes del mismo insumo. */}
+              <option value="unid.">unidad</option>
               <option value="kg">kg</option>
-              <option value="litro">litro</option>
+              <option value="L">litro</option>
               <option value="paquete">paquete</option>
               <option value="caja">caja</option>
               <option value="bolsa">bolsa</option>
@@ -4178,7 +4236,7 @@ function ModalAjusteInventario({
               <option value="">Seleccionar producto...</option>
               {productos.map((p) => (
                 <option key={p.id} value={p.id}>
-                  {p.nombre} (stock actual: {p.stock_actual} {p.unidad})
+                  {p.nombre} (stock actual: {fmtStock(p.stock_actual)} {p.unidad})
                 </option>
               ))}
             </select>
@@ -4189,7 +4247,7 @@ function ModalAjusteInventario({
               <div>
                 <label className="mb-1 block text-xs text-gray-500">Stock en sistema</label>
                 <div className="rounded border border-gray-200 bg-gray-50 px-3 py-1.5 text-sm font-medium">
-                  {prodSel.stock_actual} {prodSel.unidad}
+                  {fmtStock(prodSel.stock_actual)} {prodSel.unidad}
                 </div>
               </div>
               <div>
@@ -4428,7 +4486,7 @@ function ModalFusionarProducto({
             <p>
               {duplicado.nombre} ·{' '}
               <span className="text-red-500">
-                {duplicado.stock_actual} {duplicado.unidad}
+                {fmtStock(duplicado.stock_actual)} {duplicado.unidad}
               </span>{' '}
               · {duplicado.categoria}
             </p>
@@ -4465,7 +4523,7 @@ function ModalFusionarProducto({
                 <div className="flex items-center justify-between">
                   <span className="font-medium text-gray-800">{o.nombre}</span>
                   <span className="text-[10px] text-gray-500">
-                    {o.stock_actual} {o.unidad}
+                    {fmtStock(o.stock_actual)} {o.unidad}
                   </span>
                 </div>
                 {(o.marca || o.categoria) && (
@@ -4481,12 +4539,14 @@ function ModalFusionarProducto({
             <div className="rounded border border-green-100 bg-green-50 p-3 text-xs text-green-700">
               <p className="mb-1 font-semibold">Producto ganador:</p>
               <p>
-                {master.nombre} · {master.stock_actual} {master.unidad} · {master.categoria}
+                {master.nombre} · {fmtStock(master.stock_actual)} {master.unidad} ·{' '}
+                {master.categoria}
               </p>
               {duplicado.stock_actual > 0 && (
                 <p className="mt-1 text-green-600">
-                  Stock final: {master.stock_actual + duplicado.stock_actual} {master.unidad} (
-                  {master.stock_actual} + {duplicado.stock_actual})
+                  Stock final: {fmtStock(master.stock_actual + duplicado.stock_actual)}{' '}
+                  {master.unidad} ({fmtStock(master.stock_actual)} +{' '}
+                  {fmtStock(duplicado.stock_actual)})
                 </p>
               )}
             </div>
