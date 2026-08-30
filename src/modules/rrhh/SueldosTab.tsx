@@ -818,23 +818,65 @@ export function SueldosTab() {
     // Debounce: solo sincronizar una vez por ciclo de render
     syncRef.current = true;
     const timeout = setTimeout(async () => {
+      // Qué hay registrado hoy. Se consulta acá y no desde `filas` para no
+      // trabajar con datos viejos del render anterior.
+      const { data: previos } = await supabase
+        .from('pagos_sueldos')
+        .select(
+          'id, empleado_id, cuenta, numero_operacion, comprobante_pago_path, conciliado_movimiento_id',
+        )
+        .eq('periodo', periodoActual)
+        .in(
+          'empleado_id',
+          aSync.map((f) => f.empleado.id),
+        );
+
       for (const fila of aSync) {
-        // delete + insert (la unique ya no existe, así que upsert onConflict no aplica)
-        await supabase
-          .from('pagos_sueldos')
-          .delete()
-          .eq('empleado_id', fila.empleado.id)
-          .eq('periodo', periodoActual);
-        await supabase.from('pagos_sueldos').insert({
-          empleado_id: fila.empleado.id,
-          periodo: periodoActual,
-          fecha_pago: fila.liquidacion?.fecha_pago ?? hoyYmd,
-          monto: fila.total,
-          medio_pago: fila.medioPago as 'efectivo' | 'transferencia',
-          local: fila.empleado.local,
-          empleado_nombre: `${fila.empleado.apellido}, ${fila.empleado.nombre}`,
-          updated_at: new Date().toISOString(),
-        });
+        const suyos = (previos ?? []).filter((p) => p.empleado_id === fila.empleado.id);
+
+        // Un pago respaldado por el banco (comprobante, N° de operación o ya
+        // conciliado contra el extracto) NO se toca: la plata que se movió es la
+        // que se movió. Si después cambió el total de la liquidación, el
+        // desfasaje se muestra en pantalla en vez de pisar el registro del pago
+        // — que además dejaría la conciliación apuntando a un monto que no fue.
+        const respaldadoPorBanco = suyos.some(
+          (p) => p.numero_operacion || p.comprobante_pago_path || p.conciliado_movimiento_id,
+        );
+        if (respaldadoPorBanco) continue;
+
+        if (suyos.length === 1) {
+          // Caso normal de un pago puro: solo cambió el monto. Se actualiza la
+          // fila en vez de borrarla, así no se pierden `cuenta` ni el resto de
+          // los datos que este sync no conoce.
+          await supabase
+            .from('pagos_sueldos')
+            .update({
+              monto: fila.total,
+              medio_pago: fila.medioPago as 'efectivo' | 'transferencia',
+              fecha_pago: fila.liquidacion?.fecha_pago ?? hoyYmd,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', suyos[0].id);
+        } else {
+          // 0 filas (nunca se registró) o varias (venía de un pago mixto que
+          // ahora es puro): hay que rehacerla. Se arrastra la cuenta si existía.
+          await supabase
+            .from('pagos_sueldos')
+            .delete()
+            .eq('empleado_id', fila.empleado.id)
+            .eq('periodo', periodoActual);
+          await supabase.from('pagos_sueldos').insert({
+            empleado_id: fila.empleado.id,
+            periodo: periodoActual,
+            fecha_pago: fila.liquidacion?.fecha_pago ?? hoyYmd,
+            monto: fila.total,
+            medio_pago: fila.medioPago as 'efectivo' | 'transferencia',
+            cuenta: suyos.find((p) => p.cuenta)?.cuenta ?? null,
+            local: fila.empleado.local,
+            empleado_nombre: `${fila.empleado.apellido}, ${fila.empleado.nombre}`,
+            updated_at: new Date().toISOString(),
+          });
+        }
       }
       qc.invalidateQueries({ queryKey: ['pagos_sueldos_periodo'] });
       qc.invalidateQueries({ queryKey: ['fc_pagos_sueldos'] });
