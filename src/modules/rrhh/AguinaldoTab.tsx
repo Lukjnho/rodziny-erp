@@ -9,14 +9,15 @@ import { parseYmd, ymd, normalizarTexto, remuneracionConPresentismo } from './ut
 import { medioRequiereComprobante } from '../gastos/types';
 
 // ── Tipos ────────────────────────────────────────────────────────────────────
+// Los mismos 4 valores que ofrece MEDIO_PAGO_OPCIONES. Antes el tipo incluía
+// también debito_mp / debito_galicia / debito_icbc, que nunca se podían elegir
+// desde la pantalla ni existían en la base: se sacaron para que el tipo diga
+// la verdad.
 type MedioPagoGasto =
   | 'transferencia_mp'
   | 'transferencia_galicia'
   | 'transferencia_icbc'
-  | 'efectivo'
-  | 'debito_mp'
-  | 'debito_galicia'
-  | 'debito_icbc';
+  | 'efectivo';
 
 const MEDIO_PAGO_OPCIONES: { value: MedioPagoGasto; label: string }[] = [
   { value: 'transferencia_mp', label: 'Transferencia MP' },

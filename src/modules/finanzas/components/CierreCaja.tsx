@@ -79,6 +79,11 @@ interface CierreRow {
   fondo_siguiente: number;
   retiro: number;
   otros_retiros: number;
+  // Desglose del retiro (migración 139). `otros_retiros` sigue siendo el TOTAL
+  // y es el que usa la cuenta del arqueo; estos dos dicen en qué se fue.
+  // Null = cierre viejo, anterior a la separación.
+  retiro_cambio: number | null;
+  retiro_pagos: number | null;
   otros_retiros_nota: string | null;
   nota: string | null;
   creado_por: string | null;
@@ -121,7 +126,12 @@ export function CierreCaja() {
   const [fContado, setFContado] = useState('');
   const [fFondoAp, setFFondoAp] = useState('');
   // fFondoSig removido — retiros se manejan en un solo campo
-  const [fOtrosRetiros, setFOtrosRetiros] = useState('');
+  // Retiros separados en dos: lo que vuelve a la caja (cambio) y lo que salió
+  // de verdad (pagos). El total = la suma de los dos.
+  const [fRetiroCambio, setFRetiroCambio] = useState('');
+  const [fRetiroPagos, setFRetiroPagos] = useState('');
+  // true cuando se está editando un cierre anterior a la separación
+  const [fRetiroLegacy, setFRetiroLegacy] = useState(false);
   const [fOtrosRetNota, setFOtrosRetNota] = useState('');
   const [fNota, setFNota] = useState('');
   const [fCajeroId, setFCajeroId] = useState(''); // ID usuario Fudo (vacío = todos)
@@ -213,7 +223,9 @@ export function CierreCaja() {
       const parse = (v: string) => parseFloat((v || '0').replace(/\./g, '').replace(',', '.')) || 0;
       const contado = parse(fContado);
       const fondoAp = parse(fFondoAp);
-      const otrosRet = parse(fOtrosRetiros);
+      const retiroCambio = parse(fRetiroCambio);
+      const retiroPagos = parse(fRetiroPagos);
+      const otrosRet = retiroCambio + retiroPagos;
       const fudoEfvo = parse(fFudoEfvo);
       const fudoQR = parse(fFudoQR);
       const fudoDebito = parse(fFudoDebito);
@@ -297,6 +309,8 @@ export function CierreCaja() {
           // Antes se guardaba duplicado, lo cual provocaba doble conteo.
           retiro: 0,
           otros_retiros: otrosRet,
+          retiro_cambio: retiroCambio,
+          retiro_pagos: retiroPagos,
           otros_retiros_nota: fOtrosRetNota || null,
           nota: fNota || null,
           creado_por: 'Lucas',
@@ -446,7 +460,9 @@ export function CierreCaja() {
     setFFudoMpLucas('');
     setFContado('');
     setFFondoAp('');
-    setFOtrosRetiros('');
+    setFRetiroCambio('');
+    setFRetiroPagos('');
+    setFRetiroLegacy(false);
     setFOtrosRetNota('');
     setFNota('');
     setFNroArqueo('');
@@ -477,7 +493,18 @@ export function CierreCaja() {
     setFFudoMpLucas(c.fudo_mp_lucas ? String(c.fudo_mp_lucas) : '');
     setFContado(c.monto_contado ? String(c.monto_contado) : '');
     setFFondoAp(c.fondo_apertura ? String(c.fondo_apertura) : '');
-    setFOtrosRetiros(c.otros_retiros ? String(c.otros_retiros) : '');
+    // Cierres anteriores a la separación (migración 139) no traen el desglose.
+    // Se carga el total como "cambio" para NO perder el número del arqueo, y se
+    // avisa en pantalla para que se revise si parte de eso fue un pago.
+    const tieneDesglose = c.retiro_cambio !== null || c.retiro_pagos !== null;
+    setFRetiroLegacy(!tieneDesglose && (c.otros_retiros ?? 0) > 0);
+    if (tieneDesglose) {
+      setFRetiroCambio(c.retiro_cambio ? String(c.retiro_cambio) : '');
+      setFRetiroPagos(c.retiro_pagos ? String(c.retiro_pagos) : '');
+    } else {
+      setFRetiroCambio(c.otros_retiros ? String(c.otros_retiros) : '');
+      setFRetiroPagos('');
+    }
     setFOtrosRetNota(c.otros_retiros_nota ?? '');
     setFNota(c.nota ?? '');
     setFNroArqueo(c.nro_arqueo_fudo ?? '');
@@ -1021,7 +1048,7 @@ export function CierreCaja() {
                 const fudoEfvo = parse(fFudoEfvo);
                 const fondoAp = parse(fFondoAp);
                 const cont = parse(fContado);
-                const otrosRet = parse(fOtrosRetiros);
+                const otrosRet = parse(fRetiroCambio) + parse(fRetiroPagos);
                 const esperado = fudoEfvo + fondoAp;
                 const mostrar = fudoEfvo > 0 && cont > 0;
                 const dif = mostrar ? cont + otrosRet - esperado : 0;
@@ -1049,22 +1076,60 @@ export function CierreCaja() {
               </p>
             </div>
 
-            {/* Fila 2: Retiros y nota */}
+            {/* Fila 2: Retiros separados en cambio (vuelve a la caja) y pagos (sale de verdad) */}
             <div>
-              <label className="mb-1 block text-xs font-medium text-gray-600">Retiros</label>
+              <label className="mb-1 block text-xs font-medium text-gray-600">
+                Retiro — cambio
+              </label>
               <input
                 type="text"
-                value={fOtrosRetiros}
-                onChange={(e) => setFOtrosRetiros(e.target.value)}
+                value={fRetiroCambio}
+                onChange={(e) => setFRetiroCambio(e.target.value)}
                 placeholder="0"
                 className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500"
               />
               <p className="mt-0.5 text-[10px] text-gray-400">
-                Plata sacada de caja durante el turno (cambio, pagos, etc.)
+                Lo que se aparta para el próximo turno. Vuelve a la caja.
               </p>
             </div>
 
-            <div className="col-span-1 md:col-span-2">
+            <div>
+              <label className="mb-1 block text-xs font-medium text-gray-600">
+                Retiro — pagos
+              </label>
+              <input
+                type="text"
+                value={fRetiroPagos}
+                onChange={(e) => setFRetiroPagos(e.target.value)}
+                placeholder="0"
+                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500"
+              />
+              <p className="mt-0.5 text-[10px] text-gray-400">
+                Plata que salió para pagar algo (proveedor, adelanto).
+              </p>
+            </div>
+
+            {fRetiroLegacy && (
+              <div className="col-span-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800 md:col-span-3">
+                Este cierre es anterior a la separación de retiros: el total quedó
+                cargado como <strong>cambio</strong>. Si parte de esa plata salió para
+                pagar algo, movela al campo <strong>Retiro — pagos</strong>.
+              </div>
+            )}
+
+            {(() => {
+              const parse = (v: string) =>
+                parseFloat((v || '0').replace(/\./g, '').replace(',', '.')) || 0;
+              const total = parse(fRetiroCambio) + parse(fRetiroPagos);
+              if (total <= 0) return null;
+              return (
+                <div className="col-span-2 text-[11px] text-gray-500 md:col-span-3">
+                  Total retirado del turno: <strong>{formatARS(total)}</strong>
+                </div>
+              );
+            })()}
+
+            <div className="col-span-2 md:col-span-3">
               <label className="mb-1 block text-xs font-medium text-gray-600">
                 Motivo del retiro
               </label>
@@ -1072,7 +1137,7 @@ export function CierreCaja() {
                 type="text"
                 value={fOtrosRetNota}
                 onChange={(e) => setFOtrosRetNota(e.target.value)}
-                placeholder="Ej: Pago proveedor hielo, cambio para próximo turno"
+                placeholder="Ej: $24.000 cambio próximo turno / $91.000 pago tomates"
                 className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500"
               />
             </div>

@@ -85,7 +85,10 @@ export function PanelAdelantos({ empleado, periodo, adelantos, onClose }: Props)
         fecha,
         monto: n,
         motivo: motivo.trim() || null,
-        medio_pago: esTransferencia ? `transferencia ${medio}` : 'efectivo',
+        // Valor canónico con guion bajo, igual que el resto del ERP
+        // (transferencia_mercadopago / transferencia_galicia). El diccionario
+        // medios_pago_alias reconoce las dos formas, con y sin espacio.
+        medio_pago: esTransferencia ? `transferencia_${medio}` : 'efectivo',
         numero_operacion: esTransferencia ? nOperacion.trim() : null,
         comprobante_path: esTransferencia ? comprobantePath : null,
       });
@@ -264,7 +267,8 @@ export function PanelAdelantos({ empleado, periodo, adelantos, onClose }: Props)
                                   : 'Transferencia pendiente de conciliar'
                               }
                             >
-                              {a.medio_pago?.replace('transferencia ', '🏦 ')}
+                              {/* acepta el formato viejo (con espacio) y el nuevo (con guion bajo) */}
+                              {a.medio_pago?.replace(/^transferencia[ _]/, '🏦 ')}
                               {a.conciliado_movimiento_id ? ' · conciliado' : ' · pendiente'}
                             </span>
                           ) : (
