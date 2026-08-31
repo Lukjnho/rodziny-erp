@@ -73,6 +73,10 @@ interface CierreRow {
   monto_llevado_caja_fuerte: number | null;
   nota_caja_fuerte: string | null;
   nro_arqueo_fudo: string | null;
+  // Quién cargó este arqueo (migración 146). 'pos' = lo cerró el cajero desde
+  // el punto de venta propio, con los totales que calculó el sistema; 'manual'
+  // = lo cargó administración a mano desde este formulario.
+  origen: 'manual' | 'pos';
 }
 
 // Fondo de cambio que se deja al cierre del turno para que el próximo arranque.
@@ -1247,7 +1251,19 @@ export function CierreCaja() {
                           </div>
                         </td>
                       ) : null}
-                      <td className="px-4 py-2 text-gray-700">{c.caja || '—'}</td>
+                      <td className="px-4 py-2 text-gray-700">
+                        <div>{c.caja || '—'}</div>
+                        {/* Arqueo cerrado por el cajero desde el punto de venta:
+                            los totales los calculó el sistema, no se tipearon. */}
+                        {c.origen === 'pos' && (
+                          <span
+                            title="Lo cerró el cajero desde el punto de venta. Los totales por medio de pago salen de las ventas cobradas, no se cargaron a mano."
+                            className="mt-0.5 inline-block rounded bg-rodziny-50 px-1.5 py-0.5 text-[10px] font-semibold text-rodziny-700"
+                          >
+                            🧮 Caja
+                          </span>
+                        )}
+                      </td>
                       <td className="px-4 py-2 text-gray-600">
                         <div>{turnoLabel(c.turno)}</div>
                         {c.hora_inicio && c.hora_cierre && (

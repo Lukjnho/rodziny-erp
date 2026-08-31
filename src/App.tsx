@@ -60,6 +60,9 @@ const ConveniosPage = lazy(() =>
 const CajaPage = lazy(() =>
   import('@/modules/caja/CajaPage').then((m) => ({ default: m.CajaPage })),
 );
+const CajaResumen = lazy(() =>
+  import('@/modules/caja/CajaResumen').then((m) => ({ default: m.CajaResumen })),
+);
 const IntegracionesPage = lazy(() =>
   import('@/modules/integraciones/IntegracionesPage').then((m) => ({ default: m.IntegracionesPage })),
 );
@@ -105,10 +108,12 @@ function RutaFinanzas({ children }: { children: ReactNode }) {
   return MODULOS_FINANZAS.some((m) => tienePermiso(m)) ? <>{children}</> : <SinAcceso />;
 }
 
-// Rutas que se muestran SIN el menú lateral, a pantalla completa. La caja se
-// usa así todo el turno: el cajero entra con su usuario, toca Caja y queda
-// adentro del POS, sin Finanzas ni RRHH al costado tentando errores.
-const RUTAS_PANTALLA_COMPLETA = ['/caja'];
+// Rutas que se muestran SIN el menú lateral, a pantalla completa. El punto de
+// venta se usa así todo el turno: el cajero queda adentro del POS, sin Finanzas
+// ni RRHH al costado tentando errores. Normalmente además corre en su propia
+// ventana (ver src/lib/ventanaCaja.ts); /caja queda para el ERP, mostrando el
+// arqueo en curso.
+const RUTAS_PANTALLA_COMPLETA = ['/caja/pos'];
 
 function AppInterna() {
   const { user, perfil, cargando } = useAuth();
@@ -161,15 +166,24 @@ function AppInterna() {
                 </RutaFinanzas>
               }
             />
+            {/* /caja = el tablero dentro del ERP (arqueo en curso).
+                /caja/pos = el punto de venta, a pantalla completa. */}
             <Route
               path="/caja"
+              element={
+                <Ruta modulo="caja">
+                  <CajaResumen />
+                </Ruta>
+              }
+            />
+            <Route
+              path="/caja/pos"
               element={
                 <Ruta modulo="caja">
                   <CajaPage />
                 </Ruta>
               }
             />
-            <Route path="/caja/pos" element={<Navigate to="/caja" replace />} />
             <Route
               path="/ventas"
               element={

@@ -151,6 +151,15 @@ export interface TurnoCaja {
 /**
  * El turno abierto de esa caja, si hay. Se busca en los últimos días y no solo
  * en hoy porque el turno noche de Vedia cierra pasada la medianoche.
+ *
+ * ⚠️ LANDMINE: **no alcanza con `hora_cierre IS NULL`**. Los cierres que carga
+ * administración a mano (módulo Cierre de Caja) nunca completan esa columna —
+ * las 822 filas de la tabla la tienen en NULL. Si buscáramos solo por ahí, el
+ * POS agarraría el cierre de ayer cargado por administración como si fuera "tu
+ * turno abierto" y le metería los tickets adentro.
+ *
+ * Por eso `cierres_caja.origen` (migración 146): turno abierto = lo abrió el
+ * POS **y** todavía no cerró.
  */
 export function useTurnoAbierto(local: LocalCaja, caja: string) {
   return useQuery({
@@ -163,12 +172,101 @@ export function useTurnoAbierto(local: LocalCaja, caja: string) {
         .select('id, local, fecha, turno, caja, fondo_apertura, hora_inicio, hora_cierre, cajero_nombre')
         .eq('local', local)
         .eq('caja', caja)
+        .eq('origen', 'pos')
         .gte('fecha', desde)
         .is('hora_cierre', null)
         .order('fecha', { ascending: false })
         .limit(1);
       if (error) throw error;
       return ((data ?? [])[0] as TurnoCaja | undefined) ?? null;
+    },
+  });
+}
+
+export interface TurnoAbiertoResumen {
+  id: string;
+  local: string;
+  fecha: string;
+  turno: string;
+  caja: string;
+  fondoApertura: number;
+  horaInicio: string | null;
+  cajeroNombre: string | null;
+  /** cuántas ventas lleva cobradas ese turno */
+  tickets: number;
+  /** cuánto lleva cobrado, sumando todos los medios */
+  cobrado: number;
+}
+
+/**
+ * Los turnos que quedaron abiertos, o sea el **arqueo en curso**. Es lo que el
+ * ERP muestra en el módulo Caja y en el menú, para que se vea de un vistazo que
+ * hay una caja trabajando ahora mismo.
+ *
+ * Se miran los últimos 3 días y no solo hoy porque el turno noche de Vedia
+ * cierra pasada la medianoche — mismo criterio que `useTurnoAbierto`, incluido
+ * el filtro por `origen='pos'` (sin eso aparecerían como "en curso" los 821
+ * cierres que cargó administración a mano, que nunca completan `hora_cierre`).
+ *
+ * ⚠️ `local` va en la queryKey: sin eso, la vista del usuario restringido a un
+ * local y la del administrador se pisarían en la caché.
+ */
+export function useTurnosAbiertos(local: LocalCaja | null, habilitado = true) {
+  return useQuery({
+    queryKey: ['caja-turnos-abiertos', local],
+    enabled: habilitado,
+    staleTime: 1000 * 60,
+    refetchInterval: 1000 * 60,
+    queryFn: async (): Promise<TurnoAbiertoResumen[]> => {
+      const desde = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+      let consulta = supabase
+        .from('cierres_caja')
+        .select('id, local, fecha, turno, caja, fondo_apertura, hora_inicio, cajero_nombre')
+        .eq('origen', 'pos')
+        .gte('fecha', desde)
+        .is('hora_cierre', null)
+        .order('fecha', { ascending: false })
+        .order('caja');
+      if (local) consulta = consulta.eq('local', local);
+
+      const { data, error } = await consulta;
+      if (error) throw error;
+      const turnos = data ?? [];
+      if (turnos.length === 0) return [];
+
+      const { data: tickets, error: eTickets } = await supabase
+        .from('ventas_tickets')
+        .select('cierre_caja_id, total_bruto')
+        .in(
+          'cierre_caja_id',
+          turnos.map((t) => t.id),
+        );
+      if (eTickets) throw eTickets;
+
+      const acumulado = new Map<string, { tickets: number; cobrado: number }>();
+      for (const t of tickets ?? []) {
+        if (!t.cierre_caja_id) continue;
+        const a = acumulado.get(t.cierre_caja_id) ?? { tickets: 0, cobrado: 0 };
+        a.tickets += 1;
+        a.cobrado += Number(t.total_bruto);
+        acumulado.set(t.cierre_caja_id, a);
+      }
+
+      return turnos.map((t) => {
+        const a = acumulado.get(t.id) ?? { tickets: 0, cobrado: 0 };
+        return {
+          id: t.id,
+          local: t.local,
+          fecha: t.fecha,
+          turno: t.turno,
+          caja: t.caja,
+          fondoApertura: Number(t.fondo_apertura ?? 0),
+          horaInicio: t.hora_inicio,
+          cajeroNombre: t.cajero_nombre,
+          tickets: a.tickets,
+          cobrado: a.cobrado,
+        };
+      });
     },
   });
 }
@@ -286,6 +384,9 @@ export function useAbrirTurno() {
           fecha: input.fecha,
           turno: input.turno,
           caja: input.caja,
+          // marca el arqueo como abierto por el POS: es lo que lo distingue de
+          // los cierres que carga administración a mano (migración 146)
+          origen: 'pos',
           fondo_apertura: input.fondoApertura,
           hora_inicio: input.horaInicio,
           cajero_nombre: input.cajeroNombre,
@@ -307,8 +408,31 @@ export function useAbrirTurno() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['caja-turno-abierto'] });
+      qc.invalidateQueries({ queryKey: ['caja-turnos-abiertos'] });
     },
   });
+}
+
+/**
+ * Cuánto tiene que haber en el cajón al cerrar.
+ *
+ * ⚠️ Es **la misma cuenta que hace Finanzas → Cierre de Caja**; si se cambia
+ * una hay que cambiar la otra, o el cajero y administración van a ver dos
+ * diferencias distintas para el mismo turno:
+ *
+ *   esperado   = fondo inicial + efectivo cobrado − retiros
+ *   diferencia = contado − esperado
+ *
+ * Los retiros restan porque esa plata salió del cajón durante el turno (se fue
+ * a buscar cambio, se pagó algo). Sin esto, cada retiro aparecería como un
+ * faltante.
+ */
+export function efectivoEsperadoEnCaja(input: {
+  fondoApertura: number;
+  efectivoCobrado: number;
+  retiros: number;
+}): number {
+  return input.fondoApertura + input.efectivoCobrado - input.retiros;
 }
 
 export function useCerrarTurno() {
@@ -319,6 +443,11 @@ export function useCerrarTurno() {
       montoContado: number;
       montoEsperado: number;
       efectivoDelTurno: number;
+      /** plata que se sacó para ir a buscar cambio (vuelve a la caja) */
+      retiroCambio: number;
+      /** plata que salió de verdad: se pagó algo con el efectivo del cajón */
+      retiroPagos: number;
+      retiroNota: string | null;
       qr: number;
       debito: number;
       credito: number;
@@ -327,12 +456,15 @@ export function useCerrarTurno() {
       horaCierre: string;
       nota: string | null;
     }) => {
+      const otrosRetiros = input.retiroCambio + input.retiroPagos;
       const { error } = await supabase
         .from('cierres_caja')
         .update({
           monto_contado: input.montoContado,
           monto_esperado: input.montoEsperado,
-          diferencia: input.montoContado - input.montoEsperado,
+          // ⚠️ `diferencia` NO se manda: es una columna calculada por la base
+          // (`monto_contado − monto_esperado`). Mandarla revienta con
+          // "column diferencia can only be updated to DEFAULT".
           hora_cierre: input.horaCierre,
           // Las columnas fudo_* son "lo que dice el sistema de ventas". Cuando el
           // turno lo cobró el POS propio, el sistema de ventas es el POS. Se
@@ -343,6 +475,16 @@ export function useCerrarTurno() {
           fudo_credito: input.credito,
           fudo_transferencia: input.transferencia,
           fudo_mp_lucas: input.mpLucas,
+          // Retiros: `otros_retiros` es el TOTAL y es el que entra en la cuenta
+          // del arqueo; los otros dos dicen en qué se fue (migración 139).
+          // `retiro` es columna vieja y va en 0: si se duplicara el dato, el
+          // arqueo contaría los retiros dos veces.
+          otros_retiros: otrosRetiros,
+          retiro_cambio: input.retiroCambio,
+          retiro_pagos: input.retiroPagos,
+          otros_retiros_nota: input.retiroNota,
+          retiro: 0,
+          fondo_siguiente: 0,
           nota: input.nota,
         })
         .eq('id', input.turnoId);
@@ -350,6 +492,7 @@ export function useCerrarTurno() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['caja-turno-abierto'] });
+      qc.invalidateQueries({ queryKey: ['caja-turnos-abiertos'] });
       qc.invalidateQueries({ queryKey: ['caja-ventas-turno'] });
     },
   });
@@ -508,6 +651,8 @@ export function useCobrarVenta() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['caja-ventas-turno'] });
+      // el panel del ERP muestra cuánto lleva cobrado el turno
+      qc.invalidateQueries({ queryKey: ['caja-turnos-abiertos'] });
     },
   });
 }

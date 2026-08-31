@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
 import { CAJAS, CAJA_PRUEBAS, TURNOS, turnoSugerido } from '@/lib/turnosCaja';
+import { esVentanaDeCaja } from '@/lib/ventanaCaja';
 import { DocumentoImpresion, imprimir, type DatosImpresion } from './Impresion';
 import {
   useCatalogoCaja,
@@ -13,6 +14,7 @@ import {
   useCerrarTurno,
   useCobrarVenta,
   useDetalleTicket,
+  efectivoEsperadoEnCaja,
   ordenGrupo,
   type ItemCatalogo,
   type LocalCaja,
@@ -89,12 +91,16 @@ function Reloj() {
 }
 
 /**
- * La caja SIEMPRE se muestra a pantalla completa y sin el menú lateral (ver
- * RUTAS_PANTALLA_COMPLETA en App.tsx). El cajero entra con su usuario, toca
- * Caja y ya está adentro del POS: no elige nada más.
+ * El punto de venta, siempre a pantalla completa y sin menú lateral (ver
+ * RUTAS_PANTALLA_COMPLETA en App.tsx). Vive en `/caja/pos` y normalmente se
+ * abre en su **propia ventana** desde el ítem Caja del menú — el ERP se queda
+ * atrás mostrando el arqueo en curso (ver CajaResumen).
  */
 export function CajaPage() {
   const { perfil } = useAuth();
+  // Si esta es la ventana aparte, se sale cerrándola; si alguien entró por la
+  // dirección en una pestaña normal, se sale volviendo al ERP.
+  const enVentanaAparte = esVentanaDeCaja();
   const localForzado = perfil?.local_restringido ?? null;
   const [local, setLocal] = useState<LocalCaja>((localForzado as LocalCaja) ?? 'vedia');
   const [caja, setCaja] = useState<string>(CAJA_PRUEBAS);
@@ -161,14 +167,29 @@ export function CajaPage() {
         </div>
         <div className="flex items-center gap-5">
           <div className="text-right leading-tight">
-            <div className="text-sm font-medium text-gray-900">{perfil?.nombre}</div>
-            {/* Salida discreta: sin esto el cajero (o quien mire la caja desde
-                el ERP) queda encerrado, porque acá no hay menú lateral. */}
-            <Link to="/" className="text-xs text-gray-400 hover:text-gray-600">
-              Salir de la caja
-            </Link>
+            <div className="text-sm font-medium capitalize text-gray-900">{perfil?.nombre}</div>
+            <div className="text-xs text-gray-400">Cajero</div>
           </div>
           <Reloj />
+          {/* La salida tiene que verse: acá no hay menú lateral, y sin un botón
+              claro el cajero queda encerrado en el POS. */}
+          {enVentanaAparte ? (
+            <button
+              onClick={() => window.close()}
+              className="rounded border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+              title="Cierra esta ventana. El turno queda abierto: para cerrarlo usá 'Cerrar turno'."
+            >
+              ✕ Cerrar ventana
+            </button>
+          ) : (
+            <Link
+              to="/caja"
+              className="rounded border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+              title="Vuelve al ERP. El turno queda abierto."
+            >
+              ← Salir al ERP
+            </Link>
+          )}
         </div>
       </header>
       <main className="flex-1 p-4">{cuerpo}</main>
@@ -1085,20 +1106,72 @@ function ModalCierre({
 }) {
   const cerrar = useCerrarTurno();
   const [contado, setContado] = useState('');
+  const [retiroCambio, setRetiroCambio] = useState('');
+  const [retiroPagos, setRetiroPagos] = useState('');
+  const [retiroNota, setRetiroNota] = useState('');
   const [nota, setNota] = useState('');
   const [error, setError] = useState<string | null>(null);
 
-  const esperado = fondoApertura + totales.efectivo;
+  const cambio = Number(retiroCambio) || 0;
+  const pagos = Number(retiroPagos) || 0;
+  const retiros = cambio + pagos;
+  const esperado = efectivoEsperadoEnCaja({
+    fondoApertura,
+    efectivoCobrado: totales.efectivo,
+    retiros,
+  });
   const diferencia = (Number(contado) || 0) - esperado;
   const porMedio = (n: string) => totales.porMedio.get(n) ?? 0;
 
   return (
-    <Modal titulo="Cerrar turno" onCerrar={onCancelar}>
+    <Modal titulo="Cerrar el arqueo" onCerrar={onCancelar}>
       <dl className="mb-4 space-y-1 text-sm">
         <Fila k="Fondo inicial" v={pesos(fondoApertura)} />
         <Fila k="Cobrado en efectivo" v={pesos(totales.efectivo)} />
+        {retiros > 0 && <Fila k="Retiros del turno" v={`− ${pesos(retiros)}`} />}
         <Fila k="Tiene que haber en caja" v={pesos(esperado)} fuerte />
       </dl>
+
+      {/* Los retiros restan del arqueo: esa plata salió del cajón durante el
+          turno. Sin cargarlos, cada retiro aparecería como un faltante. */}
+      <p className="mb-2 text-sm font-medium text-gray-700">
+        ¿Sacaste plata del cajón durante el turno?
+      </p>
+      <div className="mb-2 grid grid-cols-2 gap-2">
+        <div>
+          <label className="mb-1 block text-xs text-gray-600">Para cambio</label>
+          <input
+            type="number"
+            inputMode="numeric"
+            value={retiroCambio}
+            onChange={(e) => setRetiroCambio(e.target.value)}
+            placeholder="0"
+            className="w-full rounded border border-gray-300 px-3 py-2 text-base"
+          />
+        </div>
+        <div>
+          <label className="mb-1 block text-xs text-gray-600">Para pagar algo</label>
+          <input
+            type="number"
+            inputMode="numeric"
+            value={retiroPagos}
+            onChange={(e) => setRetiroPagos(e.target.value)}
+            placeholder="0"
+            className="w-full rounded border border-gray-300 px-3 py-2 text-base"
+          />
+        </div>
+      </div>
+      {retiros > 0 && (
+        <input
+          value={retiroNota}
+          onChange={(e) => setRetiroNota(e.target.value)}
+          placeholder="¿En qué se fue? Ej: se le pagó al de la verdulería"
+          className="mb-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
+        />
+      )}
+      <p className="mb-4 text-xs text-gray-500">
+        Si no sacaste nada, dejalos en cero.
+      </p>
 
       <label className="mb-1 block text-sm font-medium text-gray-700">
         ¿Cuánto contaste en la caja?
@@ -1163,6 +1236,9 @@ function ModalCierre({
                 montoContado: Number(contado) || 0,
                 montoEsperado: esperado,
                 efectivoDelTurno: totales.efectivo,
+                retiroCambio: cambio,
+                retiroPagos: pagos,
+                retiroNota: retiroNota.trim() || null,
                 qr: porMedio('Código QR'),
                 debito: porMedio('Tarjeta de débito'),
                 credito: porMedio('Tarjeta de crédito'),
@@ -1178,9 +1254,13 @@ function ModalCierre({
           }}
           className="flex-1 rounded bg-rodziny-700 px-4 py-2 text-sm font-medium text-white hover:bg-rodziny-800 disabled:opacity-40"
         >
-          {cerrar.isPending ? 'Cerrando…' : 'Cerrar turno'}
+          {cerrar.isPending ? 'Cerrando…' : 'Cerrar el arqueo'}
         </button>
       </div>
+      <p className="mt-2 text-xs text-gray-400">
+        Al cerrar, el arqueo queda cargado en Finanzas → Cierre de Caja para que administración lo
+        controle y marque la plata como recibida.
+      </p>
     </Modal>
   );
 }

@@ -1,7 +1,9 @@
-import { NavLink } from 'react-router-dom';
+import { NavLink, useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import { useAuth, type Modulo } from '@/lib/auth';
 import { usePagosAlertas } from '@/modules/finanzas/hooks/usePagosAlertas';
+import { useTurnosAbiertos, type LocalCaja } from '@/modules/caja/useCaja';
+import { abrirVentanaCaja, RUTA_POS } from '@/lib/ventanaCaja';
 
 // Modulos que viven dentro del tab de Finanzas. Si el usuario tiene permiso
 // a cualquiera de estos, mostramos el item Finanzas en el sidebar.
@@ -26,6 +28,13 @@ const NAV: { to: string; label: string; icon: string; modulo: Modulo | 'finanzas
 export function Sidebar() {
   const { perfil, signOut, tienePermiso } = useAuth();
   const { data: alertas } = usePagosAlertas();
+  const navigate = useNavigate();
+  // Arqueo en curso: el menú avisa que hay una caja abierta cobrando ahora.
+  const { data: turnosCaja } = useTurnosAbiertos(
+    (perfil?.local_restringido as LocalCaja | null) ?? null,
+    tienePermiso('caja'),
+  );
+  const cajasAbiertas = turnosCaja?.length ?? 0;
   const items = NAV.filter((n) =>
     // Inicio es universal: lo ve cualquier usuario logueado.
     n.to === '/'
@@ -66,11 +75,21 @@ export function Sidebar() {
         {items.map(({ to, label, icon, modulo }) => {
           const mostrarBadge = modulo === 'finanzas-grupo' && (alertas?.urgentesTotal ?? 0) > 0;
           const badgeColor = (alertas?.vencidos ?? 0) > 0 ? 'bg-red-500' : 'bg-amber-500';
+          const esCaja = to === '/caja';
           return (
             <NavLink
               key={to}
               to={to}
               end={to === '/'}
+              onClick={(e) => {
+                if (!esCaja) return;
+                // La caja se abre en su PROPIA ventana y el ERP se queda atrás
+                // mostrando el arqueo en curso. Tiene que salir de este click:
+                // desde un efecto el navegador lo bloquearía. Si igual lo
+                // bloquea, se entra al POS en esta misma pestaña.
+                e.preventDefault();
+                navigate(abrirVentanaCaja() ? '/caja' : RUTA_POS);
+              }}
               className={({ isActive }) =>
                 cn(
                   'flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-all',
@@ -82,7 +101,23 @@ export function Sidebar() {
               style={({ isActive }) => (isActive ? { background: '#1e2a14' } : {})}
             >
               <span className="text-base">{icon}</span>
-              <span className="flex-1">{label}</span>
+              <span className="flex-1 leading-tight">
+                {label}
+                {esCaja && cajasAbiertas > 0 && (
+                  <span className="block text-[10px] font-medium text-green-400">
+                    {cajasAbiertas === 1 ? 'Turno en curso' : `${cajasAbiertas} turnos en curso`}
+                  </span>
+                )}
+              </span>
+              {esCaja && cajasAbiertas > 0 && (
+                <span
+                  title={`Hay ${cajasAbiertas} caja${cajasAbiertas === 1 ? '' : 's'} con el arqueo abierto`}
+                  className="relative flex h-2.5 w-2.5"
+                >
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75" />
+                  <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-green-500" />
+                </span>
+              )}
               {mostrarBadge && (
                 <span
                   title={`${alertas!.urgentesTotal} pago${alertas!.urgentesTotal === 1 ? '' : 's'} vencido${alertas!.urgentesTotal === 1 ? '' : 's'} o por vencer en ≤7 días${
