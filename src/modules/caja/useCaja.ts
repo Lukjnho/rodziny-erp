@@ -842,3 +842,37 @@ export function useCobrarVenta() {
     },
   });
 }
+
+/**
+ * Anula una venta ya cobrada: borra el ticket, y con él sus líneas y sus cobros
+ * (ON DELETE CASCADE). El arqueo se recalcula solo, porque el esperado sale de
+ * sumar los cobros del turno.
+ *
+ * ⚠️ Esto NO lo puede hacer el cajero: la migración 151 le dejó ver y cobrar,
+ * pero no borrar ni editar. Hace falta permiso de ventas (o ser administrador).
+ * Y la base no protesta cuando falta el permiso: simplemente no borra nada. Por
+ * eso se cuentan las filas afectadas y se avisa en criollo, en vez de dejar que
+ * la pantalla diga "listo" sin haber borrado nada.
+ */
+export function useAnularVenta(turnoId: string | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (ticketId: string) => {
+      const { error, count } = await supabase
+        .from('ventas_tickets')
+        .delete({ count: 'exact' })
+        .eq('id', ticketId);
+      if (error) throw error;
+      if (!count) {
+        throw new Error(
+          'No se pudo anular la venta. Hace falta un administrador: pedile ayuda para borrarla.',
+        );
+      }
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['caja-ventas-turno', turnoId] });
+      qc.invalidateQueries({ queryKey: ['caja-turnos-abiertos'] });
+      qc.invalidateQueries({ queryKey: ['caja-arqueo-medios'] });
+    },
+  });
+}

@@ -14,6 +14,7 @@ import {
   useCerrarTurno,
   useCobrarVenta,
   useDetalleTicket,
+  useAnularVenta,
   useConveniosCaja,
   efectivoEsperadoEnCaja,
   importesDeLinea,
@@ -916,6 +917,10 @@ function Mostrador({
           local={local}
           caja={caja}
           fechaTurno={turno.fecha}
+          turnoId={turno.id}
+          // el mismo permiso que pide la base (migración 151): el cajero ve el
+          // cartel, el administrador puede anular de verdad
+          puedeAnular={tienePermiso('ventas')}
           onCerrar={() => setVerVenta(null)}
           onImprimir={(d) => setDoc(d)}
         />
@@ -933,6 +938,8 @@ function ModalVenta({
   local,
   caja,
   fechaTurno,
+  turnoId,
+  puedeAnular,
   onCerrar,
   onImprimir,
 }: {
@@ -940,11 +947,15 @@ function ModalVenta({
   local: LocalCaja;
   caja: string;
   fechaTurno: string;
+  turnoId: string;
+  puedeAnular: boolean;
   onCerrar: () => void;
   onImprimir: (d: DatosImpresion) => void;
 }) {
   const detalleQ = useDetalleTicket(venta.ticketId);
   const lineas = detalleQ.data ?? [];
+  const [pidiendoAnular, setPidiendoAnular] = useState(false);
+  const anular = useAnularVenta(turnoId);
 
   function reimprimir(tipo: 'comanda' | 'ticket') {
     onImprimir({
@@ -1033,6 +1044,69 @@ function ModalVenta({
               Reimprimir ticket
             </button>
           </div>
+
+          {/* Anular. El cajero no puede (la base se lo impide desde la
+              migración 151): lo que ve es el cartel que le dice qué hacer. */}
+          {!pidiendoAnular ? (
+            <button
+              onClick={() => setPidiendoAnular(true)}
+              className="mb-2 w-full rounded border border-gray-300 px-4 py-2 text-sm text-red-700 hover:bg-red-50"
+            >
+              Anular esta venta
+            </button>
+          ) : puedeAnular ? (
+            <div className="mb-2 rounded border border-red-200 bg-red-50 p-3">
+              <p className="text-sm font-medium text-red-900">¿Anular esta venta?</p>
+              <p className="mt-1 text-xs text-red-800">
+                Se borra entera: el detalle y los cobros. El arqueo del turno se recalcula solo.
+                No se puede deshacer.
+              </p>
+              {anular.isError && (
+                <p className="mt-2 text-xs font-semibold text-red-900">
+                  {(anular.error as Error).message}
+                </p>
+              )}
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <button
+                  disabled={anular.isPending}
+                  onClick={async () => {
+                    try {
+                      await anular.mutateAsync(venta.ticketId);
+                      onCerrar();
+                    } catch {
+                      // el motivo queda a la vista, arriba de los botones
+                    }
+                  }}
+                  className="rounded bg-red-600 px-3 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+                >
+                  {anular.isPending ? 'Anulando…' : 'Sí, anular'}
+                </button>
+                <button
+                  onClick={() => setPidiendoAnular(false)}
+                  className="rounded border border-gray-300 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50"
+                >
+                  No
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="mb-2 rounded border border-amber-300 bg-amber-50 p-3">
+              <p className="text-sm font-semibold text-amber-900">
+                Pedile ayuda a un administrador para borrarla
+              </p>
+              <p className="mt-1 text-xs text-amber-800">
+                Por seguridad, la caja no puede borrar una venta ya cobrada. Si te equivocaste,
+                avisale a un administrador y la anula él.
+              </p>
+              <button
+                onClick={() => setPidiendoAnular(false)}
+                className="mt-3 w-full rounded border border-amber-300 bg-white px-3 py-2 text-sm font-medium text-amber-900 hover:bg-amber-100"
+              >
+                Entendido
+              </button>
+            </div>
+          )}
+
           <button
             onClick={onCerrar}
             className="w-full rounded border border-gray-300 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50"
