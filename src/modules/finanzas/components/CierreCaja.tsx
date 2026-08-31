@@ -96,6 +96,8 @@ export function CierreCaja() {
   const [editandoId, setEditandoId] = useState<string | null>(null);
   // Detalle del arqueo que cargó el cajero desde el POS, medio por medio.
   const [arqueoModal, setArqueoModal] = useState<CierreRow | null>(null);
+  // Mensaje cuando la base rechaza tocar un arqueo cerrado por la caja.
+  const [avisoBloqueo, setAvisoBloqueo] = useState<string | null>(null);
   const qc = useQueryClient();
 
   // Form state
@@ -322,6 +324,9 @@ export function CierreCaja() {
       setEditandoId(null);
       resetForm();
     },
+    // Si el turno ya lo cerró el cajero desde la caja, la base rechaza el
+    // guardado (migración 148). El formulario queda abierto para no perder lo
+    // cargado; el motivo ya se muestra dentro del formulario.
   });
 
   // ── mutation: eliminar cierre ──────────────────────────────────────────────
@@ -332,12 +337,17 @@ export function CierreCaja() {
       if (cierre?.dividendo_id) {
         await supabase.from('dividendos').delete().eq('id', cierre.dividendo_id);
       }
-      await supabase.from('cierres_caja').delete().eq('id', id);
+      // El error se propaga: la base rechaza borrar un arqueo del POS que tenga
+      // ventas enganchadas (migración 148) y ese mensaje tiene que llegar a la
+      // pantalla. Antes se descartaba y el borrado fallaba sin decir nada.
+      const { error } = await supabase.from('cierres_caja').delete().eq('id', id);
+      if (error) throw error;
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['cierres_mes'] });
       qc.invalidateQueries({ queryKey: ['fc_dividendos'] });
     },
+    onError: (e) => setAvisoBloqueo((e as Error).message),
   });
 
   // ── mutation: verificar cierre (= recibido en caja fuerte) ─────────────────
@@ -1191,6 +1201,20 @@ export function CierreCaja() {
         </div>
       )}
 
+      {/* La base rechazó tocar un arqueo cerrado por la caja (migración 148) */}
+      {avisoBloqueo && (
+        <div className="flex items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          <span className="text-base leading-none">🔒</span>
+          <span className="flex-1">{avisoBloqueo}</span>
+          <button
+            onClick={() => setAvisoBloqueo(null)}
+            className="text-xs text-amber-700 hover:text-amber-900"
+          >
+            Entendido
+          </button>
+        </div>
+      )}
+
       {/* Tabla de cierres */}
       <div className="overflow-hidden rounded-lg border border-surface-border bg-white">
         {isLoading ? (
@@ -1370,16 +1394,34 @@ export function CierreCaja() {
                       </td>
                       <td className="px-2 py-2 text-center">
                         <div className="flex items-center justify-center gap-2">
-                          <button
-                            onClick={() => editarCierre(c)}
-                            className="text-xs text-blue-500 transition-colors hover:text-blue-700"
-                            title="Editar este cierre"
-                          >
-                            Editar
-                          </button>
+                          {/* Un arqueo cerrado por el cajero no se reescribe: si
+                              administración lo pudiera editar, la declaración
+                              del cajero dejaría de valer como control. Lo que sí
+                              puede es verificarlo y dejarle una nota. */}
+                          {c.origen === 'pos' ? (
+                            <span
+                              title="Lo cerró el cajero desde la caja. Sus números no se editan: verificalo, marcá la caja fuerte o dejale una nota. Si hay diferencia, ese es el dato."
+                              className="text-xs text-gray-300"
+                            >
+                              🔒
+                            </span>
+                          ) : (
+                            <button
+                              onClick={() => editarCierre(c)}
+                              className="text-xs text-blue-500 transition-colors hover:text-blue-700"
+                              title="Editar este cierre"
+                            >
+                              Editar
+                            </button>
+                          )}
                           <button
                             onClick={() => {
-                              if (confirm('¿Eliminar este cierre?')) eliminarMut.mutate(c.id);
+                              setAvisoBloqueo(null);
+                              const aviso =
+                                c.origen === 'pos'
+                                  ? 'Este arqueo lo cerró el cajero desde la caja. Solo se puede borrar si no tiene ninguna venta enganchada. ¿Seguir?'
+                                  : '¿Eliminar este cierre?';
+                              if (confirm(aviso)) eliminarMut.mutate(c.id);
                             }}
                             className="text-xs text-gray-300 transition-colors hover:text-red-500"
                             title="Eliminar"
