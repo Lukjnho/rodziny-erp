@@ -18,6 +18,7 @@ import {
   ordenGrupo,
   type ItemCatalogo,
   type LocalCaja,
+  type MedioCobrado,
   type MedioPagoCaja,
   type LineaVenta,
   type PagoVenta,
@@ -299,6 +300,11 @@ function Mostrador({
   turno: { id: string; fecha: string; turno: string; fondo_apertura: number };
   onCerrado: () => void;
 }) {
+  const { tienePermiso } = useAuth();
+  // Quién puede ver los esperados: administración (finanzas o gastos) y los
+  // admin. El cajero puro NO — ver "arqueo a ciegas" más abajo.
+  const veEsperado = tienePermiso('finanzas') || tienePermiso('gastos');
+
   const catalogoQ = useCatalogoCaja(local);
   const ventasQ = useVentasDelTurno(turno.id);
   const cobrar = useCobrarVenta();
@@ -443,17 +449,31 @@ function Mostrador({
     };
   }
 
-  // Totales del turno, para el arqueo
+  // Totales del turno, para el arqueo. Se agrupa por el ID del medio, no por el
+  // nombre: el nombre es solo lo que se muestra y puede cambiar.
   const ventas = ventasQ.data ?? [];
   const totales = useMemo(() => {
     let efectivo = 0;
     let otros = 0;
-    const porMedio = new Map<string, number>();
+    const porMedio = new Map<
+      string,
+      { medioId: string; codigo: string; nombre: string; esEfectivo: boolean; cobrado: number }
+    >();
     for (const v of ventas) {
       for (const p of v.pagos) {
         if (p.esEfectivo) efectivo += p.monto;
         else otros += p.monto;
-        porMedio.set(p.medio, (porMedio.get(p.medio) ?? 0) + p.monto);
+        if (!p.medioId) continue; // pago viejo sin medio: no entra en el arqueo
+        const previo = porMedio.get(p.medioId);
+        if (previo) previo.cobrado += p.monto;
+        else
+          porMedio.set(p.medioId, {
+            medioId: p.medioId,
+            codigo: p.codigo ?? '',
+            nombre: p.medio,
+            esEfectivo: p.esEfectivo,
+            cobrado: p.monto,
+          });
       }
     }
     return { efectivo, otros, porMedio, cantidad: ventas.length };
@@ -638,19 +658,26 @@ function Mostrador({
             <Fila k="Caja" v={caja} />
             <Fila k="Fondo inicial" v={pesos(turno.fondo_apertura)} />
             <Fila k="Tickets cobrados" v={String(totales.cantidad)} />
-            <Fila k="Efectivo" v={pesos(totales.efectivo)} />
-            <Fila k="Otros medios" v={pesos(totales.otros)} />
-            <Fila
-              k="Tiene que haber en caja"
-              v={pesos(turno.fondo_apertura + totales.efectivo)}
-              fuerte
-            />
+            {/* ⚠️ ARQUEO A CIEGAS: al cajero no se le muestra cuánto tendría que
+                haber. Si viera el número, "cuadrar" no probaría nada — contaría
+                hasta llegar. Lo ve administración. */}
+            {veEsperado && (
+              <>
+                <Fila k="Efectivo" v={pesos(totales.efectivo)} />
+                <Fila k="Otros medios" v={pesos(totales.otros)} />
+                <Fila
+                  k="Tiene que haber en caja"
+                  v={pesos(turno.fondo_apertura + totales.efectivo)}
+                  fuerte
+                />
+              </>
+            )}
           </dl>
           <button
             onClick={() => setCerrando(true)}
             className="mt-4 w-full rounded border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
           >
-            Cerrar turno
+            Cerrar el arqueo
           </button>
         </div>
 
@@ -749,6 +776,7 @@ function Mostrador({
           turnoId={turno.id}
           fondoApertura={turno.fondo_apertura}
           totales={totales}
+          veEsperado={veEsperado}
           onCancelar={() => setCerrando(false)}
           onCerrado={() => {
             setCerrando(false);
@@ -1095,17 +1123,21 @@ function ModalCierre({
   turnoId,
   fondoApertura,
   totales,
+  veEsperado,
   onCancelar,
   onCerrado,
 }: {
   turnoId: string;
   fondoApertura: number;
-  totales: { efectivo: number; porMedio: Map<string, number> };
+  totales: { efectivo: number; porMedio: Map<string, MedioCobrado> };
+  /** administración ve los esperados y el total; el cajero no (arqueo a ciegas) */
+  veEsperado: boolean;
   onCancelar: () => void;
   onCerrado: () => void;
 }) {
   const cerrar = useCerrarTurno();
-  const [contado, setContado] = useState('');
+  const mediosQ = useMediosPagoCaja();
+  const [declarado, setDeclarado] = useState<Record<string, string>>({});
   const [retiroCambio, setRetiroCambio] = useState('');
   const [retiroPagos, setRetiroPagos] = useState('');
   const [retiroNota, setRetiroNota] = useState('');
@@ -1115,21 +1147,50 @@ function ModalCierre({
   const cambio = Number(retiroCambio) || 0;
   const pagos = Number(retiroPagos) || 0;
   const retiros = cambio + pagos;
-  const esperado = efectivoEsperadoEnCaja({
+  const esperadoEfectivo = efectivoEsperadoEnCaja({
     fondoApertura,
     efectivoCobrado: totales.efectivo,
     retiros,
   });
-  const diferencia = (Number(contado) || 0) - esperado;
-  const porMedio = (n: string) => totales.porMedio.get(n) ?? 0;
+
+  /**
+   * Los renglones del arqueo: un medio de pago por línea. El efectivo va
+   * SIEMPRE, aunque no se haya cobrado nada en efectivo, porque el fondo de
+   * apertura está en el cajón igual y hay que contarlo.
+   */
+  const renglones = useMemo(() => {
+    const usados = [...totales.porMedio.values()];
+    const lista = [...usados];
+    if (!usados.some((m) => m.esEfectivo)) {
+      const efectivo = (mediosQ.data ?? []).find((m) => m.es_efectivo);
+      if (efectivo) {
+        lista.unshift({
+          medioId: efectivo.id,
+          codigo: efectivo.codigo,
+          nombre: efectivo.nombre,
+          esEfectivo: true,
+          cobrado: 0,
+        });
+      }
+    }
+    return lista.sort(
+      (a, b) =>
+        Number(b.esEfectivo) - Number(a.esEfectivo) || a.nombre.localeCompare(b.nombre, 'es'),
+    );
+  }, [totales.porMedio, mediosQ.data]);
+
+  const esperadoDe = (m: MedioCobrado) => (m.esEfectivo ? esperadoEfectivo : m.cobrado);
+  const declaradoDe = (m: MedioCobrado) => Number(declarado[m.medioId]) || 0;
+  const completo = renglones.every((m) => (declarado[m.medioId] ?? '').trim() !== '');
+  const totalDeclarado = renglones.reduce((s, m) => s + declaradoDe(m), 0);
+  const totalEsperado = renglones.reduce((s, m) => s + esperadoDe(m), 0);
 
   return (
     <Modal titulo="Cerrar el arqueo" onCerrar={onCancelar}>
       <dl className="mb-4 space-y-1 text-sm">
         <Fila k="Fondo inicial" v={pesos(fondoApertura)} />
-        <Fila k="Cobrado en efectivo" v={pesos(totales.efectivo)} />
+        {veEsperado && <Fila k="Cobrado en efectivo" v={pesos(totales.efectivo)} />}
         {retiros > 0 && <Fila k="Retiros del turno" v={`− ${pesos(retiros)}`} />}
-        <Fila k="Tiene que haber en caja" v={pesos(esperado)} fuerte />
       </dl>
 
       {/* Los retiros restan del arqueo: esa plata salió del cajón durante el
@@ -1169,47 +1230,70 @@ function ModalCierre({
           className="mb-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
         />
       )}
-      <p className="mb-4 text-xs text-gray-500">
-        Si no sacaste nada, dejalos en cero.
+      <p className="mb-4 text-xs text-gray-500">Si no sacaste nada, dejalos en cero.</p>
+
+      {/* ⚠️ ARQUEO A CIEGAS (Lucas, 31-ago-2026): el cajero carga lo que TIENE,
+          medio por medio, sin ver lo que debería tener. Si viera el esperado,
+          "cuadrar" no probaría nada. Administración sí ve las dos columnas. */}
+      <p className="mb-1 text-sm font-medium text-gray-700">¿Cuánto tenés de cada medio?</p>
+      <p className="mb-2 text-xs text-gray-500">
+        El efectivo se cuenta del cajón (incluye el fondo inicial). El resto sale del cierre de lote
+        de cada terminal.
       </p>
 
-      <label className="mb-1 block text-sm font-medium text-gray-700">
-        ¿Cuánto contaste en la caja?
-      </label>
-      <input
-        type="number"
-        inputMode="numeric"
-        autoFocus
-        value={contado}
-        onChange={(e) => setContado(e.target.value)}
-        placeholder="0"
-        className="mb-2 w-full rounded border border-gray-300 px-3 py-2 text-lg"
-      />
+      <div className="mb-4 space-y-2">
+        {renglones.map((m) => {
+          const dif = declaradoDe(m) - esperadoDe(m);
+          const cargado = (declarado[m.medioId] ?? '').trim() !== '';
+          return (
+            <div key={m.medioId} className="flex items-center gap-2">
+              <label className="min-w-0 flex-1 text-sm text-gray-700">
+                {m.nombre}
+                {veEsperado && (
+                  <span className="ml-1 text-xs text-gray-400">
+                    · debería haber {pesos(esperadoDe(m))}
+                  </span>
+                )}
+              </label>
+              <input
+                type="number"
+                inputMode="numeric"
+                value={declarado[m.medioId] ?? ''}
+                onChange={(e) => setDeclarado((p) => ({ ...p, [m.medioId]: e.target.value }))}
+                placeholder="0"
+                className="w-32 rounded border border-gray-300 px-3 py-2 text-right text-base"
+              />
+              {veEsperado && cargado && (
+                <span
+                  className={cn(
+                    'w-24 text-right text-xs font-medium',
+                    Math.abs(dif) < 1
+                      ? 'text-green-700'
+                      : dif > 0
+                        ? 'text-blue-700'
+                        : 'text-red-700',
+                  )}
+                >
+                  {Math.abs(dif) < 1 ? 'cuadra' : dif > 0 ? `+${pesos(dif)}` : `−${pesos(-dif)}`}
+                </span>
+              )}
+            </div>
+          );
+        })}
+      </div>
 
-      {contado !== '' && (
-        <div
-          className={cn(
-            'mb-3 rounded px-3 py-2 text-sm',
-            Math.abs(diferencia) < 1
-              ? 'bg-green-50 text-green-800'
-              : diferencia > 0
-                ? 'bg-blue-50 text-blue-800'
-                : 'bg-red-50 text-red-800',
-          )}
-        >
-          {Math.abs(diferencia) < 1
-            ? 'Cuadra exacto.'
-            : diferencia > 0
-              ? `Sobran ${pesos(diferencia)}.`
-              : `Faltan ${pesos(Math.abs(diferencia))}.`}
-        </div>
+      {veEsperado && (
+        <dl className="mb-4 space-y-1 border-t border-gray-200 pt-3 text-sm">
+          <Fila k="Total que debería haber" v={pesos(totalEsperado)} />
+          <Fila k="Total declarado" v={pesos(totalDeclarado)} fuerte />
+        </dl>
       )}
 
       <label className="mb-1 block text-sm font-medium text-gray-700">Nota (opcional)</label>
       <input
         value={nota}
         onChange={(e) => setNota(e.target.value)}
-        placeholder="Ej: se sacaron $5.000 para cambio"
+        placeholder="Ej: el posnet no imprimió el cierre de lote"
         className="mb-4 w-full rounded border border-gray-300 px-3 py-2 text-sm"
       />
 
@@ -1227,23 +1311,17 @@ function ModalCierre({
           Volver
         </button>
         <button
-          disabled={contado === '' || cerrar.isPending}
+          disabled={!completo || cerrar.isPending}
           onClick={async () => {
             setError(null);
             try {
               await cerrar.mutateAsync({
                 turnoId,
-                montoContado: Number(contado) || 0,
-                montoEsperado: esperado,
-                efectivoDelTurno: totales.efectivo,
+                fondoApertura,
                 retiroCambio: cambio,
                 retiroPagos: pagos,
                 retiroNota: retiroNota.trim() || null,
-                qr: porMedio('Código QR'),
-                debito: porMedio('Tarjeta de débito'),
-                credito: porMedio('Tarjeta de crédito'),
-                transferencia: porMedio('Transferencia'),
-                mpLucas: porMedio('Mercado Pago Lucas'),
+                medios: renglones.map((m) => ({ ...m, declarado: declaradoDe(m) })),
                 horaCierre: ahoraAR().hora,
                 nota: nota.trim() || null,
               });
@@ -1258,8 +1336,9 @@ function ModalCierre({
         </button>
       </div>
       <p className="mt-2 text-xs text-gray-400">
-        Al cerrar, el arqueo queda cargado en Finanzas → Cierre de Caja para que administración lo
-        controle y marque la plata como recibida.
+        {completo
+          ? 'Al cerrar, el arqueo queda cargado en Finanzas → Cierre de Caja para que administración lo controle y marque la plata como recibida.'
+          : 'Cargá todos los medios para poder cerrar. Si con alguno no cobraste nada, poné 0.'}
       </p>
     </Modal>
   );

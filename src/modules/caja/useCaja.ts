@@ -271,12 +271,22 @@ export function useTurnosAbiertos(local: LocalCaja | null, habilitado = true) {
   });
 }
 
+export interface PagoDeVenta {
+  /** medios_pago.id — la identidad de verdad; el nombre es solo para mostrar */
+  medioId: string | null;
+  /** medios_pago.codigo: efectivo, qr, debito, credito, transferencia, mp_lucas */
+  codigo: string | null;
+  medio: string;
+  esEfectivo: boolean;
+  monto: number;
+}
+
 export interface VentaTurno {
   ticketId: string;
   total: number;
   hora: string | null;
   cliente: string | null;
-  pagos: { medio: string; esEfectivo: boolean; monto: number }[];
+  pagos: PagoDeVenta[];
 }
 
 export interface LineaTicketGuardada {
@@ -334,7 +344,7 @@ export function useVentasDelTurno(turnoId: string | null) {
 
       const { data: pagos, error: e2 } = await supabase
         .from('ventas_pagos')
-        .select('ticket_id, medio_pago, monto, medios_pago(es_efectivo)')
+        .select('ticket_id, medio_pago, medio_pago_id, monto, medios_pago(codigo, es_efectivo)')
         .in('ticket_id', ids);
       if (e2) throw e2;
 
@@ -342,11 +352,14 @@ export function useVentasDelTurno(turnoId: string | null) {
       for (const p of (pagos ?? []) as unknown as {
         ticket_id: string;
         medio_pago: string;
+        medio_pago_id: string | null;
         monto: number;
-        medios_pago: { es_efectivo: boolean } | null;
+        medios_pago: { codigo: string; es_efectivo: boolean } | null;
       }[]) {
         const lista = porTicket.get(p.ticket_id) ?? [];
         lista.push({
+          medioId: p.medio_pago_id,
+          codigo: p.medios_pago?.codigo ?? null,
           medio: p.medio_pago,
           esEfectivo: !!p.medios_pago?.es_efectivo,
           monto: Number(p.monto),
@@ -435,33 +448,118 @@ export function efectivoEsperadoEnCaja(input: {
   return input.fondoApertura + input.efectivoCobrado - input.retiros;
 }
 
+export interface RenglonArqueo {
+  medioId: string;
+  nombre: string;
+  esEfectivo: boolean;
+  esperado: number;
+  declarado: number;
+  diferencia: number;
+}
+
+/**
+ * El arqueo desglosado de un turno ya cerrado: qué decía el sistema y qué
+ * declaró el cajero, medio por medio. Es lo que mira administración para
+ * controlar. Vive en `cierres_caja_medios` (migración 147).
+ */
+export function useArqueoMedios(cierreId: string | null) {
+  return useQuery({
+    queryKey: ['caja-arqueo-medios', cierreId],
+    enabled: !!cierreId,
+    queryFn: async (): Promise<RenglonArqueo[]> => {
+      const { data, error } = await supabase
+        .from('cierres_caja_medios')
+        .select('medio_pago_id, esperado, declarado, diferencia, medios_pago(nombre, es_efectivo, orden)')
+        .eq('cierre_caja_id', cierreId!);
+      if (error) throw error;
+      return ((data ?? []) as unknown as {
+        medio_pago_id: string;
+        esperado: number;
+        declarado: number;
+        diferencia: number;
+        medios_pago: { nombre: string; es_efectivo: boolean; orden: number } | null;
+      }[])
+        .map((r) => ({
+          medioId: r.medio_pago_id,
+          nombre: r.medios_pago?.nombre ?? 'Sin nombre',
+          esEfectivo: !!r.medios_pago?.es_efectivo,
+          esperado: Number(r.esperado),
+          declarado: Number(r.declarado),
+          diferencia: Number(r.diferencia),
+          orden: r.medios_pago?.orden ?? 99,
+        }))
+        .sort((a, b) => a.orden - b.orden)
+        .map(({ orden: _orden, ...r }) => r);
+    },
+  });
+}
+
+/** Un medio de pago y lo que el sistema dice que se cobró con él en el turno. */
+export interface MedioCobrado {
+  medioId: string;
+  codigo: string;
+  nombre: string;
+  esEfectivo: boolean;
+  cobrado: number;
+}
+
+/** Lo mismo, más lo que el cajero declaró tener. */
+export interface MedioArqueo extends MedioCobrado {
+  /** lo que el cajero contó (efectivo) o leyó del cierre de lote (el resto) */
+  declarado: number;
+}
+
 export function useCerrarTurno() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: {
       turnoId: string;
-      montoContado: number;
-      montoEsperado: number;
-      efectivoDelTurno: number;
+      fondoApertura: number;
       /** plata que se sacó para ir a buscar cambio (vuelve a la caja) */
       retiroCambio: number;
       /** plata que salió de verdad: se pagó algo con el efectivo del cajón */
       retiroPagos: number;
       retiroNota: string | null;
-      qr: number;
-      debito: number;
-      credito: number;
-      transferencia: number;
-      mpLucas: number;
+      medios: MedioArqueo[];
       horaCierre: string;
       nota: string | null;
     }) => {
       const otrosRetiros = input.retiroCambio + input.retiroPagos;
+      const efectivo = input.medios.find((m) => m.esEfectivo);
+      const efectivoCobrado = efectivo?.cobrado ?? 0;
+      const montoContado = efectivo?.declarado ?? 0;
+      const montoEsperado = efectivoEsperadoEnCaja({
+        fondoApertura: input.fondoApertura,
+        efectivoCobrado,
+        retiros: otrosRetiros,
+      });
+      const porCodigo = (c: string) => input.medios.find((m) => m.codigo === c)?.cobrado ?? 0;
+
+      // El desglose se graba ANTES de cerrar: mientras el turno sigue abierto el
+      // cajero puede borrar y recargar sus renglones, así un cierre que falla a
+      // mitad de camino se puede reintentar sin chocar con la clave única. Una
+      // vez cerrado ya no los toca (no tiene permiso de UPDATE).
+      await supabase.from('cierres_caja_medios').delete().eq('cierre_caja_id', input.turnoId);
+
+      if (input.medios.length > 0) {
+        const { error: eMedios } = await supabase.from('cierres_caja_medios').insert(
+          input.medios.map((m) => ({
+            cierre_caja_id: input.turnoId,
+            medio_pago_id: m.medioId,
+            // En efectivo lo esperado NO es lo cobrado: es lo que tiene que
+            // estar en el cajón (fondo + cobrado − retiros).
+            esperado: m.esEfectivo ? montoEsperado : m.cobrado,
+            declarado: m.declarado,
+          })),
+        );
+        if (eMedios) throw eMedios;
+      }
+
       const { error } = await supabase
         .from('cierres_caja')
         .update({
-          monto_contado: input.montoContado,
-          monto_esperado: input.montoEsperado,
+          monto_contado: montoContado,
+          monto_esperado: montoEsperado,
           // ⚠️ `diferencia` NO se manda: es una columna calculada por la base
           // (`monto_contado − monto_esperado`). Mandarla revienta con
           // "column diferencia can only be updated to DEFAULT".
@@ -469,12 +567,14 @@ export function useCerrarTurno() {
           // Las columnas fudo_* son "lo que dice el sistema de ventas". Cuando el
           // turno lo cobró el POS propio, el sistema de ventas es el POS. Se
           // escriben acá para que Cierre de Caja (Finanzas) lo lea sin cambios.
-          fudo_efectivo: input.efectivoDelTurno,
-          fudo_qr: input.qr,
-          fudo_debito: input.debito,
-          fudo_credito: input.credito,
-          fudo_transferencia: input.transferencia,
-          fudo_mp_lucas: input.mpLucas,
+          // Se mapean por CÓDIGO, no por el nombre que se muestra: si mañana
+          // alguien renombra "Código QR", el nombre cambia pero el código no.
+          fudo_efectivo: efectivoCobrado,
+          fudo_qr: porCodigo('qr'),
+          fudo_debito: porCodigo('debito'),
+          fudo_credito: porCodigo('credito'),
+          fudo_transferencia: porCodigo('transferencia'),
+          fudo_mp_lucas: porCodigo('mp_lucas'),
           // Retiros: `otros_retiros` es el TOTAL y es el que entra en la cuenta
           // del arqueo; los otros dos dicen en qué se fue (migración 139).
           // `retiro` es columna vieja y va en 0: si se duplicara el dato, el

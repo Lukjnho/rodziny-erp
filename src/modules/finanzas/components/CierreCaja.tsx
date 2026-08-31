@@ -7,6 +7,7 @@ import { LocalSelector } from '@/components/ui/LocalSelector';
 import { obtenerVentasFudo, CAJA_FUDO_ID, type VentasFudoResumen } from '@/lib/fudoApi';
 import { useAuth } from '@/lib/auth';
 import { CAJAS, TURNOS } from '@/lib/turnosCaja';
+import { useArqueoMedios } from '@/modules/caja/useCaja';
 
 // ── config por local ─────────────────────────────────────────────────────────
 // CAJAS y TURNOS viven en @/lib/turnosCaja: los comparte con el módulo Caja (el
@@ -67,6 +68,7 @@ interface CierreRow {
   otros_retiros_nota: string | null;
   nota: string | null;
   creado_por: string | null;
+  cajero_nombre: string | null;
   verificado: boolean;
   verificado_por: string | null;
   verificado_at: string | null;
@@ -92,6 +94,8 @@ export function CierreCaja() {
   const [periodo, setPeriodo] = useState(() => new Date().toISOString().substring(0, 7));
   const [formOpen, setFormOpen] = useState(false);
   const [editandoId, setEditandoId] = useState<string | null>(null);
+  // Detalle del arqueo que cargó el cajero desde el POS, medio por medio.
+  const [arqueoModal, setArqueoModal] = useState<CierreRow | null>(null);
   const qc = useQueryClient();
 
   // Form state
@@ -1256,12 +1260,13 @@ export function CierreCaja() {
                         {/* Arqueo cerrado por el cajero desde el punto de venta:
                             los totales los calculó el sistema, no se tipearon. */}
                         {c.origen === 'pos' && (
-                          <span
-                            title="Lo cerró el cajero desde el punto de venta. Los totales por medio de pago salen de las ventas cobradas, no se cargaron a mano."
-                            className="mt-0.5 inline-block rounded bg-rodziny-50 px-1.5 py-0.5 text-[10px] font-semibold text-rodziny-700"
+                          <button
+                            onClick={() => setArqueoModal(c)}
+                            title="Lo cerró el cajero desde el punto de venta. Tocá para ver qué declaró de cada medio de pago contra lo que dice el sistema."
+                            className="mt-0.5 inline-block rounded bg-rodziny-50 px-1.5 py-0.5 text-[10px] font-semibold text-rodziny-700 hover:bg-rodziny-100"
                           >
                             🧮 Caja
-                          </span>
+                          </button>
                         )}
                       </td>
                       <td className="px-4 py-2 text-gray-600">
@@ -1387,6 +1392,10 @@ export function CierreCaja() {
       </div>
 
       {/* Modal: confirmar retiro a caja fuerte */}
+      {arqueoModal && (
+        <ArqueoDelCajeroModal cierre={arqueoModal} onCerrar={() => setArqueoModal(null)} />
+      )}
+
       {cajaFuerteModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div
@@ -1550,6 +1559,140 @@ export function CierreCaja() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Arqueo del cajero ────────────────────────────────────────────────────────
+
+/**
+ * Lo que declaró el cajero contra lo que dice el sistema, medio por medio.
+ *
+ * El cajero carga esto **a ciegas**: cuenta el cajón y lee el cierre de lote de
+ * cada terminal sin ver los esperados. Acá es donde se ve si cuadró.
+ */
+function ArqueoDelCajeroModal({
+  cierre,
+  onCerrar,
+}: {
+  cierre: CierreRow;
+  onCerrar: () => void;
+}) {
+  const { data: renglones, isLoading } = useArqueoMedios(cierre.id);
+  const filas = renglones ?? [];
+  const totalEsperado = filas.reduce((s, r) => s + r.esperado, 0);
+  const totalDeclarado = filas.reduce((s, r) => s + r.declarado, 0);
+  const totalDif = totalDeclarado - totalEsperado;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onCerrar}>
+      <div
+        className="w-full max-w-lg rounded-xl bg-white shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b border-gray-100 px-5 py-3">
+          <h3 className="text-sm font-semibold text-gray-900">🧮 Arqueo del cajero</h3>
+          <button onClick={onCerrar} className="text-xl text-gray-400 hover:text-gray-600">
+            &times;
+          </button>
+        </div>
+
+        <div className="px-5 py-4">
+          <div className="mb-3 rounded bg-gray-50 px-3 py-2 text-xs text-gray-600">
+            {cierre.fecha} · {cierre.caja} ·{' '}
+            {TURNOS[cierre.local]?.find((t) => t.key === cierre.turno)?.label ?? cierre.turno}
+            {cierre.cajero_nombre && <span className="capitalize"> · {cierre.cajero_nombre}</span>}
+            {cierre.hora_inicio && cierre.hora_cierre && (
+              <span>
+                {' '}
+                · {cierre.hora_inicio.substring(0, 5)}–{cierre.hora_cierre.substring(0, 5)}
+              </span>
+            )}
+          </div>
+
+          {isLoading ? (
+            <p className="py-4 text-sm text-gray-500">Buscando el arqueo…</p>
+          ) : filas.length === 0 ? (
+            <p className="py-4 text-sm text-gray-500">
+              Este turno se cerró antes de que existiera el desglose por medio de pago. Solo quedó
+              el arqueo del efectivo.
+            </p>
+          ) : (
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-200 text-[10px] uppercase tracking-wide text-gray-400">
+                  <th className="pb-1 text-left font-medium">Medio</th>
+                  <th className="pb-1 text-right font-medium">Debería haber</th>
+                  <th className="pb-1 text-right font-medium">Declaró</th>
+                  <th className="pb-1 text-right font-medium">Diferencia</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filas.map((r) => (
+                  <tr key={r.medioId} className="border-b border-gray-50">
+                    <td className="py-1.5 text-gray-700">
+                      {r.nombre}
+                      {r.esEfectivo && (
+                        <span className="ml-1 text-[10px] text-gray-400">
+                          (incluye el fondo, menos los retiros)
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-1.5 text-right text-gray-600">{formatARS(r.esperado)}</td>
+                    <td className="py-1.5 text-right font-medium text-gray-900">
+                      {formatARS(r.declarado)}
+                    </td>
+                    <td
+                      className={cn(
+                        'py-1.5 text-right font-medium',
+                        Math.abs(r.diferencia) < 1
+                          ? 'text-green-700'
+                          : r.diferencia > 0
+                            ? 'text-blue-700'
+                            : 'text-red-700',
+                      )}
+                    >
+                      {Math.abs(r.diferencia) < 1 ? 'cuadra' : formatARS(r.diferencia)}
+                    </td>
+                  </tr>
+                ))}
+                <tr className="border-t border-gray-300 font-semibold">
+                  <td className="py-1.5 text-gray-700">Total</td>
+                  <td className="py-1.5 text-right text-gray-600">{formatARS(totalEsperado)}</td>
+                  <td className="py-1.5 text-right text-gray-900">{formatARS(totalDeclarado)}</td>
+                  <td
+                    className={cn(
+                      'py-1.5 text-right',
+                      Math.abs(totalDif) < 1
+                        ? 'text-green-700'
+                        : totalDif > 0
+                          ? 'text-blue-700'
+                          : 'text-red-700',
+                    )}
+                  >
+                    {Math.abs(totalDif) < 1 ? 'cuadra' : formatARS(totalDif)}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          )}
+
+          {(cierre.otros_retiros ?? 0) > 0 && (
+            <p className="mt-3 text-xs text-gray-500">
+              Retiros del turno: {formatARS(cierre.otros_retiros)}
+              {(cierre.retiro_cambio ?? 0) > 0 && ` · cambio ${formatARS(cierre.retiro_cambio!)}`}
+              {(cierre.retiro_pagos ?? 0) > 0 && ` · pagos ${formatARS(cierre.retiro_pagos!)}`}
+              {cierre.otros_retiros_nota && ` — ${cierre.otros_retiros_nota}`}
+            </p>
+          )}
+
+          <p className="mt-3 text-xs text-gray-400">
+            El cajero carga estos números <strong>sin ver</strong> la columna "debería haber": cuenta
+            el cajón y lee el cierre de lote de cada terminal. Por eso lo que dice acá vale como
+            control.
+          </p>
+        </div>
+      </div>
     </div>
   );
 }
