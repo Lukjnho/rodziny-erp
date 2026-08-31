@@ -332,6 +332,10 @@ export function useVentasDelTurno(turnoId: string | null) {
   return useQuery({
     queryKey: ['caja-ventas-turno', turnoId],
     enabled: !!turnoId,
+    // Se refresca solo: el tablero del ERP muestra el turno EN VIVO, y sin esto
+    // quedaría desfasado del encabezado (que sí se refresca cada minuto). En el
+    // POS no hace falta porque cada cobro invalida la consulta, pero no molesta.
+    refetchInterval: 1000 * 60,
     queryFn: async (): Promise<VentaTurno[]> => {
       const { data: tickets, error: e1 } = await supabase
         .from('ventas_tickets')

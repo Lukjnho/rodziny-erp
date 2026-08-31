@@ -201,7 +201,13 @@ export function CierreCaja() {
         .order('fecha', { ascending: false })
         .order('caja')
         .order('turno');
-      return (data ?? []) as CierreRow[];
+      // Los turnos del POS que TODAVÍA están abiertos no entran acá: se siguen
+      // en vivo desde el módulo Caja. Si aparecieran, mostrarían un arqueo a
+      // medio hacer — cajón en $0 y una diferencia inventada del tamaño del
+      // fondo. Recién cuando el cajero cierra pasan a este control.
+      return ((data ?? []) as CierreRow[]).filter(
+        (c) => !(c.origen === 'pos' && !c.hora_cierre),
+      );
     },
   });
 
