@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Sidebar } from '@/components/layout/Sidebar';
 import { LoginPage } from '@/modules/auth/LoginPage';
@@ -57,6 +57,9 @@ const AgendaPage = lazy(() =>
 const ConveniosPage = lazy(() =>
   import('@/modules/convenios/ConveniosPage').then((m) => ({ default: m.ConveniosPage })),
 );
+const CajaPage = lazy(() =>
+  import('@/modules/caja/CajaPage').then((m) => ({ default: m.CajaPage })),
+);
 const IntegracionesPage = lazy(() =>
   import('@/modules/integraciones/IntegracionesPage').then((m) => ({ default: m.IntegracionesPage })),
 );
@@ -102,8 +105,15 @@ function RutaFinanzas({ children }: { children: ReactNode }) {
   return MODULOS_FINANZAS.some((m) => tienePermiso(m)) ? <>{children}</> : <SinAcceso />;
 }
 
+// Rutas que se muestran SIN el menú lateral, a pantalla completa. La caja se
+// usa así todo el turno: el cajero entra con su usuario, toca Caja y queda
+// adentro del POS, sin Finanzas ni RRHH al costado tentando errores.
+const RUTAS_PANTALLA_COMPLETA = ['/caja'];
+
 function AppInterna() {
   const { user, perfil, cargando } = useAuth();
+  const { pathname } = useLocation();
+  const pantallaCompleta = RUTAS_PANTALLA_COMPLETA.includes(pathname);
 
   if (cargando) return <PantallaCargando />;
   if (!user) return <LoginPage />;
@@ -136,7 +146,7 @@ function AppInterna() {
 
   return (
     <div className="flex min-h-screen">
-      <Sidebar />
+      {!pantallaCompleta && <Sidebar />}
       <div className="flex-1">
         <Suspense fallback={<PantallaCargando />}>
           <Routes>
@@ -151,6 +161,15 @@ function AppInterna() {
                 </RutaFinanzas>
               }
             />
+            <Route
+              path="/caja"
+              element={
+                <Ruta modulo="caja">
+                  <CajaPage />
+                </Ruta>
+              }
+            />
+            <Route path="/caja/pos" element={<Navigate to="/caja" replace />} />
             <Route
               path="/ventas"
               element={

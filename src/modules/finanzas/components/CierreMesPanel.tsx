@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { ORIGEN_VENTAS_OFICIAL } from '@/lib/origenVentas';
 import { useAuth } from '@/lib/auth';
 import { formatARS, formatFecha, cn } from '@/lib/utils';
 
@@ -109,6 +110,7 @@ export function CierreMesPanel({ onNavigateToTab }: Props) {
       const { data } = await supabase
         .from('ventas_tickets')
         .select('local, total_bruto, iva, es_fiscal')
+        .eq('origen', ORIGEN_VENTAS_OFICIAL) // no mezclar con las ventas del POS propio
         .eq('periodo', periodo);
       return data ?? [];
     },

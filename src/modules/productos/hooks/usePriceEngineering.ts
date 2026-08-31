@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { ORIGEN_VENTAS_OFICIAL } from '@/lib/origenVentas';
 
 export interface ProductoCarta {
   id: string;
@@ -72,6 +73,7 @@ export function usePriceEngineering(
       let q = supabase
         .from('ventas_items')
         .select('codigo, local, cantidad, total')
+        .eq('origen', ORIGEN_VENTAS_OFICIAL) // no mezclar con las ventas del POS propio
         .in('periodo', periodosVentas);
       q = q.eq('local', local);
       const { data, error } = await q;

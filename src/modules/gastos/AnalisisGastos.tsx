@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { ORIGEN_VENTAS_OFICIAL } from '@/lib/origenVentas';
 import { formatARS, cn } from '@/lib/utils';
 
 const MESES_LABEL = [
@@ -143,6 +144,7 @@ export function AnalisisGastos({ local }: Props) {
           .select('fecha, total_bruto, medio_pago')
           .gte('fecha', `${año}-01-01`)
           .lte('fecha', `${año}-12-31`)
+          .eq('origen', ORIGEN_VENTAS_OFICIAL) // no mezclar con las ventas del POS propio
           .neq('estado', 'Cancelada')
           .neq('estado', 'Eliminada')
           .or('es_dividendo.is.null,es_dividendo.eq.false')

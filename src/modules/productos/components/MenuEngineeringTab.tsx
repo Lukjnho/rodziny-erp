@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { ORIGEN_VENTAS_OFICIAL } from '@/lib/origenVentas';
 import { useAuth } from '@/lib/auth';
 import { formatARS, cn } from '@/lib/utils';
 import {
@@ -82,6 +83,7 @@ export function MenuEngineeringTab() {
         .from('ventas_items')
         .select('categoria')
         .eq('local', local)
+        .eq('origen', ORIGEN_VENTAS_OFICIAL) // no mezclar con las ventas del POS propio
         .in('periodo', periodosSel)
         .not('categoria', 'is', null);
       if (error) throw error;

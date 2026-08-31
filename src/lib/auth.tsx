@@ -19,7 +19,8 @@ export type Modulo =
   | 'productos'
   | 'agenda'
   | 'convenios'
-  | 'integraciones';
+  | 'integraciones'
+  | 'caja';
 
 export interface Perfil {
   user_id: string;
@@ -41,6 +42,9 @@ export interface Perfil {
   puede_ver_agenda: boolean;
   puede_ver_convenios: boolean;
   puede_ver_integraciones: boolean;
+  // Caja = el POS propio (abrir turno, cobrar, cerrar arqueo). Es un módulo
+  // aparte porque lo usa el cajero, que no tiene por qué ver finanzas.
+  puede_ver_caja: boolean;
   // Gate de UI (no es módulo del sidebar): controla si el usuario ve las alertas
   // financieras de supervisión en el Inicio (extractos atrasados, gastos/pagos
   // fijos vencidos, conciliación). Independiente de poder cargar gastos.
@@ -171,6 +175,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return perfil.puede_ver_convenios;
       case 'integraciones':
         return perfil.puede_ver_integraciones;
+      case 'caja':
+        return perfil.puede_ver_caja;
     }
   };
 

@@ -6,31 +6,11 @@ import { cn } from '@/lib/utils';
 import { LocalSelector } from '@/components/ui/LocalSelector';
 import { obtenerVentasFudo, CAJA_FUDO_ID, type VentasFudoResumen } from '@/lib/fudoApi';
 import { useAuth } from '@/lib/auth';
+import { CAJAS, TURNOS } from '@/lib/turnosCaja';
 
 // ── config por local ─────────────────────────────────────────────────────────
-const CAJAS: Record<string, string[]> = {
-  vedia: ['Principal Pastas 1', 'Barra Bebidas'],
-  saavedra: ['Caja Principal'],
-  // Bienal 2026: 2 stands facturados por cajas separadas del Fudo de Saavedra.
-  // Cada stand tiene su propia caja para que los cierres no se pisen entre sí.
-  bienal: ['Stand Vedia', 'Stand Saavedra'],
-};
-
-const TURNOS: Record<
-  string,
-  { key: string; label: string; horaDesde: string; horaHasta: string }[]
-> = {
-  vedia: [
-    { key: 'mediodia', label: 'Mediodía (11 a 16h)', horaDesde: '11:00', horaHasta: '16:00' },
-    { key: 'noche', label: 'Noche (20 a 01h)', horaDesde: '20:00', horaHasta: '01:00' },
-  ],
-  saavedra: [
-    { key: 'manana', label: 'Mañana (7:30 a 15:30h)', horaDesde: '07:00', horaHasta: '15:30' },
-    { key: 'tarde', label: 'Tarde-Noche (17 a 00:30h)', horaDesde: '16:30', horaHasta: '00:30' },
-  ],
-  // Bienal: un solo cierre por stand por día (evento).
-  bienal: [{ key: 'jornada', label: 'Jornada (todo el día)', horaDesde: '10:00', horaHasta: '23:59' }],
-};
+// CAJAS y TURNOS viven en @/lib/turnosCaja: los comparte con el módulo Caja (el
+// POS), que abre el mismo turno que después se controla acá.
 
 // Cajeros de Fudo por local (nombre → ID de usuario en Fudo)
 const CAJEROS_FUDO: Record<string, { id: string; nombre: string }[]> = {

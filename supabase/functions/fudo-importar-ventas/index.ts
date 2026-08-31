@@ -342,6 +342,7 @@ Deno.serve(async (req) => {
       es_dividendo: boolean
       periodo: string
       origen: string
+      cliente: string | null
     }
     interface PagoRow {
       local: string
@@ -490,6 +491,9 @@ Deno.serve(async (req) => {
         es_dividendo: esDividendoCompleto,
         periodo,
         origen: 'fudo',
+        // En Vedia acá va el número de llamador que se le da al cliente; en
+        // Saavedra suele ser el nombre. Es el mismo campo que usa el POS propio.
+        cliente: ((sale.attributes.customerName as string | null) ?? null) || null,
       })
 
       // Persistir items del ticket en ventas_items (necesario para Menu Engineering

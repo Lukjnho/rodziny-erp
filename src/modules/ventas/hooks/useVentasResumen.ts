@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { ORIGEN_VENTAS_OFICIAL } from '@/lib/origenVentas';
 
 export type LocalVentas = 'vedia' | 'saavedra' | 'consolidado';
 
@@ -73,6 +74,7 @@ async function traerTickets(local: LocalVentas, periodo: string): Promise<Ticket
       .from('ventas_tickets')
       .select('local, fecha, hora, total_bruto, medio_pago')
       .eq('periodo', periodo)
+      .eq('origen', ORIGEN_VENTAS_OFICIAL) // no mezclar con las ventas del POS propio
       .neq('estado', 'Cancelada')
       .neq('estado', 'Eliminada')
       .or('es_dividendo.is.null,es_dividendo.eq.false') // excluye dividendos de Lucas

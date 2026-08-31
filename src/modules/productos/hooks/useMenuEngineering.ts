@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { ORIGEN_VENTAS_OFICIAL } from '@/lib/origenVentas';
 import { useCostosRecetas } from '@/modules/cocina/hooks/useCostosRecetas';
 import { useConfigCosteo } from '@/modules/cocina/hooks/useConfigCosteo';
 import { useComisionMpConfig } from './useComisionMpConfig';
@@ -120,6 +121,7 @@ export function useMenuEngineering(opts: MenuEngineeringOptions) {
       let q = supabase
         .from('ventas_items')
         .select('codigo, nombre, categoria, subcategoria, local, cantidad, total, periodo')
+        .eq('origen', ORIGEN_VENTAS_OFICIAL) // no mezclar con las ventas del POS propio
         .in('periodo', opts.periodos);
       if (opts.local) q = q.eq('local', opts.local);
       const { data, error } = await q;
