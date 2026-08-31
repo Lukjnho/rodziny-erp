@@ -821,6 +821,9 @@ export function useCobrarVenta() {
         tipo_venta: 'mostrador',
         caja: input.caja,
         es_dividendo: p.medio.codigo === 'mp_lucas',
+        // sin esto el importador de Fudo los borraría todas las mañanas junto
+        // con los suyos (migración 150)
+        origen: 'pos',
       }));
 
       const { error: ePagos } = await supabase.from('ventas_pagos').insert(filasPagos);

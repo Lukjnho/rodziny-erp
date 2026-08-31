@@ -11,6 +11,7 @@ import {
   useVentasDelTurno,
   type LocalCaja,
   type TurnoAbiertoResumen,
+  type VentaTurno,
 } from './useCaja';
 
 const pesos = (n: number) =>
@@ -181,16 +182,30 @@ function FilaTurno({
         </button>
 
         <span className="flex items-center gap-5">
-          <span className="text-right leading-tight">
-            <span className="block text-xs text-gray-400">Fondo</span>
-            <span className="block text-sm text-gray-700">{pesos(turno.fondoApertura)}</span>
-          </span>
-          <span className="text-right leading-tight">
-            <span className="block text-xs text-gray-400">
+          {/* ⚠️ ARQUEO A CIEGAS: fondo + efectivo cobrado ES el esperado. Si el
+              cajero los ve acá, cuenta hasta llegar y el arqueo no prueba nada.
+              Solo se le muestra cuántas ventas lleva, que no le sirve para eso. */}
+          {veEsperado && (
+            <>
+              <span className="text-right leading-tight">
+                <span className="block text-xs text-gray-400">Fondo</span>
+                <span className="block text-sm text-gray-700">{pesos(turno.fondoApertura)}</span>
+              </span>
+              <span className="text-right leading-tight">
+                <span className="block text-xs text-gray-400">
+                  {turno.tickets} venta{turno.tickets === 1 ? '' : 's'}
+                </span>
+                <span className="block text-sm font-semibold text-gray-900">
+                  {pesos(turno.cobrado)}
+                </span>
+              </span>
+            </>
+          )}
+          {!veEsperado && (
+            <span className="text-right text-sm text-gray-500">
               {turno.tickets} venta{turno.tickets === 1 ? '' : 's'}
             </span>
-            <span className="block text-sm font-semibold text-gray-900">{pesos(turno.cobrado)}</span>
-          </span>
+          )}
           <button
             onClick={onAbrir}
             className="rounded border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
@@ -254,6 +269,17 @@ function DetalleEnVivo({
         <p className="text-sm text-gray-500">Buscando las ventas del turno…</p>
       ) : ventas.length === 0 ? (
         <p className="text-sm text-gray-500">Este turno todavía no cobró nada.</p>
+      ) : !veEsperado ? (
+        /* ⚠️ ARQUEO A CIEGAS: el desglose por medio de pago incluye el efectivo,
+           y efectivo + fondo es exactamente lo que el cajero no tiene que ver.
+           Se le muestran las últimas ventas —que le sirven si vuelve un
+           cliente— y nada de totales. */
+        <div>
+          <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-gray-400">
+            Últimas ventas
+          </h3>
+          <UltimasVentas ventas={ventas} />
+        </div>
       ) : (
         <div className="grid gap-6 md:grid-cols-2">
           <div>
@@ -271,17 +297,15 @@ function DetalleEnVivo({
                 <dt className="text-gray-700">Total del turno</dt>
                 <dd className="tabular-nums text-gray-900">{pesos(resumen.total)}</dd>
               </div>
-              {veEsperado && (
-                <div className="flex justify-between gap-4 pt-1">
-                  <dt className="text-gray-600">
-                    Tendría que haber en el cajón
-                    <span className="block text-[11px] text-gray-400">
-                      fondo {pesos(turno.fondoApertura)} + efectivo, si no sacaron nada
-                    </span>
-                  </dt>
-                  <dd className="tabular-nums font-semibold text-gray-900">{pesos(enCaja)}</dd>
-                </div>
-              )}
+              <div className="flex justify-between gap-4 pt-1">
+                <dt className="text-gray-600">
+                  Tendría que haber en el cajón
+                  <span className="block text-[11px] text-gray-400">
+                    fondo {pesos(turno.fondoApertura)} + efectivo, si no sacaron nada
+                  </span>
+                </dt>
+                <dd className="tabular-nums font-semibold text-gray-900">{pesos(enCaja)}</dd>
+              </div>
             </dl>
           </div>
 
@@ -289,36 +313,44 @@ function DetalleEnVivo({
             <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-gray-400">
               Últimas ventas
             </h3>
-            <ul className="divide-y divide-gray-200 text-sm">
-              {ultimas.map((v) => (
-                <li key={v.ticketId} className="flex items-center gap-2 py-1">
-                  <span className="w-11 shrink-0 tabular-nums text-gray-500">
-                    {v.hora?.slice(0, 5) ?? '—'}
-                  </span>
-                  {v.cliente ? (
-                    <span className="shrink-0 rounded bg-rodziny-50 px-1.5 py-0.5 text-xs font-semibold text-rodziny-700">
-                      #{v.cliente}
-                    </span>
-                  ) : (
-                    <span className="w-6 shrink-0" />
-                  )}
-                  <span className="min-w-0 flex-1 truncate text-xs text-gray-500">
-                    {v.pagos.map((p) => p.medio).join(' + ')}
-                  </span>
-                  <span className={cn('shrink-0 tabular-nums text-gray-900')}>
-                    {pesos(v.total)}
-                  </span>
-                </li>
-              ))}
-            </ul>
-            {ventas.length > ultimas.length && (
-              <p className="mt-1.5 text-xs text-gray-400">
-                Mostrando las últimas {ultimas.length} de {ventas.length}.
-              </p>
-            )}
+            <UltimasVentas ventas={ventas} />
           </div>
         </div>
       )}
     </div>
+  );
+}
+
+/** Las últimas 5 ventas del turno: hora, llamador, medios y monto. */
+function UltimasVentas({ ventas }: { ventas: VentaTurno[] }) {
+  const ultimas = [...ventas].reverse().slice(0, 5);
+  return (
+    <>
+      <ul className="divide-y divide-gray-200 text-sm">
+        {ultimas.map((v) => (
+          <li key={v.ticketId} className="flex items-center gap-2 py-1">
+            <span className="w-11 shrink-0 tabular-nums text-gray-500">
+              {v.hora?.slice(0, 5) ?? '—'}
+            </span>
+            {v.cliente ? (
+              <span className="shrink-0 rounded bg-rodziny-50 px-1.5 py-0.5 text-xs font-semibold text-rodziny-700">
+                #{v.cliente}
+              </span>
+            ) : (
+              <span className="w-6 shrink-0" />
+            )}
+            <span className="min-w-0 flex-1 truncate text-xs text-gray-500">
+              {v.pagos.map((p) => p.medio).join(' + ')}
+            </span>
+            <span className="shrink-0 tabular-nums text-gray-900">{pesos(v.total)}</span>
+          </li>
+        ))}
+      </ul>
+      {ventas.length > ultimas.length && (
+        <p className="mt-1.5 text-xs text-gray-400">
+          Mostrando las últimas {ultimas.length} de {ventas.length}.
+        </p>
+      )}
+    </>
   );
 }

@@ -562,9 +562,15 @@ Deno.serve(async (req) => {
     // Reemplazar datos del año/local — borra todo y reinserta. Los campos
     // fiscales ya fueron preservados arriba via fiscalPrevio y mergeados en
     // ticketsRows, así que borrar acá no pierde nada.
-    await supabase.from('ventas_tickets').delete().eq('local', local).in('periodo', meses)
-    await supabase.from('ventas_pagos').delete().eq('local', local).in('periodo', meses)
-    await supabase.from('ventas_items').delete().eq('local', local).in('periodo', meses)
+    //
+    // ⚠️ EL FILTRO POR `origen` NO ES OPCIONAL. Este borrado se lleva puestos
+    // los últimos 2 meses enteros del local, y el cron diario de las 8 lo corre
+    // solo. Sin esta condición también borraba las ventas cobradas por el POS
+    // propio — todas las mañanas, en silencio. `ventas_pagos` recibió la columna
+    // `origen` en la migración 150 justamente para poder filtrar acá.
+    await supabase.from('ventas_tickets').delete().eq('local', local).in('periodo', meses).eq('origen', 'fudo')
+    await supabase.from('ventas_pagos').delete().eq('local', local).in('periodo', meses).eq('origen', 'fudo')
+    await supabase.from('ventas_items').delete().eq('local', local).in('periodo', meses).eq('origen', 'fudo')
     // OJO: no se borran dividendos acá. El import ya no es dueño de esa tabla
     // (la fuente es el cierre de caja). Borrar por creado_por='import_fudo'
     // volaría los dividendos históricos de abr/may-2026, que se cargaron por este
@@ -641,6 +647,9 @@ Deno.serve(async (req) => {
       const pagosConTicket = pagosRows.map((p) => ({
         ...p,
         ticket_id: idPorFudoId.get(p.fudo_ticket_id) ?? null,
+        // marca explícita: es lo que después permite borrar solo lo de Fudo y
+        // dejar en pie las ventas del POS propio (migración 150)
+        origen: 'fudo',
       }))
       await insertChunk('ventas_pagos', pagosConTicket)
       await marcarProgreso(`Insertados ${pagosConTicket.length} pagos`)
