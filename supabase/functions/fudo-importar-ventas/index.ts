@@ -341,6 +341,7 @@ Deno.serve(async (req) => {
       es_fiscal: boolean
       es_dividendo: boolean
       periodo: string
+      origen: string
     }
     interface PagoRow {
       local: string
@@ -353,6 +354,8 @@ Deno.serve(async (req) => {
       caja: string
       es_dividendo: boolean
     }
+    // `_saleId` es transitorio: se usa para resolver ticket_id despues de
+    // insertar los tickets (recien ahi existe el uuid) y NO se manda a la base.
     interface VentaItemRow {
       local: string
       periodo: string
@@ -362,6 +365,11 @@ Deno.serve(async (req) => {
       subcategoria: string | null
       cantidad: number
       total: number
+      fecha: string
+      linea: number
+      precio_unitario: number | null
+      origen: string
+      _saleId: string
     }
 
     const ticketsRows: TicketRow[] = []
@@ -481,13 +489,19 @@ Deno.serve(async (req) => {
         es_fiscal: previo?.es_fiscal ?? false,
         es_dividendo: esDividendoCompleto,
         periodo,
+        origen: 'fudo',
       })
 
       // Persistir items del ticket en ventas_items (necesario para Menu Engineering
       // y Price Engineering). Cada Item tiene attributes.price (total del line item,
       // ya con quantity aplicada) y attributes.quantity. El Product asociado nos da
       // codigo + nombre + categoría (vía productCategory).
+      // `linea` = posición del ítem dentro del ticket, tal como la manda Fudo.
+      // Se incrementa también en los items salteados para no alterar el orden
+      // real: en Fudo un combo y sus componentes solo están atados por eso.
+      let nroLinea = 0
       for (const it of items) {
+        nroLinea++
         const prRel = it.relationships?.product?.data
         const productId = prRel && !Array.isArray(prRel) ? prRel.id : null
         const prod = productId ? productoById.get(productId) : null
@@ -507,6 +521,12 @@ Deno.serve(async (req) => {
           subcategoria: null,
           cantidad,
           total: totalItem,
+          fecha,
+          linea: nroLinea,
+          // Item.price ya viene con la cantidad aplicada (es el total de la línea)
+          precio_unitario: cantidad ? Number((totalItem / cantidad).toFixed(2)) : null,
+          origen: 'fudo',
+          _saleId: sale.id,
         })
       }
 
@@ -583,13 +603,57 @@ Deno.serve(async (req) => {
       await insertChunk('ventas_tickets', ticketsRows)
       await marcarProgreso(`Insertados ${ticketsRows.length} tickets`)
     }
+
+    // Resolver el id interno de cada ticket recién insertado para poder colgarle
+    // los pagos y los items. Antes de F0 los items quedaban huérfanos: sabíamos
+    // qué se vendió pero no en qué ticket ni qué día. Ver migración 141.
+    // OJO: PostgREST devuelve 1000 filas por defecto — hay que paginar, si no
+    // los meses grandes quedarían con la mayoría de los items sin ticket.
+    const idPorFudoId = new Map<string, string>()
+    {
+      const PAGINA = 1000
+      let desde = 0
+      while (true) {
+        const { data, error } = await supabase
+          .from('ventas_tickets')
+          .select('id, fudo_id')
+          .eq('local', local)
+          .in('periodo', meses)
+          .order('fudo_id')
+          .range(desde, desde + PAGINA - 1)
+        if (error) {
+          errores.push(`leer ids de tickets: ${error.message}`)
+          break
+        }
+        for (const t of (data ?? []) as { id: string; fudo_id: string | null }[]) {
+          if (t.fudo_id) idPorFudoId.set(t.fudo_id, t.id)
+        }
+        if (!data || data.length < PAGINA) break
+        desde += PAGINA
+      }
+    }
+
     if (pagosRows.length) {
-      await insertChunk('ventas_pagos', pagosRows)
-      await marcarProgreso(`Insertados ${pagosRows.length} pagos`)
+      const pagosConTicket = pagosRows.map((p) => ({
+        ...p,
+        ticket_id: idPorFudoId.get(p.fudo_ticket_id) ?? null,
+      }))
+      await insertChunk('ventas_pagos', pagosConTicket)
+      await marcarProgreso(`Insertados ${pagosConTicket.length} pagos`)
     }
     if (ventasItemsRows.length) {
-      await insertChunk('ventas_items', ventasItemsRows)
-      await marcarProgreso(`Insertados ${ventasItemsRows.length} items`)
+      // Se saca `_saleId` (es transitorio, no es columna) y se pone el ticket_id.
+      const itemsConTicket = ventasItemsRows.map(({ _saleId, ...fila }) => ({
+        ...fila,
+        ticket_id: idPorFudoId.get(_saleId) ?? null,
+      }))
+      const sinTicket = itemsConTicket.filter((i) => !i.ticket_id).length
+      await insertChunk('ventas_items', itemsConTicket)
+      await marcarProgreso(
+        `Insertados ${itemsConTicket.length} items` +
+          (sinTicket ? ` (${sinTicket} sin ticket)` : ''),
+      )
+      if (sinTicket) errores.push(`${sinTicket} items quedaron sin ticket_id`)
     }
 
     // Cortesías y descuentos en edr_partidas (informativo, no afecta cálculos del EdR).
