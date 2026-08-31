@@ -10,6 +10,7 @@ import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'rec
 import { useProveedoresMap, nombreProveedor } from '@/modules/gastos/proveedorDisplay';
 import { hoyAR } from '@/lib/fechaAR';
 import { parseDecimal } from '@/lib/numero';
+import { CAJA_PRUEBAS } from '@/lib/turnosCaja';
 import {
   esPagoEjecutado,
   clasificarDebito,
@@ -54,6 +55,9 @@ interface CierreVerificado {
   verificado: boolean;
   verificado_por: string | null;
   monto_llevado_caja_fuerte: number | null;
+  // Migración 146/148: de dónde salió el arqueo y si ya cerró.
+  origen: 'manual' | 'pos';
+  hora_cierre: string | null;
 }
 
 const FONDO_CAMBIO_DEFAULT = 12000;
@@ -653,7 +657,25 @@ export function FlujoCaja({ onNavigateToTab }: { onNavigateToTab?: (tab: string)
   });
 
   // ── data consolidada (sin filtro de local) ────────────────────────────────
-  const cierresFiltrados = cierres ?? [];
+  //
+  // El efectivo que cobra el POS propio SÍ tiene que entrar acá: es plata de
+  // verdad que entró al cajón, la haya cobrado Fudo o la caja nueva. Pero dos
+  // clases de turno no van:
+  //
+  //  · El turno del POS que TODAVÍA no cerró. No tiene nada que informar y
+  //    encima entra en NEGATIVO: `efectivoTurno` deriva
+  //    `monto_contado + retiros − fondo_apertura`, que en un turno recién
+  //    abierto da 0 + 0 − fondo. Un turno abierto con $15.000 de fondo restaba
+  //    $15.000 de los ingresos del mes y hundía la curva del gráfico.
+  //  · La caja de pruebas. Mientras el POS es un piloto, ahí se cobran ventas
+  //    inventadas; no son plata de la empresa.
+  const cierresFiltrados = useMemo(
+    () =>
+      (cierres ?? []).filter(
+        (c) => !(c.origen === 'pos' && !c.hora_cierre) && c.caja !== CAJA_PRUEBAS,
+      ),
+    [cierres],
+  );
   const divsFiltrados = dividendos ?? [];
 
   // Ejecutado vs comprometido. Un echeq con fecha 23/07 o un consumo que se
