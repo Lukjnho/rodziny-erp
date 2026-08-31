@@ -30,7 +30,10 @@ export interface DatosImpresion {
   caja: string;
   numero: string;
   fecha: string;
+  /** hora en que se comandó el pedido (no la de impresión) */
   hora: string;
+  /** segunda copia: se perdió el ticket, no llegó la comanda a cocina… */
+  reimpresion?: boolean;
   cliente: string | null;
   lineas: LineaImpresa[];
   pagos: { medio: string; monto: number }[];
@@ -53,6 +56,12 @@ const TITULO: Record<TipoDocumento, string> = {
 /** Hora de Argentina en el momento exacto en que se manda a imprimir. */
 function horaImpresionAR(): string {
   return new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString().slice(11, 16);
+}
+
+/** "2026-08-31" → "31/08". El año no entra: ocupa lugar y no dice nada. */
+function fechaCorta(iso: string): string {
+  const [, mes, dia] = iso.split('-');
+  return dia && mes ? `${dia}/${mes}` : iso;
 }
 
 /** Manda a imprimir lo que esté montado en #area-impresion. */
@@ -97,28 +106,23 @@ export function DocumentoImpresion({ datos }: { datos: DatosImpresion }) {
         <div style={{ textAlign: 'center', fontWeight: 700, marginTop: 4 }}>{TITULO[tipo]}</div>
         <Separador />
 
+        {/* UNA sola hora: la de impresión, que es el reloj con el que se guía la
+            cocina (desde acá se cuenta cuánto hace que el plato está esperando).
+            La hora del pedido solo aparece si es distinta — o sea, solo en las
+            reimpresiones, donde además sirve para saber que es segunda copia. */}
         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-          <span>
-            {datos.fecha} {datos.hora}
+          <span style={{ fontWeight: 700 }}>
+            {fechaCorta(datos.fecha)} {horaImpresion}
           </span>
           <span>#{datos.numero}</span>
         </div>
         <div>{datos.caja}</div>
+        {datos.reimpresion && (
+          <div style={{ fontWeight: 700 }}>REIMPRESIÓN · pedido {datos.hora}</div>
+        )}
 
-        {/* La hora de impresión es el reloj con el que se guía la cocina: desde
-            acá se cuenta cuánto hace que ese pedido está esperando. */}
-        <div
-          style={{
-            marginTop: 3,
-            fontWeight: 700,
-            fontSize: tipo === 'comanda' ? 16 : 12,
-          }}
-        >
-          IMPRESO {horaImpresion}
-        </div>
-
-        {/* El número de llamador es lo que la cocina mira para cantar el pedido:
-            va grande y sin nada al lado. */}
+        {/* El número de llamador es lo que la cocina canta cuando el plato está
+            listo: va grande, solo y sin nada al lado. */}
         {datos.cliente && (
           <>
             <Separador />
@@ -133,12 +137,18 @@ export function DocumentoImpresion({ datos }: { datos: DatosImpresion }) {
 
         <Separador />
 
+        {/* La cantidad va SIEMPRE, aunque sea 1: el cocinero no tiene que
+            deducirla. Con dos Tagliatelle y dos Bolognesa, los dos renglones
+            dicen 2. */}
         {datos.lineas.map((l, i) => (
           <div key={i} style={{ marginBottom: 2 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
               <span style={{ paddingLeft: l.esHija ? 12 : 0 }}>
                 {l.esHija ? '› ' : ''}
-                {l.cantidad > 1 ? `${l.cantidad}x ` : ''}
+                <span style={{ fontWeight: 700, fontSize: tipo === 'comanda' ? 14 : 12 }}>
+                  {l.cantidad}
+                </span>
+                {' × '}
                 {l.nombre}
               </span>
               {conPrecios && <span>{pesos(l.total)}</span>}

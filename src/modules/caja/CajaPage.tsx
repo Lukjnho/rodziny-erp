@@ -830,6 +830,7 @@ function ModalVenta({
       fecha: fechaTurno,
       // la hora de la venta; la hora de impresión la pone el documento solo
       hora: venta.hora?.slice(0, 5) ?? '',
+      reimpresion: true,
       cliente: venta.cliente,
       lineas: lineas.map((l) => ({
         nombre: l.nombre,
