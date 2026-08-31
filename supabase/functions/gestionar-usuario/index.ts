@@ -22,6 +22,7 @@ const PERMISOS_VALIDOS = new Set([
   'puede_ver_edr', 'puede_ver_gastos', 'puede_ver_amortizaciones', 'puede_ver_rrhh',
   'puede_ver_compras', 'puede_ver_usuarios', 'puede_ver_cocina', 'puede_ver_almacen',
   'puede_ver_productos', 'puede_ver_agenda', 'puede_ver_convenios', 'puede_ver_integraciones',
+  'puede_ver_caja',
 ]);
 
 // Siempre 200 con { ok, error? } para que el mensaje llegue limpio al cliente

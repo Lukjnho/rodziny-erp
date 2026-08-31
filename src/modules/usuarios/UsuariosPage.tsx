@@ -34,6 +34,16 @@ const PRESETS: {
   local?: 'saavedra' | 'vedia';
 }[] = [
   {
+    key: 'cajero',
+    label: 'Cajero (solo la caja)',
+    // A propósito NO lleva nada más: el cajero cobra y cierra su arqueo, y no
+    // tiene por qué ver finanzas, costos ni sueldos. La base lo acompaña —
+    // con este permiso solo alcanza los arqueos y las ventas del POS
+    // (migración 146).
+    permisos: { puede_ver_caja: true },
+    local: 'vedia',
+  },
+  {
     key: 'control_cocina',
     label: 'Cocina / Control (ej. Vero)',
     permisos: {
