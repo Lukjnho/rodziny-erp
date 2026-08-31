@@ -14,7 +14,9 @@ import {
   useCerrarTurno,
   useCobrarVenta,
   useDetalleTicket,
+  useConveniosCaja,
   efectivoEsperadoEnCaja,
+  importesDeLinea,
   ordenGrupo,
   type ItemCatalogo,
   type LocalCaja,
@@ -307,11 +309,13 @@ function Mostrador({
 
   const catalogoQ = useCatalogoCaja(local);
   const ventasQ = useVentasDelTurno(turno.id);
+  const conveniosQ = useConveniosCaja(local);
   const cobrar = useCobrarVenta();
 
   const [busqueda, setBusqueda] = useState('');
   const [grupoSel, setGrupoSel] = useState<string>('todo');
   const [cliente, setCliente] = useState('');
+  const [convenioId, setConvenioId] = useState('');
   const [lineas, setLineas] = useState<LineaVenta[]>([]);
   const [cobrando, setCobrando] = useState(false);
   const [cerrando, setCerrando] = useState(false);
@@ -322,7 +326,37 @@ function Mostrador({
   const buscadorRef = useRef<HTMLInputElement>(null);
 
   const catalogo = catalogoQ.data ?? [];
-  const total = lineas.reduce((s, l) => s + l.item.precio * l.cantidad, 0);
+  const convenios = conveniosQ.data ?? [];
+  const convenio = convenios.find((c) => c.id === convenioId) ?? null;
+
+  // El total es lo que se COBRA: bruto menos descuentos.
+  const importes = lineas.map(importesDeLinea);
+  const bruto = importes.reduce((s, i) => s + i.bruto, 0);
+  const descuentoTotal = importes.reduce((s, i) => s + i.descuento, 0);
+  const total = bruto - descuentoTotal;
+
+  /**
+   * Elegir un convenio le pone su porcentaje a TODAS las líneas, incluidas las
+   * salsas: el convenio es del cliente, no de un plato. Después se puede
+   * cambiar línea por línea si hace falta. Volver a "Sin convenio" saca solo el
+   * descuento que había puesto ese convenio, no toca los cargados a mano.
+   */
+  function aplicarConvenio(id: string) {
+    const elegido = convenios.find((c) => c.id === id) ?? null;
+    const pctViejo = convenio?.descuentoPct ?? 0;
+    setConvenioId(id);
+    setLineas((prev) =>
+      prev.map((l) => {
+        if (elegido) return { ...l, descuentoPct: elegido.descuentoPct };
+        return (l.descuentoPct ?? 0) === pctViejo ? { ...l, descuentoPct: 0 } : l;
+      }),
+    );
+  }
+
+  function cambiarDescuento(indice: number, pct: number) {
+    const limpio = Math.max(0, Math.min(100, pct));
+    setLineas((prev) => prev.map((l, i) => (i === indice ? { ...l, descuentoPct: limpio } : l)));
+  }
 
   // Cuando hay un documento armado, se manda a imprimir. El timeout le da a
   // React el tiempo de pintarlo antes de que el navegador saque la foto, y el
@@ -372,6 +406,8 @@ function Mostrador({
    * Tagliatelle / Bolognesa, Ravioli / Rosé.
    */
   function agregar(item: ItemCatalogo) {
+    // Si ya se eligió el convenio, lo que se agregue después también lo lleva.
+    const pct = convenio?.descuentoPct ?? 0;
     setLineas((prev) => {
       // ¿ya está esa misma línea suelta? entonces solo suma cantidad
       const iguales = prev.findIndex((l) => l.item.key === item.key && !l.padreKey);
@@ -398,12 +434,17 @@ function Mostrador({
             fin++;
           }
           const copia = [...prev];
-          copia.splice(fin, 0, { item, cantidad: 1, padreKey: madre.item.key });
+          copia.splice(fin, 0, {
+            item,
+            cantidad: 1,
+            padreKey: madre.item.key,
+            descuentoPct: pct,
+          });
           return copia;
         }
       }
 
-      return [...prev, { item, cantidad: 1, padreKey: null }];
+      return [...prev, { item, cantidad: 1, padreKey: null, descuentoPct: pct }];
     });
     setBusqueda('');
     buscadorRef.current?.focus();
@@ -437,13 +478,19 @@ function Mostrador({
       fecha,
       hora,
       cliente: cliente.trim() || null,
-      lineas: lineas.map((l) => ({
-        nombre: l.item.nombre,
-        cantidad: l.cantidad,
-        precioUnitario: l.item.precio,
-        total: l.item.precio * l.cantidad,
-        esHija: !!l.padreKey,
-      })),
+      convenio: convenio?.nombre ?? null,
+      lineas: lineas.map((l) => {
+        const { descuento, total: totalLinea } = importesDeLinea(l);
+        return {
+          nombre: l.item.nombre,
+          cantidad: l.cantidad,
+          precioUnitario: l.item.precio,
+          descuentoPct: l.descuentoPct ?? 0,
+          descuentoMonto: descuento,
+          total: totalLinea,
+          esHija: !!l.padreKey,
+        };
+      }),
       pagos: pagos.map((p) => ({ medio: p.medio.nombre, monto: p.monto })),
       total,
     };
@@ -573,47 +620,120 @@ function Mostrador({
             className="mb-3 w-full rounded border border-gray-300 px-3 py-2 text-lg font-semibold"
           />
 
+          {/* El convenio le pone su descuento a toda la venta. Reemplaza el
+              producto falso "ADICIONAL POR DESC." que se usaba en Fudo. */}
+          {convenios.length > 0 && (
+            <>
+              <label className="mb-1 block text-xs font-medium text-gray-600">Convenio</label>
+              <select
+                value={convenioId}
+                onChange={(e) => aplicarConvenio(e.target.value)}
+                className={cn(
+                  'mb-3 w-full rounded border px-3 py-2 text-sm',
+                  convenio ? 'border-rodziny-500 bg-rodziny-50 font-medium' : 'border-gray-300',
+                )}
+              >
+                <option value="">Sin convenio</option>
+                {convenios.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.nombre} — {c.descuentoPct}%
+                  </option>
+                ))}
+              </select>
+            </>
+          )}
+
           {lineas.length === 0 ? (
             <p className="py-6 text-center text-sm text-gray-400">Todavía no agregaste nada</p>
           ) : (
             <div className="mb-3 max-h-[34vh] space-y-1 overflow-y-auto">
-              {lineas.map((l, i) => (
-                <div
-                  key={`${l.item.key}-${i}`}
-                  className={cn(
-                    'flex items-center gap-2 border-b border-gray-100 py-1.5',
-                    l.padreKey && 'pl-4',
-                  )}
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm text-gray-900">
-                      {l.padreKey && <span className="text-gray-400">› </span>}
-                      {l.item.nombre}
+              {lineas.map((l, i) => {
+                const imp = importesDeLinea(l);
+                return (
+                  <div
+                    key={`${l.item.key}-${i}`}
+                    className={cn('border-b border-gray-100 py-1.5', l.padreKey && 'pl-4')}
+                  >
+                    <div className="flex items-center gap-2">
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-sm text-gray-900">
+                          {l.padreKey && <span className="text-gray-400">› </span>}
+                          {l.item.nombre}
+                        </div>
+                        <div className="text-xs text-gray-500">{pesos(l.item.precio)} c/u</div>
+                      </div>
+                      <button
+                        onClick={() => cambiarCantidad(i, -1)}
+                        className="h-7 w-7 rounded border border-gray-300 text-gray-600 hover:bg-gray-50"
+                      >
+                        −
+                      </button>
+                      <span className="w-6 text-center text-sm font-medium">{l.cantidad}</span>
+                      <button
+                        onClick={() => cambiarCantidad(i, 1)}
+                        className="h-7 w-7 rounded border border-gray-300 text-gray-600 hover:bg-gray-50"
+                      >
+                        +
+                      </button>
+                      <span className="w-20 text-right text-sm font-medium text-gray-900">
+                        {pesos(imp.total)}
+                      </span>
                     </div>
-                    <div className="text-xs text-gray-500">{pesos(l.item.precio)} c/u</div>
+                    {/* Descuento de esta línea. Se puede tocar aunque haya
+                        convenio: a veces la bonificación es solo sobre un plato. */}
+                    <div className="mt-0.5 flex items-center justify-end gap-1.5 text-xs">
+                      <span className="text-gray-400">desc.</span>
+                      <input
+                        type="number"
+                        inputMode="numeric"
+                        min={0}
+                        max={100}
+                        value={l.descuentoPct ? String(l.descuentoPct) : ''}
+                        onChange={(e) => cambiarDescuento(i, Number(e.target.value) || 0)}
+                        placeholder="0"
+                        className={cn(
+                          'w-12 rounded border px-1 py-0.5 text-right',
+                          imp.descuento > 0
+                            ? 'border-rodziny-400 bg-rodziny-50 font-medium text-rodziny-700'
+                            : 'border-gray-200 text-gray-500',
+                        )}
+                      />
+                      <span className="text-gray-400">%</span>
+                      <span
+                        className={cn(
+                          'w-20 text-right',
+                          imp.descuento > 0 ? 'text-rodziny-700' : 'text-transparent',
+                        )}
+                      >
+                        − {pesos(imp.descuento)}
+                      </span>
+                    </div>
                   </div>
-                  <button
-                    onClick={() => cambiarCantidad(i, -1)}
-                    className="h-7 w-7 rounded border border-gray-300 text-gray-600 hover:bg-gray-50"
-                  >
-                    −
-                  </button>
-                  <span className="w-6 text-center text-sm font-medium">{l.cantidad}</span>
-                  <button
-                    onClick={() => cambiarCantidad(i, 1)}
-                    className="h-7 w-7 rounded border border-gray-300 text-gray-600 hover:bg-gray-50"
-                  >
-                    +
-                  </button>
-                  <span className="w-20 text-right text-sm font-medium text-gray-900">
-                    {pesos(l.item.precio * l.cantidad)}
-                  </span>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
 
-          <div className="mb-3 flex items-baseline justify-between border-t border-gray-200 pt-3">
+          {descuentoTotal > 0 && (
+            <div className="mb-1 flex items-baseline justify-between border-t border-gray-200 pt-3 text-sm">
+              <span className="text-gray-500">Subtotal</span>
+              <span className="text-gray-500">{pesos(bruto)}</span>
+            </div>
+          )}
+          {descuentoTotal > 0 && (
+            <div className="mb-1 flex items-baseline justify-between text-sm">
+              <span className="text-rodziny-700">
+                Descuento{convenio ? ` ${convenio.nombre}` : ''}
+              </span>
+              <span className="font-medium text-rodziny-700">− {pesos(descuentoTotal)}</span>
+            </div>
+          )}
+          <div
+            className={cn(
+              'mb-3 flex items-baseline justify-between',
+              descuentoTotal === 0 && 'border-t border-gray-200 pt-3',
+            )}
+          >
             <span className="text-sm text-gray-600">Total</span>
             <span className="text-2xl font-semibold text-gray-900">{pesos(total)}</span>
           </div>
@@ -627,7 +747,10 @@ function Mostrador({
           <div className="mb-2 flex gap-2">
             <button
               disabled={lineas.length === 0}
-              onClick={() => setLineas([])}
+              onClick={() => {
+                setLineas([]);
+                setConvenioId('');
+              }}
               className="rounded border border-gray-300 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-40"
             >
               Vaciar
@@ -756,6 +879,7 @@ function Mostrador({
               fecha,
               hora,
               cliente: cliente.trim() || null,
+              convenioId: convenioId || null,
               lineas,
               pagos,
             });
@@ -763,6 +887,7 @@ function Mostrador({
             if (queImprimir) setDoc(armarDoc(queImprimir, numero, pagos));
             setLineas([]);
             setCliente('');
+            setConvenioId('');
             setCobrando(false);
             setAviso(`Cobrado ${pesos(res.total)} · ticket ${numero}`);
             setTimeout(() => setAviso(null), 5000);
@@ -832,10 +957,15 @@ function ModalVenta({
       hora: venta.hora?.slice(0, 5) ?? '',
       reimpresion: true,
       cliente: venta.cliente,
+      // el nombre del convenio no se guarda en la línea; en la copia alcanza con
+      // el detalle del descuento renglón por renglón
+      convenio: null,
       lineas: lineas.map((l) => ({
         nombre: l.nombre,
         cantidad: l.cantidad,
         precioUnitario: l.precioUnitario,
+        descuentoPct: l.descuentoPct,
+        descuentoMonto: l.descuentoMonto,
         total: l.total,
         esHija: l.esHija,
       })),
@@ -864,6 +994,11 @@ function ModalVenta({
                   {l.esHija && <span className="text-gray-400">› </span>}
                   {l.cantidad > 1 ? `${l.cantidad}x ` : ''}
                   {l.nombre}
+                  {l.descuentoMonto > 0 && (
+                    <span className="ml-1 text-xs text-rodziny-700">
+                      −{l.descuentoPct}% ({pesos(l.descuentoMonto)})
+                    </span>
+                  )}
                 </span>
                 <span>{pesos(l.total)}</span>
               </div>

@@ -19,6 +19,9 @@ export interface LineaImpresa {
   nombre: string;
   cantidad: number;
   precioUnitario: number;
+  descuentoPct: number;
+  descuentoMonto: number;
+  /** lo que se cobra, con el descuento ya restado */
   total: number;
   /** true si cuelga de la línea de arriba (la salsa de esa pasta) */
   esHija: boolean;
@@ -35,8 +38,11 @@ export interface DatosImpresion {
   /** segunda copia: se perdió el ticket, no llegó la comanda a cocina… */
   reimpresion?: boolean;
   cliente: string | null;
+  /** nombre del convenio con el que se bonificó, si hubo */
+  convenio: string | null;
   lineas: LineaImpresa[];
   pagos: { medio: string; monto: number }[];
+  /** lo que se cobra, con los descuentos ya restados */
   total: number;
 }
 
@@ -76,6 +82,7 @@ export function DocumentoImpresion({ datos }: { datos: DatosImpresion }) {
   // mismo pedido se reimprime, sale la hora nueva — que es lo que la cocina
   // necesita para saber hace cuánto está esperando ese plato.
   const horaImpresion = horaImpresionAR();
+  const descuentoTotal = datos.lineas.reduce((s, l) => s + l.descuentoMonto, 0);
 
   // OJO: el documento se monta como hijo DIRECTO de <body>, fuera del árbol de
   // la app. Si quedara adentro, la regla que esconde la pantalla para imprimir
@@ -158,12 +165,39 @@ export function DocumentoImpresion({ datos }: { datos: DatosImpresion }) {
                 {l.cantidad} × {pesos(l.precioUnitario)}
               </div>
             )}
+            {/* El descuento se muestra debajo de su línea: el cliente tiene que
+                poder ver de dónde salió la rebaja, no solo el total final. */}
+            {conPrecios && l.descuentoMonto > 0 && (
+              <div
+                style={{
+                  paddingLeft: l.esHija ? 12 : 0,
+                  fontSize: 11,
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                }}
+              >
+                <span>desc. {l.descuentoPct}%</span>
+                <span>− {pesos(l.descuentoMonto)}</span>
+              </div>
+            )}
           </div>
         ))}
 
         {conPrecios && (
           <>
             <Separador />
+            {descuentoTotal > 0 && (
+              <>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span>Subtotal</span>
+                  <span>{pesos(datos.total + descuentoTotal)}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span>Descuento{datos.convenio ? ` ${datos.convenio}` : ''}</span>
+                  <span>− {pesos(descuentoTotal)}</span>
+                </div>
+              </>
+            )}
             <div
               style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, fontSize: 14 }}
             >

@@ -107,6 +107,56 @@ export function useCatalogoCaja(local: LocalCaja) {
   });
 }
 
+// ── Descuentos ───────────────────────────────────────────────────────────────
+
+/**
+ * Lo que se bonifica en una línea.
+ *
+ * ⚠️ El redondeo va acá y en un solo lugar: si cada pantalla redondeara por su
+ * cuenta, el total del ticket no cerraría con la suma de las líneas por unos
+ * pesos, y esa diferencia terminaría apareciendo en el arqueo.
+ */
+export function descuentoDeLinea(bruto: number, pct: number): number {
+  if (!pct || pct <= 0) return 0;
+  return Math.round(bruto * Math.min(pct, 100)) / 100;
+}
+
+export interface ConvenioCaja {
+  id: string;
+  nombre: string;
+  descuentoPct: number;
+}
+
+/**
+ * Los convenios vigentes del local, para aplicar su descuento al cobrar.
+ *
+ * Reemplaza el truco de Fudo de cargar un producto inventado ("ADICIONAL POR
+ * DESC.") con importe negativo: acá el descuento queda atado a la venta y al
+ * convenio, y se puede medir cuánto se bonificó a cada uno.
+ */
+export function useConveniosCaja(local: LocalCaja) {
+  return useQuery({
+    queryKey: ['caja-convenios', local],
+    staleTime: 1000 * 60 * 30,
+    queryFn: async (): Promise<ConvenioCaja[]> => {
+      const hoy = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString().slice(0, 10);
+      const { data, error } = await supabase
+        .from('convenios')
+        .select('id, nombre, descuento_pct, vigencia_desde, vigencia_hasta')
+        .eq('local', local)
+        .eq('activo', true)
+        .gt('descuento_pct', 0)
+        .order('nombre');
+      if (error) throw error;
+      return (data ?? [])
+        // Vigencia sin cargar = sin límite, que es como están todos hoy.
+        .filter((c) => !c.vigencia_desde || c.vigencia_desde <= hoy)
+        .filter((c) => !c.vigencia_hasta || c.vigencia_hasta >= hoy)
+        .map((c) => ({ id: c.id, nombre: c.nombre, descuentoPct: Number(c.descuento_pct) }));
+    },
+  });
+}
+
 // ── Medios de pago ───────────────────────────────────────────────────────────
 
 export interface MedioPagoCaja {
@@ -295,6 +345,9 @@ export interface LineaTicketGuardada {
   nombre: string;
   cantidad: number;
   precioUnitario: number;
+  descuentoPct: number;
+  descuentoMonto: number;
+  /** lo que se cobró, con el descuento ya restado */
   total: number;
   esHija: boolean;
 }
@@ -310,7 +363,9 @@ export function useDetalleTicket(ticketId: string | null) {
     queryFn: async (): Promise<LineaTicketGuardada[]> => {
       const { data, error } = await supabase
         .from('ventas_items')
-        .select('id, linea, nombre, cantidad, precio_unitario, total, linea_padre_id')
+        .select(
+          'id, linea, nombre, cantidad, precio_unitario, descuento_pct, descuento_monto, total, linea_padre_id',
+        )
         .eq('ticket_id', ticketId!)
         .order('linea');
       if (error) throw error;
@@ -320,6 +375,8 @@ export function useDetalleTicket(ticketId: string | null) {
         nombre: l.nombre,
         cantidad: Number(l.cantidad),
         precioUnitario: Number(l.precio_unitario ?? 0),
+        descuentoPct: Number(l.descuento_pct ?? 0),
+        descuentoMonto: Number(l.descuento_monto ?? 0),
         total: Number(l.total),
         esHija: !!l.linea_padre_id,
       }));
@@ -613,6 +670,15 @@ export interface LineaVenta {
    * como una línea suelta al lado y nadie sabe con qué pasta iba.
    */
   padreKey?: string | null;
+  /** porcentaje bonificado en esta línea (convenio o descuento a mano) */
+  descuentoPct?: number;
+}
+
+/** Lo que sale y lo que se cobra de una línea, con el descuento ya aplicado. */
+export function importesDeLinea(l: LineaVenta) {
+  const bruto = l.item.precio * l.cantidad;
+  const descuento = descuentoDeLinea(bruto, l.descuentoPct ?? 0);
+  return { bruto, descuento, total: bruto - descuento };
 }
 
 export interface PagoVenta {
@@ -637,10 +703,16 @@ export function useCobrarVenta() {
       fecha: string;
       hora: string;
       cliente: string | null;
+      /** convenio con el que se hizo el descuento, si vino de uno */
+      convenioId: string | null;
       lineas: LineaVenta[];
       pagos: PagoVenta[];
     }) => {
-      const total = input.lineas.reduce((s, l) => s + l.item.precio * l.cantidad, 0);
+      // `total` es lo que se COBRA: ya tiene el descuento restado. Es la columna
+      // que leen todas las pantallas viejas, así que no puede ser el bruto.
+      const importes = input.lineas.map(importesDeLinea);
+      const total = importes.reduce((s, i) => s + i.total, 0);
+      const descuentoTotal = importes.reduce((s, i) => s + i.descuento, 0);
       const periodo = input.fecha.slice(0, 7);
       const mediosUnicos = [...new Set(input.pagos.map((p) => p.medio.id))];
       const unicoMedio = mediosUnicos.length === 1 ? input.pagos[0].medio : null;
@@ -657,6 +729,8 @@ export function useCobrarVenta() {
           periodo,
           caja: input.caja,
           cliente: input.cliente,
+          convenio_id: input.convenioId,
+          descuento_total: descuentoTotal,
           estado: 'Cerrada',
           tipo_venta: 'mostrador',
           // Con varios medios se guarda "Mixto", igual que hace el import de Fudo
@@ -671,23 +745,28 @@ export function useCobrarVenta() {
       if (eTicket) throw eTicket;
       const ticketId = ticket.id as string;
 
-      const fila = (l: LineaVenta, nroLinea: number) => ({
-        ticket_id: ticketId,
-        local: input.local,
-        periodo,
-        fecha: input.fecha,
-        linea: nroLinea,
-        codigo: l.item.codigo,
-        nombre: l.item.nombre,
-        categoria: l.item.categoria,
-        subcategoria: null,
-        cantidad: l.cantidad,
-        precio_unitario: l.item.precio,
-        total: l.item.precio * l.cantidad,
-        receta_id: l.item.tipo === 'receta' ? l.item.refId : null,
-        cocina_producto_id: l.item.tipo === 'producto' ? l.item.refId : null,
-        origen: 'pos',
-      });
+      const fila = (l: LineaVenta, nroLinea: number) => {
+        const { descuento, total: totalLinea } = importesDeLinea(l);
+        return {
+          ticket_id: ticketId,
+          local: input.local,
+          periodo,
+          fecha: input.fecha,
+          linea: nroLinea,
+          codigo: l.item.codigo,
+          nombre: l.item.nombre,
+          categoria: l.item.categoria,
+          subcategoria: null,
+          cantidad: l.cantidad,
+          precio_unitario: l.item.precio,
+          descuento_pct: l.descuentoPct ?? 0,
+          descuento_monto: descuento,
+          total: totalLinea,
+          receta_id: l.item.tipo === 'receta' ? l.item.refId : null,
+          cocina_producto_id: l.item.tipo === 'producto' ? l.item.refId : null,
+          origen: 'pos',
+        };
+      };
 
       // Dos pasadas: primero las líneas sueltas y las "madres" (las pastas), y
       // recién después las que cuelgan, ya sabiendo el id de su madre.
