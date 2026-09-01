@@ -5,7 +5,7 @@ import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/utils';
 import { KPICard } from '@/components/ui/KPICard';
 import type { Empleado } from './RRHHPage';
-import { ymd, parseYmd, MESES, normalizarTexto } from './utils';
+import { ymd, parseYmd, MESES, normalizarTexto, trabajoEnElPeriodo } from './utils';
 
 type FiltroLocal = 'todos' | 'vedia' | 'saavedra';
 type EstadoVac = 'pendiente' | 'aprobada' | 'tomada' | 'rechazada';
@@ -215,8 +215,10 @@ export function VacacionesTab() {
   // Armar filas por empleado
   const filas = useMemo(() => {
     if (!empleados || !vacaciones || !cronograma90 || !fichadas90) return [];
-    const activos = empleados.filter((e) => e.activo && e.estado_laboral !== 'baja');
-    const filtrados = activos.filter((e) => {
+    // Quien se fue durante el año igual puede tener vacaciones no gozadas para
+    // liquidar, así que sigue apareciendo en el año que trabajó.
+    const delPeriodo = empleados.filter((e) => trabajoEnElPeriodo(e, `${año}-01-01`));
+    const filtrados = delPeriodo.filter((e) => {
       if (filtroLocal === 'vedia' && e.local !== 'vedia') return false;
       if (filtroLocal === 'saavedra' && e.local !== 'saavedra') return false;
       if (busqueda.trim()) {
@@ -254,7 +256,7 @@ export function VacacionesTab() {
         };
       })
       .sort((a, b) => b.score - a.score); // score descendente = mejores primero
-  }, [empleados, vacaciones, cronograma90, fichadas90, filtroLocal, busqueda]);
+  }, [empleados, vacaciones, cronograma90, fichadas90, filtroLocal, busqueda, año]);
 
   const kpis = useMemo(() => {
     const elegibles = filas.filter((f) => f.elegible);

@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import type { Empleado } from './RRHHPage';
-import { MESES, ymd, diffHoras } from './utils';
+import { MESES, ymd, diffHoras, trabajoEnElPeriodo } from './utils';
 
 type PeriodoTipo = 'mes' | 'quincena';
 type Quincena = 'q1' | 'q2';
@@ -121,8 +121,9 @@ export function EvaluacionesTab() {
 
   const stats = useMemo<Stats[]>(() => {
     if (!empleados || !cronograma || !fichadas) return [];
-    const activos = empleados.filter((e) => e.activo && e.estado_laboral !== 'baja');
-    const filtrados = activos.filter((e) => {
+    // En un período pasado hay que seguir evaluando a quien lo trabajó.
+    const delPeriodo = empleados.filter((e) => trabajoEnElPeriodo(e, fechaDesde));
+    const filtrados = delPeriodo.filter((e) => {
       if (filtroLocal === 'todos') return true;
       if (filtroLocal === 'vedia') return e.local === 'vedia';
       if (filtroLocal === 'saavedra') return e.local === 'saavedra';

@@ -5,7 +5,13 @@ import { comprimirImagen } from '@/lib/comprimirImagen';
 import { formatARS, cn } from '@/lib/utils';
 import { KPICard } from '@/components/ui/KPICard';
 import type { Empleado } from './RRHHPage';
-import { parseYmd, ymd, normalizarTexto, remuneracionConPresentismo } from './utils';
+import {
+  parseYmd,
+  ymd,
+  normalizarTexto,
+  remuneracionConPresentismo,
+  trabajoEnElPeriodo,
+} from './utils';
 import { medioRequiereComprobante } from '../gastos/types';
 
 // ── Tipos ────────────────────────────────────────────────────────────────────
@@ -156,8 +162,11 @@ export function AguinaldoTab() {
 
   const filas = useMemo<FilaAguinaldo[]>(() => {
     if (!empleados || !aguinaldos) return [];
-    const activos = empleados.filter((e) => e.activo && e.estado_laboral !== 'baja');
-    const filtrados = activos.filter((e) => {
+    // Quien se fue durante el semestre igual tiene SAC proporcional a cobrar, así
+    // que tiene que seguir apareciendo en el semestre que trabajó.
+    const inicioSemestre = `${año}-${semestre === 1 ? '01' : '07'}-01`;
+    const delPeriodo = empleados.filter((e) => trabajoEnElPeriodo(e, inicioSemestre));
+    const filtrados = delPeriodo.filter((e) => {
       if (filtroLocal === 'vedia' && e.local !== 'vedia') return false;
       if (filtroLocal === 'saavedra' && e.local !== 'saavedra') return false;
       if (busqueda.trim()) {
