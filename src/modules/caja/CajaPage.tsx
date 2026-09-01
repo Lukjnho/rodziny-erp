@@ -1391,7 +1391,21 @@ function ModalCierre({
 
   const esperadoDe = (m: MedioCobrado) => (m.esEfectivo ? esperadoEfectivo : m.cobrado);
   const declaradoDe = (m: MedioCobrado) => Number(declarado[m.medioId]) || 0;
-  const completo = renglones.every((m) => (declarado[m.medioId] ?? '').trim() !== '');
+
+  /**
+   * ⚠️ `every` sobre una lista VACÍA devuelve `true`. Sin este chequeo, un turno
+   * que todavía no cobró nada se podía cerrar en el segundo que tarda en llegar
+   * la lista de medios de pago: se grababa contado $0 contra un esperado igual
+   * al fondo, o sea un faltante fantasma del tamaño del fondo. Y no hay vuelta
+   * atrás: el arqueo cerrado queda congelado (migración 148) y esa diferencia
+   * se le imputa al cajero en RRHH → Sueldos.
+   *
+   * El renglón de efectivo tiene que estar sí o sí: el fondo está en el cajón
+   * aunque no se haya cobrado un peso, y hay que contarlo.
+   */
+  const hayRenglones = renglones.length > 0 && renglones.some((m) => m.esEfectivo);
+  const completo =
+    hayRenglones && renglones.every((m) => (declarado[m.medioId] ?? '').trim() !== '');
   const totalDeclarado = renglones.reduce((s, m) => s + declaradoDe(m), 0);
   const totalEsperado = renglones.reduce((s, m) => s + esperadoDe(m), 0);
 
@@ -1513,6 +1527,14 @@ function ModalCierre({
         </div>
       )}
 
+      {!hayRenglones && (
+        <div className="mb-3 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          {mediosQ.isError
+            ? 'No se pudo cargar la lista de medios de pago. Esperá un momento y probá de nuevo: sin ella el arqueo quedaría mal grabado.'
+            : 'Cargando los medios de pago…'}
+        </div>
+      )}
+
       <div className="flex gap-2">
         <button
           onClick={onCancelar}
@@ -1546,9 +1568,11 @@ function ModalCierre({
         </button>
       </div>
       <p className="mt-2 text-xs text-gray-400">
-        {completo
-          ? 'Al cerrar, el arqueo queda cargado en Finanzas → Cierre de Caja para que administración lo controle y marque la plata como recibida.'
-          : 'Cargá todos los medios para poder cerrar. Si con alguno no cobraste nada, poné 0.'}
+        {!hayRenglones
+          ? 'Todavía no se puede cerrar: falta la lista de medios de pago.'
+          : completo
+            ? 'Al cerrar, el arqueo queda cargado en Finanzas → Cierre de Caja para que administración lo controle y marque la plata como recibida.'
+            : 'Cargá todos los medios para poder cerrar. Si con alguno no cobraste nada, poné 0.'}
       </p>
     </Modal>
   );

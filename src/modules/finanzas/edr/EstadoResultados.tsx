@@ -5,6 +5,7 @@ import { PageContainer } from '@/components/layout/PageContainer';
 import { formatARS } from '@/lib/utils';
 import { cn } from '@/lib/utils';
 import { LocalSelector } from '@/components/ui/LocalSelector';
+import { CAJA_PRUEBAS } from '@/lib/turnosCaja';
 
 // ── constantes ────────────────────────────────────────────────────────────────
 const MESES_LABEL = [
@@ -866,13 +867,24 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
         locales.map(async (loc) => {
           const { data } = await supabase
             .from('cierres_caja')
-            .select('fecha, diferencia')
+            .select('fecha, diferencia, origen, hora_cierre, caja')
             .eq('local', loc)
             .gte('fecha', `${año}-01-01`)
             .lte('fecha', `${año}-12-31`);
           // Agrupar por periodo (YYYY-MM)
           const porMes = new Map<string, number>();
           for (const r of data ?? []) {
+            // Mismo criterio que Flujo de Caja: la caja de pruebas del piloto
+            // del POS no es plata de la empresa, y un turno que todavía no
+            // cerró no tiene ninguna diferencia que informar. Sin esto, una
+            // prueba mal declarada se resta de los ingresos netos del mes y
+            // arrastra el resultado bruto y el EBITDA.
+            //
+            // ⚠️ NO se filtra por `origen`: cuando el POS deje de ser una
+            // prueba y sea la caja de verdad, sus diferencias de arqueo SÍ
+            // tienen que entrar acá.
+            if (r.caja === CAJA_PRUEBAS) continue;
+            if (r.origen === 'pos' && !r.hora_cierre) continue;
             const p = (r.fecha as string).substring(0, 7);
             porMes.set(p, (porMes.get(p) ?? 0) + Number(r.diferencia ?? 0));
           }

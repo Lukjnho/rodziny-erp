@@ -50,7 +50,18 @@ export function abrirVentanaCaja(): boolean {
   const destino = window.location.origin + RUTA_POS;
   try {
     const actual = ventana.location.href;
-    if (!actual || actual === 'about:blank') ventana.location.href = destino;
+    // Solo se deja quieta si YA está en el punto de venta: ahí recargarla le
+    // haría perder al cajero el ticket que está armando.
+    //
+    // En cualquier otra dirección hay que mandarla igual. Si no, pasa esto: el
+    // cajero toca "Salir al ERP" (aparece cuando se cerró la pestaña que abrió
+    // la caja), la ventana queda en /caja, y desde ahí "Abrir la caja" la
+    // encuentra por el nombre, no la navega y solo la trae al frente. El botón
+    // parece muerto y, como el popup no tiene barra de direcciones, la única
+    // salida es cerrarlo a mano.
+    const yaEstaEnElPos =
+      !!actual && actual !== 'about:blank' && new URL(actual).pathname === RUTA_POS;
+    if (!yaEstaEnElPos) ventana.location.href = destino;
   } catch {
     // no se pudo leer la dirección (quedó en otro dominio): la mandamos al POS
     ventana.location.href = destino;
