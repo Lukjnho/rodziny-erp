@@ -96,14 +96,90 @@ export async function imprimirConAgente(trabajo: TrabajoImpresion): Promise<bool
   }
 }
 
-/** ¿Hay agente escuchando? Para mostrarlo en la pantalla, no para decidir. */
-export async function agenteDisponible(): Promise<boolean> {
+// ── Configuración de la impresora ────────────────────────────────────────────
+//
+// Es DE CADA PC: cada caja tiene su impresora, y quien la elige es quien está
+// sentado ahí. Por eso vive en el agente y no en la base de datos.
+
+export interface EstadoAgente {
+  impresora: string;
+  /** la impresora elegida sigue existiendo en esta PC */
+  instalada: boolean;
+  ancho: number;
+  tabla: number;
+}
+
+export interface ImpresoraDeLaPC {
+  nombre: string;
+  driver: string;
+  puerto: string;
+  /** tiene pinta de térmica: el agente la sugiere */
+  probable: boolean;
+  predeterminada: boolean;
+}
+
+export interface TablaDeCaracteres {
+  valor: number;
+  nombre: string;
+}
+
+/** `null` si el agente no está corriendo en esta PC. */
+export async function estadoAgente(): Promise<EstadoAgente | null> {
   try {
     const respuesta = await pedir('/estado');
-    if (!respuesta.ok) return false;
-    const datos = (await respuesta.json()) as { ok?: boolean; agente?: string };
-    return datos.ok === true && datos.agente === 'rodziny';
+    if (!respuesta.ok) return null;
+    const datos = (await respuesta.json()) as { ok?: boolean; agente?: string } & EstadoAgente;
+    if (datos.ok !== true || datos.agente !== 'rodziny') return null;
+    return {
+      impresora: datos.impresora ?? '',
+      instalada: !!datos.instalada,
+      ancho: datos.ancho ?? 48,
+      tabla: datos.tabla ?? 2,
+    };
   } catch {
-    return false;
+    return null;
   }
+}
+
+/** Las impresoras instaladas en ESTA PC, para poder elegir. */
+export async function impresorasDeLaPC(): Promise<{
+  impresoras: ImpresoraDeLaPC[];
+  tablas: TablaDeCaracteres[];
+}> {
+  const respuesta = await pedir('/impresoras');
+  if (!respuesta.ok) throw new Error('El agente no contestó la lista de impresoras.');
+  const datos = (await respuesta.json()) as {
+    impresoras?: ImpresoraDeLaPC[];
+    tablas?: TablaDeCaracteres[];
+  };
+  return { impresoras: datos.impresoras ?? [], tablas: datos.tablas ?? [] };
+}
+
+/** Guarda la elección en la PC. Tira error con el motivo si no se pudo. */
+export async function guardarConfigAgente(cambios: {
+  impresora?: string;
+  ancho?: number;
+  tabla?: number;
+}): Promise<void> {
+  const respuesta = await pedir('/config', cambios);
+  const datos = (await respuesta.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+  if (!respuesta.ok || !datos.ok) {
+    throw new Error(datos.error ?? 'No se pudo guardar la configuración de la impresora.');
+  }
+}
+
+/** Imprime el ticket de prueba en papel, para calibrar ancho y acentos. */
+export async function imprimirPrueba(): Promise<void> {
+  const respuesta = await pedir('/prueba', {});
+  const datos = (await respuesta.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+  if (!respuesta.ok || !datos.ok) {
+    throw new Error(datos.error ?? 'No se pudo imprimir la prueba.');
+  }
+}
+
+/** Cómo quedaría el ticket de prueba, sin gastar papel. */
+export async function vistaPreviaPrueba(): Promise<string> {
+  const respuesta = await pedir('/vista-previa', {});
+  const datos = (await respuesta.json().catch(() => ({}))) as { papel?: string };
+  return datos.papel ?? '';
 }

@@ -1,4 +1,4 @@
-# ─────────────────────────────────────────────────────────────────────────────
+﻿# ─────────────────────────────────────────────────────────────────────────────
 # Agente de impresión de Rodziny
 #
 # Corre en la PC de la caja y hace UNA sola cosa: recibe el ticket del ERP y se
@@ -13,45 +13,105 @@
 # QUÉ NO NECESITA: no instala nada. Es PowerShell, que ya viene con Windows, y
 # usa la cola de impresión que ya está configurada ("Generic / Text Only").
 #
+# CÓMO SE CONFIGURA: NO se toca este archivo. Al arrancar por primera vez busca
+# sola una impresora térmica y la guarda; y desde el ERP (Caja → Impresora) se
+# puede elegir otra, ajustarla y hacer una prueba. La configuración es DE ESA
+# PC: cada caja tiene la suya.
+#
 # CÓMO SE USA: se deja corriendo (el instalador lo pone en el arranque). El ERP
 # le habla a http://localhost:9110 y, si no contesta, sigue funcionando como
 # hasta ahora con el diálogo del navegador. O sea que si el agente se cae, la
 # caja NO se queda sin imprimir.
 # ─────────────────────────────────────────────────────────────────────────────
 
-# ── Lo que se puede tocar ────────────────────────────────────────────────────
-
-# Nombre de la cola en Windows. Se ve con: Get-Printer
-$IMPRESORA_POR_DEFECTO = 'POS-80'
-
-# Puerto donde escucha. Si lo cambiás, cambialo también en el ERP.
 $PUERTO = 9110
 
-# Cuántos caracteres entran en un renglón. 48 es lo normal en 80 mm con la
-# letra chica; si el ticket sale cortado o con mucho aire, es este número.
-$ANCHO = 48
-
-# Tabla de caracteres de la impresora, para que salgan las eñes y los acentos.
-# 2 = PC850 (Europa occidental) en casi todas las térmicas chinas de 80 mm.
-# Si salen símbolos raros en vez de "Ñoquis", probá con 16 (Windows-1252) o 0.
-$TABLA_IMPRESORA = 2
-$CODEPAGE_WINDOWS = 850
-
-$LOG = Join-Path $env:LOCALAPPDATA 'RodzinyImpresion\agente.log'
-
-# ─────────────────────────────────────────────────────────────────────────────
+$CARPETA = Join-Path $env:LOCALAPPDATA 'RodzinyImpresion'
+$CONFIG = Join-Path $CARPETA 'config.json'
+$LOG = Join-Path $CARPETA 'agente.log'
 
 $ErrorActionPreference = 'Stop'
 
+# ── Configuración ────────────────────────────────────────────────────────────
+# Vive en un archivo aparte, no acá adentro: así se cambia desde el ERP sin
+# tocar el script ni tener que copiar un archivo distinto a cada PC.
+
+# Tabla de caracteres de la impresora → página de códigos de Windows.
+# Es lo que hace que salgan las eñes y los acentos en vez de símbolos raros.
+$TABLAS = @{
+  0  = @{ windows = 437;  nombre = 'PC437 (Estados Unidos)' }
+  2  = @{ windows = 850;  nombre = 'PC850 (Europa occidental)' }
+  16 = @{ windows = 1252; nombre = 'Windows-1252 (Latin 1)' }
+  19 = @{ windows = 858;  nombre = 'PC858 (Europa con simbolo del euro)' }
+}
+
+$script:cfg = @{ impresora = ''; ancho = 48; tabla = 2 }
+
 function Anotar([string]$mensaje) {
   try {
-    $carpeta = Split-Path $LOG -Parent
-    if (-not (Test-Path $carpeta)) { New-Item -ItemType Directory -Path $carpeta -Force | Out-Null }
-    $marca = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
-    Add-Content -Path $LOG -Value "$marca  $mensaje" -Encoding utf8
-  } catch {
-    # el log nunca puede tumbar el agente
+    if (-not (Test-Path $CARPETA)) { New-Item -ItemType Directory -Path $CARPETA -Force | Out-Null }
+    Add-Content -Path $LOG -Value ((Get-Date).ToString('yyyy-MM-dd HH:mm:ss') + '  ' + $mensaje) -Encoding utf8
+  } catch { }
+}
+
+function Get-Impresoras {
+  # Marca como "probable" a la que tiene pinta de térmica, para poder sugerirla
+  # sin obligar a nadie a saber cuál es cuál.
+  $predeterminada = ''
+  try {
+    $d = Get-CimInstance -ClassName Win32_Printer -Filter 'Default = True' -ErrorAction SilentlyContinue
+    if ($d) { $predeterminada = $d.Name }
+  } catch { }
+
+  Get-Printer -ErrorAction SilentlyContinue | ForEach-Object {
+    $texto = "$($_.Name) $($_.DriverName)"
+    $probable = $texto -match '(?i)pos.?80|thermal|t[eé]rmic|EML|XP-?\d|receipt|ticket|Generic / Text Only'
+    # Las de Windows que nunca son una térmica
+    $falsa = $_.Name -match '(?i)OneNote|XPS|Print to PDF|Fax|DeskJet|LaserJet|Send To'
+    [pscustomobject]@{
+      nombre         = $_.Name
+      driver         = $_.DriverName
+      puerto         = $_.PortName
+      probable       = ($probable -and -not $falsa)
+      predeterminada = ($_.Name -eq $predeterminada)
+    }
   }
+}
+
+function Write-Config {
+  if (-not (Test-Path $CARPETA)) { New-Item -ItemType Directory -Path $CARPETA -Force | Out-Null }
+  ($script:cfg | ConvertTo-Json) | Set-Content -Path $CONFIG -Encoding UTF8
+}
+
+function Read-Config {
+  if (Test-Path $CONFIG) {
+    try {
+      $guardada = Get-Content $CONFIG -Raw -Encoding UTF8 | ConvertFrom-Json
+      if ($guardada.impresora) { $script:cfg.impresora = [string]$guardada.impresora }
+      if ($guardada.ancho) { $script:cfg.ancho = [int]$guardada.ancho }
+      if ($null -ne $guardada.tabla) { $script:cfg.tabla = [int]$guardada.tabla }
+      Anotar "Configuracion leida: impresora='$($script:cfg.impresora)' ancho=$($script:cfg.ancho) tabla=$($script:cfg.tabla)"
+      return
+    } catch {
+      Anotar "No se pudo leer la configuracion, se busca una impresora sola: $($_.Exception.Message)"
+    }
+  }
+
+  # Primera vez en esta PC: elegir sola la que tenga pinta de térmica.
+  $candidata = Get-Impresoras | Where-Object { $_.probable } | Select-Object -First 1
+  if ($candidata) {
+    $script:cfg.impresora = $candidata.nombre
+    Anotar "Primera vez: se eligio sola la impresora '$($candidata.nombre)'"
+    Write-Config
+  } else {
+    Anotar 'Primera vez: no se encontro ninguna impresora termica. Hay que elegirla desde el ERP.'
+  }
+}
+
+function Get-CodepageWindows {
+  $t = $TABLAS[[int]$script:cfg.tabla]
+  if ($t) { return $t.windows }
+  return 850
 }
 
 # ── Mandarle bytes crudos a la impresora ─────────────────────────────────────
@@ -141,17 +201,17 @@ public class ImpresoraCruda
 #   { "k": "nl" }                                                 renglon en blanco
 # c = centrado · b = negrita · s = tamaño (1 normal, 2 doble, 3 triple) · i = sangría
 
-$ENC = [System.Text.Encoding]::GetEncoding($CODEPAGE_WINDOWS)
-
 function ConvertTo-EscPos($peticion) {
   $b = New-Object System.Collections.Generic.List[byte]
+  $enc = [System.Text.Encoding]::GetEncoding((Get-CodepageWindows))
+  $anchoTicket = [int]$script:cfg.ancho
 
   function Crudo([byte[]]$bytes) { $b.AddRange($bytes) }
-  function Texto([string]$s) { $b.AddRange($ENC.GetBytes($s)) }
+  function Texto([string]$s) { $b.AddRange($enc.GetBytes($s)) }
 
   # Arranque: reinicia la impresora y elige la tabla de caracteres
   Crudo @(0x1B, 0x40)
-  Crudo @(0x1B, 0x74, [byte]$TABLA_IMPRESORA)
+  Crudo @(0x1B, 0x74, [byte][int]$script:cfg.tabla)
 
   foreach ($r in $peticion.lineas) {
     $tipo = if ($r.k) { [string]$r.k } else { 't' }
@@ -171,7 +231,7 @@ function ConvertTo-EscPos($peticion) {
       Crudo @(0x1B, 0x61, 0x00)          # alineado a la izquierda
       Crudo @(0x1D, 0x21, 0x00)          # letra normal
       Crudo @(0x1B, 0x45, 0x00)          # sin negrita
-      Texto ('-' * $ANCHO)
+      Texto ('-' * $anchoTicket)
       Crudo @(0x0A)
       continue
     }
@@ -197,11 +257,11 @@ function ConvertTo-EscPos($peticion) {
     if ($tipo -eq 'lr') {
       # Con letra doble entran la mitad de caracteres por renglón.
       #
-      # ⚠️ LANDMINE: esta variable NO se puede llamar $ancho. PowerShell no
-      # distingue mayúsculas de minúsculas, así que $ancho ES $ANCHO: se pisaba
-      # el ancho del ticket para todo lo que viniera después. Con un TOTAL en
-      # letra doble, el resto del ticket salía a 24 caracteres en vez de 48.
-      $anchoRenglon = [int][Math]::Floor($ANCHO / $tam)
+      # ⚠️ LANDMINE: PowerShell NO distingue mayúsculas de minúsculas, así que
+      # esta variable no puede llamarse igual que el ancho del ticket. Cuando el
+      # ancho global se llamaba $ANCHO, este cálculo lo pisaba: después de un
+      # TOTAL en letra doble, el resto del ticket salía a 24 caracteres.
+      $anchoRenglon = [int][Math]::Floor($anchoTicket / $tam)
       $der = [string]$r.y
       $espacio = $anchoRenglon - $der.Length
       if ($espacio -lt 1) { $espacio = 1 }
@@ -231,9 +291,43 @@ function ConvertTo-EscPos($peticion) {
   return $b.ToArray()
 }
 
+function New-TicketDePrueba {
+  # La regla numerada es la clave: si NO entra justa en un renglón, el ancho
+  # configurado está mal. Es la forma de calibrar sin adivinar.
+  $regla = ''
+  for ($i = 1; $i -le [int]$script:cfg.ancho; $i++) { $regla += ($i % 10) }
+
+  return @{
+    titulo = 'Prueba de impresora'
+    cortar = $true
+    lineas = @(
+      @{ x = 'RODZINY'; c = $true; b = $true; s = 2 },
+      @{ x = 'Prueba de impresora'; c = $true },
+      @{ k = 'sep' },
+      @{ x = "Impresora: $($script:cfg.impresora)" },
+      @{ x = "Ancho: $($script:cfg.ancho) caracteres" },
+      @{ x = "Tabla: $($script:cfg.tabla)" },
+      @{ k = 'sep' },
+      @{ x = 'Tiene que entrar justo, sin cortarse:' },
+      @{ x = $regla },
+      @{ k = 'sep' },
+      @{ x = 'Acentos y enies:' },
+      @{ x = 'Ñoquis - Jamón - Menú del día - ¡Gracias!' },
+      @{ k = 'sep' },
+      @{ x = 'Letra normal' },
+      @{ x = 'Letra doble'; s = 2 },
+      @{ x = 'Negrita'; b = $true },
+      @{ k = 'sep' },
+      @{ k = 'lr'; x = 'TOTAL'; y = '$27.000'; b = $true; s = 2 },
+      @{ k = 'sep' },
+      @{ x = 'Si leiste todo esto, esta lista.'; c = $true }
+    )
+  }
+}
+
 # ── El servidor ──────────────────────────────────────────────────────────────
 
-function Responder($contexto, [int]$codigo, [string]$cuerpo) {
+function Send-Respuesta($contexto, [int]$codigo, [string]$cuerpo) {
   $resp = $contexto.Response
   $resp.StatusCode = $codigo
   $resp.ContentType = 'application/json; charset=utf-8'
@@ -250,89 +344,146 @@ function Responder($contexto, [int]$codigo, [string]$cuerpo) {
   $resp.OutputStream.Close()
 }
 
+function Read-Cuerpo($pedido) {
+  $lector = New-Object System.IO.StreamReader($pedido.InputStream, [System.Text.Encoding]::UTF8)
+  $crudo = $lector.ReadToEnd()
+  $lector.Close()
+  if (-not $crudo) { return $null }
+  return $crudo | ConvertFrom-Json
+}
+
+function Send-ALaImpresora($peticion, [string]$titulo) {
+  $impresora = if ($peticion -and $peticion.impresora) { [string]$peticion.impresora } else { [string]$script:cfg.impresora }
+  if (-not $impresora) {
+    return @{ ok = $false; error = 'Todavia no hay ninguna impresora elegida. Configurala desde el ERP, en Caja -> Impresora.' }
+  }
+  $bytes = ConvertTo-EscPos $peticion
+  $problema = [ImpresoraCruda]::Enviar($impresora, $bytes, $titulo)
+  if ($problema) {
+    Anotar "ERROR imprimiendo en '$impresora': $problema"
+    return @{ ok = $false; error = $problema }
+  }
+  Anotar "Impreso '$titulo' en '$impresora' ($($bytes.Length) bytes)"
+  return @{ ok = $true; bytes = $bytes.Length }
+}
+
+Read-Config
+
 $escucha = New-Object System.Net.HttpListener
 $escucha.Prefixes.Add("http://localhost:$PUERTO/")
-$escucha.Prefixes.Add("http://127.0.0.1:$PUERTO/")
 
 try {
   $escucha.Start()
 } catch {
   Anotar "NO ARRANCO: $($_.Exception.Message)"
-  Write-Host "No se pudo escuchar en el puerto $PUERTO. ¿Ya hay otro agente corriendo?"
+  Write-Host "No se pudo escuchar en el puerto $PUERTO. Puede que ya haya otro agente corriendo."
   exit 1
 }
 
-Anotar "Agente arriba en el puerto $PUERTO (impresora por defecto: $IMPRESORA_POR_DEFECTO)"
+Anotar "Agente arriba en el puerto $PUERTO (impresora: '$($script:cfg.impresora)')"
 Write-Host "Agente de impresion de Rodziny escuchando en http://localhost:$PUERTO"
-Write-Host "Impresora: $IMPRESORA_POR_DEFECTO   ·   Log: $LOG"
-Write-Host "Dejalo abierto. Para cortarlo, cerra esta ventana."
+Write-Host "Impresora: $($script:cfg.impresora)   .   Log: $LOG"
+Write-Host "Se configura desde el ERP, en Caja -> Impresora. Dejalo abierto."
 
 while ($escucha.IsListening) {
+  $contexto = $null
   try {
     $contexto = $escucha.GetContext()
     $pedido = $contexto.Request
     $ruta = $pedido.Url.AbsolutePath.TrimEnd('/')
 
-    if ($pedido.HttpMethod -eq 'OPTIONS') {
-      Responder $contexto 204 ''
-      continue
-    }
+    if ($pedido.HttpMethod -eq 'OPTIONS') { Send-Respuesta $contexto 204 ''; continue }
 
+    # ── Cómo está ─────────────────────────────────────────────────────────────
     if ($ruta -eq '/estado' -or $ruta -eq '') {
-      $existe = $null -ne (Get-Printer -Name $IMPRESORA_POR_DEFECTO -ErrorAction SilentlyContinue)
-      $cuerpo = @{ ok = $true; agente = 'rodziny'; version = 1;
-                   impresora = $IMPRESORA_POR_DEFECTO; instalada = $existe } | ConvertTo-Json -Compress
-      Responder $contexto 200 $cuerpo
-      continue
-    }
-
-    # Vista previa: arma el ticket y devuelve cómo quedaría, SIN imprimir ni
-    # gastar papel. Sirve para controlar que las eñes y los acentos salgan bien
-    # y que las columnas cierren, antes de mandar nada a la impresora.
-    if ($ruta -eq '/vista-previa' -and $pedido.HttpMethod -eq 'POST') {
-      $lector = New-Object System.IO.StreamReader($pedido.InputStream, [System.Text.Encoding]::UTF8)
-      $crudo = $lector.ReadToEnd()
-      $lector.Close()
-
-      $peticion = $crudo | ConvertFrom-Json
-      $bytes = ConvertTo-EscPos $peticion
-
-      # Se vuelve a leer con la MISMA tabla de caracteres de la impresora: si un
-      # acento se rompió al codificar, acá se ve roto igual que en el papel.
-      $comoSeVe = $ENC.GetString($bytes)
-      $comoSeVe = [regex]::Replace($comoSeVe, '\x1B@|\x1Bt.|\x1Ba.|\x1DV..|\x1D!.|\x1BE.|\x1Bd.|\x1Bp...', '')
-
-      Responder $contexto 200 (@{ ok = $true; bytes = $bytes.Length; papel = $comoSeVe } | ConvertTo-Json -Compress)
-      continue
-    }
-
-    if ($ruta -eq '/imprimir' -and $pedido.HttpMethod -eq 'POST') {
-      $lector = New-Object System.IO.StreamReader($pedido.InputStream, [System.Text.Encoding]::UTF8)
-      $crudo = $lector.ReadToEnd()
-      $lector.Close()
-
-      $peticion = $crudo | ConvertFrom-Json
-      $impresora = if ($peticion.impresora) { [string]$peticion.impresora } else { $IMPRESORA_POR_DEFECTO }
-      $titulo = if ($peticion.titulo) { [string]$peticion.titulo } else { 'Rodziny' }
-
-      $bytes = ConvertTo-EscPos $peticion
-      $problema = [ImpresoraCruda]::Enviar($impresora, $bytes, $titulo)
-
-      if ($problema) {
-        Anotar "ERROR imprimiendo en '$impresora': $problema"
-        Responder $contexto 500 (@{ ok = $false; error = $problema } | ConvertTo-Json -Compress)
-      } else {
-        Anotar "Impreso '$titulo' en '$impresora' ($($bytes.Length) bytes)"
-        Responder $contexto 200 (@{ ok = $true; bytes = $bytes.Length } | ConvertTo-Json -Compress)
+      $existe = $false
+      if ($script:cfg.impresora) {
+        $existe = $null -ne (Get-Printer -Name $script:cfg.impresora -ErrorAction SilentlyContinue)
       }
+      $cuerpo = @{
+        ok        = $true
+        agente    = 'rodziny'
+        version   = 2
+        impresora = $script:cfg.impresora
+        instalada = $existe
+        ancho     = $script:cfg.ancho
+        tabla     = $script:cfg.tabla
+      } | ConvertTo-Json -Compress
+      Send-Respuesta $contexto 200 $cuerpo
       continue
     }
 
-    Responder $contexto 404 (@{ ok = $false; error = 'ruta desconocida' } | ConvertTo-Json -Compress)
+    # ── Qué impresoras hay en esta PC ─────────────────────────────────────────
+    if ($ruta -eq '/impresoras') {
+      $lista = @(Get-Impresoras)
+      $tablas = @($TABLAS.Keys | Sort-Object | ForEach-Object {
+          @{ valor = $_; nombre = $TABLAS[$_].nombre }
+        })
+      Send-Respuesta $contexto 200 (@{ ok = $true; impresoras = $lista; tablas = $tablas } | ConvertTo-Json -Compress -Depth 4)
+      continue
+    }
+
+    # ── Elegir impresora ──────────────────────────────────────────────────────
+    if ($ruta -eq '/config' -and $pedido.HttpMethod -eq 'POST') {
+      $peticion = Read-Cuerpo $pedido
+      if ($peticion.impresora) {
+        $existe = $null -ne (Get-Printer -Name ([string]$peticion.impresora) -ErrorAction SilentlyContinue)
+        if (-not $existe) {
+          Send-Respuesta $contexto 400 (@{ ok = $false; error = "En esta PC no hay ninguna impresora llamada '$($peticion.impresora)'." } | ConvertTo-Json -Compress)
+          continue
+        }
+        $script:cfg.impresora = [string]$peticion.impresora
+      }
+      if ($peticion.ancho) { $script:cfg.ancho = [int]$peticion.ancho }
+      if ($null -ne $peticion.tabla) { $script:cfg.tabla = [int]$peticion.tabla }
+      Write-Config
+      Anotar "Configuracion guardada desde el ERP: impresora='$($script:cfg.impresora)' ancho=$($script:cfg.ancho) tabla=$($script:cfg.tabla)"
+      Send-Respuesta $contexto 200 (@{ ok = $true; impresora = $script:cfg.impresora; ancho = $script:cfg.ancho; tabla = $script:cfg.tabla } | ConvertTo-Json -Compress)
+      continue
+    }
+
+    # ── Imprimir una prueba ───────────────────────────────────────────────────
+    if ($ruta -eq '/prueba' -and $pedido.HttpMethod -eq 'POST') {
+      $resultado = Send-ALaImpresora (New-TicketDePrueba) 'Prueba de impresora'
+      $codigo = 500
+      if ($resultado.ok) { $codigo = 200 }
+      Send-Respuesta $contexto $codigo ($resultado | ConvertTo-Json -Compress)
+      continue
+    }
+
+    # ── Vista previa, sin gastar papel ────────────────────────────────────────
+    if ($ruta -eq '/vista-previa' -and $pedido.HttpMethod -eq 'POST') {
+      # Sin renglones se muestra el ticket de prueba: es la forma de calibrar el
+      # ancho y los acentos sin gastar papel.
+      $peticion = Read-Cuerpo $pedido
+      if (-not $peticion -or -not $peticion.lineas) { $peticion = New-TicketDePrueba }
+      $bytes = ConvertTo-EscPos $peticion
+      # Se vuelve a leer con la MISMA tabla de la impresora: si un acento se
+      # rompió al codificar, acá se ve roto igual que en el papel.
+      $enc = [System.Text.Encoding]::GetEncoding((Get-CodepageWindows))
+      $comoSeVe = $enc.GetString($bytes)
+      $comoSeVe = [regex]::Replace($comoSeVe, '\x1B@|\x1Bt.|\x1Ba.|\x1DV..|\x1D!.|\x1BE.|\x1Bd.|\x1Bp...', '')
+      Send-Respuesta $contexto 200 (@{ ok = $true; bytes = $bytes.Length; papel = $comoSeVe } | ConvertTo-Json -Compress)
+      continue
+    }
+
+    # ── Imprimir de verdad ────────────────────────────────────────────────────
+    if ($ruta -eq '/imprimir' -and $pedido.HttpMethod -eq 'POST') {
+      $peticion = Read-Cuerpo $pedido
+      $titulo = if ($peticion.titulo) { [string]$peticion.titulo } else { 'Rodziny' }
+      $resultado = Send-ALaImpresora $peticion $titulo
+      $codigo = 500
+      if ($resultado.ok) { $codigo = 200 }
+      Send-Respuesta $contexto $codigo ($resultado | ConvertTo-Json -Compress)
+      continue
+    }
+
+    Send-Respuesta $contexto 404 (@{ ok = $false; error = 'ruta desconocida' } | ConvertTo-Json -Compress)
   } catch {
     # Un pedido mal formado no puede tumbar el agente: se anota y se sigue.
     Anotar "ERROR atendiendo un pedido: $($_.Exception.Message)"
-    try { Responder $contexto 500 (@{ ok = $false; error = $_.Exception.Message } | ConvertTo-Json -Compress) } catch {}
+    if ($contexto) {
+      try { Send-Respuesta $contexto 500 (@{ ok = $false; error = $_.Exception.Message } | ConvertTo-Json -Compress) } catch { }
+    }
   }
 }
-

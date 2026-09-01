@@ -5,6 +5,15 @@ import { useAuth } from '@/lib/auth';
 import { CAJAS, CAJA_PRUEBAS, TURNOS, turnoSugerido } from '@/lib/turnosCaja';
 import { esVentanaDeCaja } from '@/lib/ventanaCaja';
 import {
+  estadoAgente,
+  impresorasDeLaPC,
+  guardarConfigAgente,
+  imprimirPrueba,
+  type EstadoAgente,
+  type ImpresoraDeLaPC,
+  type TablaDeCaracteres,
+} from '@/lib/impresoraDirecta';
+import {
   DocumentoImpresion,
   imprimir,
   imprimirDirecto,
@@ -113,6 +122,7 @@ export function CajaPage() {
   const localForzado = perfil?.local_restringido ?? null;
   const [local, setLocal] = useState<LocalCaja>((localForzado as LocalCaja) ?? 'vedia');
   const [caja, setCaja] = useState<string>(CAJA_PRUEBAS);
+  const [configImpresora, setConfigImpresora] = useState(false);
 
   const turnoQ = useTurnoAbierto(local, caja);
 
@@ -180,6 +190,16 @@ export function CajaPage() {
             <div className="text-xs text-gray-400">Cajero</div>
           </div>
           <Reloj />
+          {/* La impresora se configura acá y no en el ERP a propósito: es DE
+              ESTA PC. Cada caja tiene la suya, y quien la elige es quien está
+              sentado adelante. */}
+          <button
+            onClick={() => setConfigImpresora(true)}
+            className="rounded border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+            title="Elegir la impresora de esta PC y hacer una prueba"
+          >
+            🖨 Impresora
+          </button>
           {/* La salida tiene que verse: acá no hay menú lateral, y sin un botón
               claro el cajero queda encerrado en el POS. */}
           {enVentanaAparte ? (
@@ -202,7 +222,203 @@ export function CajaPage() {
         </div>
       </header>
       <main className="flex-1 p-4">{cuerpo}</main>
+      {configImpresora && <ModalImpresora onCerrar={() => setConfigImpresora(false)} />}
     </div>
+  );
+}
+
+// ── Configuración de la impresora ────────────────────────────────────────────
+
+/**
+ * Elegir la impresora de ESTA PC y calibrarla.
+ *
+ * No se guarda en la base: cada caja tiene su impresora, así que la
+ * configuración vive en el agente de esa máquina. Si el agente no está
+ * instalado, acá se explica qué hacer.
+ */
+function ModalImpresora({ onCerrar }: { onCerrar: () => void }) {
+  const [cargando, setCargando] = useState(true);
+  const [estado, setEstado] = useState<EstadoAgente | null>(null);
+  const [impresoras, setImpresoras] = useState<ImpresoraDeLaPC[]>([]);
+  const [tablas, setTablas] = useState<TablaDeCaracteres[]>([]);
+  const [elegida, setElegida] = useState('');
+  const [ancho, setAncho] = useState(48);
+  const [tabla, setTabla] = useState(2);
+  const [aviso, setAviso] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [trabajando, setTrabajando] = useState(false);
+
+  useEffect(() => {
+    let vigente = true;
+    (async () => {
+      const e = await estadoAgente();
+      if (!vigente) return;
+      setEstado(e);
+      if (e) {
+        setElegida(e.impresora);
+        setAncho(e.ancho);
+        setTabla(e.tabla);
+        try {
+          const { impresoras: lista, tablas: t } = await impresorasDeLaPC();
+          if (!vigente) return;
+          setImpresoras(lista);
+          setTablas(t);
+        } catch {
+          // el estado ya se mostró; sin lista solo se pierde el desplegable
+        }
+      }
+      if (vigente) setCargando(false);
+    })();
+    return () => {
+      vigente = false;
+    };
+  }, []);
+
+  async function guardar(prueba: boolean) {
+    setError(null);
+    setAviso(null);
+    setTrabajando(true);
+    try {
+      await guardarConfigAgente({ impresora: elegida, ancho, tabla });
+      if (prueba) {
+        await imprimirPrueba();
+        setAviso('Salió la prueba. Fijate en el papel: la fila de números tiene que entrar justa y las eñes tienen que verse bien.');
+      } else {
+        setAviso('Guardado.');
+      }
+      const e = await estadoAgente();
+      setEstado(e);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setTrabajando(false);
+    }
+  }
+
+  return (
+    <Modal titulo="Impresora de esta PC" onCerrar={onCerrar}>
+      {cargando ? (
+        <p className="text-sm text-gray-500">Buscando el agente de impresión…</p>
+      ) : !estado ? (
+        <>
+          <div className="mb-3 rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+            <p className="font-semibold">En esta PC no está el agente de impresión</p>
+            <p className="mt-1 text-xs">
+              La caja igual imprime, pero con el cartel del navegador: hay que confirmar cada
+              ticket a mano. Con el agente sale solo y corta el papel.
+            </p>
+          </div>
+          <p className="mb-2 text-sm text-gray-700">Para instalarlo, en esta misma PC:</p>
+          <ol className="mb-4 list-decimal space-y-1 pl-5 text-sm text-gray-600">
+            <li>
+              Copiar la carpeta <code className="rounded bg-gray-100 px-1">agente-impresion</code>{' '}
+              (está en el proyecto del ERP).
+            </li>
+            <li>
+              Click derecho en <code className="rounded bg-gray-100 px-1">instalar.ps1</code> →{' '}
+              <strong>Ejecutar con PowerShell</strong>.
+            </li>
+            <li>Volver acá y abrir esta ventana de nuevo.</li>
+          </ol>
+          <p className="mb-4 text-xs text-gray-500">
+            No hace falta ser administrador y no se instala ningún programa.
+          </p>
+        </>
+      ) : (
+        <>
+          <label className="mb-1 block text-sm font-medium text-gray-700">Impresora</label>
+          {impresoras.length > 0 ? (
+            <select
+              value={elegida}
+              onChange={(e) => setElegida(e.target.value)}
+              className="mb-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
+            >
+              {impresoras.map((i) => (
+                <option key={i.nombre} value={i.nombre}>
+                  {i.nombre}
+                  {i.probable ? ' — parece térmica' : ''}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <p className="mb-1 rounded border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-600">
+              {estado.impresora || 'ninguna'}
+            </p>
+          )}
+          {!estado.instalada && estado.impresora && (
+            <p className="mb-2 text-xs font-medium text-red-700">
+              La impresora configurada ya no está en esta PC. Elegí otra.
+            </p>
+          )}
+
+          <div className="mb-3 mt-3 grid grid-cols-2 gap-3">
+            <div>
+              <label className="mb-1 block text-xs text-gray-600">Ancho (caracteres)</label>
+              <input
+                type="number"
+                value={ancho}
+                onChange={(e) => setAncho(Number(e.target.value) || 48)}
+                className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+              />
+              <p className="mt-1 text-xs text-gray-400">48 en 80 mm · 32 en 58 mm</p>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs text-gray-600">Acentos y eñes</label>
+              <select
+                value={tabla}
+                onChange={(e) => setTabla(Number(e.target.value))}
+                className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+              >
+                {tablas.map((t) => (
+                  <option key={t.valor} value={t.valor}>
+                    {t.nombre}
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1 text-xs text-gray-400">Si salen símbolos raros, probá otra</p>
+            </div>
+          </div>
+
+          {aviso && (
+            <div className="mb-3 rounded border border-green-300 bg-green-50 px-3 py-2 text-sm text-green-800">
+              {aviso}
+            </div>
+          )}
+          {error && (
+            <div className="mb-3 rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800">
+              {error}
+            </div>
+          )}
+
+          <div className="mb-2 grid grid-cols-2 gap-2">
+            <button
+              disabled={trabajando || !elegida}
+              onClick={() => guardar(true)}
+              className="rounded bg-rodziny-700 px-3 py-2 text-sm font-medium text-white hover:bg-rodziny-800 disabled:opacity-40"
+            >
+              {trabajando ? 'Probando…' : 'Guardar y probar'}
+            </button>
+            <button
+              disabled={trabajando || !elegida}
+              onClick={() => guardar(false)}
+              className="rounded border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-40"
+            >
+              Solo guardar
+            </button>
+          </div>
+        </>
+      )}
+
+      <button
+        onClick={onCerrar}
+        className="w-full rounded border border-gray-300 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50"
+      >
+        Cerrar
+      </button>
+      <p className="mt-2 text-xs text-gray-400">
+        Esta configuración es de esta computadora. Cada caja tiene la suya.
+      </p>
+    </Modal>
   );
 }
 

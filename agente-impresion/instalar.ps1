@@ -1,14 +1,15 @@
-# Instala el agente de impresión de Rodziny en esta PC.
+﻿# Instala el agente de impresión de Rodziny en esta PC.
 #
-# Hace dos cosas y nada más:
+# Hace tres cosas y nada más:
 #   1. Deja el agente arrancando solo cada vez que se prende la máquina.
 #   2. Lo arranca ahora, para no tener que reiniciar.
+#   3. Dice qué impresora encontró.
 #
 # NO necesita permisos de administrador y no instala ningún programa: usa el
 # PowerShell que ya viene con Windows.
 #
-# Para desinstalarlo: borrar el archivo que queda en la carpeta de Inicio
-# (se muestra al final) y cerrar el proceso, o simplemente reiniciar.
+# La impresora NO se configura acá: el agente busca sola una térmica al
+# arrancar, y desde el ERP (Caja → Impresora) se puede elegir otra y probarla.
 
 $ErrorActionPreference = 'Stop'
 
@@ -17,34 +18,17 @@ $agente = Join-Path $aca 'agente-impresion.ps1'
 
 if (-not (Test-Path $agente)) {
   Write-Host "No encuentro 'agente-impresion.ps1' al lado de este instalador." -ForegroundColor Red
-  Write-Host "Copiá la carpeta entera y volvé a intentar."
+  Write-Host "Copia la carpeta entera y volve a intentar."
   Read-Host "Enter para cerrar"
   exit 1
 }
 
-Write-Host ""
-Write-Host "  Agente de impresion de Rodziny" -ForegroundColor Cyan
-Write-Host "  ------------------------------"
-Write-Host ""
+Write-Host ''
+Write-Host '  Agente de impresion de Rodziny' -ForegroundColor Cyan
+Write-Host '  ------------------------------'
+Write-Host ''
 
-# ── 1. Chequear que la impresora exista ──────────────────────────────────────
-$configurada = (Select-String -Path $agente -Pattern "^\`$IMPRESORA_POR_DEFECTO\s*=\s*'([^']+)'" |
-  Select-Object -First 1).Matches.Groups[1].Value
-
-$impresora = Get-Printer -Name $configurada -ErrorAction SilentlyContinue
-if ($impresora) {
-  Write-Host "  [OK] Impresora '$configurada' encontrada ($($impresora.DriverName), $($impresora.PortName))" -ForegroundColor Green
-} else {
-  Write-Host "  [!] No encuentro una impresora llamada '$configurada'." -ForegroundColor Yellow
-  Write-Host "      Las que hay en esta PC son:"
-  Get-Printer | ForEach-Object { Write-Host "        - $($_.Name)" }
-  Write-Host ""
-  Write-Host "      Si la termica tiene otro nombre, abri agente-impresion.ps1 y"
-  Write-Host "      cambia la linea que dice IMPRESORA_POR_DEFECTO."
-  Write-Host ""
-}
-
-# ── 2. Dejarlo en el arranque ────────────────────────────────────────────────
+# ── 1. Dejarlo en el arranque ────────────────────────────────────────────────
 # Va un .vbs y no un acceso directo para que NO parpadee una ventana negra cada
 # vez que se prende la PC.
 $inicio = [Environment]::GetFolderPath('Startup')
@@ -56,36 +40,57 @@ Set sh = CreateObject("WScript.Shell")
 sh.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ""$agente""", 0, False
 "@
 Set-Content -Path $lanzador -Value $vbs -Encoding ASCII
-Write-Host "  [OK] Va a arrancar solo con Windows" -ForegroundColor Green
+Write-Host '  [OK] Va a arrancar solo con Windows' -ForegroundColor Green
 
-# ── 3. Arrancarlo ahora ──────────────────────────────────────────────────────
-$yaEsta = $false
-try {
-  $r = Invoke-RestMethod -Uri 'http://localhost:9110/estado' -TimeoutSec 2
-  $yaEsta = $r.ok -eq $true
-} catch { }
+# ── 2. Arrancarlo ────────────────────────────────────────────────────────────
+$estado = $null
+try { $estado = Invoke-RestMethod -Uri 'http://localhost:9110/estado' -TimeoutSec 2 } catch { }
 
-if ($yaEsta) {
-  Write-Host "  [OK] Ya estaba corriendo" -ForegroundColor Green
+if ($estado -and $estado.ok) {
+  Write-Host '  [OK] Ya estaba corriendo' -ForegroundColor Green
 } else {
   Start-Process wscript.exe -ArgumentList "`"$lanzador`""
   Start-Sleep -Seconds 3
-  try {
-    $r = Invoke-RestMethod -Uri 'http://localhost:9110/estado' -TimeoutSec 3
-    if ($r.ok) { Write-Host "  [OK] Arrancado" -ForegroundColor Green }
-  } catch {
-    Write-Host "  [!] Arranco pero no contesta todavia. Proba de nuevo en unos segundos." -ForegroundColor Yellow
+  try { $estado = Invoke-RestMethod -Uri 'http://localhost:9110/estado' -TimeoutSec 3 } catch { }
+  if ($estado -and $estado.ok) {
+    Write-Host '  [OK] Arrancado' -ForegroundColor Green
+  } else {
+    Write-Host '  [!] Arranco pero no contesta todavia. Proba de nuevo en unos segundos.' -ForegroundColor Yellow
   }
 }
 
-Write-Host ""
-Write-Host "  Listo. Abri la caja en el ERP y cobra una venta: la comanda"
-Write-Host "  tiene que salir sola, sin que aparezca el cartel de imprimir."
-Write-Host ""
-Write-Host "  Si algo no anda, el detalle queda en:"
+# ── 3. Qué impresora encontró ────────────────────────────────────────────────
+Write-Host ''
+if ($estado -and $estado.impresora) {
+  if ($estado.instalada) {
+    Write-Host "  [OK] Impresora elegida: $($estado.impresora)" -ForegroundColor Green
+  } else {
+    Write-Host "  [!] Tiene configurada '$($estado.impresora)' pero ya no esta en esta PC." -ForegroundColor Yellow
+    Write-Host '      Elegi otra desde el ERP, en Caja -> Impresora.'
+  }
+} else {
+  Write-Host '  [!] No encontre ninguna impresora termica en esta PC.' -ForegroundColor Yellow
+  Write-Host '      Las que hay son:'
+  Get-Printer -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "        - $($_.Name)" }
+  Write-Host ''
+  Write-Host '      Si la termica no aparece en la lista, lo que falta es la COLA'
+  Write-Host '      de impresion (no el driver). Para crearla, con la impresora'
+  Write-Host '      enchufada y en una consola como administrador:'
+  Write-Host ''
+  Write-Host '        Add-PrinterDriver -Name "Generic / Text Only"' -ForegroundColor Gray
+  Write-Host '        Add-Printer -Name "POS-80" -DriverName "Generic / Text Only" -PortName "USB001"' -ForegroundColor Gray
+  Write-Host ''
+  Write-Host '      (fijate el puerto real con: Get-PrinterPort | Where-Object Name -like "USB*")'
+}
+
+Write-Host ''
+Write-Host '  Listo. Abri la caja en el ERP y toca "Impresora" para elegirla,'
+Write-Host '  ajustarla y hacer una prueba en papel.'
+Write-Host ''
+Write-Host '  Si algo no anda, el detalle queda en:'
 Write-Host "    $env:LOCALAPPDATA\RodzinyImpresion\agente.log"
-Write-Host ""
-Write-Host "  Para sacarlo del arranque, borra este archivo:"
+Write-Host ''
+Write-Host '  Para sacarlo del arranque, borra este archivo:'
 Write-Host "    $lanzador"
-Write-Host ""
-Read-Host "  Enter para cerrar"
+Write-Host ''
+Read-Host '  Enter para cerrar'
