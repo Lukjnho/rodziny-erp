@@ -216,6 +216,31 @@ export function CierreCaja() {
   // ── mutation: guardar cierre ───────────────────────────────────────────────
   const guardarMut = useMutation({
     mutationFn: async () => {
+      // ⚠️ Un turno que el cajero tiene ABIERTO no aparece en la lista de
+      // arriba (se sigue en vivo desde el módulo Caja). Sin este chequeo el
+      // upsert de más abajo no insertaría una fila nueva: entraría por la clave
+      // única (local, fecha, turno, caja) y le reescribiría los números al
+      // cajero —fondo, contado, retiros— dejándolo sin poder cerrar ni volver a
+      // abrir. La base también lo frena (migración 152), pero acá el aviso
+      // llega antes de escribir nada y dice qué hacer.
+      let buscarAbierto = supabase
+        .from('cierres_caja')
+        .select('id, cajero_nombre')
+        .eq('local', local)
+        .eq('fecha', fFecha)
+        .eq('turno', fTurno)
+        .eq('origen', 'pos')
+        .is('hora_cierre', null);
+      buscarAbierto = fCaja ? buscarAbierto.eq('caja', fCaja) : buscarAbierto.is('caja', null);
+      const { data: turnoAbierto, error: errAbierto } = await buscarAbierto.maybeSingle();
+      if (errAbierto) throw errAbierto;
+      if (turnoAbierto && turnoAbierto.id !== editandoId) {
+        const quien = turnoAbierto.cajero_nombre ? ` (${turnoAbierto.cajero_nombre})` : '';
+        throw new Error(
+          `Esa caja tiene un turno abierto en el punto de venta${quien}. Esperá a que lo cierre desde la caja: recién ahí aparece acá para controlarlo.`,
+        );
+      }
+
       const parse = (v: string) => parseFloat((v || '0').replace(/\./g, '').replace(',', '.')) || 0;
       const contado = parse(fContado);
       const fondoAp = parse(fFondoAp);
