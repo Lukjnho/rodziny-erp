@@ -29,6 +29,17 @@ type Tab =
 type FiltroLocal = 'todos' | 'vedia' | 'saavedra';
 type FiltroEstado = 'activos' | 'todos' | 'prueba' | 'efectivo' | 'suspendido' | 'baja';
 
+type MotivoBaja = 'renuncia' | 'despido' | 'fin_contrato' | 'abandono' | 'acuerdo' | 'otro';
+
+const MOTIVOS_BAJA: { valor: MotivoBaja; label: string }[] = [
+  { valor: 'renuncia', label: 'Renuncia' },
+  { valor: 'despido', label: 'Despido' },
+  { valor: 'fin_contrato', label: 'Fin de contrato' },
+  { valor: 'abandono', label: 'Abandono de trabajo' },
+  { valor: 'acuerdo', label: 'Acuerdo de partes' },
+  { valor: 'otro', label: 'Otro' },
+];
+
 export interface Empleado {
   id: string;
   nombre: string;
@@ -44,6 +55,8 @@ export interface Empleado {
   horas_semanales_requeridas: number | null;
   estado_laboral: 'prueba' | 'efectivo' | 'suspendido' | 'baja';
   fecha_efectivizacion: string | null;
+  fecha_egreso: string | null;
+  motivo_baja: MotivoBaja | null;
   activo: boolean;
   pin_fichaje: string | null;
   observaciones: string | null;
@@ -68,7 +81,9 @@ const ayudaPorTab: Record<Tab, { titulo: string; pasos: string[] }> = {
       'Para efectivizar a alguien, editá su legajo y cambiá el estado a "Efectivo" — se guarda la fecha automáticamente.',
       'Los empleados en prueba con más de 3 meses aparecen con alerta amarilla 🟡.',
       'Usá el botón "Importar CSV" para cargar varios empleados de una vez.',
-      'Para dar de baja, editá y cambiá estado a "Baja" — no se borra, queda en el historial.',
+      'Cuando alguien se va: editá el legajo y poné estado "Baja", con la fecha de egreso y el motivo. No se borra nada — se conservan fichadas, liquidaciones y pagos.',
+      'La baja le corta el fichaje automáticamente: desde ese momento no puede marcar entrada con su DNI y PIN.',
+      'Los legajos no se borran. Si alguien tiene historial cargado, la base directamente no lo deja borrar.',
     ],
   },
   cronograma: {
@@ -492,26 +507,6 @@ function LegajosTab() {
     };
   }, [empleados]);
 
-  async function eliminarEmpleado(emp: Empleado) {
-    const ok = window.confirm(
-      `¿Eliminar definitivamente a ${emp.apellido}, ${emp.nombre}?\n\n` +
-        `Esto borra el legajo. Si tiene fichadas, cronograma u otro historial asociado, ` +
-        `el borrado puede fallar y conviene marcarlo como BAJA desde Editar.`,
-    );
-    if (!ok) return;
-    const { error } = await supabase.from('empleados').delete().eq('id', emp.id);
-    if (error) {
-      window.alert(
-        `No se pudo eliminar: ${error.message}\n\n` +
-          `Probablemente tiene registros asociados (fichadas / cronograma / sueldos). ` +
-          `Editá el legajo y cambiá el estado a "Baja" en vez de borrar.`,
-      );
-      return;
-    }
-    qc.invalidateQueries({ queryKey: ['empleados'] });
-    qc.invalidateQueries({ queryKey: ['empleados-todos'] });
-  }
-
   function abrirNuevo() {
     setEmpleadoEdit(null);
     setModalAbierto(true);
@@ -694,12 +689,6 @@ function LegajosTab() {
                         className="text-xs font-medium text-rodziny-600 hover:text-rodziny-800"
                       >
                         Editar
-                      </button>
-                      <button
-                        onClick={() => eliminarEmpleado(e)}
-                        className="text-xs font-medium text-red-600 hover:text-red-800"
-                      >
-                        Eliminar
                       </button>
                     </div>
                   </td>
@@ -1036,6 +1025,8 @@ function ModalEmpleado({
     horas_semanales_requeridas: empleado?.horas_semanales_requeridas ?? 40,
     estado_laboral: empleado?.estado_laboral ?? 'prueba',
     fecha_efectivizacion: empleado?.fecha_efectivizacion ?? '',
+    fecha_egreso: empleado?.fecha_egreso ?? '',
+    motivo_baja: empleado?.motivo_baja ?? '',
     pin_fichaje: empleado?.pin_fichaje ?? '',
     observaciones: empleado?.observaciones ?? '',
     activo: empleado?.activo ?? true,
@@ -1071,6 +1062,10 @@ function ModalEmpleado({
           form.estado_laboral === 'efectivo'
             ? form.fecha_efectivizacion || new Date().toISOString().split('T')[0]
             : form.fecha_efectivizacion || null,
+        // Los datos de egreso solo viajan si la persona está de baja. Si se corrige
+        // una baja, el disparador de la base los limpia y también apaga el fichaje.
+        fecha_egreso: form.estado_laboral === 'baja' ? form.fecha_egreso || null : null,
+        motivo_baja: form.estado_laboral === 'baja' ? form.motivo_baja || null : null,
         manipulacion_alimentos_vence: form.manipulacion_alimentos_vence || null,
         certificado_domicilio: form.certificado_domicilio,
         certificado_domicilio_fecha: form.certificado_domicilio_fecha || null,
@@ -1232,6 +1227,37 @@ function ModalEmpleado({
                 className="input"
               />
             </Field>
+            {form.estado_laboral === 'baja' && (
+              <>
+                <Field label="Fecha de egreso">
+                  <input
+                    type="date"
+                    value={form.fecha_egreso ?? ''}
+                    onChange={(e) => setForm({ ...form, fecha_egreso: e.target.value })}
+                    className="input"
+                  />
+                  <div className="mt-0.5 text-[10px] text-gray-400">
+                    Último día trabajado. Si lo dejás vacío se guarda la fecha de hoy.
+                  </div>
+                </Field>
+                <Field label="Motivo de la baja">
+                  <select
+                    value={form.motivo_baja ?? ''}
+                    onChange={(e) =>
+                      setForm({ ...form, motivo_baja: e.target.value as MotivoBaja | '' })
+                    }
+                    className="input"
+                  >
+                    <option value="">— Sin especificar —</option>
+                    {MOTIVOS_BAJA.map((m) => (
+                      <option key={m.valor} value={m.valor}>
+                        {m.label}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              </>
+            )}
             <Field label="PIN fichaje (4 dígitos)">
               <input
                 value={form.pin_fichaje}
