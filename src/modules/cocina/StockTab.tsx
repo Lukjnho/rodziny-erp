@@ -1403,6 +1403,19 @@ function formatStock(valor: number, unidad: string): string {
   return Math.round(valor).toLocaleString('es-AR');
 }
 
+// Normaliza el nombre de un ingrediente-puntero a subreceta. Espeja
+// `normalizarNombre` de costeoEngine: el puntero se escribe "Subreceta Bolognesa
+// base (BIENAL)" y la subreceta se llama "Bolognesa base (BIENAL)". No incluimos
+// el fallback de "nombre simplificado" (ese existe para insumos con sufijos de
+// envase tipo "Aceite 1L"); estos punteros son nombres limpios.
+function normPuntero(n: string): string {
+  return (n ?? '')
+    .toLowerCase()
+    .trim()
+    .replace(/^subreceta\s+/i, '')
+    .replace(/\s+/g, ' ');
+}
+
 // El CHECK de cocina_lotes_produccion.unidad solo admite 'kg' | 'unid' | 'lt'.
 // Los productos guardan etiquetas más libres ("unidades", "unidad", "litros"...).
 function unidadLote(u: string): 'kg' | 'unid' | 'lt' {
@@ -1529,26 +1542,122 @@ function CatalogoStock({
   });
   const rankingDem = fudo7d?.[local]?.ranking;
 
+  // ── Puente receta vendible → subreceta Base ────────────────────────────────
+  // El QR de salsas carga contra la subreceta *Base* (rol='salsa_base') desde
+  // jun-2026, pero en Vedia los productos apuntan a la receta *vendible* (que es
+  // solo la referencia de costeo: 1 ingrediente = "Subreceta X 0,2 kg"). Sin este
+  // puente los lotes reales no matchean con ningún producto y el stock queda
+  // congelado en el último lote que sí matcheaba.
+  //
+  // Regla: UN SOLO salto, y solo desde una receta vendible (tipo='receta') hacia
+  // su ingrediente-puntero tipo='subreceta'. Si el producto YA apunta a una
+  // subreceta (patrón de Saavedra), no se salta nada: esa base ES la unidad de
+  // producción, y seguir bajando contaría sus componentes como si fueran stock.
+  //
+  // SOLO SALSAS. En salsas el puente es 1:1 limpio: la Base ES la olla que se
+  // produce. En el resto NO lo es y sumarla mentiría feo:
+  //   - "Facturas" apunta a "Masa para factura" Y a "Crema Pastelera"
+  //     → kg de crema contados como unidades de factura.
+  //   - "Ñoquis de papa" y "Capeletti" apuntan a "Servicio Salón" (pan+queso).
+  //   - "Budín de Pan" apunta a "Crema chantilli".
+  // Además panificados/postres SIGUEN cargando contra la vendible, así que el
+  // salto sería doble conteo, no un arreglo. Ver LANDMINE en project_modelo_salsas.
+  const recetaIdsProductos = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          productos
+            .filter((p) => p.local === local && p.activo && p.tipo === 'salsa' && p.receta_id)
+            .map((p) => p.receta_id as string),
+        ),
+      ).sort(),
+    [productos, local],
+  );
+
+  const { data: basePorReceta } = useQuery({
+    queryKey: ['cocina-catalogo-puente-base', local, recetaIdsProductos],
+    enabled: recetaIdsProductos.length > 0,
+    queryFn: async () => {
+      const { data: recetasRaw, error: errRec } = await supabase
+        .from('cocina_recetas')
+        .select('id, nombre, local, tipo');
+      if (errRec) throw errRec;
+      const todas = (recetasRaw ?? []) as {
+        id: string;
+        nombre: string;
+        local: string | null;
+        tipo: string | null;
+      }[];
+
+      // Solo saltamos desde vendibles. Un producto que ya apunta a una subreceta
+      // queda fuera y sigue matcheando por receta_id como hasta ahora.
+      const vendibles = todas
+        .filter((r) => r.tipo === 'receta' && recetaIdsProductos.includes(r.id))
+        .map((r) => r.id);
+      const vacio = new Map<string, string[]>();
+      if (vendibles.length === 0) return vacio;
+
+      const { data: ings, error: errIng } = await supabase
+        .from('cocina_receta_ingredientes')
+        .select('receta_id, nombre, producto_id')
+        .in('receta_id', vendibles);
+      if (errIng) throw errIng;
+
+      // Índice de subrecetas por nombre normalizado (con local y sin local).
+      const subPorNombreLocal = new Map<string, string>();
+      const subPorNombre = new Map<string, string>();
+      for (const r of todas) {
+        if (r.tipo !== 'subreceta') continue;
+        const k = normPuntero(r.nombre);
+        const kl = `${k}|${r.local ?? ''}`;
+        if (!subPorNombreLocal.has(kl)) subPorNombreLocal.set(kl, r.id);
+        if (!subPorNombre.has(k)) subPorNombre.set(k, r.id);
+      }
+
+      const out = new Map<string, string[]>();
+      for (const ing of (ings ?? []) as {
+        receta_id: string;
+        nombre: string;
+        producto_id: string | null;
+      }[]) {
+        // Un puntero a subreceta no tiene insumo comprado detrás.
+        if (ing.producto_id != null) continue;
+        const k = normPuntero(ing.nombre);
+        const subId = subPorNombreLocal.get(`${k}|${local}`) ?? subPorNombre.get(k);
+        if (!subId) continue;
+        const prev = out.get(ing.receta_id) ?? [];
+        if (!prev.includes(subId)) prev.push(subId);
+        out.set(ing.receta_id, prev);
+      }
+      return out;
+    },
+  });
+
   // Stock por producto = Σ (producido − merma) de lotes activos que matchean por
-  // nombre (nombre_libre) o por receta vinculada. Overwrite ⇒ normalmente 1 lote.
+  // nombre (nombre_libre), por receta vinculada, o por la subreceta Base a la que
+  // esa receta apunta. Overwrite ⇒ normalmente 1 lote.
   const stockPorProducto = useMemo(() => {
     const m = new Map<string, number>();
     for (const prod of productos) {
       if (prod.local !== local || !prod.activo) continue;
       const objetivoNombre = normNombre(prod.nombre);
+      const basesDelProducto = prod.receta_id
+        ? (basePorReceta?.get(prod.receta_id) ?? [])
+        : [];
       let total = 0;
       for (const l of lotes ?? []) {
         const matchNombre =
           !!l.nombre_libre && normNombre(l.nombre_libre) === objetivoNombre;
         const matchReceta = !!prod.receta_id && l.receta_id === prod.receta_id;
-        if (matchNombre || matchReceta) {
+        const matchBase = !!l.receta_id && basesDelProducto.includes(l.receta_id);
+        if (matchNombre || matchReceta || matchBase) {
           total += Math.max(0, Number(l.cantidad_producida) - (Number(l.merma_cantidad) || 0));
         }
       }
       m.set(prod.id, total);
     }
     return m;
-  }, [productos, lotes, local]);
+  }, [productos, lotes, local, basePorReceta]);
 
   // Solo los controlados van al catálogo; los demás aparecen en la sección
   // colapsable "Sin control de stock" (abajo, admin) para re-activarlos.

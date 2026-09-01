@@ -28,6 +28,7 @@ import {
   type RecetaRow,
 } from '@/modules/cocina/lib/costeoEngine';
 import { VinculacionFudoSelector } from './VinculacionFudoSelector';
+import { generarCodigo } from '../lib/codigoProducto';
 
 interface IngredienteForm {
   tempId: string;
@@ -67,6 +68,85 @@ const TIPO_PRODUCTO_A_CATEGORIA: Record<string, RecetaCategoria | ''> = {
   panificado: 'panificado',
   bebida: 'bebida',
   milanesa: '',
+};
+
+// ── Alta del producto de stock desde la receta ──────────────────────────────
+// Quien manda en Cocina › Stock es el PRODUCTO (cocina_productos), no la receta:
+// una receta sin producto vinculado no aparece en Stock. Antes el bloque
+// "Control de stock" solo se dibujaba si el producto ya existía, así que una
+// receta nueva (ej. una salsa recién costeada) no tenía forma de entrar al stock
+// desde acá. Estos mapeos derivan los defaults del producto desde la receta
+// abierta para no reescribir a mano lo que ya está cargado.
+
+const TIPOS_PRODUCTO = [
+  'pasta',
+  'salsa',
+  'postre',
+  'panificado',
+  'milanesa',
+  'relleno',
+  'masa',
+  'bebida',
+] as const;
+type TipoProducto = (typeof TIPOS_PRODUCTO)[number];
+
+const TIPO_PRODUCTO_LABEL: Record<TipoProducto, string> = {
+  pasta: 'Pasta',
+  salsa: 'Salsa',
+  postre: 'Postre',
+  panificado: 'Pan',
+  milanesa: 'Milanesa',
+  relleno: 'Relleno',
+  masa: 'Masa',
+  bebida: 'Bebida',
+};
+
+// Categoría de la receta → tipo del producto.
+const CATEGORIA_A_TIPO_PRODUCTO: Partial<Record<RecetaCategoria, TipoProducto>> = {
+  pasta: 'pasta',
+  salsa: 'salsa',
+  postre: 'postre',
+  pasteleria: 'postre',
+  panificado: 'panificado',
+  bebida: 'bebida',
+  cafeteria: 'bebida',
+};
+
+// Rol de la subreceta → tipo. Manda sobre la categoría: una subreceta no es el
+// producto vendible sino su componente (un relleno de pasta es 'relleno', no 'pasta').
+const ROL_A_TIPO_PRODUCTO: Partial<Record<SubrecetaRol, TipoProducto>> = {
+  relleno: 'relleno',
+  masa: 'masa',
+  masa_panaderia: 'masa',
+  salsa_base: 'salsa',
+  postre_base: 'postre',
+  pasteleria_base: 'postre',
+  panificado: 'panificado',
+  bebida_base: 'bebida',
+};
+
+// Unidad con la que se cuenta cada tipo en Cocina (las salsas se pesan, las
+// pastas se cuentan por porción). Es solo el default del alta: se puede cambiar.
+const UNIDAD_POR_TIPO_PRODUCTO: Record<TipoProducto, string> = {
+  pasta: 'porciones',
+  salsa: 'kg',
+  relleno: 'kg',
+  masa: 'kg',
+  postre: 'unidades',
+  panificado: 'unidades',
+  milanesa: 'unidades',
+  bebida: 'unidades',
+};
+
+const UNIDADES_PRODUCTO = ['porciones', 'unidades', 'kg', 'litros'];
+
+// Tipos que Cocina › Stock realmente lista por local (espeja StockTab: la tabla
+// de pastas + CATALOGO_TIPOS_VEDIA / CATALOGO_TIPOS_SAAVEDRA). Un relleno o una
+// masa se pueden crear igual, pero no se ven en Stock: se avisa en vez de
+// dejar que el producto desaparezca sin explicación.
+const TIPOS_EN_STOCK: Record<string, TipoProducto[]> = {
+  vedia: ['pasta', 'salsa', 'postre'],
+  saavedra: ['pasta', 'milanesa', 'postre', 'panificado', 'salsa'],
 };
 
 // Editor inline de la receta (apartado ancho, NO modal). Misma lista que
@@ -166,6 +246,123 @@ export function RecetaEditorInline({
       return (data ?? []) as ProductoVinculado[];
     },
   });
+
+  // ── Alta del producto de stock (solo si la receta todavía no tiene ninguno) ──
+  // Los campos arrancan vacíos y caen al default derivado de la receta; se
+  // guardan sueltos para que el usuario pueda pisarlos sin efectos que lo pisen
+  // a él de vuelta.
+  const [altaTipo, setAltaTipo] = useState<TipoProducto | ''>('');
+  const [altaUnidad, setAltaUnidad] = useState('');
+  const [altaMinimo, setAltaMinimo] = useState('');
+  const [altaGuardando, setAltaGuardando] = useState(false);
+  const [altaError, setAltaError] = useState('');
+
+  const tipoProductoSugerido = useMemo<TipoProducto | ''>(() => {
+    if (rol && ROL_A_TIPO_PRODUCTO[rol]) return ROL_A_TIPO_PRODUCTO[rol]!;
+    if (categoria && CATEGORIA_A_TIPO_PRODUCTO[categoria]) {
+      return CATEGORIA_A_TIPO_PRODUCTO[categoria]!;
+    }
+    return '';
+  }, [rol, categoria]);
+
+  const tipoAlta = altaTipo || tipoProductoSugerido;
+  const unidadAlta =
+    altaUnidad || (tipoAlta ? UNIDAD_POR_TIPO_PRODUCTO[tipoAlta] : '') || 'unidades';
+  const localAlta = receta?.local ?? localState;
+  const seVeEnStock = !tipoAlta || (TIPOS_EN_STOCK[localAlta] ?? []).includes(tipoAlta);
+
+  // Crea el cocina_productos derivado de la receta abierta y lo deja controlando
+  // stock. Es una acción propia (no espera al "Guardar" de la receta) para que el
+  // producto exista aunque después se cancele la edición.
+  const ponerEnStock = async () => {
+    if (!receta) return;
+    if (!tipoAlta) {
+      setAltaError('Elegí el tipo para saber en qué lista de Cocina va.');
+      return;
+    }
+    const minimoNum = altaMinimo.trim() === '' ? null : Number(altaMinimo.replace(',', '.'));
+    if (minimoNum != null && (Number.isNaN(minimoNum) || minimoNum < 0)) {
+      setAltaError('El mínimo debe ser un número válido.');
+      return;
+    }
+    setAltaGuardando(true);
+    setAltaError('');
+    try {
+      // Antes de crear: ¿ya hay un producto con este nombre en el local? Si lo hay
+      // y está suelto, se ENGANCHA a esta receta en vez de duplicarlo (ilike =
+      // comparación exacta pero sin distinguir mayúsculas: "Crema De Hongos"
+      // matchea "Crema de Hongos"). Duplicar productos rompe el stock: quedan dos
+      // filas compitiendo por los mismos lotes.
+      const { data: existentes, error: errBusq } = await supabase
+        .from('cocina_productos')
+        .select('id, nombre, receta_id')
+        .eq('local', localAlta)
+        .eq('activo', true)
+        .ilike('nombre', receta.nombre);
+      if (errBusq) throw errBusq;
+      const yaExiste = (existentes ?? [])[0] as
+        | { id: string; nombre: string; receta_id: string | null }
+        | undefined;
+
+      if (yaExiste && yaExiste.receta_id && yaExiste.receta_id !== receta.id) {
+        setAltaError(
+          `Ya existe el producto "${yaExiste.nombre}" en ${localAlta} enganchado a OTRA receta. Revisalo antes de duplicarlo.`,
+        );
+        return;
+      }
+
+      if (yaExiste) {
+        // Existía suelto (o ya era de esta receta pero sin control): se engancha
+        // y se prende el control, sin tocar su tipo/unidad/código actuales.
+        const { error: errUpd } = await supabase
+          .from('cocina_productos')
+          .update({
+            receta_id: receta.id,
+            controla_stock: true,
+            minimo_produccion: minimoNum,
+          })
+          .eq('id', yaExiste.id);
+        if (errUpd) throw errUpd;
+      } else {
+        // `codigo` es NOT NULL + UNIQUE: lo generamos con la misma regla del ABM,
+        // leyendo los códigos en uso recién ahora (no cacheado) para no chocar.
+        const { data: codigos, error: errCod } = await supabase
+          .from('cocina_productos')
+          .select('codigo');
+        if (errCod) throw errCod;
+        const usados = new Set(
+          (codigos ?? []).map((c: { codigo: string | null }) => (c.codigo ?? '').toLowerCase()),
+        );
+        const { error: errIns } = await supabase.from('cocina_productos').insert({
+          nombre: receta.nombre,
+          codigo: generarCodigo(receta.nombre, usados),
+          tipo: tipoAlta,
+          unidad: unidadAlta,
+          local: localAlta,
+          activo: true,
+          controla_stock: true,
+          minimo_produccion: minimoNum,
+          receta_id: receta.id,
+        });
+        if (errIns) throw errIns;
+      }
+      // Refresca este bloque + Cocina › Stock (tabla y catálogo) + el badge de
+      // la grilla de Costeo + la lista de huérfanos.
+      qc.invalidateQueries({ queryKey: ['receta-productos-vinculados', receta.id] });
+      qc.invalidateQueries({ queryKey: ['cocina-productos'] });
+      qc.invalidateQueries({ queryKey: ['cocina-catalogo-lotes'] });
+      qc.invalidateQueries({ queryKey: ['costeo-productos-stock'] });
+      qc.invalidateQueries({ queryKey: ['costeo-huerfanos'] });
+    } catch (err: unknown) {
+      const msg =
+        err instanceof Error
+          ? err.message
+          : ((err as { message?: string })?.message ?? 'Error desconocido');
+      setAltaError(msg);
+    } finally {
+      setAltaGuardando(false);
+    }
+  };
 
   // Inicializa el estado editable la primera vez que llega cada producto (sin pisar
   // ediciones en curso del usuario).
@@ -478,6 +675,7 @@ export function RecetaEditorInline({
         // Refresca catálogo de stock, plan de producción y ABM del producto.
         qc.invalidateQueries({ queryKey: ['cocina-productos'] });
         qc.invalidateQueries({ queryKey: ['cocina-catalogo-lotes'] });
+        qc.invalidateQueries({ queryKey: ['costeo-productos-stock'] });
         qc.invalidateQueries({ queryKey: ['producto-form'] });
         qc.invalidateQueries({ queryKey: ['receta-productos-vinculados', receta?.id] });
       }
@@ -816,8 +1014,97 @@ export function RecetaEditorInline({
         </div>
       </div>
 
-      {/* Control de stock de los productos vinculados — solo al editar. El
-          checkbox vive en cocina_productos; lo exponemos acá por comodidad. */}
+      {/* Control de stock — solo al editar. El checkbox vive en cocina_productos;
+          lo exponemos acá porque Productos es la fuente del alta y de la baja.
+          Si la receta todavía no tiene producto, el bloque NO se esconde: ofrece
+          crearlo (antes quedabas sin ninguna forma de meterla en Stock). */}
+      {!creando && productosVinculados && productosVinculados.length === 0 && (
+        <div className="rounded-lg border border-dashed border-rodziny-300 bg-rodziny-50/40 p-3">
+          <label className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-gray-500">
+            Control de stock
+          </label>
+          <p className="text-xs text-gray-600">
+            Esta receta <strong>no está en el Stock de Cocina</strong>. Ponela en stock para que
+            aparezca en Cocina › Stock y se le pueda cargar el pesaje.
+          </p>
+          {tipo === 'subreceta' && (
+            <p className="mt-1 text-[11px] text-purple-700">
+              Ojo: esto es una <strong>subreceta</strong> (un componente, no lo que se vende). Lo
+              normal es poner en Stock la receta terminada. Solo tiene sentido acá si en cocina
+              guardan y cuentan este componente aparte (ej. un relleno o un puré).
+            </p>
+          )}
+          <div className="mt-3 flex flex-wrap items-end gap-3">
+            <div>
+              <label className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-gray-500">
+                Tipo
+              </label>
+              <select
+                value={tipoAlta}
+                onChange={(e) => setAltaTipo(e.target.value as TipoProducto | '')}
+                className="rounded border border-gray-300 px-2 py-1.5 text-sm"
+              >
+                <option value="">Elegí…</option>
+                {TIPOS_PRODUCTO.map((t) => (
+                  <option key={t} value={t}>
+                    {TIPO_PRODUCTO_LABEL[t]}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-gray-500">
+                Unidad
+              </label>
+              <select
+                value={unidadAlta}
+                onChange={(e) => setAltaUnidad(e.target.value)}
+                className="rounded border border-gray-300 px-2 py-1.5 text-sm"
+              >
+                {UNIDADES_PRODUCTO.map((u) => (
+                  <option key={u} value={u}>
+                    {u}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="max-w-[9rem]">
+              <label className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-gray-500">
+                Mínimo (opcional)
+              </label>
+              <input
+                type="text"
+                inputMode="numeric"
+                value={altaMinimo}
+                onChange={(e) => setAltaMinimo(e.target.value)}
+                placeholder="Ej. 100"
+                className="w-full rounded border border-gray-300 px-2 py-1.5 text-right text-sm tabular-nums"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={ponerEnStock}
+              disabled={altaGuardando}
+              className="rounded bg-rodziny-600 px-3 py-2 text-xs font-medium text-white hover:bg-rodziny-700 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {altaGuardando ? 'Poniendo…' : 'Ponerla en Stock'}
+            </button>
+          </div>
+          {!seVeEnStock && (
+            <p className="mt-2 text-[11px] font-medium text-amber-700">
+              ⚠ Cocina › Stock de <span className="capitalize">{localAlta}</span> no lista los de
+              tipo <strong>{TIPO_PRODUCTO_LABEL[tipoAlta as TipoProducto]}</strong>. Se crea igual
+              (sirve para el costeo y el plan), pero no vas a verlo en esa pantalla.
+            </p>
+          )}
+          {altaError && <p className="mt-2 text-xs text-red-600">{altaError}</p>}
+          <p className="mt-2 text-[10px] italic text-gray-400">
+            Se crea con el nombre, el local y la receta de acá — no hay que reescribir nada. Para
+            sacarlo después, destildá "Controlar stock".
+          </p>
+        </div>
+      )}
+
       {!creando && productosVinculados && productosVinculados.length > 0 && (
         <div className="rounded-lg border border-rodziny-200 bg-white p-3">
           <label className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-gray-500">

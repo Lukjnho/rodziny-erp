@@ -160,6 +160,27 @@ export function FichaProductoTab() {
     },
   });
 
+  // Recetas que hoy están en Cocina › Stock. El control de stock vive en el
+  // producto (cocina_productos.controla_stock), no en la receta: esto es solo
+  // para mostrar el badge en la grilla y no tener que abrir una por una.
+  const { data: recetasEnStock } = useQuery({
+    queryKey: ['costeo-productos-stock'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('cocina_productos')
+        .select('receta_id, controla_stock')
+        .eq('activo', true)
+        .not('receta_id', 'is', null);
+      if (error) throw error;
+      const set = new Set<string>();
+      for (const p of (data ?? []) as { receta_id: string; controla_stock: boolean | null }[]) {
+        // controla_stock null = default true (mismo criterio que StockTab).
+        if (p.controla_stock !== false) set.add(p.receta_id);
+      }
+      return set;
+    },
+  });
+
   const { costos, ctx } = useCostosRecetas();
 
   // Vocabulario unificado para el filtro: usa tipoEfectivo(r) — mismo valor que
@@ -366,6 +387,8 @@ export function FichaProductoTab() {
     qc.invalidateQueries({ queryKey: ['cocina-recetas-costeo'] });
     qc.invalidateQueries({ queryKey: ['cocina-receta-ingredientes-costeo'] });
     qc.invalidateQueries({ queryKey: ['productos-costeo'] });
+    // El editor puede haber tildado/destildado el control de stock → refrescar el badge.
+    qc.invalidateQueries({ queryKey: ['costeo-productos-stock'] });
   };
 
   // ─── Costear huérfano: crear su receta en la grilla (flujo principal) ──────
@@ -695,6 +718,14 @@ export function FichaProductoTab() {
                       {r.vendible && (
                         <span className="rounded bg-green-100 px-1.5 py-0.5 text-[9px] font-medium text-green-700">
                           Menú
+                        </span>
+                      )}
+                      {recetasEnStock?.has(r.id) && (
+                        <span
+                          className="rounded bg-sky-100 px-1.5 py-0.5 text-[9px] font-medium text-sky-700"
+                          title="Aparece en Cocina › Stock"
+                        >
+                          Stock
                         </span>
                       )}
                       {!r.activo && (

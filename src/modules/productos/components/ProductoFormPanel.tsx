@@ -4,6 +4,7 @@ import { supabase } from '@/lib/supabase';
 import { formatARS } from '@/lib/utils';
 import { useCostosRecetas } from '@/modules/cocina/hooks/useCostosRecetas';
 import { VinculacionFudoSelector } from './VinculacionFudoSelector';
+import { generarCodigo } from '../lib/codigoProducto';
 
 // ABM de cocina_productos como APARTADO inline ancho (no modal): alta/edición
 // de la definición del producto + vincular receta existente + activo + eliminar.
@@ -59,26 +60,6 @@ const CAT_RECETA_LABEL: Record<string, string> = {
   packaging: 'Packaging',
   otros: 'Otras',
 };
-
-// Código de lote auto: slug de la 1ª palabra del nombre (sin tildes/ñ, alfanum,
-// 4 chars) + sufijo numérico si choca con uno existente. cocina_productos.codigo
-// es NOT NULL + UNIQUE. Solo se usa al CREAR; al editar no se toca.
-function generarCodigo(nombre: string, existentes: Set<string>): string {
-  const base =
-    nombre
-      .toLowerCase()
-      .normalize('NFD')
-      .replace(/[̀-ͯ]/g, '')
-      .replace(/ñ/g, 'n')
-      .replace(/[^a-z0-9\s]/g, '')
-      .trim()
-      .split(/\s+/)[0]
-      ?.slice(0, 4) || 'prod';
-  if (!existentes.has(base)) return base;
-  let i = 2;
-  while (existentes.has(`${base}${i}`)) i++;
-  return `${base}${i}`;
-}
 
 interface RecetaOpcion {
   id: string;
