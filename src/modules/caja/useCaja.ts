@@ -1,5 +1,7 @@
+import { useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { avisarCambioDeTurno, escucharCambioDeTurno } from '@/lib/avisoCaja';
 
 export type LocalCaja = 'vedia' | 'saavedra';
 
@@ -262,6 +264,21 @@ export interface TurnoAbiertoResumen {
  * local y la del administrador se pisarían en la caché.
  */
 export function useTurnosAbiertos(local: LocalCaja | null, habilitado = true) {
+  const qc = useQueryClient();
+
+  // El POS corre en su propia ventana, con su propia copia de los datos: al
+  // cerrar un turno allá, acá no se entera y el menú sigue diciendo "Turno en
+  // curso" con el arqueo ya cerrado. Esto lo actualiza en el momento, sin
+  // esperar el minuto del refresco ni que el usuario haga foco en la ventana.
+  useEffect(
+    () =>
+      escucharCambioDeTurno(() => {
+        qc.invalidateQueries({ queryKey: ['caja-turnos-abiertos'] });
+        qc.invalidateQueries({ queryKey: ['caja-turno-abierto'] });
+      }),
+    [qc],
+  );
+
   return useQuery({
     queryKey: ['caja-turnos-abiertos', local],
     enabled: habilitado,
@@ -483,6 +500,8 @@ export function useAbrirTurno() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['caja-turno-abierto'] });
       qc.invalidateQueries({ queryKey: ['caja-turnos-abiertos'] });
+      // el POS está en otra ventana: hay que avisarle al ERP
+      avisarCambioDeTurno();
     },
   });
 }
@@ -616,7 +635,7 @@ export function useCerrarTurno() {
         if (eMedios) throw eMedios;
       }
 
-      const { error } = await supabase
+      const { data: cerrado, error } = await supabase
         .from('cierres_caja')
         .update({
           monto_contado: montoContado,
@@ -648,13 +667,26 @@ export function useCerrarTurno() {
           fondo_siguiente: 0,
           nota: input.nota,
         })
-        .eq('id', input.turnoId);
+        .eq('id', input.turnoId)
+        .select('id');
       if (error) throw error;
+      // ⚠️ Cuando la base no deja tocar la fila (permiso, o el turno ya estaba
+      // cerrado) NO tira error: devuelve cero filas. Sin este control la
+      // pantalla decía "listo", volvía al ERP y el turno seguía abierto —
+      // exactamente el síntoma de "sigue diciendo turno en curso".
+      if (!cerrado || cerrado.length === 0) {
+        throw new Error(
+          'No se pudo cerrar el turno: puede que ya lo haya cerrado alguien más. Actualizá la pantalla y fijate cómo quedó antes de volver a intentar.',
+        );
+      }
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['caja-turno-abierto'] });
       qc.invalidateQueries({ queryKey: ['caja-turnos-abiertos'] });
       qc.invalidateQueries({ queryKey: ['caja-ventas-turno'] });
+      // el POS está en otra ventana: sin esto el menú del ERP se queda con el
+      // cartel "Turno en curso" hasta el próximo refresco
+      avisarCambioDeTurno();
     },
   });
 }
