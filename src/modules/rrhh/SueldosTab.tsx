@@ -12,6 +12,7 @@ import {
   normalizarTexto,
   montoPresentismo,
   esTardanzaReal,
+  trabajoEnElPeriodo,
   type Quincena,
 } from './utils';
 import type {
@@ -206,16 +207,13 @@ export function SueldosTab() {
 
   // ── Queries ──────────────────────────────────────────────────────────────
   const { data: empleados } = useQuery({
-    // Key propia por filtro: trae solo activos. NO compartir 'empleados' a secas con
-    // los tabs que traen TODOS (Aguinaldo/Horas/etc.) o el primero que cargue gana el cache.
-    queryKey: ['empleados', 'activos'],
+    // Trae TODOS los empleados y el filtrado por período se hace abajo, en JS: una
+    // persona dada de baja debe seguir apareciendo en los meses que sí trabajó.
+    // La key coincide con la de los demás tabs que traen todos (misma query, mismo
+    // resultado), así que compartir cache acá es correcto.
+    queryKey: ['empleados', 'todos'],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('empleados')
-        .select('*')
-        .eq('activo', true)
-        .neq('estado_laboral', 'baja')
-        .order('apellido');
+      const { data, error } = await supabase.from('empleados').select('*').order('apellido');
       if (error) throw error;
       return data as Empleado[];
     },
@@ -479,11 +477,11 @@ export function SueldosTab() {
       }
     },
     onMutate: async (payload) => {
-      await qc.cancelQueries({ queryKey: ['empleados', 'activos'] });
-      const previo = qc.getQueryData<Empleado[]>(['empleados', 'activos']);
+      await qc.cancelQueries({ queryKey: ['empleados', 'todos'] });
+      const previo = qc.getQueryData<Empleado[]>(['empleados', 'todos']);
       if (previo) {
         qc.setQueryData<Empleado[]>(
-          ['empleados', 'activos'],
+          ['empleados', 'todos'],
           previo.map((e) =>
             e.id === payload.id ? { ...e, modalidad_cobro: payload.modalidad } : e,
           ),
@@ -492,7 +490,7 @@ export function SueldosTab() {
       return { previo };
     },
     onError: (e: Error, _v, ctx) => {
-      if (ctx?.previo) qc.setQueryData(['empleados', 'activos'], ctx.previo);
+      if (ctx?.previo) qc.setQueryData(['empleados', 'todos'], ctx.previo);
       window.alert(`Error al cambiar modalidad: ${e.message}`);
     },
     onSettled: () => {
@@ -505,9 +503,10 @@ export function SueldosTab() {
   const empleadosFiltrados = useMemo(() => {
     if (!empleados) return [];
     return empleados.filter((e) => {
-      // Defensa: aunque la query SQL ya excluye bajas, filtramos en JS por si
-      // el cache de React Query estuvo contaminado por otra query.
-      if (!e.activo || e.estado_laboral === 'baja') return false;
+      // Se muestran los que trabajaron en el mes que se está viendo: quien se fue
+      // en septiembre tiene que seguir apareciendo en la quincena de agosto que
+      // trabajó y cobró.
+      if (!trabajoEnElPeriodo(e, fechaDesdeMes)) return false;
       if (filtroLocal === 'vedia' && e.local !== 'vedia') return false;
       if (filtroLocal === 'saavedra' && e.local !== 'saavedra') return false;
       if (busqueda.trim()) {
@@ -517,7 +516,7 @@ export function SueldosTab() {
       }
       return true;
     });
-  }, [empleados, filtroLocal, busqueda]);
+  }, [empleados, filtroLocal, busqueda, fechaDesdeMes]);
 
   // ── Filas calculadas ─────────────────────────────────────────────────────
   // Stats de asistencia por empleado (para resumen inline)

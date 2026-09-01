@@ -9,6 +9,7 @@ import {
   etiquetaDia,
   normalizarTexto,
   ultimoDiaDelMes,
+  trabajoEnElPeriodo,
   type Quincena,
   type TurnoCrono,
 } from './utils';
@@ -217,8 +218,8 @@ export function HorasTab() {
 
   const resumenes = useMemo<ResumenEmpleado[]>(() => {
     if (!empleados || !cronograma || !fichadas) return [];
-    const activos = empleados.filter((e) => e.activo && e.estado_laboral !== 'baja');
-    const filtrados = activos.filter((e) => {
+    const delPeriodo = empleados.filter((e) => trabajoEnElPeriodo(e, fechaDesde));
+    const filtrados = delPeriodo.filter((e) => {
       if (filtroLocal !== 'todos' && e.local !== filtroLocal) return false;
       if (busqueda.trim()) {
         const q = normalizarTexto(busqueda);
@@ -283,7 +284,7 @@ export function HorasTab() {
         dias,
       };
     });
-  }, [empleados, cronograma, fichadas, todosDias, filtroLocal, busqueda]);
+  }, [empleados, cronograma, fichadas, todosDias, filtroLocal, busqueda, fechaDesde]);
 
   const visibles = useMemo(() => {
     let arr = resumenes;

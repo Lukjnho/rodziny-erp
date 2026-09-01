@@ -15,6 +15,7 @@ import {
   parseYmd,
   ultimoDiaDelMes,
   ymd,
+  trabajoEnElPeriodo,
   type Quincena,
   type TurnoCrono,
 } from './utils';
@@ -123,16 +124,11 @@ export function AsistenciaTab() {
 
   // ── Datos ────────────────────────────────────────────────────────────────
   const { data: empleados } = useQuery({
-    // Key propia por filtro (activos sin baja). No compartir 'empleados' a secas con
-    // los tabs que traen TODOS los empleados (el primero que carga gana el cache).
-    queryKey: ['empleados', 'activos-sin-baja'],
+    // Trae TODOS y el filtrado por quincena se hace abajo: quien se fue en
+    // septiembre tiene que seguir apareciendo en la asistencia de agosto.
+    queryKey: ['empleados', 'todos'],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('empleados')
-        .select('*')
-        .eq('activo', true)
-        .neq('estado_laboral', 'baja')
-        .order('apellido');
+      const { data, error } = await supabase.from('empleados').select('*').order('apellido');
       if (error) throw error;
       return data as Empleado[];
     },
@@ -171,6 +167,7 @@ export function AsistenciaTab() {
   const empleadosFiltrados = useMemo(() => {
     if (!empleados) return [];
     return empleados.filter((e) => {
+      if (!trabajoEnElPeriodo(e, fechaDesde)) return false;
       if (filtroLocal === 'vedia' && e.local !== 'vedia') return false;
       if (filtroLocal === 'saavedra' && e.local !== 'saavedra') return false;
       if (busqueda.trim()) {
@@ -180,7 +177,7 @@ export function AsistenciaTab() {
       }
       return true;
     });
-  }, [empleados, filtroLocal, busqueda]);
+  }, [empleados, filtroLocal, busqueda, fechaDesde]);
 
   const empleadoIdsFiltrados = useMemo(
     () => new Set(empleadosFiltrados.map((e) => e.id)),

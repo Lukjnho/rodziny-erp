@@ -346,6 +346,26 @@ export function quincenaDeFecha(fecha: string): Quincena {
   return d.getDate() <= 14 ? 'q1' : 'q2';
 }
 
+// ── ¿Este empleado corresponde al período que se está mirando? ──────────────
+// Una baja NO borra el pasado. Si alguien se fue en septiembre, tiene que seguir
+// apareciendo en la quincena de agosto que sí trabajó (sueldos, asistencia, horas,
+// cronograma). Filtrar solo por "activo" hacía desaparecer a la persona incluso de
+// los meses en que estuvo trabajando, y eso escondía sueldos ya pagados.
+//
+// La regla: se muestra si sigue trabajando, o si su egreso cae dentro del período
+// visible o después. Se oculta recién en los períodos que arrancan después de que
+// se fue.
+export interface EmpleadoDelPeriodo {
+  activo: boolean;
+  estado_laboral: string;
+  fecha_egreso: string | null;
+}
+
+export function trabajoEnElPeriodo(e: EmpleadoDelPeriodo, primerDiaDelPeriodo: string): boolean {
+  if (e.activo && e.estado_laboral !== 'baja') return true;
+  return e.fecha_egreso !== null && e.fecha_egreso >= primerDiaDelPeriodo;
+}
+
 // ── Normalizar texto para búsqueda: minúsculas y sin tildes ────────────────
 // Uso: normalizarTexto('Martín Peña') === 'martin pena'
 export function normalizarTexto(s: string): string {

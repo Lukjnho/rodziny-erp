@@ -11,6 +11,7 @@ import {
   sumHorasTurnos,
   sumarDias,
   ymd,
+  trabajoEnElPeriodo,
   type Quincena,
   type TurnoCrono,
 } from './utils';
@@ -53,16 +54,11 @@ export function CronogramaTab() {
 
   // Empleados
   const { data: empleados } = useQuery({
-    // Key propia por filtro (activos sin baja). Ver nota en SueldosTab: no compartir
-    // 'empleados' a secas con los tabs que traen TODOS los empleados.
-    queryKey: ['empleados', 'activos-sin-baja'],
+    // Trae TODOS y el filtrado por quincena se hace abajo: en una quincena pasada
+    // hay que seguir viendo a quien la trabajó, aunque después se haya ido.
+    queryKey: ['empleados', 'todos'],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('empleados')
-        .select('*')
-        .eq('activo', true)
-        .neq('estado_laboral', 'baja')
-        .order('apellido');
+      const { data, error } = await supabase.from('empleados').select('*').order('apellido');
       if (error) throw error;
       return data as Empleado[];
     },
@@ -83,7 +79,7 @@ export function CronogramaTab() {
   });
 
   const empleadosFiltrados = useMemo(() => {
-    let lista = empleados ?? [];
+    let lista = (empleados ?? []).filter((e) => trabajoEnElPeriodo(e, fechaDesde));
     if (filtroLocal === 'vedia') lista = lista.filter((e) => e.local === 'vedia');
     else if (filtroLocal === 'saavedra') lista = lista.filter((e) => e.local === 'saavedra');
     if (busqueda.trim()) {
@@ -93,7 +89,7 @@ export function CronogramaTab() {
       );
     }
     return lista;
-  }, [empleados, filtroLocal, busqueda]);
+  }, [empleados, filtroLocal, busqueda, fechaDesde]);
 
   const diasMostrados = useMemo(() => {
     if (filtroDia === null) return dias;
