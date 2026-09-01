@@ -4,7 +4,12 @@ import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
 import { CAJAS, CAJA_PRUEBAS, TURNOS, turnoSugerido } from '@/lib/turnosCaja';
 import { esVentanaDeCaja } from '@/lib/ventanaCaja';
-import { DocumentoImpresion, imprimir, type DatosImpresion } from './Impresion';
+import {
+  DocumentoImpresion,
+  imprimir,
+  imprimirDirecto,
+  type DatosImpresion,
+} from './Impresion';
 import {
   useCatalogoCaja,
   useMediosPagoCaja,
@@ -359,17 +364,35 @@ function Mostrador({
     setLineas((prev) => prev.map((l, i) => (i === indice ? { ...l, descuentoPct: limpio } : l)));
   }
 
-  // Cuando hay un documento armado, se manda a imprimir. El timeout le da a
-  // React el tiempo de pintarlo antes de que el navegador saque la foto, y el
-  // documento se desmonta recién cuando el diálogo se cerró: si se sacara antes,
-  // la vista previa podía quedar vacía.
+  // Cuando hay un documento armado, se manda a imprimir.
+  //
+  // Primero se prueba el agente de la PC de la caja: si está, el ticket sale
+  // solo y acá no se ve nada. Si no está —o falla— se cae al diálogo del
+  // navegador, que es como funcionaba antes. El intento no cuesta nada cuando
+  // el agente no está instalado: el navegador rechaza la conexión al instante.
+  //
+  // El timeout le da a React el tiempo de pintar el documento antes de que el
+  // navegador saque la foto, y se desmonta recién cuando el diálogo se cerró:
+  // si se sacara antes, la vista previa podía quedar vacía.
   useEffect(() => {
     if (!doc) return;
+    let vigente = true;
+    let reloj: ReturnType<typeof setTimeout> | undefined;
     const limpiar = () => setDoc(null);
-    window.addEventListener('afterprint', limpiar);
-    const t = setTimeout(() => imprimir(), 120);
+
+    imprimirDirecto(doc).then((salioSolo) => {
+      if (!vigente) return;
+      if (salioSolo) {
+        setDoc(null);
+        return;
+      }
+      window.addEventListener('afterprint', limpiar);
+      reloj = setTimeout(() => imprimir(), 120);
+    });
+
     return () => {
-      clearTimeout(t);
+      vigente = false;
+      if (reloj) clearTimeout(reloj);
       window.removeEventListener('afterprint', limpiar);
     };
   }, [doc]);

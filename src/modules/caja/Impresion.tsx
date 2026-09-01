@@ -1,17 +1,23 @@
 /**
  * Impresión de comanda, control y ticket en formato 80 mm (rollo térmico).
  *
- * CÓMO IMPRIME: se arma el documento en la pantalla y se manda a imprimir con
- * el diálogo del navegador, eligiendo la impresora térmica como cualquier otra
- * impresora de Windows. Funciona hoy, sin instalar nada.
+ * HAY DOS CAMINOS, y se prueban en este orden:
  *
- * LO QUE ESTO NO HACE: imprimir de una sin que aparezca el diálogo, ni abrir la
- * gaveta, ni cortar el papel automáticamente. Eso necesita hablarle a la
- * impresora en su propio idioma (ESC/POS) y desde el navegador no se puede: hay
- * que instalar un programita en la notebook de la caja. Es un paso aparte.
+ * 1. EL AGENTE (`agente-impresion/`). Si está instalado en la PC de la caja, el
+ *    ticket sale SOLO: sin diálogo, cortando el papel. Es el camino bueno para
+ *    un mostrador con 65 tickets por turno.
+ *
+ * 2. EL DIÁLOGO DEL NAVEGADOR. Si el agente no está, se arma el documento en la
+ *    pantalla y se manda con `window.print()`, eligiendo la térmica como
+ *    cualquier impresora. Funciona sin instalar nada, pero hay que confirmar
+ *    cada impresión a mano.
+ *
+ * O sea que el agente MEJORA la caja pero no es obligatorio: si se cae, se
+ * sigue imprimiendo igual.
  */
 
 import { createPortal } from 'react-dom';
+import { imprimirConAgente, type RenglonImpreso } from '@/lib/impresoraDirecta';
 
 export type TipoDocumento = 'comanda' | 'control' | 'ticket';
 
@@ -70,9 +76,122 @@ function fechaCorta(iso: string): string {
   return dia && mes ? `${dia}/${mes}` : iso;
 }
 
-/** Manda a imprimir lo que esté montado en #area-impresion. */
+/** Manda a imprimir lo que esté montado en #area-impresion (plan B). */
 export function imprimir() {
   window.print();
+}
+
+/** "vedia" → "Vedia" */
+function conMayuscula(s: string): string {
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+}
+
+/**
+ * El mismo documento, pero en renglones para la impresora térmica.
+ *
+ * El diseño vive acá, del lado del ERP, y no adentro del agente: así se puede
+ * cambiar el ticket con un deploy, sin volver a instalar nada en las PCs de los
+ * locales.
+ *
+ * ⚠️ Nada de caracteres finos: la térmica escribe con una tabla vieja
+ * (PC850). Las eñes y los acentos entran bien, pero el "×" y el "−" largos no:
+ * van una "x" y un guion común.
+ */
+export function aRenglones(datos: DatosImpresion): RenglonImpreso[] {
+  const { tipo } = datos;
+  const conPrecios = tipo !== 'comanda';
+  const horaImpresion = horaImpresionAR();
+  const descuentoTotal = datos.lineas.reduce((s, l) => s + l.descuentoMonto, 0);
+  const r: RenglonImpreso[] = [];
+
+  r.push({ x: 'RODZINY', c: true, b: true, s: 2 });
+  r.push({ x: conMayuscula(datos.local), c: true });
+  r.push({ x: TITULO[tipo], c: true, b: true });
+  r.push({ k: 'sep' });
+
+  r.push({
+    k: 'lr',
+    x: `${fechaCorta(datos.fecha)} ${horaImpresion}`,
+    y: `#${datos.numero}`,
+    b: true,
+  });
+  r.push({ x: datos.caja });
+  if (datos.reimpresion) r.push({ x: `REIMPRESIÓN - pedido ${datos.hora}`, b: true });
+
+  // El llamador es lo que la cocina canta: va grande, solo y sin nada al lado.
+  if (datos.cliente) {
+    r.push({ k: 'sep' });
+    r.push({ x: 'LLAMADOR', c: true });
+    r.push({ x: datos.cliente, c: true, b: true, s: tipo === 'comanda' ? 3 : 2 });
+  }
+
+  r.push({ k: 'sep' });
+
+  for (const l of datos.lineas) {
+    const sangria = l.esHija ? 2 : 0;
+    const nombre = `${l.esHija ? '> ' : ''}${l.cantidad} x ${l.nombre}`;
+    if (conPrecios) {
+      r.push({ k: 'lr', x: nombre, y: pesos(l.total), i: sangria });
+      if (l.cantidad > 1) {
+        r.push({ x: `${l.cantidad} x ${pesos(l.precioUnitario)}`, i: sangria + 2 });
+      }
+      if (l.descuentoMonto > 0) {
+        r.push({
+          k: 'lr',
+          x: `desc. ${l.descuentoPct}%`,
+          y: `- ${pesos(l.descuentoMonto)}`,
+          i: sangria + 2,
+        });
+      }
+    } else {
+      // En la comanda no hay precios: la cantidad en negrita es lo que importa
+      r.push({ x: nombre, b: true, i: sangria });
+    }
+  }
+
+  if (conPrecios) {
+    r.push({ k: 'sep' });
+    if (descuentoTotal > 0) {
+      r.push({ k: 'lr', x: 'Subtotal', y: pesos(datos.total + descuentoTotal) });
+      r.push({
+        k: 'lr',
+        x: `Descuento${datos.convenio ? ` ${datos.convenio}` : ''}`,
+        y: `- ${pesos(descuentoTotal)}`,
+      });
+    }
+    r.push({ k: 'lr', x: 'TOTAL', y: pesos(datos.total), b: true, s: 2 });
+  }
+
+  if (tipo === 'ticket' && datos.pagos.length > 0) {
+    r.push({ k: 'sep' });
+    for (const p of datos.pagos) r.push({ k: 'lr', x: p.medio, y: pesos(p.monto) });
+  }
+
+  r.push({ k: 'sep' });
+  r.push({
+    x:
+      tipo === 'control'
+        ? 'CONTROL - no válido como comprobante'
+        : tipo === 'comanda'
+          ? 'Cocina'
+          : 'Documento no fiscal',
+    c: true,
+  });
+  r.push({ x: '¡Gracias!', c: true });
+
+  return r;
+}
+
+/**
+ * Intenta imprimir por el agente de la PC de la caja.
+ * `true` si salió por la térmica; `false` si hay que usar el diálogo.
+ */
+export async function imprimirDirecto(datos: DatosImpresion): Promise<boolean> {
+  return imprimirConAgente({
+    titulo: `${TITULO[datos.tipo]} ${datos.numero}`,
+    lineas: aRenglones(datos),
+    cortar: true,
+  });
 }
 
 export function DocumentoImpresion({ datos }: { datos: DatosImpresion }) {
