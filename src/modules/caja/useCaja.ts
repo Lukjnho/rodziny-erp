@@ -25,6 +25,15 @@ export interface ItemCatalogo {
   /** con qué se agrupa en la pantalla: pasta, salsa, bebida, postre… */
   grupo: string;
   precio: number;
+  /**
+   * Nombres con los que este ítem se vende en Fudo, para poder cruzarlo contra
+   * `ventas_items`. La caja NO lo usa: lo consume Price Engineering, que ahora
+   * toma de acá la definición de "la carta" en vez de tener la suya.
+   *
+   * TRANSITORIO (Lucas, 2-sep-2026): cuando productos y ventas los maneje el
+   * ERP en vez de Fudo, este cruce por nombre desaparece y con él esta columna.
+   */
+  fudoProductos: string[];
 }
 
 /** Las masas son insumos de cocina, no algo que se venda en el mostrador. */
@@ -64,7 +73,7 @@ export function useCatalogoCaja(local: LocalCaja) {
       const [recetasRes, preciosRecetaRes] = await Promise.all([
         supabase
           .from('cocina_recetas')
-          .select('id, nombre, categoria')
+          .select('id, nombre, categoria, fudo_productos')
           .eq('local', local)
           .eq('vendible', true)
           .eq('activo', true),
@@ -99,6 +108,7 @@ export function useCatalogoCaja(local: LocalCaja) {
           categoria: r.categoria ?? null,
           grupo,
           precio,
+          fudoProductos: r.fudo_productos ?? [],
         });
       }
 

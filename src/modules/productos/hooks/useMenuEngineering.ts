@@ -7,6 +7,22 @@ import { useConfigCosteo } from '@/modules/cocina/hooks/useConfigCosteo';
 import { useComisionMpConfig } from './useComisionMpConfig';
 import { useProductosCosteoConfig } from './useProductosCosteoConfig';
 
+// Ventana de análisis del módulo: los N meses CERRADOS previos al mes en curso
+// (YYYY-MM, más reciente primero). El mes actual se excluye a propósito: con
+// pocos días transcurridos las ventas parecen mínimas y cualquier producto sale
+// mal medido (2-sep-2026: septiembre tenía 201 líneas en Vedia contra ~10.500
+// de un mes normal). Vive acá para que Plan de acción y Price Engineering pidan
+// exactamente la misma ventana.
+export function mesesCompletos(n: number): string[] {
+  const out: string[] = [];
+  const hoy = new Date();
+  for (let i = 1; i <= n; i++) {
+    const d = new Date(hoy.getFullYear(), hoy.getMonth() - i, 1);
+    out.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+  }
+  return out;
+}
+
 export type CuadranteME = 'estrella' | 'vaca' | 'puzzle' | 'perro';
 
 export interface ProductoME {
@@ -82,7 +98,7 @@ function mediana(arr: number[]): number {
   return ord.length % 2 === 0 ? (ord[mid - 1] + ord[mid]) / 2 : ord[mid];
 }
 
-function normalizarNombre(n: string): string {
+export function normalizarNombre(n: string): string {
   return (n ?? '').toLowerCase().trim().replace(/\s+/g, ' ');
 }
 

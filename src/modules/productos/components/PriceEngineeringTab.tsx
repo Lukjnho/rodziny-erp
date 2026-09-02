@@ -2,39 +2,35 @@ import { useState, useMemo } from 'react';
 import { formatARS, cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
 import { usePriceEngineering } from '../hooks/usePriceEngineering';
-
-function ultimosMeses(n: number): string[] {
-  const out: string[] = [];
-  const hoy = new Date();
-  for (let i = 0; i < n; i++) {
-    const d = new Date(hoy.getFullYear(), hoy.getMonth() - i, 1);
-    out.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
-  }
-  return out;
-}
+import { mesesCompletos } from '../hooks/useMenuEngineering';
 
 export function PriceEngineeringTab() {
   const { perfil } = useAuth();
   const localRestringido = (perfil?.local_restringido ?? null) as 'vedia' | 'saavedra' | null;
-  const meses = useMemo(() => ultimosMeses(3), []);
+  // Misma ventana que Plan de acción: 3 meses CERRADOS. El mes en curso
+  // distorsiona (2-sep-2026: septiembre tenía 201 líneas contra ~10.500 de un
+  // mes normal, y cualquier producto salía mal medido).
+  const meses = useMemo(() => mesesCompletos(3), []);
   const [local, setLocal] = useState<'vedia' | 'saavedra'>(localRestringido ?? 'vedia');
   const [categoria, setCategoria] = useState<string>('todas');
 
-  const { resultado, productos, isLoading } = usePriceEngineering(local, categoria, meses);
-
-  const categorias = useMemo(() => {
-    const set = new Set<string>();
-    for (const p of productos) if (p.tipo) set.add(p.tipo);
-    return Array.from(set).sort();
-  }, [productos]);
+  // `categorias` sale de la carta COMPLETA (no de la filtrada): si saliera de
+  // `productos`, al elegir una categoría el desplegable se quedaría con esa sola.
+  const { resultado, productos, categorias, isLoading } = usePriceEngineering(
+    local,
+    categoria,
+    meses,
+  );
 
   return (
     <div className="space-y-4">
       <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs text-blue-800">
         <strong>Ley de Omnes</strong> (Cortijo): 4 principios para evaluar la estructura de precios
         de la carta. Esta vista calcula automáticamente los 3 primeros (el cuarto es presentación
-        visual del menú, fuera del scope del ERP). Filtrá por <strong>categoría</strong> para
-        analizar cada sección de la carta por separado.
+        visual del menú, fuera del scope del ERP). Los precios son los del{' '}
+        <strong>tab Menú (canal plato)</strong>, los mismos que cobra el mostrador. Filtrá siempre
+        por <strong>categoría</strong>: con «Todas» se mezclan bebidas, vinos y pastas y la
+        dispersión deja de significar algo.
       </div>
 
       <div className="flex flex-wrap items-end gap-3 rounded-lg border border-gray-200 bg-white p-3">
@@ -45,7 +41,13 @@ export function PriceEngineeringTab() {
               <button
                 key={l}
                 disabled={!!localRestringido && l !== localRestringido}
-                onClick={() => setLocal(l)}
+                onClick={() => {
+                  setLocal(l);
+                  // Las categorías no coinciden entre locales (Saavedra tiene
+                  // cafetería, pastelería, pizza y panificado que Vedia no):
+                  // sin este reset la pantalla queda en "Sin productos".
+                  setCategoria('todas');
+                }}
                 className={cn(
                   'rounded px-3 py-1 text-xs capitalize disabled:opacity-30',
                   local === l
@@ -76,7 +78,9 @@ export function PriceEngineeringTab() {
           </select>
         </div>
         <div className="ml-auto text-xs text-gray-400">
-          {productos.length} productos · ventas {meses[meses.length - 1]} → {meses[0]}
+          {productos.length} ítems de carta
+          {resultado ? ` · ${resultado.itemsConVenta} con ventas` : ''} · ventas{' '}
+          {meses[meses.length - 1]} → {meses[0]}
         </div>
       </div>
 
