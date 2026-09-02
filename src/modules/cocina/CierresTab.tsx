@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
+import { hoyAR } from '@/lib/fechaAR';
 
 type Local = 'vedia' | 'saavedra';
 type Tipo = 'pasta' | 'salsa' | 'postre' | 'panaderia';
@@ -53,8 +54,10 @@ interface RecetaMin {
   tipo: string;
 }
 
+// Día operativo AR (ver lib/fechaAR). Con toISOString() la pantalla se paraba
+// en el día equivocado si se abría de noche, justo cuando se cargan los cierres.
 function hoyISO(): string {
-  return new Date().toISOString().slice(0, 10);
+  return hoyAR();
 }
 
 function diaAnterior(iso: string): string {

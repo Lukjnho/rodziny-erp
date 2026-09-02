@@ -5,6 +5,7 @@ import { mensajeErrorAmigable } from '@/lib/erroresSupabase';
 import { invalidarStockCocina } from './lib/invalidarStock';
 import { KPICard } from '@/components/ui/KPICard';
 import { useAuth } from '@/lib/auth';
+import { hoyAR } from '@/lib/fechaAR';
 
 interface Producto {
   id: string;
@@ -51,8 +52,11 @@ interface MermaRow {
 
 type FiltroLocal = 'vedia' | 'saavedra';
 
+// Día operativo AR. Usaba toISOString() (UTC): un traslado cargado después de
+// las 21:00 se guardaba con la fecha de MAÑANA y las porciones saltaban de día.
+// 9 de 492 traspasos quedaron así (abr–ago 2026).
 function hoy() {
-  return new Date().toISOString().slice(0, 10);
+  return hoyAR();
 }
 
 export function TraspasosTab() {

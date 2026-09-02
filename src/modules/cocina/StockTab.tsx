@@ -6,6 +6,7 @@ import { invalidarStockCocina } from './lib/invalidarStock';
 import { KPICard } from '@/components/ui/KPICard';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
+import { hoyAR } from '@/lib/fechaAR';
 import { PRODUCTOS_COCINA, normNombre } from './DashboardTab';
 
 interface Producto {
@@ -1455,7 +1456,9 @@ function CatalogoStock({
   const guardarStockManual = useMutation({
     mutationFn: async (payload: { producto: Producto; tipo: string; valor: number }) => {
       const { producto, tipo, valor } = payload;
-      const fechaHoy = new Date().toISOString().slice(0, 10);
+      // Día operativo AR: un conteo cargado después de las 21:00 se guardaba
+      // con la fecha de mañana y el lote quedaba fuera del día que se contó.
+      const fechaHoy = hoyAR();
       // Apagar lotes activos previos que matcheen este producto (por receta y por
       // nombre_libre) y cargar uno nuevo con el valor contado. Espeja el cierre
       // product-mode (receta_id + nombre_libre) para que el stock reconcilie siempre.

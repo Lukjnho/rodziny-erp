@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { mensajeErrorAmigable } from '@/lib/erroresSupabase';
 import { cn } from '@/lib/utils';
+import { hoyAR } from '@/lib/fechaAR';
 import { normNombre } from '../DashboardTab';
 import {
   calcularCobertura,
@@ -157,8 +158,11 @@ const TIPOS_SAAVEDRA: { tipo: TipoItem; label: string; emoji: string }[] = [
   { tipo: 'panaderia', label: 'Panadería', emoji: '🍞' },
 ];
 
+// Día operativo AR. Usaba toISOString() (UTC), así que planificar después de
+// las 21:00 — que es cuando se publica el pizarrón — hacía que el editor
+// creyera que ya era mañana y arrancara en la semana equivocada.
 function hoy() {
-  return new Date().toISOString().slice(0, 10);
+  return hoyAR();
 }
 
 function sumarDias(fecha: string, dias: number) {
