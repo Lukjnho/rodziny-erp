@@ -13,7 +13,14 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../../lib/supabase';
-import { comprimirImagen, extensionDe, OPTS_OCR } from '../../lib/comprimirImagen';
+import {
+  comprimirImagen,
+  extensionDe,
+  OPTS_OCR,
+  esArchivoHeic,
+  MENSAJE_HEIC,
+} from '../../lib/comprimirImagen';
+import { mensajeErrorEdgeFunction } from '../../lib/erroresSupabase';
 import { useAuth } from '../../lib/auth';
 import { sha256File } from '../../lib/hashFile';
 import { procesarFactura } from '../../lib/ocrFactura';
@@ -216,6 +223,13 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
   const [hash, setHash] = useState<string | null>(null);
   const [comprobanteId, setComprobanteId] = useState<string | null>(null);
   const [filePath, setFilePath] = useState<string | null>(null);
+  // Id del comprobante que YA quedó subido a Storage pero cuya lectura por IA falló.
+  // Habilita el botón "Volver a leer el comprobante": el archivo ya está arriba, así
+  // que se reinvoca el OCR sobre la MISMA fila en vez de pedirle otra foto a la persona
+  // (cada reintento por subida deja un archivo huérfano en Storage).
+  // No alcanza con mirar `comprobanteId`: ese también está seteado en el camino feliz.
+  const [comprobanteReintentable, setComprobanteReintentable] = useState<string | null>(null);
+  const [reintentandoOcr, setReintentandoOcr] = useState(false);
 
   // Factura fiscal (opcional, en ambos caminos)
   const [facturaFile, setFacturaFile] = useState<File | null>(null);
@@ -317,6 +331,8 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
       setHash(null);
       setComprobanteId(null);
       setFilePath(null);
+      setComprobanteReintentable(null);
+      setReintentandoOcr(false);
       setFacturaFile(null);
       setFacturaPathPreSubido(null);
       setFacturaComprobanteId(null);
@@ -719,10 +735,144 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Prellenado del formulario con lo que leyó el OCR. Vive aparte porque lo usan DOS
+  // caminos: la subida normal y el botón "Volver a leer el comprobante".
+  // Devuelve false cuando el comprobante resulta ser una transferencia interna (no es
+  // un gasto): en ese caso ya dejó el cartel puesto y el llamador tiene que cortar.
+  async function aplicarLecturaOcr(ocrRes: OcrResponse, idComprobante: string): Promise<boolean> {
+    const extraido = ocrRes.ocr_extraido!;
+    setOcrData(extraido);
+    setOcrConfianza(ocrRes.confianza ?? extraido.confianza ?? 0);
+    setDuplicados(ocrRes.duplicados ?? []);
+
+    // Bloquear si es transferencia interna (no es un gasto)
+    const cuitEsRodziny = esCuitDeRodziny(extraido.proveedor_cuit);
+    if (extraido.es_transferencia_interna || cuitEsRodziny) {
+      // Limpiar el comprobante huerfano (no se va a usar)
+      await supabase.from('comprobantes').delete().eq('id', idComprobante);
+      setComprobanteReintentable(null);
+      setError(
+        'Este comprobante es una transferencia entre cuentas propias de Rodziny — no es un gasto a un proveedor.\n\n' +
+        'Las transferencias internas se concilian automáticamente al importar los extractos bancarios. ' +
+        'No las cargues acá.',
+      );
+      setStep('upload');
+      return false;
+    }
+
+    // Pre-llenar form con datos del OCR
+    if (extraido.monto) setImporteTexto(formatNumeroAR(extraido.monto));
+    if (extraido.fecha) setFecha(extraido.fecha);
+    if (extraido.n_operacion) setNOperacion(extraido.n_operacion);
+    if (extraido.medio_pago) setMedioPago(mapOcrMedioPago(extraido.medio_pago));
+
+    // Auto-match o auto-crear proveedor con datos del OCR.
+    // Pega contra la base: si falla (red, RLS), NO tiramos abajo la carga — el
+    // comprobante ya está subido y el proveedor se puede elegir del listado.
+    try {
+      await autoMatchOCrearProveedor(extraido);
+    } catch (eProv) {
+      console.warn('[NuevoGastoForm] no se pudo buscar el proveedor automáticamente:', eProv);
+      setMensajeProveedor('No se pudo buscar el proveedor automáticamente — elegilo del listado.');
+    }
+
+    // Aviso de duplicado por OCR (no bloqueante)
+    if ((ocrRes.duplicados?.length ?? 0) > 0) {
+      const tipo = ocrRes.duplicados![0].match_type;
+      setWarning(
+        tipo === 'n_operacion'
+          ? `Se encontro otro comprobante con el mismo N° de operacion. Verifica antes de confirmar.`
+          : `Se encontro un gasto con monto y fecha similares. Puede ser duplicado.`,
+      );
+    }
+
+    return true;
+  }
+
+  // Aviso AMARILLO cuando la lectura automática falla pero el archivo YA quedó guardado.
+  // No es un error del usuario y no se perdió nada: el formulario sigue usable y el
+  // comprobante se adjunta igual al gasto. El motivo sale traducido a criollo — antes
+  // acá se veía "Edge Function returned a non-2xx status code", que no dice nada.
+  async function avisarLecturaFallida(causa: unknown, idComprobante: string, nombreArchivo: string) {
+    console.warn('[NuevoGastoForm] el OCR falló, sigue la carga manual:', causa);
+    const motivo = await mensajeErrorEdgeFunction(causa, 'No se pudo leer el comprobante automáticamente');
+    setWarning(
+      `${motivo} El archivo «${nombreArchivo}» quedó guardado igual — completá a mano ` +
+        'proveedor, monto, fecha y N° de operación.',
+    );
+    setComprobanteReintentable(idComprobante);
+    setStep('preview');
+  }
+
+  // Botón "Volver a leer el comprobante": reinvoca el OCR sobre la fila que YA existe,
+  // sin volver a subir el archivo. Sirve cuando la lectura falló por algo pasajero (el
+  // servicio sin saldo o saturado) y después se destrabó. Nunca reintenta solo: cada
+  // lectura se cobra, así que va siempre a pedido explícito.
+  async function reintentarLecturaOcr() {
+    const idComprobante = comprobanteReintentable;
+    if (!idComprobante || reintentandoOcr) return;
+
+    setReintentandoOcr(true);
+    setError(null);
+    setWarning(null);
+    try {
+      const { data: ocrRes, error: errOcr } = await supabase.functions.invoke<OcrResponse>(
+        'ocr-comprobante',
+        { body: { comprobante_id: idComprobante, force: true } },
+      );
+
+      if (errOcr || !ocrRes?.ok || !ocrRes.ocr_extraido) {
+        await avisarLecturaFallida(errOcr ?? ocrRes?.error, idComprobante, file?.name ?? 'el comprobante');
+        return;
+      }
+
+      if (!(await aplicarLecturaOcr(ocrRes, idComprobante))) return;
+
+      // Salió bien: se apaga el reintento y queda igual que el camino feliz.
+      setComprobanteReintentable(null);
+      setStep('preview');
+    } catch (e) {
+      console.error('[NuevoGastoForm] falló el reintento de lectura:', e);
+      setWarning(
+        `No se pudo volver a leer el comprobante: ${formatError(e)}. ` +
+          'El archivo sigue guardado — completá los datos a mano.',
+      );
+    } finally {
+      setReintentandoOcr(false);
+    }
+  }
+
   async function handleFileSelected(selected: File) {
     setError(null);
     setWarning(null);
+    setComprobanteReintentable(null);
+
+    // Corte temprano para fotos de iPhone en HEIC: no se pueden leer ni convertir en el
+    // navegador (ninguno de escritorio decodifica HEIC, así que el canvas no sirve). Si
+    // las dejáramos pasar, el archivo se sube igual pero el OCR devuelve un error
+    // indescifrable y encima queda adjunto un archivo que después nadie puede abrir.
+    // Cortamos acá, con el archivo todavía SIN subir: no deja fila, ni archivo en
+    // Storage, ni consumo de la API. Se limpia el input para que volver a elegir el
+    // MISMO archivo vuelva a avisar (si no, la pantalla queda muda y parece colgada).
+    if (esArchivoHeic(selected)) {
+      setError(MENSAJE_HEIC);
+      setStep('upload');
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
+
     setFile(selected);
+
+    // Limpiar la lectura anterior antes de arrancar con el archivo nuevo. Si el intento
+    // previo rebotó (ej: transferencia interna), sus datos NO pueden quedar pegados a
+    // este archivo — un monto o un N° de operación de otro comprobante es plata mal
+    // cargada. Además deja `ocrData` en null como señal de "este no se pudo leer".
+    setOcrData(null);
+    setOcrConfianza(0);
+    setDuplicados([]);
+    setImporteTexto('');
+    setFecha('');
+    setNOperacion('');
 
     try {
       // 1. Calcular hash
@@ -792,58 +942,35 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
       if (errInsComp) throw errInsComp;
       setComprobanteId(insComp.id);
 
-      // 5. Invocar edge function
+      // 5. Invocar edge function.
+      // A partir de acá el archivo YA está en Storage y la fila de `comprobantes` YA
+      // existe. Si falla SOLO la lectura no tiramos abajo el trabajo hecho: avisamos en
+      // amarillo y seguimos igual a "Verificar" para completar a mano. Es el mismo
+      // criterio fail-open que ya usan ocrFactura.ts y ocrComprobantePago.ts en los
+      // otros 7 puntos de subida del ERP. (Incidente 1-sep-2026: la cuenta de IA se
+      // quedó sin saldo y este camino echaba al usuario, perdiendo lo ya subido.)
       const { data: ocrRes, error: errOcr } = await supabase.functions.invoke<OcrResponse>(
         'ocr-comprobante',
         { body: { comprobante_id: insComp.id } },
       );
 
-      if (errOcr) throw new Error(`Error invocando OCR: ${errOcr.message}`);
-      if (!ocrRes?.ok) throw new Error(ocrRes?.error ?? 'OCR fallo sin mensaje');
-
-      const extraido = ocrRes.ocr_extraido!;
-      setOcrData(extraido);
-      setOcrConfianza(ocrRes.confianza ?? extraido.confianza ?? 0);
-      setDuplicados(ocrRes.duplicados ?? []);
-
-      // 6a. Bloquear si es transferencia interna (no es un gasto)
-      const cuitEsRodziny = esCuitDeRodziny(extraido.proveedor_cuit);
-      if (extraido.es_transferencia_interna || cuitEsRodziny) {
-        // Limpiar el comprobante huerfano (no se va a usar)
-        await supabase.from('comprobantes').delete().eq('id', insComp.id);
-        setError(
-          'Este comprobante es una transferencia entre cuentas propias de Rodziny — no es un gasto a un proveedor.\n\n' +
-          'Las transferencias internas se concilian automáticamente al importar los extractos bancarios. ' +
-          'No las cargues acá.',
-        );
-        setStep('upload');
+      // `ok:true` sin `ocr_extraido` es la rama "ya_procesado" de la edge function:
+      // no hay nada para prellenar, así que va por el mismo camino que un fallo.
+      if (errOcr || !ocrRes?.ok || !ocrRes.ocr_extraido) {
+        await avisarLecturaFallida(errOcr ?? ocrRes?.error, insComp.id, selected.name);
         return;
       }
 
-      // 6b. Pre-llenar form con datos del OCR
-      if (extraido.monto) setImporteTexto(formatNumeroAR(extraido.monto));
-      if (extraido.fecha) setFecha(extraido.fecha);
-      if (extraido.n_operacion) setNOperacion(extraido.n_operacion);
-      if (extraido.medio_pago) setMedioPago(mapOcrMedioPago(extraido.medio_pago));
-
-      // Auto-match o auto-crear proveedor con datos del OCR
-      await autoMatchOCrearProveedor(extraido);
-
-      // Aviso de duplicado por OCR (no bloqueante)
-      if ((ocrRes.duplicados?.length ?? 0) > 0) {
-        const tipo = ocrRes.duplicados![0].match_type;
-        setWarning(
-          tipo === 'n_operacion'
-            ? `Se encontro otro comprobante con el mismo N° de operacion. Verifica antes de confirmar.`
-            : `Se encontro un gasto con monto y fecha similares. Puede ser duplicado.`,
-        );
-      }
+      if (!(await aplicarLecturaOcr(ocrRes, insComp.id))) return;
 
       setStep('preview');
     } catch (e) {
+      // Acá ya solo caen los fallos ANTERIORES a tener el archivo guardado: hash,
+      // chequeo de duplicado, subida a Storage o alta en `comprobantes`. En esos casos
+      // no quedó nada para completar a mano → error rojo y de vuelta a elegir archivo.
       const msg = formatError(e);
-      console.error('[NuevoGastoForm] error:', e);
-      setError(`Error procesando comprobante: ${msg}`);
+      console.error('[NuevoGastoForm] no se pudo guardar el comprobante:', e);
+      setError(`No se pudo guardar el comprobante: ${msg}`);
       setStep('upload');
     }
   }
@@ -1718,14 +1845,34 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
         {/* Body */}
         <div className="flex-1 overflow-y-auto p-4">
           {/* Errores y warnings comunes a todos los steps */}
+          {/* whitespace-pre-line: hay mensajes de varias líneas (transferencia interna,
+              HEIC con sus tres opciones) que si no se aplastan en un párrafo corrido. */}
           {error && (
-            <div className="mb-3 rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+            <div className="mb-3 whitespace-pre-line rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
               {error}
             </div>
           )}
           {warning && step === 'preview' && (
             <div className="mb-3 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
               ⚠ {warning}
+            </div>
+          )}
+
+          {/* Reintento de lectura: el archivo YA está subido, así que se vuelve a leer
+              la MISMA fila en vez de pedir otra foto (cada resubida deja un huérfano en
+              Storage). Solo en 'upload' y 'preview': en 'saving'/'done' el gasto ya se
+              guardó y reabrir el formulario desde ahí permitiría confirmarlo dos veces. */}
+          {comprobanteReintentable && (step === 'preview' || step === 'upload') && (
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              <span>El archivo se subió bien, pero no se pudo leer.</span>
+              <button
+                type="button"
+                onClick={() => void reintentarLecturaOcr()}
+                disabled={reintentandoOcr}
+                className="rounded bg-amber-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-700 disabled:opacity-50"
+              >
+                {reintentandoOcr ? 'Leyendo…' : '🔄 Volver a leer el comprobante'}
+              </button>
             </div>
           )}
 
@@ -1764,6 +1911,10 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
                     setFilePath(null);
                     setComprobanteId(null);
                     setError(null);
+                    // También se apaga el reintento: si no, el cartel sobrevive al
+                    // comprobante que se acaba de desvincular y volver a leerlo
+                    // reinyectaría sus datos en un gasto que ya no lo tiene adjunto.
+                    setComprobanteReintentable(null);
                   }}
                   className="rounded border border-red-300 bg-white px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-100"
                 >
@@ -2910,7 +3061,13 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
                 ← Volver
               </button>
             )}
-            {step === 'preview' && tipoGasto !== 'digital' && (
+            {/* En digital normalmente no se vuelve: el comprobante ya se leyó y es un
+                pago. Pero si la lectura falló (ocrData en null) la persona puede
+                descubrir que el archivo era una factura impaga y no un pago; le dejamos
+                la salida a Cuenta corriente sin perder lo subido. Si elige impago salta
+                el recuadro rojo anti doble-pago de arriba — que es exactamente lo que
+                tiene que pasar, con sus dos salidas intactas. */}
+            {step === 'preview' && (tipoGasto !== 'digital' || !ocrData) && (
               <button
                 onClick={() => setStep('tipo')}
                 className="rounded px-3 py-2 text-sm text-gray-600 hover:bg-gray-100"

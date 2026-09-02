@@ -15,6 +15,7 @@
 import { supabase } from './supabase';
 import { comprimirImagen, extensionDe, OPTS_OCR } from './comprimirImagen';
 import { sha256File } from './hashFile';
+import { mensajeErrorEdgeFunction } from './erroresSupabase';
 
 interface OcrFacturaExtraido {
   tipo_comprobante: string | null;
@@ -150,13 +151,19 @@ export async function procesarFactura(
     );
 
     if (errOcr || !ocrRes?.ok) {
-      const msg = errOcr?.message ?? ocrRes?.error ?? 'OCR no respondió';
+      // Mismo caso que en ocrComprobantePago: el motivo real está en el cuerpo de
+      // la respuesta 500, no en el .message genérico que entrega supabase-js.
+      console.warn('[ocrFactura] el OCR falló:', errOcr ?? ocrRes?.error);
+      const motivo = await mensajeErrorEdgeFunction(
+        errOcr ?? ocrRes?.error,
+        '⚠️ No se pudo leer la factura',
+      );
       return {
         ok: true,
         factura_path: path,
         comprobante_id: insComp.id,
         ...RESULT_VACIO,
-        warning: `No se pudo leer la factura (${msg}). Completá los datos manualmente.`,
+        warning: `${motivo} Completá los datos manualmente.`,
         error: null,
       };
     }

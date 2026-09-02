@@ -16,6 +16,7 @@
 import { supabase } from './supabase';
 import { comprimirImagen, extensionDe, OPTS_OCR } from './comprimirImagen';
 import { sha256File } from './hashFile';
+import { mensajeErrorEdgeFunction } from './erroresSupabase';
 
 interface OcrExtraidoMin {
   n_operacion: string | null;
@@ -202,13 +203,22 @@ export async function procesarComprobantePago(
     );
 
     if (errOcr || !ocrRes?.ok) {
-      const msg = errOcr?.message ?? ocrRes?.error ?? 'OCR no respondió';
+      // El .message de supabase-js no dice nada cuando la function responde 500
+      // ("Edge Function returned a non-2xx status code"): el motivo real (sin saldo,
+      // saturado, archivo no soportado…) viaja en el CUERPO de la respuesta y lo
+      // desenvuelve mensajeErrorEdgeFunction. El fail-open no cambia: el archivo
+      // ya quedó subido y se sigue cargando a mano.
+      console.warn('[ocrComprobantePago] el OCR falló:', errOcr ?? ocrRes?.error);
+      const motivo = await mensajeErrorEdgeFunction(
+        errOcr ?? ocrRes?.error,
+        '⚠️ No se pudo leer el comprobante',
+      );
       return {
         ok: true,
         file_path: path,
         comprobante_id: comprobanteId,
         ...RESULT_VACIO,
-        warning: `No se pudo leer el comprobante (${msg}). Completá manualmente el N° de operación.`,
+        warning: `${motivo} Completá manualmente el N° de operación.`,
         error: null,
       };
     }

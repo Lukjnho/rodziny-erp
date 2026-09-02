@@ -25,6 +25,37 @@ export const OPTS_OCR: ComprimirOpts = { maxLado: 2400, quality: 0.88 };
 
 const ES_IMAGEN = /^image\/(jpe?g|png|webp)$/i;
 
+/**
+ * Detecta fotos en formato HEIC/HEIF (el que usa el iPhone por defecto).
+ *
+ * Por qué existe: `comprimirImagen` no toca estos archivos (no matchean ES_IMAGEN),
+ * y tampoco podría: ningún navegador de escritorio sabe decodificar HEIC, así que el
+ * canvas no sirve. El archivo sube crudo y la edge function de OCR termina mandándole
+ * a la API de lectura bytes HEIC etiquetados como JPEG (ver normalizeMediaType) → error
+ * 400 con un texto técnico que no le dice nada a nadie. Conviene cortar antes.
+ *
+ * Mira el nombre además del mime porque en Windows, sin el complemento HEIF instalado,
+ * el navegador devuelve `file.type` vacío y la extensión queda como única pista.
+ */
+export function esArchivoHeic(file: File): boolean {
+  const mime = (file.type || '').toLowerCase();
+  // Cubre image/heic, image/heif y sus variantes -sequence.
+  if (/^image\/hei[cf]/.test(mime)) return true;
+  return /\.(heic|heif)$/i.test(file.name || '');
+}
+
+/**
+ * Texto para mostrarle a la persona cuando sube una foto HEIC. Sin jerga: qué pasó
+ * y las tres salidas concretas, de la más rápida a la definitiva.
+ * Se muestra con `whitespace-pre-line` para que los saltos de línea se respeten.
+ */
+export const MENSAJE_HEIC =
+  'Esta foto está en formato HEIC, el que usa el iPhone por defecto, y el sistema no puede leerla.\n\n' +
+  'Se resuelve con cualquiera de estas tres:\n' +
+  '• Mandátela por WhatsApp a vos misma y descargá la que llega: WhatsApp la convierte a JPG sola.\n' +
+  '• Sacá la foto directamente con el botón de cámara de esta pantalla.\n' +
+  '• En el iPhone entrá a Ajustes › Cámara › Formatos y elegí "Más compatible": desde ahí todas las fotos nuevas salen en JPG.';
+
 const EXT_POR_MIME: Record<string, string> = {
   'image/jpeg': 'jpg',
   'image/png': 'png',
