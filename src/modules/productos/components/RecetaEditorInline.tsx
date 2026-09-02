@@ -650,7 +650,8 @@ export function RecetaEditorInline({
         // huérfanos, resumen semanal, dashboard, ABM).
         qc.invalidateQueries({ queryKey: ['pastas-sin-receta'] });
         qc.invalidateQueries({ queryKey: ['costeo-huerfanos'] });
-        qc.invalidateQueries({ queryKey: ['cocina-productos-sugerencias-plan'] });
+        qc.invalidateQueries({ queryKey: ['plan-cob-vendibles'] });
+        qc.invalidateQueries({ queryKey: ['resumen-semanal-catalogo'] });
         qc.invalidateQueries({ queryKey: ['cocina_productos_dashboard'] });
         qc.invalidateQueries({ queryKey: ['producto-form'] });
       }
