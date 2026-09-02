@@ -5,14 +5,16 @@ import { FudoLiveTab } from './components/FudoLiveTab';
 import { ResumenTab } from './components/ResumenTab';
 import { MediosPagoTab } from './components/MediosPagoTab';
 import { InteranualTab } from './components/InteranualTab';
+import { FacturacionTab } from './components/FacturacionTab';
 
-type Tab = 'resumen' | 'envivo' | 'medios' | 'interanual';
+type Tab = 'resumen' | 'envivo' | 'medios' | 'interanual' | 'facturacion';
 
 const TABS: [Tab, string][] = [
   ['resumen', 'Resumen'],
   ['envivo', 'En vivo (Fudo)'],
   ['medios', 'Medios de pago'],
   ['interanual', 'Interanual'],
+  ['facturacion', 'Facturación'],
 ];
 
 export function VentasPage({ embedded = false }: { embedded?: boolean } = {}) {
@@ -41,6 +43,7 @@ export function VentasPage({ embedded = false }: { embedded?: boolean } = {}) {
       {tab === 'envivo' && <FudoLiveTab />}
       {tab === 'medios' && <MediosPagoTab />}
       {tab === 'interanual' && <InteranualTab />}
+      {tab === 'facturacion' && <FacturacionTab />}
     </div>
   );
 
