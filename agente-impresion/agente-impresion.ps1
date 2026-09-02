@@ -199,6 +199,7 @@ public class ImpresoraCruda
 #   { "k": "lr", "x": "TOTAL", "y": "$1.500", "b": true }         izquierda y derecha
 #   { "k": "sep" }                                                linea de guiones
 #   { "k": "nl" }                                                 renglon en blanco
+#   { "k": "qr",  "x": "https://..." }                            codigo QR
 # c = centrado · b = negrita · s = tamaño (1 normal, 2 doble, 3 triple) · i = sangría
 
 function ConvertTo-EscPos($peticion) {
@@ -233,6 +234,35 @@ function ConvertTo-EscPos($peticion) {
       Crudo @(0x1B, 0x45, 0x00)          # sin negrita
       Texto ('-' * $anchoTicket)
       Crudo @(0x0A)
+      continue
+    }
+
+    # Codigo QR, dibujado por la impresora con su propio comando (no como
+    # imagen): sale nitido y viajan solo los caracteres de la URL.
+    # Lo usa el comprobante fiscal, donde el QR es obligatorio.
+    if ($tipo -eq 'qr') {
+      $textoQr = [string]$r.x
+      if (-not $textoQr) { continue }
+      # La URL de ARCA es ASCII (base64 y signos): no pasa por la tabla de
+      # caracteres de la impresora, que es para el texto del ticket.
+      $datosQr = [System.Text.Encoding]::ASCII.GetBytes($textoQr)
+      $largo = $datosQr.Length + 3
+      $pL = [byte]($largo % 256)
+      $pH = [byte]([Math]::Floor($largo / 256))
+
+      Crudo @(0x1B, 0x61, 0x01)                              # centrado
+      Crudo @(0x1D, 0x21, 0x00)                              # letra normal
+      Crudo @(0x1B, 0x45, 0x00)                              # sin negrita
+      Crudo @(0x1D, 0x28, 0x6B, 0x04, 0x00, 0x31, 0x41, 0x32, 0x00)  # modelo 2
+      Crudo @(0x1D, 0x28, 0x6B, 0x03, 0x00, 0x31, 0x43, 0x05)        # tamaño del punto
+      # Correccion L a proposito: la URL es larga y con mas correccion entran
+      # mas cuadraditos, que en una termica de 203 dpi se leen peor.
+      Crudo @(0x1D, 0x28, 0x6B, 0x03, 0x00, 0x31, 0x45, 0x30)
+      Crudo @(0x1D, 0x28, 0x6B, $pL, $pH, 0x31, 0x50, 0x30)          # cargar datos
+      Crudo $datosQr
+      Crudo @(0x1D, 0x28, 0x6B, 0x03, 0x00, 0x31, 0x51, 0x30)        # imprimirlo
+      Crudo @(0x0A)
+      Crudo @(0x1B, 0x61, 0x00)                              # volver a la izquierda
       continue
     }
 
@@ -463,6 +493,13 @@ while ($escucha.IsListening) {
       $enc = [System.Text.Encoding]::GetEncoding((Get-CodepageWindows))
       $comoSeVe = $enc.GetString($bytes)
       $comoSeVe = [regex]::Replace($comoSeVe, '\x1B@|\x1Bt.|\x1Ba.|\x1DV..|\x1D!.|\x1BE.|\x1Bd.|\x1Bp...', '')
+      # El QR son cinco comandos seguidos, y en el del medio viaja la URL entera.
+      # Sin esto, la vista previa vuelca 300 caracteres de base64 y no se
+      # entiende nada de lo que rodea al codigo.
+      $comoSeVe = [regex]::Replace(
+        $comoSeVe,
+        '\x1D\(k[\s\S]{2}1A[\s\S]{2}[\s\S]*?\x1D\(k[\s\S]{2}1Q0',
+        '[ CODIGO QR ]')
       Send-Respuesta $contexto 200 (@{ ok = $true; bytes = $bytes.Length; papel = $comoSeVe } | ConvertTo-Json -Compress)
       continue
     }

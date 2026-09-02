@@ -17,7 +17,19 @@
  */
 
 import { createPortal } from 'react-dom';
+import qrcode from 'qrcode-generator';
 import { imprimirConAgente, type RenglonImpreso } from '@/lib/impresoraDirecta';
+import {
+  CONDICION_IVA,
+  LEYENDA_TRANSPARENCIA,
+  LEYENDA_TRANSPARENCIA_TERMICA,
+  TIPO_COMPROBANTE,
+  fechaLarga,
+  numeroFormateado,
+  receptorImpreso,
+  urlQrArca,
+  type DatosFiscales,
+} from './comprobanteFiscal';
 
 export type TipoDocumento = 'comanda' | 'control' | 'ticket';
 
@@ -50,6 +62,11 @@ export interface DatosImpresion {
   pagos: { medio: string; monto: number }[];
   /** lo que se cobra, con los descuentos ya restados */
   total: number;
+  /**
+   * Si vino el CAE de ARCA, el ticket deja de ser "documento no fiscal" y pasa
+   * a ser la factura. Mientras esto no esté, se imprime el ticket de siempre.
+   */
+  fiscal?: DatosFiscales | null;
 }
 
 const pesos = (n: number) =>
@@ -104,9 +121,52 @@ export function aRenglones(datos: DatosImpresion): RenglonImpreso[] {
   const descuentoTotal = datos.lineas.reduce((s, l) => s + l.descuentoMonto, 0);
   const r: RenglonImpreso[] = [];
 
+  const f = tipo === 'ticket' ? (datos.fiscal ?? null) : null;
+  const cbte = f ? TIPO_COMPROBANTE[f.tipoComprobante] : null;
+
   r.push({ x: 'RODZINY', c: true, b: true, s: 2 });
   r.push({ x: conMayuscula(datos.local), c: true });
-  r.push({ x: TITULO[tipo], c: true, b: true });
+
+  if (f) {
+    // Encabezado del emisor: lo exige la RG 4291 en todo comprobante.
+    r.push({ x: f.emisor.razonSocial, c: true });
+    r.push({ x: `CUIT ${f.emisor.cuit}`, c: true });
+    if (f.emisor.domicilio) r.push({ x: f.emisor.domicilio, c: true });
+    if (f.emisor.ingresosBrutos) r.push({ x: `IIBB ${f.emisor.ingresosBrutos}`, c: true });
+    if (f.emisor.inicioActividades) {
+      r.push({ x: `Inicio de actividades ${fechaLarga(f.emisor.inicioActividades)}`, c: true });
+    }
+    r.push({ x: 'IVA RESPONSABLE INSCRIPTO', c: true });
+    r.push({ k: 'sep' });
+
+    // La letra es lo que primero mira quien recibe el comprobante.
+    r.push({ x: cbte?.letra ?? '?', c: true, b: true, s: 3 });
+    r.push({
+      x: `${cbte?.nombre ?? 'COMPROBANTE'} ${cbte?.letra ?? ''} - COD. ${String(f.tipoComprobante).padStart(2, '0')}`,
+      c: true,
+      b: true,
+    });
+    r.push({ x: numeroFormateado(f.puntoVenta, f.numero), c: true, b: true, s: 2 });
+    r.push({ x: `Fecha de emision ${fechaLarga(f.fecha)}`, c: true });
+    if (f.ambiente === 'homologacion') {
+      r.push({ k: 'nl' });
+      r.push({ x: 'PRUEBA - SIN VALOR FISCAL', c: true, b: true, s: 2 });
+    }
+    r.push({ k: 'sep' });
+
+    const rec = receptorImpreso(f.receptor);
+    r.push({ x: rec.linea1, b: true });
+    if (rec.linea2) r.push({ x: rec.linea2 });
+    if (f.receptor.domicilio) r.push({ x: f.receptor.domicilio });
+    // "A CONSUMIDOR FINAL" ya lo dice todo: repetir abajo "Consumidor Final"
+    // es ruido. La condición se aclara solo cuando el cliente está identificado.
+    if (f.receptor.docTipo !== 99) {
+      r.push({ x: CONDICION_IVA[f.receptor.condicionIva] ?? 'Consumidor Final' });
+    }
+  } else {
+    r.push({ x: TITULO[tipo], c: true, b: true });
+  }
+
   r.push({ k: 'sep' });
 
   r.push({
@@ -159,6 +219,12 @@ export function aRenglones(datos: DatosImpresion): RenglonImpreso[] {
         y: `- ${pesos(descuentoTotal)}`,
       });
     }
+    // El IVA discriminado es obligatorio desde el 1-abr-2025 (Ley 27.743): el
+    // consumidor final tiene derecho a ver cuánto de lo que paga es impuesto.
+    if (f) {
+      r.push({ k: 'lr', x: 'Neto gravado', y: pesos(f.neto) });
+      r.push({ k: 'lr', x: 'IVA 21%', y: pesos(f.iva) });
+    }
     r.push({ k: 'lr', x: 'TOTAL', y: pesos(datos.total), b: true, s: 2 });
   }
 
@@ -168,15 +234,29 @@ export function aRenglones(datos: DatosImpresion): RenglonImpreso[] {
   }
 
   r.push({ k: 'sep' });
-  r.push({
-    x:
-      tipo === 'control'
-        ? 'CONTROL - no válido como comprobante'
-        : tipo === 'comanda'
-          ? 'Cocina'
-          : 'Documento no fiscal',
-    c: true,
-  });
+
+  if (f) {
+    for (const linea of LEYENDA_TRANSPARENCIA_TERMICA) r.push({ x: linea, c: true });
+    r.push({ k: 'sep' });
+    r.push({ k: 'lr', x: 'CAE', y: f.cae, b: true });
+    r.push({ k: 'lr', x: 'Vencimiento del CAE', y: fechaLarga(f.caeVencimiento) });
+    r.push({ k: 'nl' });
+    // El QR lo dibuja la impresora con su propio comando: sale nítido y no
+    // depende de mandar una imagen por el cable.
+    r.push({ k: 'qr', x: urlQrArca(f) });
+    r.push({ k: 'nl' });
+  } else {
+    r.push({
+      x:
+        tipo === 'control'
+          ? 'CONTROL - no válido como comprobante'
+          : tipo === 'comanda'
+            ? 'Cocina'
+            : 'Documento no fiscal',
+      c: true,
+    });
+  }
+
   r.push({ x: '¡Gracias!', c: true });
 
   return r;
@@ -202,6 +282,9 @@ export function DocumentoImpresion({ datos }: { datos: DatosImpresion }) {
   // necesita para saber hace cuánto está esperando ese plato.
   const horaImpresion = horaImpresionAR();
   const descuentoTotal = datos.lineas.reduce((s, l) => s + l.descuentoMonto, 0);
+  const f = tipo === 'ticket' ? (datos.fiscal ?? null) : null;
+  const cbte = f ? TIPO_COMPROBANTE[f.tipoComprobante] : null;
+  const rec = f ? receptorImpreso(f.receptor) : null;
 
   // OJO: el documento se monta como hijo DIRECTO de <body>, fuera del árbol de
   // la app. Si quedara adentro, la regla que esconde la pantalla para imprimir
@@ -229,7 +312,50 @@ export function DocumentoImpresion({ datos }: { datos: DatosImpresion }) {
       <div id="area-impresion">
         <div style={{ textAlign: 'center', fontWeight: 700, fontSize: 15 }}>RODZINY</div>
         <div style={{ textAlign: 'center', textTransform: 'capitalize' }}>{datos.local}</div>
-        <div style={{ textAlign: 'center', fontWeight: 700, marginTop: 4 }}>{TITULO[tipo]}</div>
+
+        {f ? (
+          <>
+            <div style={{ textAlign: 'center', fontSize: 11 }}>
+              <div>{f.emisor.razonSocial}</div>
+              <div>CUIT {f.emisor.cuit}</div>
+              {f.emisor.domicilio && <div>{f.emisor.domicilio}</div>}
+              {f.emisor.ingresosBrutos && <div>IIBB {f.emisor.ingresosBrutos}</div>}
+              {f.emisor.inicioActividades && (
+                <div>Inicio de actividades {fechaLarga(f.emisor.inicioActividades)}</div>
+              )}
+              <div>IVA RESPONSABLE INSCRIPTO</div>
+            </div>
+            <Separador />
+            <div style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: 30, fontWeight: 700, lineHeight: 1.1 }}>
+                {cbte?.letra ?? '?'}
+              </div>
+              <div style={{ fontWeight: 700 }}>
+                {cbte?.nombre ?? 'COMPROBANTE'} {cbte?.letra} — COD.{' '}
+                {String(f.tipoComprobante).padStart(2, '0')}
+              </div>
+              <div style={{ fontSize: 15, fontWeight: 700 }}>
+                {numeroFormateado(f.puntoVenta, f.numero)}
+              </div>
+              <div style={{ fontSize: 11 }}>Fecha de emisión {fechaLarga(f.fecha)}</div>
+              {f.ambiente === 'homologacion' && (
+                <div style={{ fontSize: 14, fontWeight: 700, marginTop: 3 }}>
+                  PRUEBA — SIN VALOR FISCAL
+                </div>
+              )}
+            </div>
+            <Separador />
+            <div style={{ fontSize: 11 }}>
+              <div style={{ fontWeight: 700 }}>{rec?.linea1}</div>
+              {rec?.linea2 && <div>{rec.linea2}</div>}
+              {f.receptor.domicilio && <div>{f.receptor.domicilio}</div>}
+              <div>{CONDICION_IVA[f.receptor.condicionIva] ?? 'Consumidor Final'}</div>
+            </div>
+          </>
+        ) : (
+          <div style={{ textAlign: 'center', fontWeight: 700, marginTop: 4 }}>{TITULO[tipo]}</div>
+        )}
+
         <Separador />
 
         {/* UNA sola hora: la de impresión, que es el reloj con el que se guía la
@@ -317,6 +443,18 @@ export function DocumentoImpresion({ datos }: { datos: DatosImpresion }) {
                 </div>
               </>
             )}
+            {f && (
+              <>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span>Neto gravado</span>
+                  <span>{pesos(f.neto)}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span>IVA 21%</span>
+                  <span>{pesos(f.iva)}</span>
+                </div>
+              </>
+            )}
             <div
               style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, fontSize: 14 }}
             >
@@ -339,13 +477,33 @@ export function DocumentoImpresion({ datos }: { datos: DatosImpresion }) {
         )}
 
         <Separador />
-        <div style={{ textAlign: 'center', fontSize: 11 }}>
-          {tipo === 'control'
-            ? 'CONTROL — no válido como comprobante'
-            : tipo === 'comanda'
-              ? 'Cocina'
-              : 'Documento no fiscal'}
-        </div>
+
+        {f ? (
+          <>
+            <div style={{ textAlign: 'center', fontSize: 10 }}>{LEYENDA_TRANSPARENCIA}</div>
+            <Separador />
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700 }}>
+              <span>CAE</span>
+              <span>{f.cae}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
+              <span>Vencimiento del CAE</span>
+              <span>{fechaLarga(f.caeVencimiento)}</span>
+            </div>
+            <div style={{ textAlign: 'center', marginTop: 6 }}>
+              <QrArca url={urlQrArca(f)} />
+            </div>
+          </>
+        ) : (
+          <div style={{ textAlign: 'center', fontSize: 11 }}>
+            {tipo === 'control'
+              ? 'CONTROL — no válido como comprobante'
+              : tipo === 'comanda'
+                ? 'Cocina'
+                : 'Documento no fiscal'}
+          </div>
+        )}
+
         <div style={{ textAlign: 'center', fontSize: 11, marginTop: 2 }}>¡Gracias!</div>
         {/* aire al final para que el corte no se coma la última línea */}
         <div style={{ height: '10mm' }} />
@@ -357,4 +515,25 @@ export function DocumentoImpresion({ datos }: { datos: DatosImpresion }) {
 
 function Separador() {
   return <div style={{ borderTop: '1px dashed #000', margin: '4px 0' }} />;
+}
+
+/**
+ * El QR de ARCA para el camino del navegador (cuando no está el agente).
+ *
+ * Se dibuja acá y no se pide a ningún servicio: un comprobante fiscal no puede
+ * depender de que una web ajena esté levantada al momento de imprimir.
+ * Corrección 'L' a propósito: la URL es larga y con menos corrección entran
+ * menos cuadraditos, que en una térmica de 203 dpi se leen mucho mejor.
+ */
+function QrArca({ url }: { url: string }) {
+  const qr = qrcode(0, 'L');
+  qr.addData(url);
+  qr.make();
+  return (
+    <img
+      src={qr.createDataURL(4, 0)}
+      alt="Código QR del comprobante"
+      style={{ width: '28mm', height: '28mm' }}
+    />
+  );
 }

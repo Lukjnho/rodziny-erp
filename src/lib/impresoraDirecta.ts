@@ -27,9 +27,15 @@ let noInsistirHasta = 0;
 
 /** Un renglón del ticket. El agente lo traduce a ESC/POS. */
 export interface RenglonImpreso {
-  /** t = texto · lr = izquierda y derecha · sep = línea de guiones · nl = renglón vacío */
-  k?: 't' | 'lr' | 'sep' | 'nl';
-  /** el texto (o la parte izquierda si es `lr`) */
+  /**
+   * t = texto · lr = izquierda y derecha · sep = línea de guiones
+   * nl = renglón vacío · qr = código QR (el contenido va en `x`)
+   *
+   * El QR lo dibuja la impresora con su propio comando, no se manda como
+   * imagen: sale nítido y ocupa una fracción de los datos.
+   */
+  k?: 't' | 'lr' | 'sep' | 'nl' | 'qr';
+  /** el texto (o la parte izquierda si es `lr`, o el contenido si es `qr`) */
   x?: string;
   /** la parte derecha, pegada al borde */
   y?: string;
