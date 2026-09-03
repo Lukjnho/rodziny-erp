@@ -14,6 +14,7 @@ import {
   type UrgenciaPago,
 } from '@/modules/finanzas/hooks/usePagosAlertas';
 import { recomputarEstadoGasto } from '@/modules/gastos/recomputarEstadoGasto';
+import { mensajeErrorAmigable } from '@/lib/erroresSupabase';
 import {
   useProveedoresMap,
   resolverProveedor,
@@ -388,17 +389,41 @@ export function ChecklistPagos() {
 
   const deletePago = useMutation({
     mutationFn: async (pago: PagoFijo) => {
-      // Si tiene gasto asociado, eliminar pago_gasto y gasto
+      // Si tiene gasto asociado, eliminar pago_gasto y gasto.
+      // Si el gasto NO se puede borrar, se corta acá: borrar el pago fijo
+      // dejaría el gasto vivo en el EdR y sin nada que lo apunte.
       if (pago.gasto_id) {
-        await supabase.from('pagos_gastos').delete().eq('gasto_id', pago.gasto_id);
-        await supabase.from('gastos').delete().eq('id', pago.gasto_id);
+        const borrado = await deshacerGastoDePagoFijo(pago.gasto_id);
+        if (!borrado) {
+          throw new Error(
+            `No se pudo borrar el gasto de "${pago.concepto}", así que el pago fijo se deja ` +
+              'como está. Suele ser porque no tenés permiso o porque el gasto ya está ' +
+              'conciliado con un movimiento del banco.',
+          );
+        }
       }
-      const { error } = await supabase.from('pagos_fijos').delete().eq('id', pago.id);
+      const { data, error } = await supabase
+        .from('pagos_fijos')
+        .delete()
+        .eq('id', pago.id)
+        .select('id');
       if (error) throw error;
+      if (!data || data.length === 0) {
+        throw new Error(
+          `No se borró "${pago.concepto}": no tenés permiso para eliminarlo. ` +
+            (pago.gasto_id ? 'OJO: el gasto asociado SÍ se borró, recargá la pantalla.' : ''),
+        );
+      }
     },
     onSuccess: () => {
       invalidarPagosFijos(qc, periodo);
       qc.invalidateQueries({ queryKey: ['fc_pagos'] });
+    },
+    // Sin esto el error se pierde y la pantalla se queda como si hubiera
+    // borrado. El motivo tiene que llegar a quien apretó el botón.
+    onError: (e) => {
+      window.alert(mensajeErrorAmigable(e, 'No se pudo eliminar el pago fijo'));
+      invalidarPagosFijos(qc, periodo);
     },
   });
 
@@ -610,7 +635,7 @@ export function ChecklistPagos() {
     }
 
     // 2. Crear pago_gasto
-    await supabase.from('pagos_gastos').insert({
+    const { error: e2 } = await supabase.from('pagos_gastos').insert({
       gasto_id: gastoData.id,
       fecha_pago: fechaPago,
       monto: pago.monto ?? 0,
@@ -619,9 +644,23 @@ export function ChecklistPagos() {
       numero_operacion: numeroOperacion,
       comprobante_pago_path: pathComprobante,
     });
+    if (e2) {
+      await deshacerGastoDePagoFijo(gastoData.id);
+      window.alert(
+        mensajeErrorAmigable(e2, `No se pudo registrar el pago de "${pago.concepto}"`) +
+          '. No quedó nada a medias: el gasto que se había creado se deshizo. Probá de nuevo.',
+      );
+      return;
+    }
 
     // 3. Actualizar pago_fijo
-    await supabase
+    //
+    // Este es el paso que no se puede saltear en silencio. Si el gasto y el
+    // pago quedan creados pero el pago fijo sigue figurando IMPAGO, el próximo
+    // clic crea un segundo gasto y un segundo pago: gasto duplicado, real, en
+    // el EdR. Ojo: un UPDATE que los permisos bloquean no da error, devuelve
+    // cero filas — por eso se pide .select() y se cuenta.
+    const { data: fijoActualizado, error: e3 } = await supabase
       .from('pagos_fijos')
       .update({
         pagado: true,
@@ -629,7 +668,20 @@ export function ChecklistPagos() {
         medio_pago: medioPago,
         gasto_id: gastoData.id,
       })
-      .eq('id', pago.id);
+      .eq('id', pago.id)
+      .select('id');
+
+    if (e3 || !fijoActualizado || fijoActualizado.length === 0) {
+      await deshacerGastoDePagoFijo(gastoData.id);
+      window.alert(
+        e3
+          ? mensajeErrorAmigable(e3, `No se pudo marcar "${pago.concepto}" como pagado`) +
+            '. Se deshizo el gasto para que no quede duplicado.'
+          : `No se pudo marcar "${pago.concepto}" como pagado: no tenés permiso para modificarlo. ` +
+            'Se deshizo el gasto que se había creado, así que no quedó nada duplicado.',
+      );
+      return;
+    }
 
     invalidarPagosFijos(qc, periodo);
     qc.invalidateQueries({ queryKey: ['fc_pagos'] });
@@ -641,13 +693,35 @@ export function ChecklistPagos() {
     setToast({ tipo: 'pagado', concepto: pago.concepto, monto: pago.monto ?? 0 });
   }
 
+  // Borra el gasto y su pago. Devuelve true si el gasto ya no está.
+  //
+  // Un DELETE que los permisos bloquean NO da error: devuelve cero filas. Sin
+  // el .select() no hay forma de saber si borró, y un gasto que queda vivo
+  // sigue sumando en el EdR sin que nadie lo pueda encontrar.
+  async function deshacerGastoDePagoFijo(gastoId: string): Promise<boolean> {
+    await supabase.from('pagos_gastos').delete().eq('gasto_id', gastoId);
+    const { data, error } = await supabase.from('gastos').delete().eq('id', gastoId).select('id');
+    return !error && !!data && data.length > 0;
+  }
+
   // Desmarcar pagado: elimina gasto + pago_gasto
   async function desmarcarPagado(pago: PagoFijo) {
     if (pago.gasto_id) {
-      await supabase.from('pagos_gastos').delete().eq('gasto_id', pago.gasto_id);
-      await supabase.from('gastos').delete().eq('id', pago.gasto_id);
+      const borrado = await deshacerGastoDePagoFijo(pago.gasto_id);
+      if (!borrado) {
+        // NO se limpia el vínculo. Un gasto huérfano (vivo pero sin nada que
+        // lo apunte) infla el EdR para siempre y no hay pantalla desde donde
+        // encontrarlo. Dejarlo enganchado es peor prolijidad y mejor plata.
+        window.alert(
+          `No se pudo borrar el gasto de "${pago.concepto}", así que el pago queda como está.\n\n` +
+            'Casi siempre es porque no tenés permiso, o porque el gasto ya está conciliado con ' +
+            'un movimiento del banco. Fijate en Resumen de Egresos o pedile a un administrador ' +
+            'que lo haga.',
+        );
+        return;
+      }
     }
-    await supabase
+    const { data: fijoActualizado, error } = await supabase
       .from('pagos_fijos')
       .update({
         pagado: false,
@@ -655,7 +729,20 @@ export function ChecklistPagos() {
         medio_pago: null,
         gasto_id: null,
       })
-      .eq('id', pago.id);
+      .eq('id', pago.id)
+      .select('id');
+
+    if (error || !fijoActualizado || fijoActualizado.length === 0) {
+      window.alert(
+        (error
+          ? mensajeErrorAmigable(error, `No se pudo desmarcar "${pago.concepto}"`)
+          : `No se pudo desmarcar "${pago.concepto}": no tenés permiso para modificarlo`) +
+          '.\n\nOJO: el gasto asociado SÍ se borró. Recargá la pantalla y volvé a intentar, ' +
+          'o avisá, porque el pago fijo quedó marcado como pagado sin gasto detrás.',
+      );
+      invalidarPagosFijos(qc, periodo);
+      return;
+    }
 
     invalidarPagosFijos(qc, periodo);
     qc.invalidateQueries({ queryKey: ['fc_pagos'] });
@@ -668,7 +755,20 @@ export function ChecklistPagos() {
   // pago_gasto vinculados para que el cambio se refleje en Flujo de Caja y EdR
   // sin tener que desmarcar/marcar de nuevo.
   async function actualizarPago(pago: PagoFijo, fields: Partial<PagoFijo>) {
-    await supabase.from('pagos_fijos').update(fields).eq('id', pago.id);
+    const { data: fijoOk, error: errFijo } = await supabase
+      .from('pagos_fijos')
+      .update(fields)
+      .eq('id', pago.id)
+      .select('id');
+    if (errFijo || !fijoOk || fijoOk.length === 0) {
+      window.alert(
+        errFijo
+          ? mensajeErrorAmigable(errFijo, `No se pudo guardar el cambio en "${pago.concepto}"`)
+          : `No se guardó el cambio en "${pago.concepto}": no tenés permiso para modificarlo.`,
+      );
+      invalidarPagosFijos(qc, periodo);
+      return;
+    }
 
     if (pago.pagado && pago.gasto_id) {
       const updateGasto: Record<string, unknown> = {};
@@ -698,11 +798,31 @@ export function ChecklistPagos() {
         updatePagoGasto.medio_pago = fields.medio_pago;
       }
 
+      // Si el pago fijo se actualizó pero el gasto no, el EdR y esta pantalla
+      // quedan diciendo cosas distintas del mismo pago. Hay que avisar.
+      let desincronizado = false;
       if (Object.keys(updateGasto).length > 0) {
-        await supabase.from('gastos').update(updateGasto).eq('id', pago.gasto_id);
+        const { data, error } = await supabase
+          .from('gastos')
+          .update(updateGasto)
+          .eq('id', pago.gasto_id)
+          .select('id');
+        if (error || !data || data.length === 0) desincronizado = true;
       }
       if (Object.keys(updatePagoGasto).length > 0) {
-        await supabase.from('pagos_gastos').update(updatePagoGasto).eq('gasto_id', pago.gasto_id);
+        const { data, error } = await supabase
+          .from('pagos_gastos')
+          .update(updatePagoGasto)
+          .eq('gasto_id', pago.gasto_id)
+          .select('id');
+        if (error || !data || data.length === 0) desincronizado = true;
+      }
+      if (desincronizado) {
+        window.alert(
+          `El cambio se guardó en el pago fijo "${pago.concepto}", pero NO se pudo actualizar ` +
+            'el gasto asociado.\n\nEl Estado de Resultados y el Flujo de Caja van a seguir ' +
+            'mostrando el importe viejo. Avisá o corregilo desde Resumen de Egresos.',
+        );
       }
     }
 
@@ -735,7 +855,18 @@ export function ChecklistPagos() {
       return;
     }
     if (pago.pagado && pago.gasto_id) {
-      await supabase.from('gastos').update({ periodo: nuevoPeriodo }).eq('id', pago.gasto_id);
+      const { data, error: errGasto } = await supabase
+        .from('gastos')
+        .update({ periodo: nuevoPeriodo })
+        .eq('id', pago.gasto_id)
+        .select('id');
+      if (errGasto || !data || data.length === 0) {
+        window.alert(
+          `"${pago.concepto}" se movió a ${labelMes(nuevoPeriodo)}, pero el gasto asociado quedó ` +
+            `en ${labelMes(pago.periodo)}.\n\nEl EdR va a seguir imputando esa plata al mes ` +
+            'viejo. Corregilo desde Resumen de Egresos o avisá.',
+        );
+      }
     }
     invalidarPagosFijos(qc, periodo);
     qc.invalidateQueries({ queryKey: ['pagos_fijos', nuevoPeriodo] });
