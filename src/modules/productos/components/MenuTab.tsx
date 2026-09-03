@@ -336,6 +336,13 @@ export function MenuTab() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['menu-precios-receta'] });
+      // El precio del canal 'plato' ES el precio del mostrador: lo lee el
+      // catálogo de la caja (useCatalogoCaja) y, a través de él, Price
+      // Engineering. Sin este aviso ese catálogo queda fresco 10 minutos y la
+      // Ley de Omnes sigue analizando el precio viejo después de cambiarlo acá.
+      // ⚠️ Solo alcanza a ESTA ventana: el POS corre en otra y tiene su propia
+      // caché — ahí el precio nuevo entra recién cuando su consulta vence.
+      qc.invalidateQueries({ queryKey: ['caja-catalogo'] });
     },
   });
 

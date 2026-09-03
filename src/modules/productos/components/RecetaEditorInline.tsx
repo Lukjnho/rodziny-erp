@@ -681,6 +681,11 @@ export function RecetaEditorInline({
         qc.invalidateQueries({ queryKey: ['receta-productos-vinculados', receta?.id] });
       }
 
+      // Guardar acá puede cambiar el nombre, la categoría o los nombres de Fudo
+      // de una receta vendible — las tres cosas que arman el catálogo del
+      // mostrador y la carta que analiza Price Engineering.
+      qc.invalidateQueries({ queryKey: ['caja-catalogo'] });
+
       onSaved();
     } catch (err: unknown) {
       const msg =
