@@ -58,7 +58,10 @@ interface LotePastaSemana {
 interface PastaRecetaMap {
   pasta_id: string;
   receta_id: string;
-  receta?: { tipo: string } | null;
+  // OJO: el papel de la receta vive en `rol` ('relleno' | 'masa' | ...).
+  // `tipo` solo puede ser 'receta' | 'subreceta' (check en la base), asi que
+  // filtrar por tipo aca no encuentra NUNCA nada.
+  receta?: { rol: string | null } | null;
 }
 
 const TIPO_LABEL: Record<TipoPlan, string> = {
@@ -303,7 +306,7 @@ export function PlanSemanal({
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cocina_pasta_recetas')
-        .select('pasta_id, receta_id, receta:cocina_recetas(tipo)');
+        .select('pasta_id, receta_id, receta:cocina_recetas(rol)');
       if (error) throw error;
       return (data ?? []) as unknown as PastaRecetaMap[];
     },
@@ -316,8 +319,8 @@ export function PlanSemanal({
     const masaAPastas = new Map<string, Set<string>>(); // receta_id (masa) → set pasta_id
     const pastaAReceta = new Map<string, { rellenos: Set<string>; masas: Set<string> }>();
     for (const r of pastaRecetas ?? []) {
-      const tipo = r.receta?.tipo ?? null;
-      const dest = tipo === 'relleno' ? rellenoAPastas : tipo === 'masa' ? masaAPastas : null;
+      const rol = r.receta?.rol ?? null;
+      const dest = rol === 'relleno' ? rellenoAPastas : rol === 'masa' ? masaAPastas : null;
       if (dest) {
         if (!dest.has(r.receta_id)) dest.set(r.receta_id, new Set());
         dest.get(r.receta_id)!.add(r.pasta_id);
@@ -326,8 +329,8 @@ export function PlanSemanal({
         pastaAReceta.set(r.pasta_id, { rellenos: new Set(), masas: new Set() });
       }
       const e = pastaAReceta.get(r.pasta_id)!;
-      if (tipo === 'relleno') e.rellenos.add(r.receta_id);
-      else if (tipo === 'masa') e.masas.add(r.receta_id);
+      if (rol === 'relleno') e.rellenos.add(r.receta_id);
+      else if (rol === 'masa') e.masas.add(r.receta_id);
     }
     return { rellenoAPastas, masaAPastas, pastaAReceta };
   }, [pastaRecetas]);
