@@ -104,7 +104,7 @@ export function PizarronPage() {
   const { data: movimientos } = useQuery({
     queryKey: ['pizarron-movimientos', local],
     queryFn: async () => {
-      const [entradas, salidas] = await Promise.all([
+      const [entradas, salidas, conteos] = await Promise.all([
         supabaseAnon
           .from('cocina_lotes_pasta')
           .select('id, porciones, porcionado_at, responsable_porcionado, producto:cocina_productos(nombre)')
@@ -119,9 +119,19 @@ export function PizarronPage() {
           .eq('local', local)
           .order('created_at', { ascending: false })
           .limit(6),
+        // Los conteos también son movimiento, y el más importante: son los que
+        // corrigen el número. Sin esto, contar no deja rastro visible en la
+        // pantalla y no se puede verificar que quedó guardado.
+        supabaseAnon
+          .from('cocina_cierre_camara')
+          .select('id, cantidad_real, created_at, responsable, producto:cocina_productos(nombre)')
+          .eq('local', local)
+          .order('created_at', { ascending: false })
+          .limit(6),
       ]);
       if (entradas.error) throw entradas.error;
       if (salidas.error) throw salidas.error;
+      if (conteos.error) throw conteos.error;
 
       const nombreDe = (p: unknown): string => {
         const rel = Array.isArray(p) ? p[0] : p;
@@ -146,6 +156,16 @@ export function PizarronPage() {
           producto: nombreDe(r.producto),
           quien: (r.responsable as string | null) ?? null,
           que: 'bajó al mostrador',
+        })),
+        ...(conteos.data ?? []).map((r) => ({
+          id: `c-${r.id}`,
+          cuando: r.created_at as string,
+          // El conteo no suma ni resta: FIJA el número. Por eso lleva "=".
+          signo: '=' as const,
+          porciones: Number(r.cantidad_real) || 0,
+          producto: nombreDe(r.producto),
+          quien: (r.responsable as string | null) ?? null,
+          que: 'contó',
         })),
       ];
       items.sort((a, b) => (a.cuando < b.cuando ? 1 : -1));
@@ -206,6 +226,9 @@ export function PizarronPage() {
       setGuardado(`${nombre}: quedaron ${conMiles(p.cantidad_real)} porciones`);
       cerrarConteo();
       qc.invalidateQueries({ queryKey: ['pizarron-stock'] });
+      // También la lista de abajo: el conteo tiene que aparecer al toque, si no
+      // la persona no tiene forma de saber que quedó guardado.
+      qc.invalidateQueries({ queryKey: ['pizarron-movimientos'] });
       window.setTimeout(() => setGuardado(''), 6000);
     },
     onError: (e: Error) => setError(mensajeErrorAmigable(e, 'No se pudo guardar el conteo')),
@@ -344,7 +367,7 @@ export function PizarronPage() {
       {(movimientos ?? []).length > 0 && (
         <footer className="border-t border-slate-700 px-6 py-5">
           <h2 className="mb-3 text-base uppercase tracking-wider text-slate-500">
-            Último movimiento
+            Lo último que pasó
           </h2>
           <ul className="space-y-2">
             {(movimientos ?? []).map((m) => (
@@ -355,7 +378,11 @@ export function PizarronPage() {
                 <span
                   className={cn(
                     'w-20 shrink-0 text-right font-semibold tabular-nums',
-                    m.signo === '+' ? 'text-teal-300' : 'text-slate-300',
+                    m.signo === '+'
+                      ? 'text-teal-300'
+                      : m.signo === '='
+                        ? 'text-amber-300'
+                        : 'text-slate-300',
                   )}
                 >
                   {m.signo}
@@ -484,7 +511,7 @@ export function PizarronPage() {
               {guardarConteo.isPending ? 'Guardando…' : 'Guardar el conteo'}
             </button>
             <p className="mt-4 pb-6 text-base text-slate-500">
-              El conteo no borra nada: queda con tu nombre y la hora, y el número arranca de ahí.
+              El conteo no borra nada: queda con tu nombre y la hora, aparece abajo en los movimientos, y el número arranca de ahí.
             </p>
           </div>
         </div>
