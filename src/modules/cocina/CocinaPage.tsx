@@ -1,4 +1,6 @@
 import { useState } from 'react';
+import { abrirVentanaAparte } from '@/lib/ventanaPantalla';
+import { NOMBRE_VENTANA_PIZARRON, RUTA_PIZARRON_CAMARA } from '@/lib/ventanaPizarron';
 import { PageContainer } from '@/components/layout/PageContainer';
 import { cn } from '@/lib/utils';
 import { DashboardTab } from './DashboardTab';
@@ -40,8 +42,9 @@ const ayudaPorTab: Record<Tab, { titulo: string; pasos: string[] }> = {
   stock: {
     titulo: 'Stock',
     pasos: [
-      'Muestra el stock actual por producto en sus tres ubicaciones: Pastas en produ (frescas sin porcionar), En cámara (depósito), En mostrador (listas para venta).',
-      'El stock en cámara se calcula como: producción en cámara − traspasos históricos − merma.',
+      'Muestra el stock por producto en sus tres lugares: A porcionar (bandejas armadas en el freezer de la sala, todavía sin cortar), En cámara (depósito, ya en porciones) y En mostrador (listas para venta).',
+      'El número de cámara sale de la cuenta única de la base: arranca del último conteo físico y le suma el porcionado posterior, menos traspasos y merma. Ninguna pantalla lo recalcula por su cuenta.',
+      'La columna "A porcionar" muestra BANDEJAS, y abajo la estimación en porciones con ~ (dice "?" cuando no hay histórico para estimarla).',
       'El stock en mostrador se calcula como: traspasos de hoy − ventas Fudo de hoy − merma de hoy. Solo Vedia tiene ventas automáticas desde Fudo.',
       'Los productos bajo mínimo aparecen en amarillo, sin stock en rojo.',
     ],
@@ -113,9 +116,28 @@ export function CocinaPage() {
         <TabButton activo={tab === 'calculadora'} onClick={() => setTab('calculadora')}>
           Calculadora
         </TabButton>
+        {/* ⚠️ El click TIENE que salir de acá: si se abriera desde un efecto o
+            después de un await, el navegador lo bloquea como ventana emergente
+            y sin avisar. Ver src/lib/ventanaPantalla.ts */}
+        <button
+          onClick={() => {
+            const abierta = abrirVentanaAparte({
+              nombre: NOMBRE_VENTANA_PIZARRON,
+              ruta: RUTA_PIZARRON_CAMARA,
+              ancho: 1280,
+              alto: 900,
+            });
+            // Plan B si el navegador bloqueó la ventana: se abre en una pestaña.
+            if (!abierta) window.open(RUTA_PIZARRON_CAMARA, '_blank');
+          }}
+          className="mb-2 ml-auto rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-slate-700"
+          title="Pantalla para la tablet del depósito: stock de cámara y conteo físico"
+        >
+          🧊 Pizarrón del depósito
+        </button>
         <button
           onClick={() => setAyudaAbierta(true)}
-          className="hover:bg-rodziny-200 mb-2 ml-auto flex h-8 w-8 items-center justify-center rounded-full bg-rodziny-100 text-sm font-bold text-rodziny-700 transition-colors"
+          className="hover:bg-rodziny-200 mb-2 ml-2 flex h-8 w-8 items-center justify-center rounded-full bg-rodziny-100 text-sm font-bold text-rodziny-700 transition-colors"
           title="Ayuda"
         >
           ?

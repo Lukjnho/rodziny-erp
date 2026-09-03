@@ -42,6 +42,9 @@ const ProduccionQRPage = lazy(() =>
 const MostradorPage = lazy(() =>
   import('@/modules/cocina/MostradorPage').then((m) => ({ default: m.MostradorPage })),
 );
+const PizarronPage = lazy(() =>
+  import('@/modules/cocina/PizarronPage').then((m) => ({ default: m.PizarronPage })),
+);
 const AlmacenPage = lazy(() =>
   import('@/modules/almacen/AlmacenPage').then((m) => ({ default: m.AlmacenPage })),
 );
@@ -289,6 +292,12 @@ export default function App() {
               <Route path="/fichar" element={<FicharPage />} />
               <Route path="/produccion" element={<ProduccionQRPage />} />
               <Route path="/mostrador" element={<MostradorPage />} />
+              {/* El pizarrón de la fábrica: tablet colgada en la pared, se lee
+                  sin sesión igual que el QR. Va acá arriba (fuera de
+                  AppInterna) a propósito: si estuviera bajo /cocina pediría
+                  login y una tablet de pared con login termina mostrando
+                  "sesión expirada" y nadie la arregla. */}
+              <Route path="/pizarron" element={<PizarronPage />} />
 
               {/* Resto del ERP protegido */}
               <Route path="*" element={<AppInterna />} />
