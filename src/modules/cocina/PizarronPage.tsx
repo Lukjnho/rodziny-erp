@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabaseAnon } from '@/lib/supabaseAnon';
 import { supabase } from '@/lib/supabase';
 import { mensajeErrorAmigable } from '@/lib/erroresSupabase';
 import { hoyAR } from '@/lib/fechaAR';
+import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/utils';
 import { SELECT_STOCK_PASTAS, vendibleHoy, type StockPastaRow } from './lib/stockPastas';
 import { ResponsableBotones } from './components/ResponsableBotones';
@@ -178,16 +179,13 @@ export function PizarronPage() {
   // La pantalla LEE sin sesión, pero `cocina_cierre_camara` hoy solo acepta
   // conteos de un usuario logueado. Si la tablet no tiene sesión, se avisa en
   // vez de dejar tocar un botón que va a fallar.
-  const [haySesion, setHaySesion] = useState<boolean | null>(null);
-  useEffect(() => {
-    let vivo = true;
-    supabase.auth.getSession().then(({ data }) => {
-      if (vivo) setHaySesion(!!data.session);
-    });
-    return () => {
-      vivo = false;
-    };
-  }, []);
+  //
+  // ⚠️ Se usa el contexto de auth y NO `supabase.auth.getSession()`: ese método
+  // queda colgado con refresh tokens (bug conocido de Supabase, documentado en
+  // `lib/auth.tsx`), y el aviso nunca aparecería. El contexto escucha
+  // `onAuthStateChange`, que sí dispara siempre.
+  const { user, perfil, cargando: cargandoSesion } = useAuth();
+  const haySesion = cargandoSesion ? null : !!user;
 
   // ── El conteo ──────────────────────────────────────────────────────────────
   const [contando, setContando] = useState<FilaStock | null>(null);
@@ -474,7 +472,12 @@ export function PizarronPage() {
 
             <p className="mt-8 text-2xl font-semibold">¿Quién contó?</p>
             <div className="mt-3">
-              <ResponsableBotones local={local} value={quien} onChange={setQuien} />
+              <ResponsableBotones
+                local={local}
+                value={quien}
+                onChange={setQuien}
+                nombreSesion={perfil?.nombre ?? null}
+              />
             </div>
 
             {haySesion === false && (
