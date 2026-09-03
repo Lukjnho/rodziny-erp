@@ -1,14 +1,11 @@
 import { useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { supabaseAnon } from '@/lib/supabaseAnon';
-import { supabase } from '@/lib/supabase';
-import { mensajeErrorAmigable } from '@/lib/erroresSupabase';
-import { hoyAR } from '@/lib/fechaAR';
 import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/utils';
 import { SELECT_STOCK_PASTAS, vendibleHoy, type StockPastaRow } from './lib/stockPastas';
-import { ResponsableBotones } from './components/ResponsableBotones';
+import { PizarronPanelPasta } from './components/PizarronPanelPasta';
 
 /**
  * EL PIZARRÓN DE LA FÁBRICA — pantalla para una tablet colgada de la pared.
@@ -81,7 +78,6 @@ export function PizarronPage() {
   const [params, setParams] = useSearchParams();
   const local: Local = params.get('local') === 'saavedra' ? 'saavedra' : 'vedia';
   const vista: Vista = 'camara';
-  const qc = useQueryClient();
 
   // ── El stock, de la cuenta única ───────────────────────────────────────────
   const { data: filas, isLoading } = useQuery({
@@ -187,50 +183,11 @@ export function PizarronPage() {
   const { user, perfil, cargando: cargandoSesion } = useAuth();
   const haySesion = cargandoSesion ? null : !!user;
 
-  // ── El conteo ──────────────────────────────────────────────────────────────
+  // ── Qué pasta se está mirando ────────────────────────────────────────────
+  // El panel de la pasta (los lotes, contar y sacar) vive en su propio
+  // archivo: acá solo se elige cuál se abre.
   const [contando, setContando] = useState<FilaStock | null>(null);
-  const [cantidad, setCantidad] = useState('');
-  const [quien, setQuien] = useState('');
-  const [error, setError] = useState('');
   const [guardado, setGuardado] = useState('');
-
-  const cerrarConteo = () => {
-    setContando(null);
-    setCantidad('');
-    setQuien(''); // pantalla compartida: no se recuerda a nadie
-    setError('');
-  };
-
-  const guardarConteo = useMutation({
-    mutationFn: async (p: { producto_id: string; cantidad_real: number; responsable: string }) => {
-      // El conteo físico es un BASELINE, no un delta: la vista toma el más
-      // reciente y le suma lo posterior. Contar de nuevo corrige sin pisar
-      // nada, y quedan los dos conteos con su hora y su responsable.
-      const { error: e } = await supabase.from('cocina_cierre_camara').insert({
-        producto_id: p.producto_id,
-        local,
-        // ⚠️ La fecha se manda explícita. El default de la columna es
-        // CURRENT_DATE, que en el servidor es UTC: un conteo de las 22 hs de
-        // acá quedaría guardado con la fecha de mañana.
-        fecha: hoyAR(),
-        cantidad_real: p.cantidad_real,
-        responsable: p.responsable,
-        notas: 'Conteo desde el pizarrón del depósito',
-      });
-      if (e) throw e;
-    },
-    onSuccess: (_d, p) => {
-      const nombre = contando?.nombre ?? '';
-      setGuardado(`${nombre}: quedaron ${conMiles(p.cantidad_real)} porciones`);
-      cerrarConteo();
-      qc.invalidateQueries({ queryKey: ['pizarron-stock'] });
-      // También la lista de abajo: el conteo tiene que aparecer al toque, si no
-      // la persona no tiene forma de saber que quedó guardado.
-      qc.invalidateQueries({ queryKey: ['pizarron-movimientos'] });
-      window.setTimeout(() => setGuardado(''), 6000);
-    },
-    onError: (e: Error) => setError(mensajeErrorAmigable(e, 'No se pudo guardar el conteo')),
-  });
 
   const totales = useMemo(() => {
     const lista = filas ?? [];
@@ -244,10 +201,6 @@ export function PizarronPage() {
       bandejasEnSala: lista.reduce((s, f) => s + (Number(f.bandejas_en_proceso) || 0), 0),
     };
   }, [filas]);
-
-  const contado = contando ? Number(cantidad) : 0;
-  const cree = contando ? vendibleHoy(contando) : 0;
-  const diferencia = contado - cree;
 
   return (
     <div className="min-h-screen bg-slate-900 text-slate-50">
@@ -318,11 +271,7 @@ export function PizarronPage() {
             <button
               key={f.producto_id}
               type="button"
-              onClick={() => {
-                setContando(f);
-                setCantidad(String(porciones));
-                setError('');
-              }}
+              onClick={() => setContando(f)}
               className={cn(
                 'rounded-2xl border-2 p-5 text-left transition',
                 vencido
@@ -397,127 +346,20 @@ export function PizarronPage() {
         </footer>
       )}
 
-      {/* ── Contar: pantalla completa, un número y un nombre ──────────────── */}
+
+      {/* ── El panel de la pasta: los lotes, contar y sacar ───────────────── */}
       {contando && (
-        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900 px-6 py-6">
-          <div className="mx-auto max-w-2xl">
-            <button
-              type="button"
-              onClick={cerrarConteo}
-              className="mb-6 text-lg text-slate-400 underline"
-            >
-              ← Volver sin guardar
-            </button>
-
-            <h2 className="text-3xl font-bold leading-tight">{contando.nombre}</h2>
-            <p className="mt-2 text-xl text-slate-400">
-              El sistema cree que hay {conMiles(cree)} porciones
-              {contando.ultimo_conteo_at
-                ? ` (${textoAntiguedad(diasDesde(contando.ultimo_conteo_at))})`
-                : ' (nunca se contó)'}
-            </p>
-
-            <p className="mt-8 text-2xl font-semibold">¿Cuántas contaste?</p>
-            <div className="mt-3 rounded-2xl bg-slate-800 px-6 py-5 text-center text-6xl font-bold tabular-nums">
-              {cantidad === '' ? <span className="text-slate-600">0</span> : conMiles(Number(cantidad))}
-            </div>
-            {cantidad !== '' && diferencia !== 0 && (
-              <p
-                className={cn(
-                  'mt-3 text-center text-xl font-medium',
-                  diferencia < 0 ? 'text-amber-300' : 'text-teal-300',
-                )}
-              >
-                {diferencia < 0
-                  ? `${conMiles(Math.abs(diferencia))} menos de lo que decía el sistema`
-                  : `${conMiles(diferencia)} más de lo que decía el sistema`}
-              </p>
-            )}
-
-            {/* Teclado propio: en una tablet el teclado del sistema tapa media
-                pantalla y hay que apuntar a teclas chicas. */}
-            <div className="mt-5 grid grid-cols-3 gap-3">
-              {['7', '8', '9', '4', '5', '6', '1', '2', '3'].map((d) => (
-                <button
-                  key={d}
-                  type="button"
-                  onClick={() => setCantidad((v) => (v === '0' ? d : v + d))}
-                  className="min-h-[72px] rounded-xl bg-slate-700 text-3xl font-semibold hover:bg-slate-600"
-                >
-                  {d}
-                </button>
-              ))}
-              <button
-                type="button"
-                onClick={() => setCantidad((v) => (v === '' || v === '0' ? '0' : v + '0'))}
-                className="min-h-[72px] rounded-xl bg-slate-700 text-3xl font-semibold hover:bg-slate-600"
-              >
-                0
-              </button>
-              <button
-                type="button"
-                onClick={() => setCantidad('')}
-                className="min-h-[72px] rounded-xl bg-slate-700 text-xl font-semibold text-slate-300 hover:bg-slate-600"
-              >
-                Borrar
-              </button>
-              <button
-                type="button"
-                onClick={() => setCantidad((v) => v.slice(0, -1))}
-                className="min-h-[72px] rounded-xl bg-slate-700 text-3xl font-semibold hover:bg-slate-600"
-              >
-                ⌫
-              </button>
-            </div>
-
-            <p className="mt-8 text-2xl font-semibold">¿Quién contó?</p>
-            <div className="mt-3">
-              <ResponsableBotones
-                local={local}
-                value={quien}
-                onChange={setQuien}
-                nombreSesion={perfil?.nombre ?? null}
-              />
-            </div>
-
-            {haySesion === false && (
-              <div className="mt-6 rounded-xl border-2 border-amber-500/60 bg-amber-500/10 px-5 py-4 text-lg text-amber-200">
-                Esta tablet no tiene la sesión iniciada, así que todavía no puede guardar el conteo.
-                Entrá una vez al ERP desde este mismo navegador y queda lista.
-              </div>
-            )}
-
-            {error && (
-              <div className="mt-6 rounded-xl bg-red-500/20 px-5 py-4 text-lg text-red-200">
-                {error}
-              </div>
-            )}
-
-            <button
-              type="button"
-              disabled={
-                cantidad === '' ||
-                !quien ||
-                haySesion === false ||
-                guardarConteo.isPending
-              }
-              onClick={() => {
-                setError('');
-                guardarConteo.mutate({
-                  producto_id: contando.producto_id,
-                  cantidad_real: Number(cantidad),
-                  responsable: quien,
-                });
-              }}
-              className="mt-8 min-h-[80px] w-full rounded-2xl bg-teal-400 text-2xl font-bold text-slate-900 transition hover:bg-teal-300 disabled:bg-slate-700 disabled:text-slate-500"
-            >
-              {guardarConteo.isPending ? 'Guardando…' : 'Guardar el conteo'}
-            </button>
-            <p className="mt-4 pb-6 text-base text-slate-500">
-              El conteo no borra nada: queda con tu nombre y la hora, aparece abajo en los movimientos, y el número arranca de ahí.
-            </p>
-          </div>
-        </div>
+        <PizarronPanelPasta
+          fila={contando}
+          local={local}
+          nombreSesion={perfil?.nombre ?? null}
+          haySesion={haySesion}
+          onCerrar={() => setContando(null)}
+          onGuardado={(msg) => {
+            setGuardado(msg);
+            window.setTimeout(() => setGuardado(''), 6000);
+          }}
+        />
       )}
     </div>
   );

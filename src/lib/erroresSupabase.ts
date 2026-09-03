@@ -16,6 +16,11 @@ const POR_CODIGO: Record<string, string> = {
   '23514': 'Alguna cantidad no es válida. Revisá los números cargados.',
   '22P02': 'Hay un valor con formato inválido (revisá las cantidades).',
   '40001': 'Otra persona guardó al mismo tiempo. Esperá un segundo y probá de nuevo.',
+  // RLS: la fila se rechazó por permisos, no por los datos. Antes caía en el
+  // mensaje genérico ("no se pudo completar") y la persona no tenía forma de
+  // saber que le faltaba un permiso — probaba de nuevo para siempre.
+  '42501':
+    'Tu usuario no tiene permiso para hacer esto. Pedile a un administrador que te habilite el módulo.',
   PGRST116: 'No se encontró el registro (quizás se borró o cambió desde otra pantalla).',
 };
 
@@ -62,6 +67,9 @@ export function mensajeErrorAmigable(error: unknown, contexto?: string): string 
     else if (raw.includes('foreign key')) base = POR_CODIGO['23503'];
     else if (raw.includes('null value') || raw.includes('not-null')) base = POR_CODIGO['23502'];
     else if (raw.includes('check constraint')) base = POR_CODIGO['23514'];
+    // PostgREST a veces devuelve el rechazo de RLS sin el código 42501.
+    else if (raw.includes('row-level security') || raw.includes('permission denied'))
+      base = POR_CODIGO['42501'];
   }
 
   // Mensaje escrito a mano por la app (throw new Error('...')): no tiene código
