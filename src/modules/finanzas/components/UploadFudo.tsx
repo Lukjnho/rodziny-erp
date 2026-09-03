@@ -150,7 +150,19 @@ export function UploadFudo({ onSuccess }: { onSuccess?: () => void }) {
     // de otros meses sobrevivían y colisionaban contra la constraint única (local, fudo_id).
     const periodosArchivo = [...new Set(ticketsRows.map((t) => t.periodo))];
     if (periodosArchivo.length) {
-      await supabase.from('ventas_tickets').delete().eq('local', loc).in('periodo', periodosArchivo);
+      // ⚠️ EL FILTRO POR `origen` NO ES OPCIONAL — mismo motivo que en
+      // supabase/functions/fudo-importar-ventas/index.ts. Sin esta condicion,
+      // subir un archivo de Fudo para corregir un mes se lleva puestas tambien
+      // las ventas cobradas por el POS propio de ese mes, en silencio y sin
+      // papelera. Las filas que inserta ESTA pantalla nacen con origen='fudo'
+      // (es el default de la columna), asi que el filtro no le impide limpiar
+      // lo suyo: solo le impide borrar lo ajeno.
+      await supabase
+        .from('ventas_tickets')
+        .delete()
+        .eq('local', loc)
+        .in('periodo', periodosArchivo)
+        .eq('origen', 'fudo');
     }
     // upsert por (local, fudo_id): si algún ticket quedó bajo otro periodo, se actualiza en vez de romper.
     const { error: e1 } = await supabase
@@ -194,7 +206,14 @@ export function UploadFudo({ onSuccess }: { onSuccess?: () => void }) {
       .from('edr_partidas')
       .upsert(descPartidas, { onConflict: 'local,periodo,concepto' });
 
-    await supabase.from('ventas_items').delete().eq('local', loc).eq('periodo', data.periodo);
+    // Ver el comentario del borrado de ventas_tickets: el filtro por origen
+    // protege las ventas del POS propio.
+    await supabase
+      .from('ventas_items')
+      .delete()
+      .eq('local', loc)
+      .eq('periodo', data.periodo)
+      .eq('origen', 'fudo');
     const itemsRows = data.productos.map((p) => ({ local: loc, periodo: data.periodo, ...p }));
     console.log(
       '[upload] items a insertar:',
@@ -209,7 +228,14 @@ export function UploadFudo({ onSuccess }: { onSuccess?: () => void }) {
       }
     }
 
-    await supabase.from('ventas_pagos').delete().eq('local', loc).eq('periodo', data.periodo);
+    // Ver el comentario del borrado de ventas_tickets: el filtro por origen
+    // protege los pagos del POS propio.
+    await supabase
+      .from('ventas_pagos')
+      .delete()
+      .eq('local', loc)
+      .eq('periodo', data.periodo)
+      .eq('origen', 'fudo');
     // Excluir pagos de tickets cancelados/eliminados
     const ticketIdsValidos = new Set(ticketsRows.map((t) => t.fudo_id));
     const pagosRows = data.pagos
