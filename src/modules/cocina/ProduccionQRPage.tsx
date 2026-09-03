@@ -334,6 +334,8 @@ export function ProduccionQRPage() {
     setVista(v);
   }, []);
   const [mensajeExito, setMensajeExito] = useState('');
+  // Código del lote recién guardado, para mostrarlo grande en la pantalla de OK.
+  const [codigoExito, setCodigoExito] = useState<string | null>(null);
 
   // Catálogos
   const { data: productos } = useQuery({
@@ -812,8 +814,9 @@ export function ProduccionQRPage() {
     [recetas, local],
   );
 
-  function onGuardado(msg: string) {
+  function onGuardado(msg: string, codigo?: string | null) {
     setMensajeExito(msg);
+    setCodigoExito(codigo ?? null);
     setVista('exito');
     // Refrescar lotes para que aparezcan al cargar pasta
     qc.invalidateQueries({ queryKey: ['cocina-lotes-relleno-qr'] });
@@ -976,7 +979,9 @@ export function ProduccionQRPage() {
         />
       )}
 
-      {vista === 'exito' && <Exito mensaje={mensajeExito} onOtro={() => irA('inicio')} />}
+      {vista === 'exito' && (
+        <Exito mensaje={mensajeExito} codigo={codigoExito} onOtro={() => irA('inicio')} />
+      )}
     </Pantalla>
   );
 }
@@ -1769,7 +1774,8 @@ function FormPasta({
     receta: { tipo: string; rol: string | null } | { tipo: string; rol: string | null }[] | null;
   }[];
   cargasHoy?: CargaHoyItem[];
-  onGuardado: (msg: string) => void;
+  /** El segundo argumento es el código del lote tal cual lo guardó la base. */
+  onGuardado: (msg: string, codigo?: string | null) => void;
   onVolver: () => void;
 }) {
   const [loteRellenoId, setLoteRellenoId] = useState('');
@@ -2103,7 +2109,11 @@ function FormPasta({
         local,
         notas: notasFinal,
       })
-      .select('id')
+      // Traemos codigo_lote de vuelta: el codigo definitivo lo pone la BASE
+      // (migracion 171 le agrega la letra de tanda si ya existe uno igual ese
+      // dia). Mostrar el que calculo el navegador haria que el equipo escriba
+      // en el cajon un codigo que no es el que quedo guardado.
+      .select('id, codigo_lote')
       .single();
 
     if (err) {
@@ -2129,10 +2139,12 @@ function FormPasta({
         return;
       }
     }
+    const codigoGuardado = loteCreado?.codigo_lote ?? codigoLote;
     onGuardado(
       esPastaSinRelleno
-        ? `${prodSel?.nombre ?? 'Pasta'} — ${cantidadCajones || '?'} porciones en cámara (${codigoLote})`
-        : `${prodSel?.nombre ?? 'Pasta'} armada — ${cantidadCajones || '?'} bandejas en freezer (${codigoLote})`,
+        ? `${prodSel?.nombre ?? 'Pasta'} — ${cantidadCajones || '?'} porciones en cámara`
+        : `${prodSel?.nombre ?? 'Pasta'} armada — ${cantidadCajones || '?'} bandejas en freezer`,
+      codigoGuardado,
     );
   }
 
@@ -3613,14 +3625,39 @@ function FormCerrarMasa({
 
 // ── Pantalla de éxito ──────────────────────────────────────────────────────────
 
-function Exito({ mensaje, onOtro }: { mensaje: string; onOtro: () => void }) {
+function Exito({
+  mensaje,
+  codigo,
+  onOtro,
+}: {
+  mensaje: string;
+  /** Codigo del lote tal cual quedo guardado en la base. Es el que va al cajon. */
+  codigo?: string | null;
+  onOtro: () => void;
+}) {
   return (
     <div className="mt-8 text-center">
       <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-green-100">
         <span className="text-3xl text-green-600">✓</span>
       </div>
       <h2 className="mb-1 text-lg font-semibold text-gray-900">Registrado</h2>
-      <p className="mb-6 text-sm text-gray-600">{mensaje}</p>
+      <p className="mb-4 text-sm text-gray-600">{mensaje}</p>
+
+      {/* El codigo de la tanda. Es lo que se escribe en el cajon y lo que
+          despues se usa para entrar y sacar mercaderia de la camara, asi que
+          va grande y en monoespaciado (la letra del final se tiene que
+          distinguir bien de la del lote de al lado). */}
+      {codigo && (
+        <div className="mb-6 rounded-lg border-2 border-rodziny-700 bg-rodziny-50 p-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-rodziny-700">
+            Código del lote
+          </p>
+          <p className="mt-1 select-all font-mono text-3xl font-bold uppercase text-rodziny-900">
+            {codigo}
+          </p>
+          <p className="mt-2 text-xs text-rodziny-700">✍️ Anotalo en el cajón</p>
+        </div>
+      )}
       <button
         onClick={onOtro}
         className="w-full rounded-lg bg-rodziny-700 py-4 text-base font-semibold text-white shadow transition-transform hover:bg-rodziny-800 active:scale-[0.98]"
