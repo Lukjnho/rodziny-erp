@@ -2,34 +2,35 @@ import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
-
-interface VistaStockPasta {
-  producto_id: string;
-  nombre: string;
-  codigo: string;
-  local: string;
-  minimo_produccion: number | null;
-  porciones_camara: number | null;
-  porciones_fresco: number | null;
-  porciones_traspasadas: number | null;
-  porciones_merma: number | null;
-}
+import {
+  SELECT_STOCK_PASTAS,
+  vendibleHoy,
+  bandejasEnProceso,
+  type StockPastaRow,
+} from '@/modules/cocina/lib/stockPastas';
 
 interface Row {
   id: string;
   nombre: string;
   codigo: string;
-  frescos: number;
+  /** Bandejas armadas esperando el porcionado. NO son porciones vendibles. */
+  bandejas: number;
   stock: number;
   minimo: number;
 }
 
 /**
  * Panel read-only con el stock de pastas terminadas del local.
- * Lee de la vista canónica `v_cocina_stock_pastas` (misma que Cocina → Stock,
- * Dashboard y Traspasos): stock de cámara = último conteo físico (baseline) +
- * porcionado/traslados/merma/ajustes posteriores. Antes este panel sumaba todo
- * el histórico de lotes sin baseline y sobrecontaba (ej. 341 vs 88 reales).
+ *
+ * Lee la cuenta única de la base (migración 161) a través de
+ * `cocina/lib/stockPastas`: acá NO se hace ninguna resta. Antes este panel
+ * restaba a mano cámara − traslados − merma, igual que otras cinco pantallas,
+ * cada una con su propia variante.
+ *
+ * La columna de bandejas cambió de significado: antes leía `porciones_fresco`,
+ * que daba 0 SIEMPRE (en el freezer de producción las porciones son NULL), así
+ * que la pasta armada nunca se veía. Ahora muestra bandejas de verdad.
+ *
  * El encargado de compras ve el disponible pero no lo edita (gestión en Cocina).
  */
 export function PastasTerminadasPanel({
@@ -46,34 +47,25 @@ export function PastasTerminadasPanel({
     queryFn: async () => {
       const { data, error } = await supabase
         .from('v_cocina_stock_pastas')
-        .select(
-          'producto_id, nombre, codigo, local, minimo_produccion, porciones_camara, porciones_fresco, porciones_traspasadas, porciones_merma',
-        )
+        .select(SELECT_STOCK_PASTAS)
         .eq('local', local)
         .order('nombre');
       if (error) throw error;
-      return data as VistaStockPasta[];
+      return data as unknown as StockPastaRow[];
     },
   });
 
   const rows = useMemo<Row[]>(() => {
     if (!vista) return [];
-    return vista.map((v) => {
-      // Disponible en cámara = cámara (baseline + producido posterior) − traslados − merma.
-      // Espeja exactamente el "Stock disponible" de Cocina → Stock.
-      const stock =
-        Number(v.porciones_camara ?? 0) -
-        Number(v.porciones_traspasadas ?? 0) -
-        Number(v.porciones_merma ?? 0);
-      return {
-        id: v.producto_id,
-        nombre: v.nombre,
-        codigo: v.codigo,
-        frescos: Number(v.porciones_fresco ?? 0),
-        stock: Math.max(0, stock),
-        minimo: v.minimo_produccion ?? 0,
-      };
-    });
+    // Sin aritmética: la resta ya viene hecha de la base.
+    return vista.map((v) => ({
+      id: v.producto_id,
+      nombre: v.nombre,
+      codigo: v.codigo,
+      bandejas: bandejasEnProceso(v),
+      stock: vendibleHoy(v),
+      minimo: v.minimo_produccion ?? 0,
+    }));
   }, [vista]);
 
   const rowsFiltradas = useMemo(() => {
@@ -92,7 +84,7 @@ export function PastasTerminadasPanel({
   }, [rows, filtro]);
 
   const totalDisponible = rowsFiltradas.reduce((s, r) => s + Math.max(0, r.stock), 0);
-  const totalFrescos = rowsFiltradas.reduce((s, r) => s + r.frescos, 0);
+  const totalBandejas = rowsFiltradas.reduce((s, r) => s + r.bandejas, 0);
   const sinStock = rowsFiltradas.filter((r) => r.stock <= 0).length;
   const bajoMin = rowsFiltradas.filter(
     (r) => r.minimo > 0 && r.stock > 0 && r.stock < r.minimo,
@@ -112,7 +104,7 @@ export function PastasTerminadasPanel({
             🍝 Pastas terminadas (de cocina)
           </span>
           <span className="text-xs text-gray-500">
-            {totalDisponible} porciones disponibles · {totalFrescos} frescas por porcionar
+            {totalDisponible} porciones disponibles · {totalBandejas} bandejas por porcionar
           </span>
           {(sinStock > 0 || bajoMin > 0) && (
             <span className="text-xs text-orange-600">
@@ -138,7 +130,7 @@ export function PastasTerminadasPanel({
                   Stock disponible
                 </th>
                 <th className="px-4 py-2 text-right text-xs font-semibold text-gray-600">
-                  Frescos
+                  Por porcionar
                 </th>
                 <th className="px-4 py-2 text-right text-xs font-semibold text-gray-600">Mínimo</th>
                 <th className="px-4 py-2 text-center text-xs font-semibold text-gray-600">
@@ -171,8 +163,8 @@ export function PastasTerminadasPanel({
                       </span>
                     </td>
                     <td className="px-4 py-2 text-right">
-                      {r.frescos > 0 ? (
-                        <span className="text-blue-600">{r.frescos}</span>
+                      {r.bandejas > 0 ? (
+                        <span className="text-blue-600">{r.bandejas} band.</span>
                       ) : (
                         <span className="text-gray-300">—</span>
                       )}
