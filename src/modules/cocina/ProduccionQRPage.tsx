@@ -1014,6 +1014,7 @@ function Inicio({
     month: 'long',
   });
   const { faltantes: cierresFaltantes } = useCierresFaltantes(local, supabase);
+  const [verMes, setVerMes] = useState(false);
 
   const botones: { vista: Vista; label: string; color: string }[] = [
     { vista: 'relleno', label: 'Cargar Relleno', color: 'bg-green-600 hover:bg-green-700' },
@@ -1142,6 +1143,16 @@ function Inicio({
         )}
       </div>
 
+      {/* El mes, plegado por defecto: la pantalla tiene que seguir abriendo en
+          lo que hay que hacer AHORA, no en un calendario. */}
+      <button
+        onClick={() => setVerMes((v) => !v)}
+        className="w-full rounded-lg border border-gray-300 bg-white py-3 text-sm font-semibold text-gray-700 transition-transform active:scale-[0.98]"
+      >
+        📅 {verMes ? 'Ocultar el mes' : 'Ver el plan del mes'}
+      </button>
+      {verMes && <CalendarioPlan local={local} />}
+
       {botones.map((b) => (
         <button
           key={b.vista}
@@ -1196,6 +1207,181 @@ function Inicio({
       <p className="mt-6 text-center text-[10px] text-gray-400">
         Rodziny ERP · Carga de producción
       </p>
+    </div>
+  );
+}
+
+// ── Calendario del plan (solo mirar) ─────────────────────────────────────────
+// Regla de Lucas (3-sep-2026): "no cambiar los días de las tareas que por ejemplo
+// hice ayer, o las que hay que hacer mañana". Por eso esta vista NO carga nada:
+// muestra el mes y el detalle del día tocado, y listo. La carga sigue siendo
+// siempre contra HOY, así ningún lote queda con fecha de mañana ni una tarea de
+// ayer se corre de lugar. Para terminar algo de ayer no hace falta venir acá:
+// lo que quedó abierto ya aparece solo en el plan de hoy (carry-over).
+
+const NOMBRE_MES = [
+  'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
+  'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre',
+];
+
+type ItemMes = {
+  fecha_objetivo: string;
+  tipo: string;
+  estado: string;
+  cantidad_recetas: number | null;
+  receta: { nombre: string } | null;
+};
+
+function CalendarioPlan({ local }: { local: 'vedia' | 'saavedra' }) {
+  const hoyStr = hoy();
+  const [ancla, setAncla] = useState(() => {
+    const [a, m] = hoyStr.split('-').map(Number);
+    return { anio: a, mes: m - 1 }; // mes 0-11
+  });
+  const [diaSel, setDiaSel] = useState<string | null>(hoyStr);
+
+  const desde = `${ancla.anio}-${String(ancla.mes + 1).padStart(2, '0')}-01`;
+  const ultimoDia = new Date(ancla.anio, ancla.mes + 1, 0).getDate();
+  const hasta = `${ancla.anio}-${String(ancla.mes + 1).padStart(2, '0')}-${String(ultimoDia).padStart(2, '0')}`;
+
+  const { data: items, isLoading } = useQuery({
+    queryKey: ['cocina-plan-mes-qr', local, desde],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('cocina_pizarron_items')
+        .select('fecha_objetivo, tipo, estado, cantidad_recetas, receta:cocina_recetas(nombre)')
+        .eq('local', local)
+        .gte('fecha_objetivo', desde)
+        .lte('fecha_objetivo', hasta)
+        .neq('estado', 'cancelado');
+      if (error) throw error;
+      return data as unknown as ItemMes[];
+    },
+  });
+
+  // Por día: cuántos renglones hay y cuántos siguen abiertos.
+  const porDia = useMemo(() => {
+    const m = new Map<string, { total: number; abiertos: number }>();
+    for (const it of items ?? []) {
+      const e = m.get(it.fecha_objetivo) ?? { total: 0, abiertos: 0 };
+      e.total += 1;
+      if (it.estado !== 'ciclo_completo') e.abiertos += 1;
+      m.set(it.fecha_objetivo, e);
+    }
+    return m;
+  }, [items]);
+
+  const delDia = useMemo(
+    () => (items ?? []).filter((it) => it.fecha_objetivo === diaSel),
+    [items, diaSel],
+  );
+
+  // La grilla: se rellena con vacíos hasta el día de semana del 1°.
+  const offsetInicial = new Date(ancla.anio, ancla.mes, 1).getDay(); // 0 = domingo
+  const celdas: (string | null)[] = [
+    ...Array<null>(offsetInicial).fill(null),
+    ...Array.from({ length: ultimoDia }, (_, i) => {
+      return `${ancla.anio}-${String(ancla.mes + 1).padStart(2, '0')}-${String(i + 1).padStart(2, '0')}`;
+    }),
+  ];
+
+  function moverMes(delta: number) {
+    setAncla((a) => {
+      const d = new Date(a.anio, a.mes + delta, 1);
+      return { anio: d.getFullYear(), mes: d.getMonth() };
+    });
+    setDiaSel(null);
+  }
+
+  return (
+    <div className="rounded-lg border border-gray-200 bg-white p-3">
+      <div className="flex items-center justify-between">
+        <button
+          onClick={() => moverMes(-1)}
+          className="rounded px-3 py-2 text-lg font-bold text-gray-600 active:bg-gray-100"
+          aria-label="Mes anterior"
+        >
+          ‹
+        </button>
+        <p className="text-sm font-semibold capitalize text-gray-800">
+          {NOMBRE_MES[ancla.mes]} {ancla.anio}
+        </p>
+        <button
+          onClick={() => moverMes(1)}
+          className="rounded px-3 py-2 text-lg font-bold text-gray-600 active:bg-gray-100"
+          aria-label="Mes siguiente"
+        >
+          ›
+        </button>
+      </div>
+
+      <div className="mt-2 grid grid-cols-7 gap-1 text-center text-[10px] text-gray-400">
+        {['D', 'L', 'M', 'M', 'J', 'V', 'S'].map((d, i) => (
+          <span key={i}>{d}</span>
+        ))}
+      </div>
+
+      <div className="mt-1 grid grid-cols-7 gap-1">
+        {celdas.map((f, i) => {
+          if (!f) return <span key={`v${i}`} />;
+          const info = porDia.get(f);
+          const esHoy = f === hoyStr;
+          const sel = f === diaSel;
+          return (
+            <button
+              key={f}
+              onClick={() => setDiaSel(sel ? null : f)}
+              className={cn(
+                'flex h-10 flex-col items-center justify-center rounded text-xs',
+                sel ? 'bg-rodziny-700 text-white' : 'text-gray-700 active:bg-gray-100',
+                !sel && esHoy && 'ring-2 ring-rodziny-600',
+                !sel && !info && 'text-gray-300',
+              )}
+            >
+              <span className={cn('leading-none', esHoy && 'font-bold')}>{Number(f.slice(-2))}</span>
+              {info && (
+                <span
+                  className={cn(
+                    'mt-0.5 h-1.5 w-1.5 rounded-full',
+                    sel ? 'bg-white' : info.abiertos > 0 ? 'bg-amber-500' : 'bg-green-500',
+                  )}
+                />
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      {isLoading && <p className="mt-3 text-center text-xs text-gray-400">Cargando…</p>}
+
+      {diaSel && (
+        <div className="mt-3 border-t border-gray-100 pt-3">
+          <p className="text-xs font-semibold text-gray-700">
+            {diaSel === hoyStr ? 'Hoy' : diaSel.split('-').reverse().join('/')}
+          </p>
+          {delDia.length === 0 ? (
+            <p className="mt-1 text-xs text-gray-400">Sin plan cargado ese día.</p>
+          ) : (
+            <ul className="mt-1 space-y-1">
+              {delDia.map((it, i) => (
+                <li key={i} className="flex items-start justify-between gap-2 text-xs">
+                  <span className={cn(it.estado === 'ciclo_completo' && 'text-gray-400 line-through')}>
+                    {it.estado === 'ciclo_completo' ? '✓ ' : '· '}
+                    {it.receta?.nombre ?? '(sin receta)'}
+                  </span>
+                  <span className="shrink-0 text-gray-500">×{it.cantidad_recetas ?? 1}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          {diaSel !== hoyStr && (
+            <p className="mt-2 text-[10px] leading-snug text-gray-400">
+              Esto es solo para mirar. Lo que cargues siempre se registra con la fecha de
+              hoy, y lo que quedó abierto de días pasados ya te aparece arriba.
+            </p>
+          )}
+        </div>
+      )}
     </div>
   );
 }
