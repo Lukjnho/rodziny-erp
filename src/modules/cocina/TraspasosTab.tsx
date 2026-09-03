@@ -6,19 +6,12 @@ import { invalidarStockCocina } from './lib/invalidarStock';
 import { KPICard } from '@/components/ui/KPICard';
 import { useAuth } from '@/lib/auth';
 import { hoyAR } from '@/lib/fechaAR';
+import { SELECT_STOCK_PASTAS, vendibleHoy, type StockPastaRow } from './lib/stockPastas';
 
 interface Producto {
   id: string;
   nombre: string;
   codigo: string;
-}
-// Fila de la vista BD v_cocina_stock_pastas — fuente única de verdad del stock de cámara.
-interface StockPastaView {
-  producto_id: string;
-  local: string;
-  porciones_camara: number | null;
-  porciones_traspasadas: number | null;
-  porciones_merma: number | null;
 }
 type StockMap = Map<string, number>; // key = `${producto_id}|${local}`
 
@@ -92,28 +85,28 @@ export function TraspasosTab() {
     },
   });
 
-  // Stock disponible: viene de la vista v_cocina_stock_pastas (misma fuente que el Dashboard).
-  // porciones_camara ya incluye los ajustes manuales acumulados en cocina_ajustes_stock.
+  // Stock disponible: la cuenta única de la base (migración 161). Acá NO se
+  // resta nada: `porciones_neto_camara` ya viene con cámara − traspasos − merma
+  // y sin negativos.
   const { data: stockPastas } = useQuery({
     queryKey: ['cocina_stock_pastas'],
     queryFn: async () => {
       const { data, error } = await supabase
         .from('v_cocina_stock_pastas')
-        .select('producto_id, local, porciones_camara, porciones_traspasadas, porciones_merma');
+        .select(SELECT_STOCK_PASTAS);
       if (error) throw error;
-      return (data ?? []) as StockPastaView[];
+      return (data ?? []) as unknown as StockPastaRow[];
     },
   });
 
-  // Stock disponible por producto × local: clamp a 0 (nunca negativo).
+  // ⛔ Acá va `vendibleHoy` y NUNCA `paraPlanificar`: esta pantalla MUEVE
+  // mercadería real al mostrador. El número proyectado incluye bandejas que
+  // todavía nadie cortó, y habilitaría bajar porciones que no existen.
   const stockDisponible = useMemo<StockMap>(() => {
     const map: StockMap = new Map();
     if (!stockPastas) return map;
     for (const r of stockPastas) {
-      const camara = Number(r.porciones_camara) || 0;
-      const traspasos = Number(r.porciones_traspasadas) || 0;
-      const merma = Number(r.porciones_merma) || 0;
-      map.set(stockKey(r.producto_id, r.local), Math.max(0, camara - traspasos - merma));
+      map.set(stockKey(r.producto_id, r.local), vendibleHoy(r));
     }
     return map;
   }, [stockPastas]);

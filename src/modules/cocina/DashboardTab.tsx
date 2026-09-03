@@ -3,6 +3,12 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { mensajeErrorAmigable } from '@/lib/erroresSupabase';
 import { invalidarStockCocina } from './lib/invalidarStock';
+import {
+  SELECT_STOCK_PASTAS,
+  vendibleHoy,
+  bandejasEnProceso,
+  type StockPastaRow,
+} from './lib/stockPastas';
 import { cn } from '@/lib/utils';
 import { LocalSelector } from '@/components/ui/LocalSelector';
 import { useAuth } from '@/lib/auth';
@@ -743,7 +749,12 @@ export type FilaDashboard = ProductoCocina & {
   rendPorciones: number | null;
   // Lotes registrados en QR (solo aplica a tipo === 'pasta').
   enCamaraPorciones: number;
+  /** Bandejas armadas esperando el porcionado. Es el dato que se muestra. */
+  bandejasPorPorcionar: number;
+  /** Estimación en porciones de esas bandejas. Nunca se suma a lo vendible. */
   enColaPorciones: number;
+  /** Hay bandejas pero no alcanza el histórico para estimarlas: se muestra "?". */
+  enColaSinEstimar: boolean;
   enMostradorPorciones: number; // traspasos hoy − ventas hoy − merma hoy
   stockEsFallback: boolean; // true si stockCantidad es null y usamos cámara/mostrador como aproximación
 };
@@ -767,12 +778,16 @@ type ProductoDBRow = {
 // Stock derivado de la vista v_cocina_stock_pastas (lotes registrados en QR).
 // Se usa para mostrar bandejas en cola y como fallback cuando no hay conteo manual.
 interface StockPastaDB {
-  porcionesCamara: number;
-  porcionesFresco: number;
-  porcionesTraspasadas: number;
-  porcionesMerma: number;
-  porcionesAjusteMostrador: number; // ajuste manual acumulado de mostrador
-  porcionesVendibles: number; // camara - traspasos - merma  (camara ya incluye ajuste de cámara)
+  /** Neto de cámara: vendible HOY. La resta ya viene hecha de la base (mig 161). */
+  porcionesVendibles: number;
+  /** Bandejas armadas esperando el porcionado. El dato crudo que ve el cocinero. */
+  bandejasEnProceso: number;
+  /** Esas bandejas traducidas a porciones (estimación por kilos, no conteo). */
+  porcionesEnProcesoEst: number;
+  /** Hay bandejas y NO se puede estimar: mostrar "?" en vez de un 0 que miente. */
+  sinRatio: boolean;
+  /** Ajuste manual acumulado del MOSTRADOR (otro stock, no se suma a cámara). */
+  porcionesAjusteMostrador: number;
 }
 
 // Normaliza nombres para matchear entre PRODUCTOS_COCINA y la tabla cocina_productos.
@@ -782,6 +797,38 @@ export function normNombre(s: string): string {
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/[^a-z0-9]+/g, '');
+}
+
+/**
+ * Lo que está armado en bandejas y todavía nadie cortó.
+ *
+ * Se muestra SIEMPRE aparte del stock vendible y nunca sumado: son dos cosas
+ * distintas y confundirlas es lo que hacía que el plan pidiera producir de
+ * nuevo pasta que ya estaba hecha.
+ *
+ * El número grande es la BANDEJA, porque es lo que la persona ve y cuenta en el
+ * freezer. La porción va entre paréntesis y con ~ porque es una estimación por
+ * kilos; si no hay histórico suficiente para estimarla dice "?" en vez de
+ * mentir un 0.
+ */
+function PorPorcionar({
+  bandejas,
+  porciones,
+  sinEstimar,
+}: {
+  bandejas: number;
+  porciones: number;
+  sinEstimar: boolean;
+}) {
+  if (bandejas <= 0) return null;
+  return (
+    <div className="text-[10px] text-blue-600">
+      + {bandejas} band. por porcionar{' '}
+      <span className="text-blue-400">
+        ({sinEstimar || porciones <= 0 ? '?' : `~${porciones}`} porc.)
+      </span>
+    </div>
+  );
 }
 
 // Piso de producción para pastas: siempre al menos 100 porciones si hay que producir.
@@ -848,42 +895,36 @@ export function DashboardTab() {
     },
   });
 
-  // ── Query: stock de pastas derivado de lotes registrados en QR ──
-  // La vista v_cocina_stock_pastas suma porciones por ubicación
-  // (cámara_congelado vs freezer_produccion) descontando traspasos y merma.
-  // Mostramos las bandejas "en cola" y usamos las de cámara como fallback
-  // cuando no hay conteo manual reciente del chef.
+  // ── Query: stock de pastas, de la cuenta única de la base (migración 161) ──
+  // Acá NO se resta nada: la vista ya devuelve el neto de cámara y, aparte, las
+  // bandejas armadas que esperan el porcionado. Las dos capas se muestran
+  // SEPARADAS y no se suman: una es vendible hoy, la otra todavía no existe
+  // como porción.
+  //
+  // Antes esta pantalla leía `porciones_fresco`, que da 0 SIEMPRE (en el freezer
+  // de producción las porciones son NULL hasta que alguien corta), así que la
+  // pasta armada era invisible y el plan la volvía a pedir.
   const { data: stockPastasDB } = useQuery({
     queryKey: ['cocina_stock_pastas', local],
     queryFn: async () => {
       const { data, error } = await supabase
         .from('v_cocina_stock_pastas')
-        .select(
-          'nombre, porciones_camara, porciones_fresco, porciones_traspasadas, porciones_merma, porciones_ajuste_mostrador',
-        )
+        // El ajuste de mostrador se pide aparte del select común: NO entra en
+        // ningún neto de cámara, se usa más abajo para estimar el mostrador,
+        // que es otro stock físico.
+        .select(SELECT_STOCK_PASTAS + ', porciones_ajuste_mostrador')
         .eq('local', local);
       if (error) throw error;
       const m = new Map<string, StockPastaDB>();
-      for (const r of (data ?? []) as Array<{
-        nombre: string;
-        porciones_camara: number | null;
-        porciones_fresco: number | null;
-        porciones_traspasadas: number | null;
-        porciones_merma: number | null;
-        porciones_ajuste_mostrador: number | null;
-      }>) {
-        const camara = Number(r.porciones_camara) || 0; // ya incluye ajuste de cámara
-        const fresco = Number(r.porciones_fresco) || 0;
-        const traspasos = Number(r.porciones_traspasadas) || 0;
-        const merma = Number(r.porciones_merma) || 0;
-        const ajusteMostrador = Number(r.porciones_ajuste_mostrador) || 0;
+      for (const r of (data ?? []) as unknown as Array<
+        StockPastaRow & { porciones_ajuste_mostrador: number | null }
+      >) {
         m.set(normNombre(r.nombre), {
-          porcionesCamara: camara,
-          porcionesFresco: fresco,
-          porcionesTraspasadas: traspasos,
-          porcionesMerma: merma,
-          porcionesAjusteMostrador: ajusteMostrador,
-          porcionesVendibles: Math.max(0, camara - traspasos - merma),
+          porcionesVendibles: vendibleHoy(r),
+          bandejasEnProceso: bandejasEnProceso(r),
+          porcionesEnProcesoEst: Number(r.porciones_en_proceso_est) || 0,
+          sinRatio: r.en_proceso_sin_ratio === true,
+          porcionesAjusteMostrador: Number(r.porciones_ajuste_mostrador) || 0,
         });
       }
       return m;
@@ -1364,12 +1405,15 @@ export function DashboardTab() {
         prod.tipo !== 'pasta' && stockReg ? Math.round(stockReg.cantidad * 100) / 100 : null;
       const stockFecha = stockReg?.fecha ?? null;
 
-      // Stock derivado de lotes registrados en QR (solo pastas).
-      // Vendibles = porciones en cámara − traspasos − merma. En cola = freezer producción.
+      // Stock derivado de lotes registrados en QR (solo pastas), en dos capas
+      // que NO se suman: lo que hay cortado en cámara, y lo que está armado en
+      // bandejas esperando el porcionado.
       const stockDB =
         prod.tipo === 'pasta' ? (stockPastasDB?.get(normNombre(prod.nombre)) ?? null) : null;
       const enCamaraPorciones = stockDB?.porcionesVendibles ?? 0;
-      const enColaPorciones = stockDB?.porcionesFresco ?? 0;
+      const bandejasPorPorcionar = stockDB?.bandejasEnProceso ?? 0;
+      const enColaPorciones = stockDB?.porcionesEnProcesoEst ?? 0;
+      const enColaSinEstimar = stockDB?.sinRatio ?? false;
 
       // Stock en el freezer del mostrador.
       // Si hay cierre previo (turno anterior): base = cierre.cantidad_real + eventos posteriores.
@@ -1556,7 +1600,9 @@ export function DashboardTab() {
         recetaNombre: prodDB?.receta_nombre ?? null,
         rendPorciones,
         enCamaraPorciones,
+        bandejasPorPorcionar,
         enColaPorciones,
+        enColaSinEstimar,
         enMostradorPorciones,
         stockEsFallback,
       };
@@ -1944,10 +1990,12 @@ function CategoriaAccordion({
                               })}
                             </div>
                           )}
-                          {f.tipo === 'pasta' && f.enColaPorciones > 0 && (
-                            <div className="text-[10px] text-blue-600">
-                              + {f.enColaPorciones} porc. en cola
-                            </div>
+                          {f.tipo === 'pasta' && (
+                            <PorPorcionar
+                              bandejas={f.bandejasPorPorcionar}
+                              porciones={f.enColaPorciones}
+                              sinEstimar={f.enColaSinEstimar}
+                            />
                           )}
                         </div>
                       ) : f.stockEsFallback ? (
@@ -1962,11 +2010,12 @@ function CategoriaAccordion({
                                 ? `${f.enMostradorPorciones} en mostrador`
                                 : 'cámara (auto)'}
                           </div>
-                          {f.enColaPorciones > 0 && (
-                            <div className="text-[10px] text-blue-600">
-                              + {f.enColaPorciones} porc. en cola
-                            </div>
-                          )}
+                          <PorPorcionar
+                            bandejas={f.bandejasPorPorcionar}
+                            porciones={f.enColaPorciones}
+                            sinEstimar={f.enColaSinEstimar}
+                          />
+
                         </div>
                       ) : (
                         <span className="text-gray-300">—</span>

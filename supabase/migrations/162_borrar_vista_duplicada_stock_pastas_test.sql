@@ -1,0 +1,21 @@
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 162 · Se va la fórmula duplicada: v_stock_pastas_test
+-- ─────────────────────────────────────────────────────────────────────────────
+-- QUÉ ERA. Una vista que alguna sesión anterior dejó viva en producción, fuera
+-- del repositorio, sin un solo lector en el código. Calculaba el mismo stock de
+-- pastas que v_cocina_stock_pastas pero con las bandejas en proceso sumadas,
+-- y por eso el mismo producto daba dos números distintos según cuál mirabas
+-- (Sorrentinos J&Q de Vedia: 393 acá, 416 allá).
+--
+-- POR QUÉ SE PUEDE BORRAR. Su lógica ya está absorbida en la migración 161:
+-- las 5 columnas nuevas de v_cocina_stock_pastas salieron de acá.
+-- Verificado antes de aplicar:
+--   · pg_depend: 0 vistas, reglas o funciones dependen de ella.
+--   · grep en todo el repo: 0 lecturas en código (solo comentarios).
+-- No se borra ni una fila de datos: una vista es una cuenta guardada, no una
+-- tabla. Lo que se borra es la fórmula repetida.
+--
+-- Lucas dio el OK explícito el 3-sep-2026 porque es un DROP.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+drop view if exists public.v_stock_pastas_test;
