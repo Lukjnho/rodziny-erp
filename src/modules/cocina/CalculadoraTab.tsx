@@ -4,7 +4,7 @@ import { supabase } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
 import { LocalSelector } from '@/components/ui/LocalSelector';
 import { formatNum, parseDecimal, normalizarDecimal } from '@/lib/numero';
-import type { Receta, Ingrediente } from './RecetasTab';
+import type { Receta, Ingrediente } from './recetas/modelo';
 
 // ── Calculadora / planificador de recetas ────────────────────────────────────
 // Herramienta de REFERENCIA (read-only, no toca stock ni guarda nada).

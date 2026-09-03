@@ -2,8 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { cn, formatARS } from '@/lib/utils';
+import { AutocompleteIngrediente } from '@/modules/cocina/recetas/componentes';
 import {
-  AutocompleteIngrediente,
   CATEGORIAS,
   CATEGORIA_LABEL,
   ROLES,
@@ -20,7 +20,7 @@ import {
   type SubrecetaRol,
   type Ingrediente,
   type RendUnidad,
-} from '@/modules/cocina/RecetasTab';
+} from '@/modules/cocina/recetas/modelo';
 import {
   costearBorrador,
   type CosteoContext,
