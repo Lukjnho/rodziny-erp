@@ -87,6 +87,8 @@ interface ProductoRow {
   // BebidaReventaPanel — acá lo preservamos al editar para no pisarlo en NULL.
   ml_por_venta: number | null;
   fudo_nombres: string[] | null;
+  /** Solo pastas: si se arma con un lote de relleno (migración 160). */
+  lleva_relleno: boolean | null;
 }
 
 interface InsumoOpcion {
@@ -113,7 +115,7 @@ export function ProductoFormPanel({
     queryFn: async (): Promise<ProductoRow | null> => {
       const { data, error } = await supabase
         .from('cocina_productos')
-        .select('id, nombre, codigo, tipo, unidad, minimo_produccion, controla_stock, disponible_almacen, local, activo, receta_id, insumo_reventa_id, ml_por_venta, fudo_nombres')
+        .select('id, nombre, codigo, tipo, unidad, minimo_produccion, controla_stock, disponible_almacen, local, activo, receta_id, insumo_reventa_id, ml_por_venta, fudo_nombres, lleva_relleno')
         .eq('id', productoId)
         .maybeSingle();
       if (error) throw error;
@@ -205,6 +207,10 @@ function FormInterno({
   const [disponibleAlmacen, setDisponibleAlmacen] = useState<boolean>(
     producto?.disponible_almacen ?? false,
   );
+  // Pastas: el formulario lo PREGUNTA en vez de que el QR lo deduzca después.
+  const [llevaRelleno, setLlevaRelleno] = useState<boolean | null>(
+    producto?.lleva_relleno ?? null,
+  );
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState('');
 
@@ -253,6 +259,13 @@ function FormInterno({
       setError('El mínimo debe ser un número válido');
       return;
     }
+    // La base tampoco lo deja pasar (constraint de la migración 160), pero acá
+    // el aviso se entiende: si el QR no sabe si la pasta lleva relleno vuelve a
+    // adivinar, y adivinando fue como desapareció el mezzelune.
+    if (tipo === 'pasta' && llevaRelleno == null) {
+      setError('Decí si esta pasta lleva relleno: de eso depende que aparezca para porcionar');
+      return;
+    }
     setGuardando(true);
     setError('');
     // `codigo` NO se incluye: se autogenera SOLO al crear; al editar no se toca
@@ -271,6 +284,8 @@ function FormInterno({
       // Reventa y receta son excluyentes: si hay receta, manda receta.
       insumo_reventa_id: recetaId ? null : insumoReventaId || null,
       fudo_nombres: fudoNombres.map((s) => s.trim()).filter(Boolean),
+      // Solo tiene sentido en pastas; en el resto queda en NULL.
+      lleva_relleno: tipo === 'pasta' ? llevaRelleno : null,
     };
     const { error: err } = producto
       ? await supabase.from('cocina_productos').update(row).eq('id', producto.id)
@@ -423,6 +438,28 @@ function FormInterno({
             en el grid de Costeo hasta vincularle una.
           </p>
         </div>
+
+        {tipo === 'pasta' && (
+          <div className="border-t border-gray-100 pt-4">
+            <label className={labelCls}>¿Lleva relleno?</label>
+            <select
+              value={llevaRelleno == null ? '' : llevaRelleno ? 'si' : 'no'}
+              onChange={(e) =>
+                setLlevaRelleno(e.target.value === '' ? null : e.target.value === 'si')
+              }
+              className={`${inputCls} max-w-md`}
+            >
+              <option value="">— Elegí una opción —</option>
+              <option value="si">Sí — se arma con un relleno y después se porciona</option>
+              <option value="no">No — es fideo, se embolsa y va directo a cámara</option>
+            </select>
+            <p className="mt-2 text-[10px] italic text-gray-400">
+              De esto depende el circuito en el QR de producción. Las que llevan relleno quedan
+              en el freezer esperando el paso "Porcionar"; los fideos entran derecho a cámara.
+              Los ñoquis van en <strong>Sí</strong>: el puré se carga como si fuera el relleno.
+            </p>
+          </div>
+        )}
 
         {tipo === 'bebida' && (
           <div className="border-t border-gray-100 pt-4">

@@ -26,6 +26,12 @@ interface Producto {
   tipo: string;
   local: string;
   es_mixto: boolean;
+  /**
+   * Si esta pasta se arma con un lote de relleno. Lo DECLARA el producto: antes
+   * se deducía de si el operario había elegido relleno, y esa deducción hizo
+   * desaparecer el mezzelune de bondiola (migración 160).
+   */
+  lleva_relleno: boolean | null;
 }
 interface Receta {
   id: string;
@@ -312,7 +318,7 @@ export function ProduccionQRPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cocina_productos')
-        .select('id, nombre, codigo, tipo, local, es_mixto')
+        .select('id, nombre, codigo, tipo, local, es_mixto, lleva_relleno')
         .eq('activo', true)
         .order('nombre');
       if (error) throw error;
@@ -1702,29 +1708,22 @@ function FormPasta({
     return m;
   }, [pastaRecetas]);
 
-  // Pastas que admiten relleno: tienen al menos una receta tipo='relleno' mapeada.
-  // Las demás (tagliatelles, fettuccine, spaghetti) son fideos y NO permiten elegir
-  // relleno — al seleccionarlas se resetea el dropdown.
-  const pastasConRelleno = useMemo(() => {
-    const s = new Set<string>();
-    for (const pr of pastaRecetas) {
-      // Supabase devuelve el join como objeto o array según la cardinalidad detectada
-      const r = Array.isArray(pr.receta) ? pr.receta[0] : pr.receta;
-      if (r?.rol === 'relleno') s.add(pr.pasta_id);
-    }
-    return s;
-  }, [pastaRecetas]);
-
   const productoSel = productos.find((p) => p.id === productoId);
   const esMixto = !!productoSel?.es_mixto;
-  const productoAdmiteRelleno = productoSel ? pastasConRelleno.has(productoSel.id) : true;
+  // Lo dice el producto, no el mapeo de recetas.
+  //
+  // Antes esto se sacaba de cocina_pasta_recetas: "admite relleno si tiene
+  // alguna receta de rol relleno mapeada". Una pasta rellena a la que nadie le
+  // había cargado el mapeo quedaba tratada como fideo y el desplegable se le
+  // apagaba solo — le pasó al mezzelune de bondiola el día que se creó.
+  const productoAdmiteRelleno = productoSel ? productoSel.lleva_relleno !== false : true;
 
-  // Si elegí una pasta que NO admite relleno, limpiar el relleno seleccionado.
+  // Si elegí un fideo, limpiar el relleno que hubiera quedado seleccionado.
   useEffect(() => {
-    if (productoId && !pastasConRelleno.has(productoId) && loteRellenoId) {
+    if (productoSel && productoSel.lleva_relleno === false && loteRellenoId) {
       setLoteRellenoId('');
     }
-  }, [productoId, pastasConRelleno, loteRellenoId]);
+  }, [productoSel, loteRellenoId]);
 
   // Pastas candidatas según el relleno elegido
   const pastasCandidatas = useMemo<Producto[]>(() => {
@@ -1774,10 +1773,21 @@ function FormPasta({
   const codigoLote = prodSel ? `${prodSel.codigo}-${formatDDMM(hoy())}` : '';
   const esConMuzzarella = prodSel ? PASTAS_CON_MUZZARELLA.has(prodSel.codigo) : false;
   const rellenoSel = lotesRelleno.find((l) => l.id === loteRellenoId);
-  // Pastas sin relleno (tagliatelles, fettuccine, spaghetti...) no llevan
-  // paso de porcionado posterior — el equipo arma y guarda en bolsitas en una
-  // sola pasada. Entra directo a cámara con porciones cargadas.
-  const esPastaSinRelleno = !loteRellenoId;
+  // Los fideos (tagliatelles, rigatoni, radiatori...) no llevan paso de
+  // porcionado posterior: el equipo arma y embolsa en una sola pasada, así que
+  // el lote entra directo a cámara con las porciones cargadas.
+  //
+  // ⚠️ ESTO ERA EL BUG. Antes decía `!loteRellenoId`, o sea: "si no eligieron
+  // relleno, es un fideo". Entonces una pasta RELLENA cargada sin elegir el
+  // relleno nacía marcada como ya porcionada y desaparecía del paso Porcionar.
+  // Ahora lo decide el producto (columna lleva_relleno, migración 160) y el
+  // guardado se bloquea antes de llegar acá si falta el relleno.
+  //
+  // Mientras no haya pasta elegida se mantiene el comportamiento viejo, para no
+  // cambiarle los carteles al formulario en blanco ("Porciones" / "Registrar en
+  // cámara"). Al guardar siempre hay pasta elegida, así que lo que se escribe en
+  // la base sale del producto y nunca de la deducción.
+  const esPastaSinRelleno = prodSel ? prodSel.lleva_relleno === false : !loteRellenoId;
 
   // Si la receta del relleno define ratios (ej: puré de papa para ñoquis →
   // 350g semolín + 180g huevo por kg), sugerir los gramos a partir del
@@ -1829,6 +1839,23 @@ function FormPasta({
   async function guardar() {
     if (!productoId) {
       setError('Seleccioná qué pasta estás armando');
+      return;
+    }
+    // El bloqueo que faltaba: una pasta rellena NO se guarda sin su relleno.
+    // Si se guardaba igual, el lote nacía como "ya porcionado" y no aparecía al
+    // día siguiente para porcionar (el bug del mezzelune, 1-sep-2026).
+    if (prodSel && prodSel.lleva_relleno == null) {
+      setError(
+        `Falta definir si "${prodSel.nombre}" lleva relleno. ` +
+          'Cargalo en Productos y volvé a intentar.',
+      );
+      return;
+    }
+    if (prodSel?.lleva_relleno === true && !loteRellenoId) {
+      setError(
+        `"${prodSel.nombre}" lleva relleno: elegí arriba el lote de relleno que usaste. ` +
+          'Sin eso la pasta no aparece después para porcionar.',
+      );
       return;
     }
     if (requiereSemolinHuevo) {
