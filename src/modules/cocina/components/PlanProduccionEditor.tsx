@@ -5,6 +5,7 @@ import { mensajeErrorAmigable } from '@/lib/erroresSupabase';
 import { cn } from '@/lib/utils';
 import { hoyAR } from '@/lib/fechaAR';
 import { normNombre } from '../DashboardTab';
+import { SELECT_STOCK_PASTAS, paraPlanificar, type StockPastaRow } from '../lib/stockPastas';
 import {
   calcularCobertura,
   type ItemPlanCob,
@@ -378,24 +379,14 @@ export function PlanProduccionEditor({
     queryFn: async () => {
       const { data, error } = await supabase
         .from('v_cocina_stock_pastas')
-        .select(
-          'producto_id, porciones_camara, porciones_fresco, porciones_traspasadas, porciones_merma',
-        )
+        .select(SELECT_STOCK_PASTAS)
         .eq('local', local);
       if (error) throw error;
       const m = new Map<string, number>();
-      for (const r of (data ?? []) as Array<{
-        producto_id: string;
-        porciones_camara: number | null;
-        porciones_fresco: number | null;
-        porciones_traspasadas: number | null;
-        porciones_merma: number | null;
-      }>) {
-        const camara = Number(r.porciones_camara) || 0;
-        const fresco = Number(r.porciones_fresco) || 0;
-        const traspasos = Number(r.porciones_traspasadas) || 0;
-        const merma = Number(r.porciones_merma) || 0;
-        m.set(r.producto_id, Math.max(0, camara - traspasos - merma) + Math.max(0, fresco));
+      // Cobertura = lo PROYECTADO: cortado en cámara + armado en bandejas.
+      // Misma cuenta que el Resumen Semanal, para que los dos coincidan.
+      for (const r of (data ?? []) as unknown as StockPastaRow[]) {
+        m.set(r.producto_id, paraPlanificar(r));
       }
       return m;
     },

@@ -3,14 +3,15 @@ import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
 import { calcularCobertura, type ResultadoCob } from '../lib/cobertura';
+import { SELECT_STOCK_PASTAS, paraPlanificar, type StockPastaRow } from '../lib/stockPastas';
 
 // El Resumen semanal estima la COBERTURA de cada producto esta semana:
 //
 //   disponible = (stock actual − pedidos comprometidos) + producción planificada
 //   estado     = disponible / demanda semanal (Fudo 7d)
 //
-// - stock actual: lo que ya hay en cámara/fresco (pastas) o en lotes activos
-//   (postres). Es la foto de HOY.
+// - stock actual: lo proyectado para pastas (cámara + bandejas por porcionar) o
+//   los lotes activos (postres). Es la foto de HOY.
 // - pedidos comprometidos: pedidos anticipados de Almacén (congelados/viandas)
 //   pendientes — ese stock ya está prometido, así que se descuenta.
 // - planificado: items del pizarrón de la semana × rendimiento_porciones.
@@ -154,34 +155,25 @@ export function ResumenSemanalCard({
     },
   });
 
-  // ── Stock actual de PASTAS (vista v_cocina_stock_pastas, por producto_id) ──
-  // Disponible = cámara neto (cámara − traspasos − merma) + fresco (freezer
-  // producción). No incluye mostrador: para una vista semanal es marginal y
-  // requeriría las ventas de hoy. Key = producto_id (= id del catálogo).
+  // ── Stock actual de PASTAS (cuenta única de la base, por producto_id) ──
+  // Disponible = lo PROYECTADO: neto de cámara + lo armado en bandejas que
+  // todavía falta porcionar. No incluye mostrador: para una vista semanal es
+  // marginal y requeriría las ventas de hoy. Key = producto_id (= del catálogo).
   const { data: stockPastas } = useQuery({
     queryKey: ['resumen-semanal-stock-pastas', local],
     queryFn: async () => {
       const { data, error } = await supabase
         .from('v_cocina_stock_pastas')
-        .select(
-          'producto_id, porciones_camara, porciones_fresco, porciones_traspasadas, porciones_merma',
-        )
+        .select(SELECT_STOCK_PASTAS)
         .eq('local', local);
       if (error) throw error;
       const m = new Map<string, number>();
-      for (const r of (data ?? []) as Array<{
-        producto_id: string;
-        porciones_camara: number | null;
-        porciones_fresco: number | null;
-        porciones_traspasadas: number | null;
-        porciones_merma: number | null;
-      }>) {
-        const camara = Number(r.porciones_camara) || 0; // ya incluye ajuste de cámara
-        const fresco = Number(r.porciones_fresco) || 0;
-        const traspasos = Number(r.porciones_traspasadas) || 0;
-        const merma = Number(r.porciones_merma) || 0;
-        const disponible = Math.max(0, camara - traspasos - merma) + Math.max(0, fresco);
-        m.set(r.producto_id, disponible);
+      // Planificar mira lo PROYECTADO: lo cortado en cámara más lo armado en
+      // bandejas. Antes esta cuenta sumaba `porciones_fresco` para incluir lo
+      // armado, pero esa columna da 0 SIEMPRE, así que la intención estaba y el
+      // dato nunca llegaba: el resumen pedía producir pasta ya hecha.
+      for (const r of (data ?? []) as unknown as StockPastaRow[]) {
+        m.set(r.producto_id, paraPlanificar(r));
       }
       return m;
     },

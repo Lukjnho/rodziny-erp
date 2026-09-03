@@ -8,6 +8,12 @@ import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
 import { hoyAR } from '@/lib/fechaAR';
 import { PRODUCTOS_COCINA, normNombre } from './DashboardTab';
+import {
+  SELECT_STOCK_PASTAS,
+  vendibleHoy,
+  bandejasEnProceso,
+  type StockPastaRow,
+} from './lib/stockPastas';
 
 interface Producto {
   id: string;
@@ -33,15 +39,10 @@ interface LotePasta {
   porcionado_at: string | null; // timestamp en que entró a cámara (porcionado); null si sigue fresco
   responsable: string | null; // nombre cargado en el QR de Producción
 }
-// Baseline (conteo físico) de cámara: fija el punto de partida del stock.
-// El stock de cámara = cantidad_real del último cierre + porcionado posterior
-// − traslados posteriores − merma posterior. Reemplaza al viejo delta acumulado.
-interface CierreCamara {
-  producto_id: string;
-  local: string;
-  cantidad_real: number;
-  created_at: string;
-}
+// Fila de la cuenta única de la base (mig 161), más la merma que se muestra en
+// su propia columna. El baseline del conteo físico ya está aplicado adentro de
+// la vista: acá no se recalcula nada.
+type FilaVistaStock = StockPastaRow & { porciones_merma: number | null };
 interface Traspaso {
   producto_id: string;
   porciones: number;
@@ -88,19 +89,16 @@ type FiltroLocal = 'vedia' | 'saavedra';
 interface StockRow {
   producto: Producto;
   local: string;
-  producido: number;
-  fresco: number; // porciones en freezer_produccion (sirve para histórico ya porcionado)
-  frescoBandejas: number; // bandejas en cola para porcionar (cantidad_cajones)
+  bandejasPorPorcionar: number; // bandejas armadas esperando el corte (dato crudo)
+  porcionesEnProcesoEst: number; // esas bandejas traducidas (estimación por kilos)
+  sinEstimar: boolean; // hay bandejas y no se puede estimar → mostrar "?"
   bandejasViejas: number; // bandejas en freezer con ≥3 días — alerta
   loteMasViejoFecha: string | null; // fecha YYYY-MM-DD del lote más antiguo en freezer_produccion
-  traspasado: number;
   vendidoHoy: number;
   mostrador: number; // clamp >= 0 para mostrar
   mostradorRaw: number; // valor real (puede ser negativo si las ventas exceden traspasos+ajustes)
   merma: number;
-  stock: number; // cámara — incluye ajustes acumulados (clamp para mostrar)
-  stockRaw: number; // sin clamp
-  ajusteCamara: number;
+  stock: number; // neto de cámara, tal como lo da la base (ya sin negativos)
   ajusteMostrador: number;
   demanda7d: number; // porciones vendidas (Fudo) en los últimos 7 días
   demandaDiaria: number; // demanda7d / días reales del rango
@@ -437,22 +435,28 @@ export function StockTab() {
     },
   });
 
-  // Baseline de cámara: el más reciente por (producto_id, local).
-  const { data: cierresCamaraPorProducto } = useQuery({
-    queryKey: ['cocina-cierres-camara'],
+  // ── Stock de cámara: la cuenta única de la base (migración 161) ────────────
+  // Esta pantalla reimplementaba en el navegador el baseline del conteo físico
+  // y todas las restas de la vista: unas 130 líneas que espejaban a mano un
+  // lateral join de Postgres. Cualquier cambio en la vista dejaba esta copia
+  // desincronizada, y por eso el mismo producto daba números distintos según
+  // qué pantalla mirabas. Ahora se lee, no se recalcula.
+  const { data: stockVista } = useQuery({
+    queryKey: ['cocina-stock-vista-pastas'],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from('cocina_cierre_camara')
-        .select('producto_id, local, cantidad_real, created_at')
-        .order('created_at', { ascending: false });
+        .from('v_cocina_stock_pastas')
+        // porciones_merma se pide aparte del select común: se muestra en su
+        // propia columna y NO entra en ningún neto (ya viene restada).
+        .select(SELECT_STOCK_PASTAS + ', porciones_merma');
       if (error) throw error;
-      const m = new Map<string, CierreCamara>();
-      for (const c of (data ?? []) as CierreCamara[]) {
-        const key = `${c.producto_id}|${c.local}`;
-        if (!m.has(key)) m.set(key, c);
+      const m = new Map<string, FilaVistaStock>();
+      for (const r of (data ?? []) as unknown as FilaVistaStock[]) {
+        m.set(`${r.producto_id}|${r.local}`, r);
       }
       return m;
     },
+    refetchOnMount: 'always',
   });
 
   const guardarAjuste = useMutation({
@@ -615,47 +619,25 @@ export function StockTab() {
       for (const loc of locales) {
         if (prod.local !== loc) continue;
 
-        // Producido en cámara = stock disponible. "Pastas en produ" = frescas sin porcionar (no cuentan como stock vendible).
-        // Modelo escalonado: el stock de cámara arranca del último conteo físico
-        // (baseline) y solo suma/resta lo POSTERIOR a ese conteo. Así el
-        // porcionado siempre se ve y el conteo no se come la producción.
-        // Si no hay baseline (ej. producto sin conteo aún), cae al histórico total.
-        // En Saavedra se produce y almacena en la MISMA cámara: el cierre de turno
-        // de pastas (cocina_cierre_dia) ES el conteo físico de cámara. Se toma como
-        // baseline si es más reciente que el último conteo de cámara, para que el
-        // acumulado se resetee cada turno y solo lo producido vía QR posterior sume.
-        // En Vedia el cierre de turno es del mostrador (≠ cámara) y NO entra acá.
-        // Espeja el lateral `b` de v_cocina_stock_pastas (mig 125).
-        const baselineCamara = cierresCamaraPorProducto?.get(`${prod.id}|${loc}`) ?? null;
-        const cierreTurnoCamara =
-          loc === 'saavedra' ? (cierresPorProducto?.get(`${prod.id}|${loc}`) ?? null) : null;
-        let baseCamaraCantidad = baselineCamara ? Number(baselineCamara.cantidad_real) : 0;
-        let baseTs = baselineCamara?.created_at ?? null;
-        if (cierreTurnoCamara && (baseTs === null || cierreTurnoCamara.created_at > baseTs)) {
-          baseCamaraCantidad = Number(cierreTurnoCamara.cantidad_real);
-          baseTs = cierreTurnoCamara.created_at;
-        }
-        const despuesDelConteo = (ts: string | null) =>
-          baseTs === null || (ts !== null && ts > baseTs);
+        // El neto de cámara y las bandejas en proceso vienen HECHOS de la base.
+        // Antes acá se rearmaba a mano el baseline del conteo físico (incluida
+        // la regla de que en Saavedra el cierre de turno ES el conteo de cámara,
+        // y en Vedia no) más las restas de traslados, merma y ajustes: un espejo
+        // del lateral join de la vista que se podía desincronizar en silencio.
+        const vista = stockVista?.get(`${prod.id}|${loc}`) ?? null;
+        const stock = vista ? vendibleHoy(vista) : 0;
+        const bandejasPorPorcionar = vista ? bandejasEnProceso(vista) : 0;
+        const porcionesEnProcesoEst = Number(vista?.porciones_en_proceso_est) || 0;
+        const sinEstimar = vista?.en_proceso_sin_ratio === true;
+        const mermaTotal = Number(vista?.porciones_merma) || 0;
 
-        const producido = lotesPasta
-          .filter(
-            (l) =>
-              l.producto_id === prod.id &&
-              l.local === loc &&
-              l.ubicacion === 'camara_congelado' &&
-              despuesDelConteo(l.porcionado_at ?? l.created_at),
-          )
-          .reduce((s, l) => s + (l.porciones ?? 0), 0);
-        // Lotes en freezer de producción = bandejas armadas, todavía sin porcionar.
-        // Las porciones quedan en null hasta el paso "Porcionar pasta" del QR, así que
-        // lo que tiene valor en esta etapa son las bandejas (cantidad_cajones).
+        // Lo único que sigue saliendo de los lotes uno por uno: la ANTIGÜEDAD.
+        // La vista da totales, no fechas por lote, y para avisar "hay bandejas
+        // de hace 3 días" hace falta mirar cada lote.
         const lotesFresco = lotesPasta.filter(
           (l) =>
             l.producto_id === prod.id && l.local === loc && l.ubicacion === 'freezer_produccion',
         );
-        const fresco = lotesFresco.reduce((s, l) => s + (l.porciones ?? 0), 0);
-        const frescoBandejas = lotesFresco.reduce((s, l) => s + (l.cantidad_cajones ?? 0), 0);
         // Bandejas viejas: lotes en freezer con ≥3 días. Cada lote individual cuenta.
         // Si el producto tiene un lote de 4 band. con 4 días y otro de 6 band. con 1 día,
         // bandejasViejas = 4 (no 10).
@@ -669,33 +651,11 @@ export function StockTab() {
                 null,
               )
             : null;
-        // Traslados y merma POSTERIORES al conteo (descuentan del baseline).
-        const traspasado = traspasos
-          .filter(
-            (t) => t.producto_id === prod.id && t.local === loc && despuesDelConteo(t.created_at),
-          )
-          .reduce((s, t) => s + t.porciones, 0);
-        const mermaTotal = mermas
-          .filter(
-            (m) => m.producto_id === prod.id && m.local === loc && despuesDelConteo(m.created_at),
-          )
-          .reduce((s, m) => s + m.porciones, 0);
-
         // Vendido hoy de Fudo: descuenta de "En mostrador" (mostradorRaw).
         const vendidoHoy = ventasFudoDelProducto(prod, fudoHoy?.[loc]?.ranking);
 
-        // Ajustes manuales de cámara POSTERIORES al conteo (los viejos ya están
-        // absorbidos en el baseline). El flujo nuevo usa conteo→baseline, pero se
-        // siguen respetando ajustes-delta sueltos si los hubiera.
-        const ajusteCamara = (ajustes ?? [])
-          .filter(
-            (a) =>
-              a.producto_id === prod.id &&
-              a.local === loc &&
-              a.ubicacion === 'camara' &&
-              despuesDelConteo(a.created_at),
-          )
-          .reduce((s, a) => s + Number(a.delta), 0);
+        // El ajuste de MOSTRADOR sigue acá: es otro stock físico, con su propio
+        // cierre de turno, y la vista de cámara no lo resuelve.
         const ajusteMostrador = (ajustes ?? [])
           .filter(
             (a) => a.producto_id === prod.id && a.local === loc && a.ubicacion === 'mostrador',
@@ -754,13 +714,6 @@ export function StockTab() {
           mostrador = Math.max(0, mostradorRaw);
         }
 
-        // Stock de cámara = baseline (último conteo) + porcionado posterior
-        // − traslados posteriores − merma posterior + ajustes posteriores.
-        // Espeja exactamente v_cocina_stock_pastas (Dashboard / Traspasos).
-        // El stock nunca puede ser negativo (regla de negocio: máximo puede ser 0).
-        const stockRaw = baseCamaraCantidad + producido - traspasado - mermaTotal + ajusteCamara;
-        const stock = Math.max(0, stockRaw);
-
         // Demanda real: ventas Fudo de los últimos 7 días (vía fudo_nombres).
         // El estado se mide en días de cobertura del stock de cámara contra la
         // venta diaria promedio; la columna muestra la demanda semanal + 15%.
@@ -773,19 +726,16 @@ export function StockTab() {
         rows.push({
           producto: prod,
           local: loc,
-          producido,
-          fresco,
-          frescoBandejas,
+          bandejasPorPorcionar,
+          porcionesEnProcesoEst,
+          sinEstimar,
           bandejasViejas,
           loteMasViejoFecha,
-          traspasado,
           vendidoHoy,
           mostrador,
           mostradorRaw,
           merma: mermaTotal,
           stock,
-          stockRaw,
-          ajusteCamara,
           ajusteMostrador,
           demanda7d,
           demandaDiaria,
@@ -807,7 +757,7 @@ export function StockTab() {
     fudoDesdeCierre,
     fudo7d,
     cierresPorProducto,
-    cierresCamaraPorProducto,
+    stockVista,
     hoy,
     ajustes,
     filtroLocal,
@@ -820,8 +770,8 @@ export function StockTab() {
     const totalPorciones = stockRows.reduce((s, r) => s + Math.max(0, r.stock), 0);
     // El KPI "Pastas en produ" muestra bandejas (cola para porcionar). Las porciones
     // recién se asignan al porcionar, así que sumar porciones acá daría 0 en este flujo.
-    const totalFrescos = stockRows.reduce((s, r) => s + r.frescoBandejas, 0);
-    const conFresco = stockRows.filter((r) => r.frescoBandejas > 0 || r.fresco > 0).length;
+    const totalFrescos = stockRows.reduce((s, r) => s + r.bandejasPorPorcionar, 0);
+    const conFresco = stockRows.filter((r) => r.bandejasPorPorcionar > 0).length;
     const totalMostrador = stockRows.reduce((s, r) => s + r.mostrador, 0);
     const conMostrador = stockRows.filter((r) => r.mostrador > 0).length;
     return {
@@ -845,7 +795,7 @@ export function StockTab() {
     if (filtroEstado === 'sin_stock')
       return stockRows.filter((r) => estadoPorCobertura(r) === 'sin-stock');
     if (filtroEstado === 'con_fresco')
-      return stockRows.filter((r) => r.frescoBandejas > 0 || r.fresco > 0);
+      return stockRows.filter((r) => r.bandejasPorPorcionar > 0);
     return stockRows;
   }, [stockRows, filtroEstado]);
 
@@ -891,7 +841,7 @@ export function StockTab() {
           />
         )}
         <KPICard
-          label="Pastas en produ"
+          label="A porcionar (bandejas)"
           value={String(kpis.totalFrescos)}
           color={kpis.totalFrescos > 0 ? 'blue' : 'neutral'}
           loading={isLoading}
@@ -956,7 +906,7 @@ export function StockTab() {
                   <tr className="border-b border-surface-border bg-gray-50 text-left text-xs uppercase text-gray-500">
                     <th className="px-4 py-2">Producto</th>
                     <th className="px-4 py-2">Código</th>
-                    <th className="px-4 py-2 text-right">Pastas en produ</th>
+                    <th className="px-4 py-2 text-right">A porcionar</th>
                     <th className="px-4 py-2 text-right">En cámara</th>
                     {locKey === 'vedia' && <th className="px-4 py-2 text-right">En mostrador</th>}
                     <th className="px-4 py-2 text-right">Merma</th>
@@ -980,27 +930,30 @@ export function StockTab() {
                   <td className="px-4 py-2 font-medium">{r.producto.nombre}</td>
                   <td className="px-4 py-2 font-mono text-xs">{r.producto.codigo}</td>
                   <td className="px-4 py-2 text-right">
-                    {r.frescoBandejas > 0 || r.fresco > 0 ? (
+                    {r.bandejasPorPorcionar > 0 ? (
                       <div className="flex flex-col items-end leading-tight">
-                        {r.frescoBandejas > 0 && (
-                          <span
-                            className={cn(
-                              'font-medium',
-                              r.bandejasViejas > 0 ? 'text-red-600' : 'text-blue-600',
-                            )}
-                            title={
-                              r.bandejasViejas > 0 && r.loteMasViejoFecha
-                                ? `⚠ ${r.bandejasViejas} bandeja${r.bandejasViejas === 1 ? '' : 's'} con ${DIAS_BANDEJA_VIEJA}+ días en freezer de producción.\nLote más antiguo: ${r.loteMasViejoFecha} (hace ${diasDesdeFecha(r.loteMasViejoFecha)} días)`
-                                : undefined
-                            }
-                          >
-                            {r.frescoBandejas} band.
-                            {r.bandejasViejas > 0 && <span className="ml-1">⚠</span>}
-                          </span>
-                        )}
-                        {r.fresco > 0 && (
-                          <span className="text-[10px] text-gray-400">{r.fresco} porc.</span>
-                        )}
+                        <span
+                          className={cn(
+                            'font-medium',
+                            r.bandejasViejas > 0 ? 'text-red-600' : 'text-blue-600',
+                          )}
+                          title={
+                            r.bandejasViejas > 0 && r.loteMasViejoFecha
+                              ? `⚠ ${r.bandejasViejas} bandeja${r.bandejasViejas === 1 ? '' : 's'} con ${DIAS_BANDEJA_VIEJA}+ días en freezer de producción.\nLote más antiguo: ${r.loteMasViejoFecha} (hace ${diasDesdeFecha(r.loteMasViejoFecha)} días)`
+                              : undefined
+                          }
+                        >
+                          {r.bandejasPorPorcionar} band.
+                          {r.bandejasViejas > 0 && <span className="ml-1">⚠</span>}
+                        </span>
+                        {/* La porción va con ~ porque es estimación por kilos; "?"
+                            cuando no hay histórico para estimarla (antes esta línea
+                            leía porciones_fresco, que da 0 siempre, y no aparecía nunca). */}
+                        <span className="text-[10px] text-gray-400">
+                          {r.sinEstimar || r.porcionesEnProcesoEst <= 0
+                            ? '? porc.'
+                            : `~${r.porcionesEnProcesoEst} porc.`}
+                        </span>
                       </div>
                     ) : (
                       '—'
@@ -1015,7 +968,7 @@ export function StockTab() {
                           ubicacion: 'camara',
                           // Pasamos el valor "raw" (sin clamp) para que el delta sea correcto
                           // aunque la cuenta interna esté en negativos por ventas/traspasos.
-                          actual: r.stockRaw,
+                          actual: r.stock,
                           actualMostrado: Math.max(0, r.stock),
                           // En 0 (primer conteo) abrimos vacío para que el botón no quede
                           // gris por delta=0; el cocinero escribe el número y se habilita.
