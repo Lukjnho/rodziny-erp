@@ -1565,14 +1565,23 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
           categoria: padreCat?.nombre ?? subCat?.nombre ?? null, // legacy mirror (rubro padre)
           subcategoria: subCat?.nombre ?? null, // legacy mirror
           importe_total: total,
-          // Si discrimina IVA → guardamos neto/IVA prorrateados según el total del split.
-          // Si no → null (el EdR sigue usando importe_total como antes).
-          importe_neto: discriminaIVA && importeTotal > 0
-            ? Math.round((importeNetoCalc * (total / importeTotal)) * 100) / 100
-            : null,
-          iva: discriminaIVA && importeTotal > 0
-            ? Math.round((ivaCalc * (total / importeTotal)) * 100) / 100
-            : null,
+          // Si discrimina IVA → neto/IVA prorrateados según el total del split.
+          // Si no → neto = total con IVA en 0, EXPLÍCITO.
+          //
+          // Antes acá iba null, y el EdR resolvía con coalesce(neto, total). El
+          // resultado era el mismo número pero nadie podía distinguir "este
+          // gasto no lleva IVA" de "a este gasto no se lo cargaron": 910 gastos
+          // de 2026 ($277M) quedaron en esa nebulosa. Guardándolo explícito,
+          // importe_neto siempre significa lo mismo — lo que va al EdR — y se
+          // puede medir cuántos gastos con IVA se están cargando sin discriminar.
+          importe_neto:
+            discriminaIVA && importeTotal > 0
+              ? Math.round(importeNetoCalc * (total / importeTotal) * 100) / 100
+              : total,
+          iva:
+            discriminaIVA && importeTotal > 0
+              ? Math.round(ivaCalc * (total / importeTotal) * 100) / 100
+              : 0,
           iibb: null,
           medio_pago: medioPagoGasto,
           tipo_comprobante: tipoComprobante,

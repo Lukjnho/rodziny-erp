@@ -155,6 +155,14 @@ const FILAS: FilaEdR[] = [
   { key: '_personal', label: 'PERSONAL', tipo: 'seccion', depth: 0 },
   { key: 'pers_sueldos', label: 'Sueldos', tipo: 'auto', depth: 1, formato: 'moneda' },
   { key: 'pers_cargas', label: 'Cargas Sociales', tipo: 'auto', depth: 1, formato: 'moneda' },
+  { key: 'pers_aguinaldo', label: 'Aguinaldo', tipo: 'auto', depth: 1, formato: 'moneda' },
+  {
+    key: 'pers_otros',
+    label: 'Sindicato, uniformes y otros',
+    tipo: 'auto',
+    depth: 1,
+    formato: 'moneda',
+  },
   { key: '__pers_total', label: 'TOTAL PERSONAL', tipo: 'calculada', depth: 0, formato: 'moneda' },
   {
     key: '_kpi_labor',
@@ -204,6 +212,7 @@ const FILAS: FilaEdR[] = [
   { key: '_fin', label: 'RESULTADO FINANCIERO', tipo: 'seccion', depth: 0 },
   { key: 'fin_intereses', label: 'Intereses', tipo: 'auto', depth: 1, formato: 'moneda' },
   { key: 'fin_arca', label: 'Regularización ARCA', tipo: 'auto', depth: 1, formato: 'moneda' },
+  { key: 'fin_bienal', label: 'Bienal 2026', tipo: 'auto', depth: 1, formato: 'moneda' },
   { key: 'fin_prestamo', label: 'Préstamo', tipo: 'auto', depth: 1, formato: 'moneda' },
   { key: '__fin_total', label: 'TOTAL FINANCIERO', tipo: 'calculada', depth: 0, formato: 'moneda' },
   { key: '_esp7', label: '', tipo: 'espacio', depth: 0 },
@@ -248,9 +257,20 @@ interface AutoMes {
   intereses: number;
   sueldos: number;
   cargasSociales: number;
+  // Gastos de RRHH que no son sueldo ni carga social (sindicato, uniformes, y
+  // los que quedaron sin subcategoría). Se calculaban desde siempre y la
+  // pantalla los descartaba: $4,6M de 2026 que no aparecían en ningún lado.
+  rrhhOtros: number;
+  aguinaldo: number;
   amortizaciones: number;
   difArqueo: number;
   arca: number;
+  // Bienal 2026: renglón propio abajo del EBIT, como la regularización ARCA,
+  // para que el evento no ensucie el resultado operativo (decisión de Lucas).
+  bienal: number;
+  // Lo que no encaja en NINGÚN renglón. Si es > 0 la pantalla lo grita: es
+  // plata cargada que el EdR no está mostrando en ninguna línea.
+  sinClasificar: number;
   // Cierres de inventario aprobados — fin de mes actual y mes anterior.
   // Si no hay cierres, todos en 0 → Δ = 0 → CMV REAL = TOTAL COMPRAS.
   stockFinalAlimentos: number;
@@ -288,6 +308,14 @@ function computarMes(manual: Map<string, number>, auto: AutoMes): Map<string, nu
   // Personal: auto desde gastos Fudo, override manual
   const persSueldos = manual.has('pers_sueldos') ? m('pers_sueldos') : auto.sueldos;
   const persCargas = manual.has('pers_cargas') ? m('pers_cargas') : auto.cargasSociales;
+  // Aguinaldo aparte de Sueldos: es estacional (junio y diciembre) y mezclarlo
+  // haría parecer que un mes se disparó el costo de personal.
+  const persAguinaldo = manual.has('pers_aguinaldo') ? m('pers_aguinaldo') : auto.aguinaldo;
+  // Sindicato, uniformes y demás. Antes se calculaban y se tiraban.
+  const persOtros = manual.has('pers_otros') ? m('pers_otros') : auto.rrhhOtros;
+
+  // Bienal 2026: extraordinario, va abajo del EBIT igual que la regularización.
+  const finBienal = auto.bienal;
 
   // Diferencias de arqueo: auto desde cierres de caja, override manual
   const difArqueo = manual.has('dif_arqueo') ? m('dif_arqueo') : auto.difArqueo;
@@ -321,7 +349,7 @@ function computarMes(manual: Map<string, number>, auto: AutoMes): Map<string, nu
   const cmvEstimado =
     auto.cmvRealResuelto != null ? auto.cmvEstimadoResuelto : !deltaValidoLocal;
   const margenBruto = ingNeto - cmvReal;
-  const persTotal = persSueldos + persCargas;
+  const persTotal = persSueldos + persCargas + persAguinaldo + persOtros;
   // Prime Cost = CMV (consumo real) + Personal. Usa cmvReal, NO cmvTotal (compras):
   // Prime Cost es costo de lo VENDIDO + mano de obra. Antes usaba compras y en meses
   // con movimiento de inventario inflaba el % y no cuadraba con el CMV REAL mostrado.
@@ -329,7 +357,7 @@ function computarMes(manual: Map<string, number>, auto: AutoMes): Map<string, nu
   const amortizaciones = manual.has('amortizaciones') ? m('amortizaciones') : auto.amortizaciones;
   const ebitda = margenBruto - persTotal - gastosOp - impuestosOp;
   const ebit = ebitda - amortizaciones;
-  const finTotal = -(finIntereses + finArca + m('fin_prestamo'));
+  const finTotal = -(finIntereses + finArca + finBienal + m('fin_prestamo'));
   const rdoAntes = ebit + finTotal;
   const rdoNeto = rdoAntes - m('anticipo_gcias');
 
@@ -399,6 +427,10 @@ function computarMes(manual: Map<string, number>, auto: AutoMes): Map<string, nu
   result.set('impuestos_op', impuestosOp);
   result.set('fin_intereses', finIntereses);
   result.set('fin_arca', finArca);
+  result.set('fin_bienal', finBienal);
+  result.set('pers_aguinaldo', persAguinaldo);
+  result.set('pers_otros', persOtros);
+  result.set('_sin_clasificar', auto.sinClasificar);
   result.set('_kpi_gastosop', ingNeto > 0 ? gastosOp / ingNeto : 0);
   result.set('__ebitda', ebitda);
   result.set('_kpi_ebitda', ingNeto > 0 ? ebitda / ingNeto : 0);
@@ -456,10 +488,11 @@ const SENTIDO_FILA: Record<string, 1 | -1 | 0> = {
   // CMV REAL: subir es malo (consumiste más).
   __cmv_real: -1,
   __margen_bruto: 1,
-  pers_sueldos: -1, pers_cargas: -1, __pers_total: -1, __prime_cost: -1,
+  pers_sueldos: -1, pers_cargas: -1, pers_aguinaldo: -1, pers_otros: -1,
+  __pers_total: -1, __prime_cost: -1,
   gastos_op: -1, impuestos_op: -1,
   __ebitda: 1, amortizaciones: -1, __ebit: 1,
-  fin_intereses: 1, fin_arca: -1, fin_prestamo: -1, __fin_total: 1,
+  fin_intereses: 1, fin_arca: -1, fin_bienal: -1, fin_prestamo: -1, __fin_total: 1,
   __rdo_antes: 1, anticipo_gcias: -1, __rdo_neto: 1,
 };
 
@@ -633,6 +666,11 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
     sueldos: number;
     cargas_sociales: number;
     arca: number;
+    rrhh_otros: number;
+    aguinaldo: number;
+    bienal: number;
+    sin_clasificar: number;
+    total_gastos: number;
   };
   type AmortRow = { periodo: string; total_amort: number };
   type PartidaRow = { periodo: string; concepto: string; monto: number };
@@ -655,7 +693,7 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
   }
 
   // ── queries ────────────────────────────────────────────────────────────────
-  const { data: ticketsRaw } = useQuery({
+  const { data: ticketsRaw, error: errorVentas } = useQuery({
     queryKey: ['edr_tickets', año, localEdr],
     queryFn: async () => {
       const results = await Promise.all(
@@ -665,8 +703,10 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
             p_anio: año,
           });
           if (error) {
-            console.error('[edr_resumen_ventas]', error);
-            return [];
+            // Antes acá se hacía console.error y se devolvía vacío: si fallaba
+            // la consulta de UN local, el consolidado mostraba ceros de ese
+            // local como si no hubiera vendido nada. Mejor romper y avisar.
+            throw new Error(`No se pudieron leer las ventas de ${loc}: ${error.message}`);
           }
           // IVA débito estimado (total mensual 21/121) guardado por local en
           // edr_partidas. Se resuelve el efectivo POR LOCAL acá, ANTES de
@@ -697,7 +737,7 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
     },
   });
 
-  const { data: gastosResumen } = useQuery({
+  const { data: gastosResumen, error: errorGastos } = useQuery({
     queryKey: ['edr_gastos_resumen', año, localEdr],
     queryFn: async () => {
       const results = await Promise.all(
@@ -707,8 +747,9 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
             p_anio: año,
           });
           if (error) {
-            console.error('[edr_resumen_gastos]', error);
-            return [];
+            // Mismo criterio que las ventas: un local que falla no puede
+            // aparecer como un local sin gastos.
+            throw new Error(`No se pudieron leer los gastos de ${loc}: ${error.message}`);
           }
           return (data ?? []) as GastoResRow[];
         }),
@@ -726,8 +767,64 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
             'sueldos',
             'cargas_sociales',
             'arca',
+            'rrhh_otros',
+            'aguinaldo',
+            'bienal',
+            'sin_clasificar',
+            'total_gastos',
           ])
         : results[0];
+    },
+  });
+
+  // Plata cargada que el EdR no está mostrando en ninguna línea. Son dos casos
+  // distintos y los dos terminan igual: el gasto existe, se pagó, y no figura.
+  //   · sin renglón → la categoría no encaja en ninguna línea del EdR.
+  //   · invisible   → el local no es vedia/saavedra/sas, así que ninguna vista
+  //                   lo puede traer, ni siquiera el consolidado.
+  // La lista sale de una vista que usa la MISMA función de clasificación que
+  // el resumen (edr_renglon_de_gasto), así que no pueden discrepar.
+  const { data: gastosFueraDelEdr } = useQuery({
+    queryKey: ['edr_gastos_fuera', año, localEdr],
+    queryFn: async () => {
+      let qSinRenglon = supabase
+        .from('v_edr_gastos_sin_renglon')
+        .select('periodo, local, categoria, subcategoria, monto')
+        .like('periodo', `${año}-%`);
+      if (!esConsolidado) qSinRenglon = qSinRenglon.eq('local', localEdr);
+
+      const [sinRenglon, invisibles] = await Promise.all([
+        qSinRenglon,
+        // Los invisibles se muestran siempre: no pertenecen a ningún local.
+        supabase
+          .from('v_edr_gastos_invisibles')
+          .select('periodo, categoria, monto, motivo')
+          .like('periodo', `${año}-%`),
+      ]);
+      if (sinRenglon.error) throw sinRenglon.error;
+      if (invisibles.error) throw invisibles.error;
+
+      const filas = [
+        ...(sinRenglon.data ?? []).map((g) => ({
+          categoria: g.categoria as string,
+          monto: Number(g.monto),
+        })),
+        ...(invisibles.data ?? []).map((g) => ({
+          categoria: `${g.categoria || '(sin categoría)'} — ${g.motivo}`,
+          monto: Number(g.monto),
+        })),
+      ];
+      if (filas.length === 0) return null;
+
+      const porCategoria = new Map<string, number>();
+      for (const f of filas) {
+        porCategoria.set(f.categoria, (porCategoria.get(f.categoria) ?? 0) + f.monto);
+      }
+      return {
+        cantidad: filas.length,
+        total: filas.reduce((s, f) => s + f.monto, 0),
+        categorias: [...porCategoria.entries()].sort((a, b) => b[1] - a[1]),
+      };
     },
   });
 
@@ -1001,9 +1098,13 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
     intereses: 0,
     sueldos: 0,
     cargasSociales: 0,
+    rrhhOtros: 0,
+    aguinaldo: 0,
     amortizaciones: 0,
     difArqueo: 0,
     arca: 0,
+    bienal: 0,
+    sinClasificar: 0,
     stockFinalAlimentos: 0,
     stockFinalBebidas: 0,
     stockFinalIndirectos: 0,
@@ -1046,6 +1147,10 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
         sueldos: Number(g?.sueldos ?? 0),
         cargasSociales: Number(g?.cargas_sociales ?? 0),
         arca: Number(g?.arca ?? 0),
+        rrhhOtros: Number(g?.rrhh_otros ?? 0),
+        aguinaldo: Number(g?.aguinaldo ?? 0),
+        bienal: Number(g?.bienal ?? 0),
+        sinClasificar: Number(g?.sin_clasificar ?? 0),
       });
     }
     // Periodos solo con gastos (sin tickets)
@@ -1064,6 +1169,10 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
           sueldos: Number(g.sueldos),
           cargasSociales: Number(g.cargas_sociales),
           arca: Number(g.arca ?? 0),
+          rrhhOtros: Number(g.rrhh_otros ?? 0),
+          aguinaldo: Number(g.aguinaldo ?? 0),
+          bienal: Number(g.bienal ?? 0),
+          sinClasificar: Number(g.sin_clasificar ?? 0),
         });
       }
     }
@@ -1348,6 +1457,38 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
         El EdR es de <strong>solo lectura</strong>: se calcula automáticamente desde la información
         que ya tiene el ERP (ventas de Fudo, gastos, sueldos, cierres de inventario).
       </p>
+
+      {(errorVentas || errorGastos) && (
+        <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
+          🚫 <strong>No se pudieron traer todos los datos.</strong> Los números de abajo están
+          incompletos — no los uses hasta que esto se resuelva. Probá recargar la página; si sigue,
+          avisá.
+          <div className="mt-1 font-mono text-[11px] text-red-600">
+            {(errorVentas ?? errorGastos)?.message}
+          </div>
+        </div>
+      )}
+
+      {gastosFueraDelEdr && (
+        <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          ⚠ <strong>Hay {formatARS(gastosFueraDelEdr.total)} que este EdR no está mostrando</strong>{' '}
+          en ninguna línea ({gastosFueraDelEdr.cantidad}{' '}
+          {gastosFueraDelEdr.cantidad === 1 ? 'gasto' : 'gastos'} de {año}). Están cargados y
+          pagados, pero su categoría no corresponde a ningún renglón del Estado de Resultados, así
+          que el resultado de abajo es <em>mejor</em> que el real.
+          <ul className="mt-1.5 space-y-0.5">
+            {gastosFueraDelEdr.categorias.map(([cat, monto]) => (
+              <li key={cat}>
+                · {cat}: <strong>{formatARS(monto)}</strong>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-1.5 text-amber-700">
+            Se arregla desde <strong>Resumen de Egresos</strong>, poniéndole a cada uno la categoría
+            que le corresponde. Si la categoría es correcta y falta el renglón en el EdR, avisá.
+          </p>
+        </div>
+      )}
 
       {mesesCmvEstimado.length > 0 && (
         <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">

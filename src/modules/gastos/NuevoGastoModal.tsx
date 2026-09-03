@@ -689,8 +689,12 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
           subcategoria: sub?.nombre ?? null,
           categoria_id,
           comentario,
-          importe_neto: neto,
-          iva,
+          // Si no se cargó el neto, vale el total. Antes se guardaba 0, y como
+          // el EdR resuelve con coalesce(neto, total), un CERO no se rescata:
+          // el gasto entraba valiendo $0. Así se perdieron 76 gastos de 2026
+          // ($14,76M) que figuraban cargados y sumaban nada.
+          importe_neto: neto > 0 ? neto : total,
+          iva: neto > 0 ? iva : 0,
           iibb,
           importe_total: total,
           medio_pago: form.estado_pago === 'pagado' ? form.medio_pago : null,
