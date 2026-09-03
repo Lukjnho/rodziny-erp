@@ -212,6 +212,22 @@ type Vista =
 // flujo cámara/traspaso de Vedia. Por eso 'pasta' y 'milanesa' son categorías genéricas.
 type CategoriaGenerica = 'salsa' | 'postre' | 'pasteleria' | 'panaderia' | 'pasta' | 'milanesa';
 
+/**
+ * Un renglón del plan de hoy, listo para dibujar como botón en la pantalla de
+ * inicio. `vista` es adónde lleva el toque y `recetaId` lo que queda elegido al
+ * llegar: la idea es que el cocinero NO tenga que adivinar en qué categoría
+ * está lo que le toca hacer.
+ */
+type RenglonPlan = {
+  vista: Vista;
+  recetaId: string;
+  nombre: string;
+  cantidad: number;
+  color: string;
+  /** Ya se cargó un lote contra este renglón. Se sigue pudiendo tocar. */
+  hecho: boolean;
+};
+
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 // Día operativo AR: una carga de noche debe imputarse al día que se trabajó,
@@ -310,6 +326,13 @@ export function ProduccionQRPage() {
 
   const qc = useQueryClient();
   const [vista, setVista] = useState<Vista>('inicio');
+  // Receta que quedó elegida al tocar un renglón del plan. Se limpia al volver
+  // al inicio para que la próxima entrada "a mano" no arrastre la anterior.
+  const [recetaPreseleccionada, setRecetaPreseleccionada] = useState<string | null>(null);
+  const irA = useCallback((v: Vista, recetaId?: string) => {
+    setRecetaPreseleccionada(recetaId ?? null);
+    setVista(v);
+  }, []);
   const [mensajeExito, setMensajeExito] = useState('');
 
   // Catálogos
@@ -726,6 +749,50 @@ export function ProduccionQRPage() {
     }
     return m;
   }, [planHoy]);
+
+  // El plan de hoy convertido en botones para la pantalla de inicio. Se resuelve
+  // el nombre contra las recetas del local: si una receta del plan no está en el
+  // catálogo, ese renglón NO se dibuja — la pantalla no inventa un botón que
+  // después no sabe adónde llevar.
+  const renglonesPlan = useMemo<RenglonPlan[]>(() => {
+    const destino: Partial<Record<keyof typeof planPorTipo, { vista: Vista; color: string }>> = {
+      relleno: { vista: 'relleno', color: 'bg-green-600 hover:bg-green-700' },
+      salsa: { vista: 'salsa', color: 'bg-orange-500 hover:bg-orange-600' },
+      postre: { vista: 'postre', color: 'bg-pink-500 hover:bg-pink-600' },
+      pasteleria: { vista: 'pasteleria', color: 'bg-pink-500 hover:bg-pink-600' },
+      panaderia: { vista: 'panaderia', color: 'bg-yellow-600 hover:bg-yellow-700' },
+      milanesa: { vista: 'milanesa', color: 'bg-red-700 hover:bg-red-800' },
+    };
+    const acum = new Map<string, RenglonPlan>();
+    for (const it of planHoy ?? []) {
+      if (!it.receta_id) continue;
+      const d = destino[it.tipo as keyof typeof planPorTipo];
+      if (!d) continue;
+      const receta = recetasLocal.find((r) => r.id === it.receta_id);
+      if (!receta) continue;
+      const clave = `${it.tipo}|${it.receta_id}`;
+      const previo = acum.get(clave);
+      const cantidad = (previo?.cantidad ?? 0) + (Number(it.cantidad_recetas) || 1);
+      // Se marca hecho solo si TODOS los renglones de esa receta están cerrados.
+      // OJO: el pizarrón hoy tacha un pedido con la primera carga, aunque falte
+      // cantidad. Por eso el renglón se muestra igual, tildado pero tocable:
+      // esconderlo escondería trabajo que puede seguir pendiente de verdad.
+      const hecho = (previo ? previo.hecho : true) && it.estado === 'ciclo_completo';
+      acum.set(clave, {
+        vista: d.vista,
+        recetaId: it.receta_id,
+        nombre: receta.nombre,
+        cantidad,
+        color: d.color,
+        hecho,
+      });
+    }
+    return [...acum.values()].sort((a, b) => {
+      if (a.hecho !== b.hecho) return a.hecho ? 1 : -1; // lo pendiente, arriba
+      return a.nombre.localeCompare(b.nombre, 'es');
+    });
+  }, [planHoy, recetasLocal]);
+
   const productosPasta = useMemo(
     () => (productos ?? []).filter((p) => p.tipo === 'pasta' && p.local === local),
     [productos, local],
@@ -764,10 +831,11 @@ export function ProduccionQRPage() {
       {vista === 'inicio' && (
         <Inicio
           local={local}
-          onIr={(v) => setVista(v)}
+          onIr={irA}
           lotesHoy={(lotesRellenoHoy ?? []).filter((l) => l.fecha === hoy()).length}
           masasAbiertas={masasAbiertas}
           frescosPendientes={frescosPendientes}
+          renglonesPlan={renglonesPlan}
         />
       )}
 
@@ -776,9 +844,10 @@ export function ProduccionQRPage() {
           local={local}
           recetas={recetasRelleno}
           recetaIdsPlan={planPorTipo.relleno}
+          recetaIdInicial={recetaPreseleccionada ?? undefined}
           cargasHoy={cargasHoyRelleno}
           onGuardado={(msg) => onGuardado(msg)}
-          onVolver={() => setVista('inicio')}
+          onVolver={() => irA('inicio')}
         />
       )}
 
@@ -791,7 +860,7 @@ export function ProduccionQRPage() {
           pastaRecetas={pastaRecetas ?? []}
           cargasHoy={cargasHoyPasta}
           onGuardado={(msg) => onGuardado(msg)}
-          onVolver={() => setVista('inicio')}
+          onVolver={() => irA('inicio')}
         />
       )}
 
@@ -801,7 +870,7 @@ export function ProduccionQRPage() {
           lotesFrescos={lotesFrescos ?? []}
           sobrantesPendientes={sobrantesPendientes ?? []}
           onGuardado={(msg) => onGuardado(msg)}
-          onVolver={() => setVista('inicio')}
+          onVolver={() => irA('inicio')}
         />
       )}
 
@@ -811,7 +880,7 @@ export function ProduccionQRPage() {
           recetas={recetasMasa}
           cargasHoy={cargasHoyMasa}
           onGuardado={(msg) => onGuardado(msg)}
-          onVolver={() => setVista('inicio')}
+          onVolver={() => irA('inicio')}
         />
       )}
 
@@ -821,7 +890,7 @@ export function ProduccionQRPage() {
             (m) => m.fecha === hoy() && m.kg_sobrante === null,
           )}
           onGuardado={(msg) => onGuardado(msg)}
-          onVolver={() => setVista('inicio')}
+          onVolver={() => irA('inicio')}
         />
       )}
 
@@ -831,8 +900,9 @@ export function ProduccionQRPage() {
           categoria="salsa"
           recetas={recetasSalsa}
           recetaIdsPlan={planPorTipo.salsa}
+          recetaIdInicial={recetaPreseleccionada ?? undefined}
           onGuardado={onGuardado}
-          onVolver={() => setVista('inicio')}
+          onVolver={() => irA('inicio')}
         />
       )}
 
@@ -842,8 +912,9 @@ export function ProduccionQRPage() {
           categoria="postre"
           recetas={recetasPostre}
           recetaIdsPlan={planPorTipo.postre}
+          recetaIdInicial={recetaPreseleccionada ?? undefined}
           onGuardado={onGuardado}
-          onVolver={() => setVista('inicio')}
+          onVolver={() => irA('inicio')}
         />
       )}
 
@@ -853,7 +924,7 @@ export function ProduccionQRPage() {
           recetaIdsPlan={planPorTipo.pasteleria}
           recetaIdsPlanPostre={planPorTipo.postre}
           onGuardado={onGuardado}
-          onVolver={() => setVista('inicio')}
+          onVolver={() => irA('inicio')}
         />
       )}
 
@@ -861,7 +932,7 @@ export function ProduccionQRPage() {
         <FormPanaderia
           local={local}
           onGuardado={onGuardado}
-          onVolver={() => setVista('inicio')}
+          onVolver={() => irA('inicio')}
         />
       )}
 
@@ -873,7 +944,7 @@ export function ProduccionQRPage() {
           permitirLibre
           productosLibres={pastaLibres}
           onGuardado={onGuardado}
-          onVolver={() => setVista('inicio')}
+          onVolver={() => irA('inicio')}
         />
       )}
 
@@ -883,7 +954,7 @@ export function ProduccionQRPage() {
           recetasMilanesa={recetasMilanesa}
           recetaIdsPlan={planPorTipo.milanesa}
           onGuardado={onGuardado}
-          onVolver={() => setVista('inicio')}
+          onVolver={() => irA('inicio')}
         />
       )}
 
@@ -893,7 +964,7 @@ export function ProduccionQRPage() {
           productos={productos ?? []}
           recetas={recetas ?? []}
           onGuardado={onGuardado}
-          onVolver={() => setVista('inicio')}
+          onVolver={() => irA('inicio')}
         />
       )}
 
@@ -901,11 +972,11 @@ export function ProduccionQRPage() {
         <TrasladoPastasForm
           local={local}
           onGuardado={(msg) => onGuardado(msg)}
-          onVolver={() => setVista('inicio')}
+          onVolver={() => irA('inicio')}
         />
       )}
 
-      {vista === 'exito' && <Exito mensaje={mensajeExito} onOtro={() => setVista('inicio')} />}
+      {vista === 'exito' && <Exito mensaje={mensajeExito} onOtro={() => irA('inicio')} />}
     </Pantalla>
   );
 }
@@ -918,12 +989,18 @@ function Inicio({
   lotesHoy,
   masasAbiertas,
   frescosPendientes,
+  renglonesPlan = [],
 }: {
   local: 'vedia' | 'saavedra';
-  onIr: (v: Vista) => void;
+  onIr: (v: Vista, recetaId?: string) => void;
   lotesHoy: number;
   masasAbiertas: number;
   frescosPendientes: number;
+  /**
+   * Lo que hay que hacer hoy, sacado del pizarrón. Si viene vacío, esta pantalla
+   * queda EXACTAMENTE igual que antes: el peor caso es que no cambie nada.
+   */
+  renglonesPlan?: RenglonPlan[];
 }) {
   const ahora = new Date();
   const fechaLabel = ahora.toLocaleDateString('es-AR', {
@@ -1004,6 +1081,39 @@ function Inicio({
           >
             Ir al cierre →
           </a>
+        </div>
+      )}
+
+      {/* El plan de hoy, arriba de todo y como botones grandes. Tocar uno lleva
+          al formulario que YA existe con la receta puesta. Si no hay plan
+          cargado, este bloque no se dibuja y la pantalla queda como siempre. */}
+      {renglonesPlan.length > 0 && (
+        <div className="rounded-lg border-2 border-rodziny-700 bg-rodziny-50 p-3">
+          <p className="text-sm font-bold text-rodziny-800">📋 Hoy hay que hacer</p>
+          <p className="mt-0.5 text-xs text-rodziny-700">
+            Tocá lo que vas a hacer y se abre con la receta puesta.
+          </p>
+          <div className="mt-3 space-y-2">
+            {renglonesPlan.map((r) => (
+              <button
+                key={`${r.vista}-${r.recetaId}`}
+                onClick={() => onIr(r.vista, r.recetaId)}
+                className={cn(
+                  'flex w-full items-center justify-between gap-2 rounded-lg px-4 py-4 text-left text-white shadow transition-transform active:scale-[0.98]',
+                  r.color,
+                  r.hecho && 'opacity-50',
+                )}
+              >
+                <span className="text-base font-semibold leading-tight">
+                  {r.hecho && <span className="mr-1">✓</span>}
+                  {r.nombre}
+                </span>
+                <span className="shrink-0 rounded bg-black/20 px-2 py-1 text-sm font-bold">
+                  ×{r.cantidad}
+                </span>
+              </button>
+            ))}
+          </div>
         </div>
       )}
 
@@ -1215,6 +1325,7 @@ function FormRelleno({
   local,
   recetas,
   recetaIdsPlan,
+  recetaIdInicial,
   cargasHoy = [],
   onGuardado,
   onVolver,
@@ -1222,6 +1333,8 @@ function FormRelleno({
   local: string;
   recetas: Receta[];
   recetaIdsPlan?: Map<string, number>;
+  /** Viene de tocar un renglón del plan en la pantalla de inicio. */
+  recetaIdInicial?: string;
   cargasHoy?: CargaHoyItem[];
   onGuardado: (msg: string) => void;
   onVolver: () => void;
@@ -1233,10 +1346,15 @@ function FormRelleno({
     return recetas.filter((r) => recetaIdsPlan.has(r.id));
   }, [recetas, recetaIdsPlan, verTodas]);
 
-  const [recetaId, setRecetaId] = useState(recetasVisibles[0]?.id ?? '');
+  // Si vino con una receta elegida desde el plan, esa manda. Si no, la primera
+  // visible, como siempre.
+  const idInicial =
+    recetaIdInicial && recetasVisibles.some((r) => r.id === recetaIdInicial)
+      ? recetaIdInicial
+      : (recetasVisibles[0]?.id ?? '');
+  const [recetaId, setRecetaId] = useState(idInicial);
   const [cantRecetas, setCantRecetas] = useState(() => {
-    const id = recetasVisibles[0]?.id;
-    const planeada = id ? recetaIdsPlan?.get(id) : undefined;
+    const planeada = idInicial ? recetaIdsPlan?.get(idInicial) : undefined;
     return planeada ? String(planeada) : '1';
   });
   const [pesoKg, setPesoKg] = useState(''); // en modo bolsa = kg de puré que salió
@@ -4198,6 +4316,7 @@ function FormGenerico({
   categoria,
   recetas,
   recetaIdsPlan,
+  recetaIdInicial,
   permitirLibre,
   permitirLitros,
   productosLibres,
@@ -4208,6 +4327,8 @@ function FormGenerico({
   categoria: CategoriaGenerica;
   recetas: Receta[];
   recetaIdsPlan?: Map<string, number>;
+  /** Viene de tocar un renglón del plan en la pantalla de inicio. */
+  recetaIdInicial?: string;
   permitirLibre?: boolean;
   permitirLitros?: boolean;
   // Catálogo de productos para carga recipe-independent (Saavedra pasta/milanesa):
@@ -4223,7 +4344,10 @@ function FormGenerico({
     return recetas.filter((r) => recetaIdsPlan.has(r.id));
   }, [recetas, recetaIdsPlan, verTodas]);
 
-  const [recetaId, setRecetaId] = useState('');
+  // Si vino con una receta elegida desde el plan, arranca con esa puesta.
+  const [recetaId, setRecetaId] = useState(() =>
+    recetaIdInicial && recetas.some((r) => r.id === recetaIdInicial) ? recetaIdInicial : '',
+  );
 
   useEffect(() => {
     if (recetaId && !recetasVisibles.some((r) => r.id === recetaId)) {
