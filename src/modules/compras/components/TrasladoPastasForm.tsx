@@ -2,7 +2,13 @@ import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
+import { hoyAR } from '@/lib/fechaAR';
 import { invalidarStockCocina } from '@/modules/cocina/lib/invalidarStock';
+import {
+  SELECT_STOCK_PASTAS,
+  vendibleHoy,
+  type StockPastaRow,
+} from '@/modules/cocina/lib/stockPastas';
 
 interface PastaRow {
   id: string;
@@ -29,105 +35,52 @@ export function TrasladoPastasForm({
   const [exito, setExito] = useState(false);
   const qc = useQueryClient();
 
-  const { data: productos } = useQuery({
-    queryKey: ['qr-traslado-productos', local],
+  // ⚠️ ESTE FORMULARIO MUEVE MERCADERÍA REAL, así que el stock que muestra
+  // TIENE que ser el mismo que ve todo el resto del sistema.
+  //
+  // Antes hacía su propia cuenta: sumaba TODOS los lotes de cámara de la
+  // historia, menos todos los traspasos, menos toda la merma, más los ajustes.
+  // Le faltaba el conteo físico (el baseline): la cuenta única arranca del
+  // último conteo y solo suma lo posterior. Sin eso, el número acumulaba desde
+  // el día uno y quedaba enorme. Medido el 3-sep-2026 en Vedia:
+  //
+  //     Rigatoni ...... mostraba 1.282 cuando había 140   (1.142 de más)
+  //     Radiatori ..... mostraba 1.277 cuando había 249   (1.028 de más)
+  //     Sorrentinos ...   mostraba 684 cuando había 393     (291 de más)
+  //
+  // O sea que dejaba bajar al mostrador porciones que no existen. Era el
+  // séptimo lugar del sistema calculando este número por su cuenta; ahora lo
+  // lee de la base como los otros seis (migración 161).
+  const { data: vista } = useQuery({
+    queryKey: ['qr-traslado-stock', local],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from('cocina_productos')
-        .select('id, nombre, codigo, local')
-        .eq('tipo', 'pasta')
-        .eq('activo', true)
+        .from('v_cocina_stock_pastas')
+        .select(SELECT_STOCK_PASTAS)
         .eq('local', local)
         .order('nombre');
       if (error) throw error;
-      return data as Array<{ id: string; nombre: string; codigo: string; local: string }>;
-    },
-  });
-
-  const { data: lotes } = useQuery({
-    queryKey: ['qr-traslado-lotes', local],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('cocina_lotes_pasta')
-        .select('producto_id, porciones, ubicacion')
-        .eq('local', local)
-        .eq('ubicacion', 'camara_congelado');
-      if (error) throw error;
-      return data as Array<{ producto_id: string; porciones: number | null; ubicacion: string }>;
-    },
-  });
-
-  const { data: traspasos } = useQuery({
-    queryKey: ['qr-traslado-traspasos', local],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('cocina_traspasos')
-        .select('producto_id, porciones')
-        .eq('local', local);
-      if (error) throw error;
-      return data as Array<{ producto_id: string; porciones: number }>;
-    },
-  });
-
-  const { data: mermas } = useQuery({
-    queryKey: ['qr-traslado-mermas', local],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('cocina_merma')
-        .select('producto_id, porciones')
-        .eq('local', local);
-      if (error) throw error;
-      return data as Array<{ producto_id: string; porciones: number }>;
-    },
-  });
-
-  // Ajustes manuales acumulados de cámara: si Lucas reajustó el stock al conteo
-  // físico (ej: −150 para reflejar que en la cámara hay 46 y no 196 históricos),
-  // el traslado debe respetar esa corrección. Sin esto se mostraría stock
-  // fantasma que ya no existe físicamente.
-  const { data: ajustesCamara } = useQuery({
-    queryKey: ['qr-traslado-ajustes-camara', local],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('cocina_ajustes_stock')
-        .select('producto_id, delta')
-        .eq('local', local)
-        .eq('ubicacion', 'camara');
-      if (error) throw error;
-      return data as Array<{ producto_id: string; delta: number }>;
+      return (data ?? []) as unknown as StockPastaRow[];
     },
   });
 
   const rows = useMemo<PastaRow[]>(() => {
-    if (!productos) return [];
-    // Solo mostramos pastas con stock disponible en cámara_congelado (las que terminaron
-    // el ciclo: relleno → masa → armado → porcionado → cámara). Las que están en
-    // freezer_produccion (frescas sin porcionar) no aparecen porque todavía no son
-    // trasladables; tampoco las que tienen stock 0 (no hay nada que mover).
-    return productos
-      .map((p) => {
-        const enCamara = (lotes ?? [])
-          .filter((l) => l.producto_id === p.id)
-          .reduce((s, l) => s + (l.porciones ?? 0), 0);
-        const traspasado = (traspasos ?? [])
-          .filter((t) => t.producto_id === p.id)
-          .reduce((s, t) => s + t.porciones, 0);
-        const merma = (mermas ?? [])
-          .filter((m) => m.producto_id === p.id)
-          .reduce((s, m) => s + m.porciones, 0);
-        const ajuste = (ajustesCamara ?? [])
-          .filter((a) => a.producto_id === p.id)
-          .reduce((s, a) => s + Number(a.delta), 0);
-        return {
-          id: p.id,
-          nombre: p.nombre,
-          codigo: p.codigo,
-          stockCamara: enCamara - traspasado - merma + ajuste,
-        };
-      })
+    if (!vista) return [];
+    // ⛔ `vendibleHoy` y NUNCA `paraPlanificar`: el proyectado incluye bandejas
+    // que todavía nadie cortó, y acá se traslada mercadería que tiene que
+    // existir físicamente. Las que están en el freezer de producción no
+    // aparecen porque todavía no son trasladables, y las que tienen 0 tampoco
+    // porque no hay nada que mover.
+    return vista
+      .map((v) => ({
+        id: v.producto_id,
+        nombre: v.nombre,
+        codigo: v.codigo,
+        stockCamara: vendibleHoy(v),
+      }))
       .filter((r) => r.stockCamara > 0)
       .sort((a, b) => b.stockCamara - a.stockCamara); // las que más hay, primero
-  }, [productos, lotes, traspasos, mermas, ajustesCamara]);
+  }, [vista]);
 
   const filtradas = useMemo(() => {
     if (!busqueda.trim()) return rows;
@@ -163,9 +116,11 @@ export function TrasladoPastasForm({
         throw new Error(`Solo hay ${seleccionado.stockCamara} porciones en cámara`);
       }
 
-      const hoy = new Date();
-      const fecha = hoy.toISOString().slice(0, 10);
-      const hora = hoy.toTimeString().slice(0, 8);
+      // ⚠️ La fecha va con hoyAR(), no con toISOString(): ese devuelve UTC, así
+      // que un traslado de las 22 hs de acá quedaba con la fecha de mañana —
+      // y encima la hora sí era local, o sea que fecha y hora no coincidían.
+      const fecha = hoyAR();
+      const hora = new Date().toTimeString().slice(0, 8);
 
       const { error } = await supabase.from('cocina_traspasos').insert({
         producto_id: seleccionado.id,
@@ -180,7 +135,7 @@ export function TrasladoPastasForm({
       if (error) throw error;
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['qr-traslado-traspasos'] });
+      qc.invalidateQueries({ queryKey: ['qr-traslado-stock'] });
       qc.invalidateQueries({ queryKey: ['compras-pastas-traspasos'] });
       qc.invalidateQueries({ queryKey: ['cocina-traspasos-hoy-qr'] });
       // Tab Cocina > Stock, Dashboard, Resumen, etc. — todo el stock derivado.
