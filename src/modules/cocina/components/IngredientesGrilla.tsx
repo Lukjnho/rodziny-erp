@@ -21,6 +21,40 @@ function formatARS(n: number): string {
   });
 }
 
+/**
+ * Redondeo que NO borra los ingredientes chicos.
+ *
+ * Con 3 decimales fijos, los 0,0002 kg de nuez moscada de una porción se
+ * mostraban como "0" y el cocinero no tenía qué pesar. Se agregan decimales solo
+ * cuando hacen falta para que el número deje de ser cero.
+ */
+function redondearCantidad(n: number): number {
+  if (!isFinite(n) || n === 0) return 0;
+  for (const d of [3, 4, 5, 6]) {
+    const r = +n.toFixed(d);
+    if (r !== 0) return r;
+  }
+  return +n.toFixed(6);
+}
+
+/** ¿El cocinero cambió la cantidad? Con tolerancia relativa: 0,001 fijo daba por
+ *  "distinto" a cualquier cosa medida en gramos. */
+function esDistinto(a: number, b: number): boolean {
+  return Math.abs(a - b) > Math.max(1e-6, Math.abs(b) * 0.005);
+}
+
+/**
+ * "0,012" en kg no se puede pesar de cabeza: al lado se muestra "≈ 12 g".
+ * Solo para kg y por debajo del kilo, que es donde el número engaña.
+ */
+function pistaGramos(cantidad: number, unidad: string): string | null {
+  if (!/^kgs?$/i.test((unidad ?? '').trim())) return null;
+  if (!isFinite(cantidad) || cantidad <= 0 || cantidad >= 1) return null;
+  const g = cantidad * 1000;
+  const txt = g >= 10 ? String(Math.round(g)) : String(+g.toFixed(2));
+  return `≈ ${txt.replace('.', ',')} g`;
+}
+
 interface IngredienteRow {
   id: string;
   nombre: string;
@@ -81,7 +115,7 @@ export function IngredientesGrilla({
       // Default con coma decimal (es-AR) — el input no acepta punto, así que
       // mostrar "0,005" en lugar de "0.005".
       for (const i of ingredientes)
-        initial[i.id] = String(+(i.cantidad * factor).toFixed(3)).replace('.', ',');
+        initial[i.id] = String(redondearCantidad(i.cantidad * factor)).replace('.', ',');
       setCantidades(initial);
       setTildados(new Set());
     }
@@ -95,7 +129,7 @@ export function IngredientesGrilla({
     return ingredientes.map((i) => ({
       ing_id: i.id,
       nombre: i.nombre,
-      cantidad_receta: +(i.cantidad * factor).toFixed(3),
+      cantidad_receta: redondearCantidad(i.cantidad * factor),
       cantidad_real: parseDecimal(cantidades[i.id]) || i.cantidad * factor,
       unidad: i.unidad,
       producto_id: i.producto_id,
@@ -158,7 +192,7 @@ export function IngredientesGrilla({
 
   // Detectar si alguna cantidad fue modificada vs el default (receta × factor)
   const ajustados = reales.filter(
-    (r) => Math.abs(r.cantidad_real - r.cantidad_receta) > 0.001,
+    (r) => esDistinto(r.cantidad_real, r.cantidad_receta),
   ).length;
   const hayAjuste =
     ajustados > 0 &&
@@ -222,10 +256,10 @@ export function IngredientesGrilla({
 
       <div className="max-h-72 space-y-1.5 overflow-y-auto p-2">
         {ingredientes.map((i) => {
-          const esperado = +(i.cantidad * factor).toFixed(3);
+          const esperado = redondearCantidad(i.cantidad * factor);
           const raw = cantidades[i.id] ?? String(esperado).replace('.', ',');
           const realNum = parseDecimal(raw);
-          const ajustado = realNum > 0 && Math.abs(realNum - esperado) > 0.001;
+          const ajustado = realNum > 0 && esDistinto(realNum, esperado);
           const costoBaseIng = costoPorIng.get(i.id) ?? null;
           const ratio = i.cantidad > 0 && realNum > 0 ? realNum / i.cantidad : 1;
           const costoIng = costoBaseIng != null ? costoBaseIng * ratio : null;
@@ -272,11 +306,16 @@ export function IngredientesGrilla({
                 }
                 onClick={(e) => e.stopPropagation()}
                 className={
-                  'w-20 rounded border px-2 py-1 text-right text-xs ' +
+                  'w-24 rounded border px-2 py-1 text-right text-xs ' +
                   (ajustado ? 'border-amber-400 bg-amber-50' : 'border-gray-300 bg-white')
                 }
               />
-              <span className="w-8 text-[10px] text-gray-500">{i.unidad}</span>
+              <span className="w-16 text-[10px] leading-tight text-gray-500">
+                {i.unidad}
+                {pistaGramos(realNum || esperado, i.unidad) && (
+                  <span className="block text-gray-400">{pistaGramos(realNum || esperado, i.unidad)}</span>
+                )}
+              </span>
               <span className="w-14 text-right text-[10px] tabular-nums text-gray-500">
                 {costoIng != null ? formatARS(costoIng) : '—'}
               </span>
@@ -290,7 +329,7 @@ export function IngredientesGrilla({
             onClick={() => {
               const reset: Record<string, string> = {};
               for (const i of ingredientes)
-                reset[i.id] = String(+(i.cantidad * factor).toFixed(3)).replace('.', ',');
+                reset[i.id] = String(redondearCantidad(i.cantidad * factor)).replace('.', ',');
               setCantidades(reset);
             }}
             className="underline hover:text-gray-700"
