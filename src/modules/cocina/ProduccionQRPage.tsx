@@ -4181,12 +4181,23 @@ function FormPanaderia({
 
     // 1) Descontar la masa UNA sola vez: cerrar el lote con el sobrante.
     const sobrante = +(loteSel.kg_producidos - usados).toFixed(3);
-    const { error: errMasa } = await supabase
-      .from('cocina_lotes_masa')
-      .update({ kg_sobrante: sobrante, destino_sobrante: 'panadería' })
-      .eq('id', loteSel.id);
+    // Por función, no por UPDATE: anon no puede escribir cocina_lotes_masa y el
+    // UPDATE bloqueado devolvía 0 filas sin error, así que la masa NUNCA se
+    // descontaba y la misma se podía usar de nuevo. Ver migración 172.
+    // Se descuenta ANTES de dar de alta el pan a propósito: si esto falla no
+    // queremos pan cargado contra una masa que quedó libre para usar otra vez.
+    const { data: masaCerrada, error: errMasa } = await supabase.rpc('cocina_cerrar_masa', {
+      p_lote_id: loteSel.id,
+      p_kg_sobrante: sobrante,
+      p_destino: sobrante > 0 ? 'panadería' : null,
+    });
     if (errMasa) {
       setError(mensajeErrorAmigable(errMasa, 'No se pudo descontar la masa'));
+      setGuardando(false);
+      return;
+    }
+    if (!masaCerrada) {
+      setError('No se pudo descontar la masa: la base no confirmó el cambio. Probá de nuevo.');
       setGuardando(false);
       return;
     }
@@ -4206,7 +4217,14 @@ function FormPanaderia({
     }));
     const { error: errPan } = await supabase.from('cocina_lotes_produccion').insert(payload);
     if (errPan) {
-      setError(mensajeErrorAmigable(errPan, 'No se pudo cargar la panadería'));
+      // La masa ya quedó descontada arriba: hay que decirlo, si no el operario
+      // vuelve a elegirla y no la encuentra.
+      setError(
+        mensajeErrorAmigable(
+          errPan,
+          `No se pudo cargar la panadería. Ojo: la masa "${masaNombre}" ya quedó descontada, avisá para cargar el pan desde la PC`,
+        ),
+      );
       setGuardando(false);
       return;
     }
@@ -4563,16 +4581,23 @@ function FormCerrarMasa({
     setError('');
 
     const sobrante = parseDecimal(kgSobrante);
-    const { error: err } = await supabase
-      .from('cocina_lotes_masa')
-      .update({
-        kg_sobrante: sobrante,
-        destino_sobrante: sobrante > 0 ? destinoSobrante : null,
-      })
-      .eq('id', selectedId);
+    // Va por función y no por UPDATE directo: anon no puede escribir esta tabla y
+    // un UPDATE que la RLS bloquea devuelve 0 filas SIN error, así que el botón
+    // decía "listo" sin guardar nada. La función devuelve la fila cerrada, y solo
+    // avisamos que se cerró si volvió de verdad. Ver migración 172.
+    const { data, error: err } = await supabase.rpc('cocina_cerrar_masa', {
+      p_lote_id: selectedId,
+      p_kg_sobrante: sobrante,
+      p_destino: sobrante > 0 ? destinoSobrante : null,
+    });
 
     if (err) {
       setError(mensajeErrorAmigable(err, 'No se pudo cerrar la masa'));
+      setGuardando(false);
+      return;
+    }
+    if (!data) {
+      setError('No se pudo cerrar la masa: la base no confirmó el cambio. Probá de nuevo.');
       setGuardando(false);
       return;
     }
