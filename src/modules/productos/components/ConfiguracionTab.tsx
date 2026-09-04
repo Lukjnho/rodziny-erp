@@ -167,22 +167,20 @@ function SeccionCategorias() {
 
   return (
     <section className="rounded-lg border border-gray-200 bg-white p-4">
-      <h3 className="mb-1 text-sm font-semibold text-gray-800">🏷️ Markup y márgenes por categoría</h3>
+      <h3 className="mb-1 text-sm font-semibold text-gray-800">🏷️ Margen mínimo por categoría</h3>
       <p className="mb-3 text-xs text-gray-600">
-        El <strong>markup</strong> es el % que se suma al costo para sacar el precio sugerido (70% =
-        precio costo × 1,7). El <strong>margen</strong> es lo que te queda después de IVA y comisión
-        sobre el precio cobrado. Si la categoría no tiene config, se usa <code>default</code>.
+        El <strong>margen</strong> es lo que te queda del precio después de IVA y comisión. Si un
+        producto queda por debajo del mínimo de su categoría, aparece en <strong>Plan de Acción</strong>{' '}
+        con el precio al que habría que venderlo para llegar, redondeado al paso de acá abajo. Si la
+        categoría no tiene config propia, se usa <code>default</code>.
       </p>
       <div className="overflow-x-auto rounded border border-gray-200">
         <table className="w-full text-xs">
           <thead className="bg-gray-50 text-left text-[10px] uppercase tracking-wide text-gray-500">
             <tr>
               <th className="px-3 py-2">Categoría</th>
-              <th className="px-3 py-2 text-right">Markup %</th>
-              <th className="px-3 py-2 text-right">Margen min %</th>
-              <th className="px-3 py-2 text-right">Margen max %</th>
+              <th className="px-3 py-2 text-right">Margen mínimo %</th>
               <th className="px-3 py-2 text-right">Redondeo $</th>
-              <th className="px-3 py-2 text-right">Rango mercado</th>
               <th className="px-3 py-2">Descripción</th>
             </tr>
           </thead>
@@ -194,7 +192,7 @@ function SeccionCategorias() {
             ))}
             {!configs?.length && (
               <tr>
-                <td colSpan={7} className="px-3 py-6 text-center text-gray-400">
+                <td colSpan={4} className="px-3 py-6 text-center text-gray-400">
                   Sin configuraciones cargadas
                 </td>
               </tr>
@@ -219,7 +217,7 @@ function FilaCategoria({
   const val = (k: keyof ProductoCosteoConfig) =>
     (edit[k] !== undefined ? edit[k] : config[k]) as number | string | null;
 
-  function pctInput(field: 'markup_objetivo' | 'margen_min' | 'margen_max') {
+  function pctInput(field: 'margen_min') {
     const v = val(field);
     const display = v != null ? ((v as number) * 100).toFixed(1) : '';
     return (
@@ -236,19 +234,18 @@ function FilaCategoria({
     );
   }
 
-  function numInput(field: 'redondeo' | 'rango_mercado_min' | 'rango_mercado_max') {
+  function numInput(field: 'redondeo') {
     const v = val(field);
     return (
       <input
         type="number"
-        step={field === 'redondeo' ? 50 : 100}
+        step={50}
         value={v == null ? '' : String(v)}
         onChange={(e) => {
-          const raw = e.target.value;
-          setEdit((s) => ({
-            ...s,
-            [field]: raw === '' ? null : parseFloat(raw.replace(',', '.')) || 0,
-          }));
+          // El redondeo no puede quedar vacío: si se borra queda en 0 y quien lo lee
+          // cae a $100 (ver useMenuEngineering y PlanAccionTab).
+          const n = parseFloat(e.target.value.replace(',', '.'));
+          setEdit((s) => ({ ...s, [field]: isNaN(n) ? 0 : n }));
         }}
         className="w-20 rounded border border-gray-300 px-1.5 py-0.5 text-right tabular-nums"
       />
@@ -258,22 +255,8 @@ function FilaCategoria({
   return (
     <tr className="hover:bg-gray-50">
       <td className="px-3 py-2 font-medium capitalize">{config.categoria}</td>
-      <td className="px-3 py-2 text-right">{pctInput('markup_objetivo')}</td>
       <td className="px-3 py-2 text-right">{pctInput('margen_min')}</td>
-      <td className="px-3 py-2 text-right">{pctInput('margen_max')}</td>
       <td className="px-3 py-2 text-right">{numInput('redondeo')}</td>
-      <td className="px-3 py-2 text-right tabular-nums">
-        <div className="flex items-center justify-end gap-1">
-          {numInput('rango_mercado_min')}
-          <span className="text-gray-400">–</span>
-          {numInput('rango_mercado_max')}
-        </div>
-        {config.rango_mercado_min && config.rango_mercado_max && !dirty && (
-          <div className="mt-1 text-[9px] text-gray-400">
-            {formatARS(config.rango_mercado_min)}–{formatARS(config.rango_mercado_max)}
-          </div>
-        )}
-      </td>
       <td className="px-3 py-2">
         <input
           type="text"

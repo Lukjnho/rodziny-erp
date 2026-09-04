@@ -91,8 +91,10 @@ export function PlanAccionTab() {
         p.unidadesVendidas > 0 &&
         p.precioPromedio > 0
       ) {
-        // Sugerencia: subir 5% del precio promedio
-        const nuevoPrecio = Math.round((p.precioPromedio * 1.05) / 100) * 100;
+        // Sugerencia: subir 5% del precio promedio, redondeado al paso que tenga
+        // configurada la categoría (panificados van de a $50, el resto de a $100).
+        const paso = cfg && cfg.redondeo > 0 ? cfg.redondeo : 100;
+        const nuevoPrecio = Math.round((p.precioPromedio * 1.05) / paso) * paso;
         const incrementoUnit = nuevoPrecio - p.precioPromedio;
         const impactoMes = incrementoUnit * udsMes;
         out.push({
@@ -121,8 +123,17 @@ export function PlanAccionTab() {
           prioridad: diff * Math.abs(contribMes) * 10,
           producto: p,
           impactoEstimadoMes: null,
-          titulo: `${p.nombre}: margen ${(p.margenPctSobrePrecio * 100).toFixed(1)}% (mínimo ${(cfg.margen_min * 100).toFixed(0)}%)`,
-          detalle: `Categoría "${p.tipo}" pide al menos ${(cfg.margen_min * 100).toFixed(0)}% de margen. Faltan ${(diff * 100).toFixed(1)} puntos. Revisar costo o subir precio.`,
+          titulo:
+            p.precioParaMargenMin != null
+              ? `${p.nombre} ${formatARS(p.precioPromedio)} → ${formatARS(p.precioParaMargenMin)} (margen ${(p.margenPctSobrePrecio * 100).toFixed(1)}%, mínimo ${(cfg.margen_min * 100).toFixed(0)}%)`
+              : `${p.nombre}: margen ${(p.margenPctSobrePrecio * 100).toFixed(1)}% (mínimo ${(cfg.margen_min * 100).toFixed(0)}%)`,
+          detalle:
+            p.precioParaMargenMin != null && p.precioPromedio > 0
+              ? `Categoría "${p.tipo}" pide al menos ${(cfg.margen_min * 100).toFixed(0)}% de margen y faltan ${(diff * 100).toFixed(1)} puntos. Hoy se vende a ${formatARS(p.precioPromedio)}: para llegar al mínimo habría que ponerlo en ${formatARS(p.precioParaMargenMin)}. La otra salida es bajar el costo.`
+              : `Categoría "${p.tipo}" pide al menos ${(cfg.margen_min * 100).toFixed(0)}% de margen. Faltan ${(diff * 100).toFixed(1)} puntos. Revisar costo o subir precio.`,
+          // Queda como precio objetivo de la acción: así, cuando se marca hecha,
+          // se guarda contra qué precio se resolvió y deja de aparecer sola.
+          precioSugerido: p.precioParaMargenMin ?? undefined,
         });
       }
 

@@ -1,14 +1,19 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 
+/**
+ * Config de precios por categoría. Quedaron SOLO los dos campos que mandan sobre
+ * algo (migración 176): el margen mínimo, que dispara la alerta y define el precio
+ * objetivo del Plan de Acción, y el paso de redondeo con el que ese precio cae en
+ * un número de carta. Los otros cuatro —markup objetivo, margen máximo y el rango
+ * de mercado— no los leía ninguna pantalla y se borraron.
+ */
 export interface ProductoCosteoConfig {
   categoria: string;
-  markup_objetivo: number;
+  /** Piso de margen sobre lo recibido (neto de IVA y comisión). 0,55 = 55 %. */
   margen_min: number;
-  margen_max: number;
+  /** A cuánto redondea el precio sugerido: 50 en panificados, 100 en el resto. */
   redondeo: number;
-  rango_mercado_min: number | null;
-  rango_mercado_max: number | null;
   descripcion: string | null;
   updated_at: string;
 }

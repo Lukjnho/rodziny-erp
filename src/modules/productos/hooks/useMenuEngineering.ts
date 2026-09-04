@@ -45,6 +45,9 @@ export interface ProductoME {
   // Métricas derivadas
   margenUnitario: number | null;       // recibido (neto − comisión) − costo = ganancia $/unidad
   margenPctSobrePrecio: number | null; // margen / recibido
+  /** Precio de lista que dejaría este producto justo en el margen mínimo de su
+   *  categoría, redondeado hacia arriba al paso configurado. null si no hay costo. */
+  precioParaMargenMin: number | null;
   contribucionAbsoluta: number | null; // margen × unidades = $/período
 
   // Clasificación
@@ -377,6 +380,25 @@ export function useMenuEngineering(opts: MenuEngineeringOptions) {
         tienePrecio && it.costoUnitario != null ? recibido - it.costoUnitario : null;
       const margenPctSobrePrecio =
         margenUnitario != null ? margenUnitario / recibido : null;
+
+      // A cuánto habría que venderlo para llegar al margen mínimo de su categoría.
+      // Se invierte la misma cadena de arriba: del margen se sale al recibido, del
+      // recibido al neto y del neto al precio con IVA. Sin esto, la alerta de
+      // "margen bajo" decía cuántos puntos faltan pero no daba ningún precio.
+      const cfgCat = getConfig(it.tipo);
+      let precioParaMargenMin: number | null = null;
+      if (
+        cfgCat &&
+        it.costoUnitario != null &&
+        cfgCat.margen_min < 1 &&
+        comisionMax < 1
+      ) {
+        const recibidoObjetivo = it.costoUnitario / (1 - cfgCat.margen_min);
+        const bruto = (recibidoObjetivo * (1 + ivaPct)) / (1 - comisionMax);
+        // Redondeo HACIA ARRIBA: para abajo quedaría por debajo del mínimo.
+        const paso = cfgCat.redondeo > 0 ? cfgCat.redondeo : 100;
+        precioParaMargenMin = Math.ceil(bruto / paso) * paso;
+      }
       // Contribución sobre la demanda TOTAL (incluye unidades M.E al margen base).
       const contribucionAbsoluta =
         margenUnitario != null ? margenUnitario * it.udsTotal : null;
@@ -395,6 +417,7 @@ export function useMenuEngineering(opts: MenuEngineeringOptions) {
         costoUnitario: it.costoUnitario,
         margenUnitario,
         margenPctSobrePrecio,
+        precioParaMargenMin,
         contribucionAbsoluta,
         cuadrante: null,
         popularidadRelativa: 0,
