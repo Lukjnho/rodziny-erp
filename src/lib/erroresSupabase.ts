@@ -39,6 +39,16 @@ const TOKENS_TECNICOS = [
   'null value',
 ];
 
+// Candados con nombre propio. Para estos, el mensaje generico de 23505 -"ya
+// existe un registro, puede que ya lo hayas cargado hoy"- no solo no ayuda:
+// MIENTE, porque no es que el operario cargo dos veces. Postgres manda el
+// nombre del indice adentro del texto del error, asi que se puede traducir de
+// verdad y decirle a la persona que hacer.
+const POR_RESTRICCION: Record<string, string> = {
+  cocina_lotes_pasta_codigo_unico_por_local:
+    'Ya hay otro lote con ese mismo codigo en este local. El sistema deberia haberle puesto una letra al final solo: avisa, porque algo no funciono.',
+};
+
 function pareceTecnico(rawLower: string): boolean {
   return TOKENS_TECNICOS.some((t) => rawLower.includes(t));
 }
@@ -57,6 +67,11 @@ export function mensajeErrorAmigable(error: unknown, contexto?: string): string 
   // Problema de conexión / red.
   if (raw.includes('failed to fetch') || raw.includes('networkerror') || raw.includes('network request')) {
     return wrap('Problema de conexión. Revisá internet y probá de nuevo.');
+  }
+
+  // Un candado con nombre propio gana sobre el mensaje generico del codigo.
+  for (const [restriccion, mensaje] of Object.entries(POR_RESTRICCION)) {
+    if (raw.includes(restriccion)) return wrap(mensaje);
   }
 
   let base = POR_CODIGO[code];
