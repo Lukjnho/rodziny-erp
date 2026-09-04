@@ -168,7 +168,7 @@ interface LoteMasa {
   created_at?: string | null;
   responsable?: string | null;
   excluido_analisis?: boolean;
-  receta?: { nombre: string } | null;
+  receta?: { nombre: string; rol?: string | null } | null;
   consumido_kg?: number;
   disponible_kg?: number;
 }
@@ -256,6 +256,341 @@ function formatDDMM(fecha: string) {
 function horaDe(ts?: string | null): string {
   if (!ts) return '';
   return new Date(ts).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+}
+
+// ── Lo hecho, para MIRAR desde la tablet ─────────────────────────────────────
+// Un renglón por lote, venga de la tabla que venga (pasta, relleno, masa o la
+// genérica de salsas/postres/panadería/milanesas). Alimenta "✅ Hecho hoy", el
+// calendario y la ficha que se abre al tocar un lote: es lo que el chef tenía
+// que ir a mirar a la PC (Cocina › Producción › Lotes registrados).
+
+type CatHecho =
+  | 'pasta'
+  | 'relleno'
+  | 'masa'
+  | 'salsa'
+  | 'postre'
+  | 'pasteleria'
+  | 'panaderia'
+  | 'milanesa';
+
+const CAT_HECHO_ORDEN: CatHecho[] = [
+  'pasta',
+  'relleno',
+  'masa',
+  'salsa',
+  'postre',
+  'pasteleria',
+  'panaderia',
+  'milanesa',
+];
+const CAT_HECHO_LABEL: Record<CatHecho, string> = {
+  pasta: 'Pastas',
+  relleno: 'Rellenos',
+  masa: 'Masas',
+  salsa: 'Salsas',
+  postre: 'Postres',
+  pasteleria: 'Pastelería',
+  panaderia: 'Panadería',
+  milanesa: 'Milanesas',
+};
+// Mismo color que el botón de cargar de cada cosa, para reconocerlo de un vistazo.
+const CAT_HECHO_COLOR: Record<CatHecho, string> = {
+  pasta: 'bg-rodziny-700',
+  relleno: 'bg-green-600',
+  masa: 'bg-amber-500',
+  salsa: 'bg-orange-500',
+  postre: 'bg-pink-500',
+  pasteleria: 'bg-pink-500',
+  panaderia: 'bg-yellow-600',
+  milanesa: 'bg-red-700',
+};
+// Adónde lleva "Cargar otra tanda" para lo que vive en la tabla genérica.
+const VISTA_POR_CATEGORIA: Record<string, Vista> = {
+  salsa: 'salsa',
+  postre: 'postre',
+  pasteleria: 'pasteleria',
+  panaderia: 'panaderia',
+  milanesa: 'milanesa',
+  pasta: 'pasta-stock',
+};
+
+interface LoteHecho {
+  id: string;
+  cat: CatHecho;
+  fecha: string;
+  createdAt: string | null;
+  nombre: string;
+  /** Cantidad ya formateada: "12,5 kg", "40 bandejas", "120 porciones". */
+  cantidadStr: string;
+  /** Solo las pastas tienen código. Es el que va escrito en el cajón. */
+  codigo: string | null;
+  responsable: string | null;
+  notas: string | null;
+  /** Adónde lleva "Cargar otra tanda" y qué queda elegido al llegar. */
+  vista: Vista;
+  preseleccionId: string | null;
+  pasta?: {
+    ubicacion: string | null;
+    porciones: number | null;
+    cantidadCajones: number | null;
+    rellenoNombre: string | null;
+    rellenoKg: number | null;
+    masas: { nombre: string; kg: number | null }[];
+    fechaPorcionado: string | null;
+    responsablePorcionado: string | null;
+    porcionadoAt: string | null;
+  };
+}
+
+// Supabase devuelve un embed como objeto o como array según cómo esté el FK.
+function uno<T>(v: T | T[] | null | undefined): T | null {
+  if (v == null) return null;
+  return Array.isArray(v) ? (v[0] ?? null) : v;
+}
+
+type EmbNombre = { nombre: string } | { nombre: string }[] | null;
+type FilaPastaHecho = {
+  id: string;
+  codigo_lote: string;
+  fecha: string;
+  created_at: string | null;
+  responsable: string | null;
+  notas: string | null;
+  ubicacion: string | null;
+  porciones: number | null;
+  cantidad_cajones: number | null;
+  producto_id: string;
+  relleno_kg: number | null;
+  masa_kg: number | null;
+  fecha_porcionado: string | null;
+  responsable_porcionado: string | null;
+  porcionado_at: string | null;
+  producto: EmbNombre;
+  lote_relleno: { receta: EmbNombre } | { receta: EmbNombre }[] | null;
+  receta_masa: EmbNombre;
+  masas:
+    | {
+        masa_kg: number | null;
+        lote_masa: { receta: EmbNombre } | { receta: EmbNombre }[] | null;
+      }[]
+    | null;
+};
+type FilaSimpleHecho = {
+  id: string;
+  receta_id: string | null;
+  fecha: string;
+  created_at: string | null;
+  responsable: string | null;
+  notas: string | null;
+  receta: EmbNombre;
+};
+type FilaGenericaHecho = FilaSimpleHecho & {
+  categoria: string;
+  nombre_libre: string | null;
+  cantidad_producida: number;
+  unidad: string;
+};
+
+const SELECT_PASTA_HECHO =
+  'id, codigo_lote, fecha, created_at, responsable, notas, ubicacion, porciones, cantidad_cajones, ' +
+  'producto_id, relleno_kg, masa_kg, fecha_porcionado, responsable_porcionado, porcionado_at, ' +
+  'producto:cocina_productos(nombre), ' +
+  'lote_relleno:cocina_lotes_relleno(receta:cocina_recetas(nombre)), ' +
+  'receta_masa:cocina_recetas(nombre), ' +
+  'masas:cocina_lotes_pasta_masas(masa_kg, lote_masa:cocina_lotes_masa(receta:cocina_recetas(nombre)))';
+
+function kgStr(v: number | null | undefined): string {
+  return v == null ? '' : `${formatNum(Number(v))} kg`;
+}
+
+function pastaAHecho(r: FilaPastaHecho): LoteHecho {
+  const masas: { nombre: string; kg: number | null }[] = [];
+  const recetaMasa = uno(r.receta_masa);
+  if (recetaMasa) masas.push({ nombre: recetaMasa.nombre, kg: r.masa_kg });
+  // Pastas mixtas: el lote no apunta a una masa; el detalle está en la puente.
+  for (const m of r.masas ?? []) {
+    const rec = uno(uno(m.lote_masa)?.receta);
+    masas.push({ nombre: rec?.nombre ?? 'Masa', kg: m.masa_kg });
+  }
+  // Con relleno nace en bandejas y recién al porcionar tiene porciones; sin
+  // relleno nace directo en porciones. Mostramos lo más avanzado que haya.
+  const cantidadStr =
+    r.porciones != null
+      ? `${formatNum(Number(r.porciones))} porciones`
+      : r.cantidad_cajones != null
+        ? `${formatNum(Number(r.cantidad_cajones))} bandejas`
+        : '';
+  return {
+    id: r.id,
+    cat: 'pasta',
+    fecha: r.fecha,
+    createdAt: r.created_at,
+    nombre: uno(r.producto)?.nombre ?? 'Pasta',
+    cantidadStr,
+    codigo: r.codigo_lote,
+    responsable: r.responsable,
+    notas: r.notas,
+    vista: 'pasta',
+    preseleccionId: r.producto_id,
+    pasta: {
+      ubicacion: r.ubicacion,
+      porciones: r.porciones,
+      cantidadCajones: r.cantidad_cajones,
+      rellenoNombre: uno(uno(r.lote_relleno)?.receta)?.nombre ?? null,
+      rellenoKg: r.relleno_kg,
+      masas,
+      fechaPorcionado: r.fecha_porcionado,
+      responsablePorcionado: r.responsable_porcionado,
+      porcionadoAt: r.porcionado_at,
+    },
+  };
+}
+
+/**
+ * Todo lo que se cargó en el local entre dos fechas (día operativo, ambas
+ * incluidas), de las 4 tablas de lotes, del más nuevo al más viejo.
+ */
+function useLotesHechos(local: 'vedia' | 'saavedra', desde: string, hasta: string) {
+  return useQuery({
+    queryKey: ['cocina-hechos-qr', local, desde, hasta],
+    queryFn: async (): Promise<LoteHecho[]> => {
+      const [pastas, rellenos, masas, genericos] = await Promise.all([
+        supabase
+          .from('cocina_lotes_pasta')
+          .select(SELECT_PASTA_HECHO)
+          .eq('local', local)
+          .gte('fecha', desde)
+          .lte('fecha', hasta)
+          .order('created_at', { ascending: false }),
+        supabase
+          .from('cocina_lotes_relleno')
+          .select(
+            'id, receta_id, peso_total_kg, fecha, created_at, responsable, notas, receta:cocina_recetas(nombre)',
+          )
+          .eq('local', local)
+          .gte('fecha', desde)
+          .lte('fecha', hasta)
+          .order('created_at', { ascending: false }),
+        supabase
+          .from('cocina_lotes_masa')
+          .select(
+            'id, receta_id, kg_producidos, fecha, created_at, responsable, notas, receta:cocina_recetas(nombre)',
+          )
+          .eq('local', local)
+          .gte('fecha', desde)
+          .lte('fecha', hasta)
+          .order('created_at', { ascending: false }),
+        // Solo lo PRODUCIDO: el grueso de esta tabla son filas de cierre (el
+        // conteo que vuelve a fijar el stock), y eso no es trabajo hecho.
+        supabase
+          .from('cocina_lotes_produccion')
+          .select(
+            'id, categoria, receta_id, nombre_libre, cantidad_producida, unidad, fecha, created_at, responsable, notas, receta:cocina_recetas(nombre)',
+          )
+          .eq('local', local)
+          .eq('origen', 'produccion')
+          .gte('fecha', desde)
+          .lte('fecha', hasta)
+          .order('created_at', { ascending: false }),
+      ]);
+      for (const r of [pastas, rellenos, masas, genericos]) if (r.error) throw r.error;
+
+      const out: LoteHecho[] = [];
+      for (const r of (pastas.data ?? []) as unknown as FilaPastaHecho[]) out.push(pastaAHecho(r));
+      for (const r of (rellenos.data ?? []) as unknown as (FilaSimpleHecho & {
+        peso_total_kg: number;
+      })[]) {
+        out.push({
+          id: r.id,
+          cat: 'relleno',
+          fecha: r.fecha,
+          createdAt: r.created_at,
+          nombre: uno(r.receta)?.nombre ?? 'Relleno',
+          cantidadStr: kgStr(r.peso_total_kg),
+          codigo: null,
+          responsable: r.responsable,
+          notas: r.notas,
+          vista: 'relleno',
+          preseleccionId: r.receta_id,
+        });
+      }
+      for (const r of (masas.data ?? []) as unknown as (FilaSimpleHecho & {
+        kg_producidos: number;
+      })[]) {
+        out.push({
+          id: r.id,
+          cat: 'masa',
+          fecha: r.fecha,
+          createdAt: r.created_at,
+          nombre: uno(r.receta)?.nombre ?? 'Masa',
+          cantidadStr: kgStr(r.kg_producidos),
+          codigo: null,
+          responsable: r.responsable,
+          notas: r.notas,
+          vista: 'masa',
+          preseleccionId: r.receta_id,
+        });
+      }
+      for (const r of (genericos.data ?? []) as unknown as FilaGenericaHecho[]) {
+        const cat = (CAT_HECHO_ORDEN as string[]).includes(r.categoria)
+          ? (r.categoria as CatHecho)
+          : 'salsa';
+        out.push({
+          id: r.id,
+          cat,
+          fecha: r.fecha,
+          createdAt: r.created_at,
+          nombre: r.nombre_libre ?? uno(r.receta)?.nombre ?? CAT_HECHO_LABEL[cat],
+          cantidadStr: `${formatNum(Number(r.cantidad_producida))} ${r.unidad === 'unid' ? 'u' : r.unidad}`,
+          codigo: null,
+          responsable: r.responsable,
+          notas: r.notas,
+          vista: VISTA_POR_CATEGORIA[r.categoria] ?? 'inicio',
+          // Pastelería, panadería y milanesa eligen adentro de su formulario.
+          preseleccionId: cat === 'salsa' || cat === 'postre' ? r.receta_id : null,
+        });
+      }
+      out.sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''));
+      return out;
+    },
+  });
+}
+
+/** Busca un lote de pasta por su código (lo que está escrito en el cajón). */
+async function buscarLotePorCodigo(local: string, codigo: string): Promise<LoteHecho | null> {
+  // Los códigos son solo minúsculas, números y guiones (los 389 de la base):
+  // se normaliza y se compara exacto. Sin comodines de ningún tipo.
+  const limpio = codigo.toLowerCase().replace(/[^a-z0-9-]/g, '');
+  if (!limpio) return null;
+  const { data, error } = await supabase
+    .from('cocina_lotes_pasta')
+    .select(SELECT_PASTA_HECHO)
+    .eq('local', local)
+    .eq('codigo_lote', limpio)
+    .order('created_at', { ascending: false })
+    .limit(1);
+  if (error) throw error;
+  const fila = (data ?? [])[0] as unknown as FilaPastaHecho | undefined;
+  return fila ? pastaAHecho(fila) : null;
+}
+
+// Fechas como texto (YYYY-MM-DD) con aritmética local, sin pasar por UTC:
+// a las 22:00 de Argentina toISOString() ya está en mañana.
+function sumarDias(fecha: string, dias: number): string {
+  const [a, m, d] = fecha.split('-').map(Number);
+  const dt = new Date(a, m - 1, d + dias);
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+}
+/** Lunes de la semana a la que pertenece la fecha (la cocina opera lun-dom). */
+function lunesDe(fecha: string): string {
+  const [a, m, d] = fecha.split('-').map(Number);
+  const dow = new Date(a, m - 1, d).getDay(); // 0 = domingo
+  return sumarDias(fecha, -((dow + 6) % 7));
+}
+function ddmm(fecha: string): string {
+  const [, m, d] = fecha.split('-');
+  return `${d}/${m}`;
 }
 
 // ── Historial "Ya cargado hoy" ───────────────────────────────────────────────
@@ -430,7 +765,7 @@ export function ProduccionQRPage() {
       const { data, error } = await supabase
         .from('cocina_lotes_masa')
         .select(
-          'id, receta_id, kg_producidos, kg_sobrante, destino_sobrante, fecha, created_at, responsable, excluido_analisis, receta:cocina_recetas(nombre)',
+          'id, receta_id, kg_producidos, kg_sobrante, destino_sobrante, fecha, created_at, responsable, excluido_analisis, receta:cocina_recetas(nombre, rol)',
         )
         .gte('fecha', desdeLotes)
         .eq('local', local)
@@ -824,6 +1159,12 @@ export function ProduccionQRPage() {
     qc.invalidateQueries({ queryKey: ['cocina-lotes-produccion-qr'] });
     qc.invalidateQueries({ queryKey: ['cocina-lotes-pasta-frescos-qr'] });
     qc.invalidateQueries({ queryKey: ['cocina-pastas-consumo-qr'] });
+    qc.invalidateQueries({ queryKey: ['cocina-pasta-masas-consumo-qr'] });
+    // Lo que se ve en el inicio: "Hecho hoy", el plan tachado y el calendario.
+    qc.invalidateQueries({ queryKey: ['cocina-hechos-qr'] });
+    qc.invalidateQueries({ queryKey: ['cocina-lotes-pasta-hoy-qr'] });
+    qc.invalidateQueries({ queryKey: ['cocina-plan-hoy-qr'] });
+    qc.invalidateQueries({ queryKey: ['cocina-plan-mes-qr'] });
     // Refrescar todo el stock derivado (StockTab, Dashboard, Resumen, catálogo)
     // para que cualquier carga del QR se vea al instante en las pantallas abiertas.
     invalidarStockCocina(qc);
@@ -839,6 +1180,9 @@ export function ProduccionQRPage() {
           masasAbiertas={masasAbiertas}
           frescosPendientes={frescosPendientes}
           renglonesPlan={renglonesPlan}
+          rellenosDisponibles={rellenosDisponibles}
+          masasDisponibles={masasDisponibles}
+          lotesFrescos={lotesFrescos ?? []}
         />
       )}
 
@@ -861,6 +1205,7 @@ export function ProduccionQRPage() {
           lotesRelleno={rellenosDisponibles}
           lotesMasa={masasDisponibles.filter((m) => m.kg_sobrante === null)}
           pastaRecetas={pastaRecetas ?? []}
+          productoIdInicial={recetaPreseleccionada ?? undefined}
           cargasHoy={cargasHoyPasta}
           onGuardado={(msg) => onGuardado(msg)}
           onVolver={() => irA('inicio')}
@@ -881,6 +1226,7 @@ export function ProduccionQRPage() {
         <FormMasa
           local={local}
           recetas={recetasMasa}
+          recetaIdInicial={recetaPreseleccionada ?? undefined}
           cargasHoy={cargasHoyMasa}
           onGuardado={(msg) => onGuardado(msg)}
           onVolver={() => irA('inicio')}
@@ -995,6 +1341,9 @@ function Inicio({
   masasAbiertas,
   frescosPendientes,
   renglonesPlan = [],
+  rellenosDisponibles = [],
+  masasDisponibles = [],
+  lotesFrescos = [],
 }: {
   local: 'vedia' | 'saavedra';
   onIr: (v: Vista, recetaId?: string) => void;
@@ -1006,6 +1355,10 @@ function Inicio({
    * queda EXACTAMENTE igual que antes: el peor caso es que no cambie nada.
    */
   renglonesPlan?: RenglonPlan[];
+  /** Para "🔥 En curso": relleno sin armar, masa con kg sin usar, pasta sin porcionar. */
+  rellenosDisponibles?: LoteRelleno[];
+  masasDisponibles?: LoteMasa[];
+  lotesFrescos?: LotePastaFresco[];
 }) {
   const ahora = new Date();
   const fechaLabel = ahora.toLocaleDateString('es-AR', {
@@ -1015,6 +1368,8 @@ function Inicio({
   });
   const { faltantes: cierresFaltantes } = useCierresFaltantes(local, supabase);
   const [verMes, setVerMes] = useState(false);
+  // Lote tocado (en "Hecho hoy", en el calendario o buscando por código).
+  const [loteSel, setLoteSel] = useState<LoteHecho | null>(null);
 
   const botones: { vista: Vista; label: string; color: string }[] = [
     { vista: 'relleno', label: 'Cargar Relleno', color: 'bg-green-600 hover:bg-green-700' },
@@ -1123,6 +1478,16 @@ function Inicio({
         </div>
       )}
 
+      {/* Lo que quedó a medio camino y lo que ya se hizo hoy: lo que el chef
+          tenía que ir a mirar a la PC. Tocar un lote abre su ficha. */}
+      <EnCurso
+        onIr={onIr}
+        rellenos={rellenosDisponibles}
+        masas={masasDisponibles}
+        frescos={lotesFrescos}
+      />
+      <HechoHoy local={local} onVerLote={setLoteSel} />
+
       <div className="rounded-lg border border-gray-200 bg-white p-4 text-center">
         <p className="text-xs capitalize text-gray-500">{fechaLabel}</p>
         <p className="mt-1 text-sm text-gray-600">
@@ -1149,9 +1514,9 @@ function Inicio({
         onClick={() => setVerMes((v) => !v)}
         className="w-full rounded-lg border border-gray-300 bg-white py-3 text-sm font-semibold text-gray-700 transition-transform active:scale-[0.98]"
       >
-        📅 {verMes ? 'Ocultar el mes' : 'Ver el plan del mes'}
+        📅 {verMes ? 'Ocultar el calendario' : 'Ver calendario (semana / mes)'}
       </button>
-      {verMes && <CalendarioPlan local={local} />}
+      {verMes && <CalendarioPlan local={local} onVerLote={setLoteSel} />}
 
       {botones.map((b) => (
         <button
@@ -1207,6 +1572,414 @@ function Inicio({
       <p className="mt-6 text-center text-[10px] text-gray-400">
         Rodziny ERP · Carga de producción
       </p>
+
+      {loteSel && (
+        <FichaLote
+          lote={loteSel}
+          onCerrar={() => setLoteSel(null)}
+          onIr={(v, id) => {
+            setLoteSel(null);
+            onIr(v, id);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ── En curso: lo que quedó a medio camino ────────────────────────────────────
+// Relleno hecho que todavía no se armó, masa con kg sin usar y pasta armada que
+// no fue a cámara. Si no hay nada, el bloque no se dibuja. Mide lo que de
+// verdad se consumió (kg armados contra el lote), NO la "masa abierta" de
+// kg_sobrante, que desde este QR no se puede cerrar.
+function EnCurso({
+  onIr,
+  rellenos,
+  masas,
+  frescos,
+}: {
+  onIr: (v: Vista) => void;
+  rellenos: LoteRelleno[];
+  masas: LoteMasa[];
+  frescos: LotePastaFresco[];
+}) {
+  const items: { key: string; icono: string; label: string; detalle: string; vista: Vista }[] = [];
+  for (const r of rellenos) {
+    items.push({
+      key: `r-${r.id}`,
+      icono: '🥣',
+      label: r.receta?.nombre ?? 'Relleno',
+      detalle: `${kgStr(r.disponible_kg)} sin armar · ${ddmm(r.fecha)}`,
+      vista: 'pasta',
+    });
+  }
+  for (const m of masas) {
+    // La masa de panadería se termina desde "Cargar Panadería", no acá.
+    if (m.receta?.rol === 'masa_panaderia') continue;
+    items.push({
+      key: `m-${m.id}`,
+      icono: '🫓',
+      label: m.receta?.nombre ?? 'Masa',
+      detalle: `${kgStr(m.disponible_kg)} sin usar · ${ddmm(m.fecha)}`,
+      vista: 'pasta',
+    });
+  }
+  for (const f of frescos) {
+    items.push({
+      key: `f-${f.id}`,
+      icono: '🧊',
+      label: `${f.codigo_lote} · ${f.producto?.nombre ?? 'Pasta'}`,
+      detalle: `${f.cantidad_cajones ?? 0} bandejas sin porcionar · ${ddmm(f.fecha)}`,
+      vista: 'porcionar-pasta',
+    });
+  }
+  if (items.length === 0) return null;
+  return (
+    <div className="rounded-lg border-2 border-amber-400 bg-amber-50 p-3">
+      <p className="text-sm font-bold text-amber-800">🔥 En curso</p>
+      <p className="mt-0.5 text-xs text-amber-700">Quedó a medio camino. Tocá para seguir.</p>
+      <div className="mt-2 space-y-1.5">
+        {items.map((it) => (
+          <button
+            key={it.key}
+            onClick={() => onIr(it.vista)}
+            className="flex w-full items-center justify-between gap-2 rounded-lg bg-white px-3 py-3 text-left shadow-sm transition-transform active:scale-[0.98]"
+          >
+            <span className="min-w-0">
+              <span className="block truncate text-sm font-semibold text-gray-900">
+                <span className="mr-1">{it.icono}</span>
+                {it.label}
+              </span>
+              <span className="block text-xs text-gray-500">{it.detalle}</span>
+            </span>
+            <span className="shrink-0 text-lg text-gray-400">›</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Hecho hoy: la lista que antes había que ir a mirar a la PC ───────────────
+// Todo lo cargado hoy en el local, con chips por categoría, el código grande
+// en las pastas, y un buscador que sirve igual tipeando o con la pistola de
+// códigos (la pistola es un teclado: escribe y manda Enter).
+function HechoHoy({
+  local,
+  onVerLote,
+}: {
+  local: 'vedia' | 'saavedra';
+  onVerLote: (l: LoteHecho) => void;
+}) {
+  const hoyStr = hoy();
+  const { data: hechos, isLoading, isError } = useLotesHechos(local, hoyStr, hoyStr);
+  const [cat, setCat] = useState<CatHecho | 'todos'>('todos');
+  const [busq, setBusq] = useState('');
+  const [buscando, setBuscando] = useState(false);
+  const [msgBusq, setMsgBusq] = useState('');
+
+  const porCat = useMemo(() => {
+    const m = new Map<CatHecho, number>();
+    for (const h of hechos ?? []) m.set(h.cat, (m.get(h.cat) ?? 0) + 1);
+    return m;
+  }, [hechos]);
+
+  const q = busq.trim().toLowerCase();
+  const visibles = useMemo(
+    () =>
+      (hechos ?? []).filter(
+        (h) =>
+          (cat === 'todos' || h.cat === cat) &&
+          (!q || h.nombre.toLowerCase().includes(q) || (h.codigo ?? '').toLowerCase().includes(q)),
+      ),
+    [hechos, cat, q],
+  );
+
+  // Enter (o la pistola): si el código es de hoy se abre directo; si no, se
+  // busca en la base entre todos los lotes del local, de cualquier fecha.
+  async function buscarCodigo() {
+    if (!q) return;
+    const deHoy = (hechos ?? []).find((h) => h.codigo?.toLowerCase() === q);
+    if (deHoy) {
+      onVerLote(deHoy);
+      setBusq('');
+      return;
+    }
+    setBuscando(true);
+    setMsgBusq('');
+    try {
+      const l = await buscarLotePorCodigo(local, q);
+      if (l) {
+        onVerLote(l);
+        setBusq('');
+      } else {
+        setMsgBusq(`No hay ningún lote con el código "${busq.trim()}".`);
+      }
+    } catch (e) {
+      setMsgBusq(mensajeErrorAmigable(e, 'No se pudo buscar el código'));
+    } finally {
+      setBuscando(false);
+    }
+  }
+
+  const chips: (CatHecho | 'todos')[] = [
+    'todos',
+    ...CAT_HECHO_ORDEN.filter((c) => (porCat.get(c) ?? 0) > 0),
+  ];
+  const total = hechos?.length ?? 0;
+
+  return (
+    <div className="rounded-lg border border-gray-200 bg-white p-3">
+      <p className="text-sm font-bold text-gray-800">✅ Hecho hoy{total > 0 ? ` · ${total}` : ''}</p>
+
+      <div className="mt-2 flex gap-2">
+        <input
+          type="search"
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck={false}
+          placeholder="Buscar o escanear código…"
+          value={busq}
+          onChange={(e) => {
+            setBusq(e.target.value);
+            setMsgBusq('');
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              void buscarCodigo();
+            }
+          }}
+          className="min-w-0 flex-1 rounded-lg border border-gray-300 px-3 py-2.5 text-base"
+        />
+        <button
+          type="button"
+          onClick={() => void buscarCodigo()}
+          disabled={!q || buscando}
+          className="shrink-0 rounded-lg bg-gray-800 px-4 text-sm font-semibold text-white disabled:opacity-40"
+        >
+          {buscando ? '…' : 'Buscar'}
+        </button>
+      </div>
+      {msgBusq && <p className="mt-1 text-xs text-red-600">{msgBusq}</p>}
+
+      {chips.length > 1 && (
+        <div className="-mx-3 mt-2 flex gap-1.5 overflow-x-auto px-3 pb-1">
+          {chips.map((c) => {
+            const n = c === 'todos' ? total : (porCat.get(c) ?? 0);
+            const sel = c === cat;
+            return (
+              <button
+                key={c}
+                type="button"
+                onClick={() => setCat(c)}
+                className={cn(
+                  'shrink-0 rounded-full border px-3 py-1.5 text-xs font-semibold',
+                  sel
+                    ? 'border-gray-900 bg-gray-900 text-white'
+                    : 'border-gray-300 bg-white text-gray-700',
+                )}
+              >
+                {c === 'todos' ? 'Todos' : CAT_HECHO_LABEL[c]} · {n}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {isLoading && <p className="mt-2 text-center text-xs text-gray-400">Cargando…</p>}
+      {isError && (
+        <p className="mt-2 text-xs text-red-600">No se pudo leer lo cargado hoy. Probá de nuevo.</p>
+      )}
+      {!isLoading && !isError && total === 0 && (
+        <p className="mt-2 text-xs text-gray-400">Todavía no se cargó nada hoy.</p>
+      )}
+      {!isLoading && total > 0 && visibles.length === 0 && (
+        <p className="mt-2 text-xs text-gray-400">Nada de hoy coincide con eso.</p>
+      )}
+      {visibles.length > 0 && (
+        <div className="mt-2 space-y-1.5">
+          {visibles.map((h) => (
+            <FilaHecho key={`${h.cat}-${h.id}`} h={h} onVer={onVerLote} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FilaHecho({
+  h,
+  onVer,
+  mostrarFecha,
+}: {
+  h: LoteHecho;
+  onVer: (l: LoteHecho) => void;
+  mostrarFecha?: boolean;
+}) {
+  const enFreezer = h.pasta?.ubicacion === 'freezer_produccion';
+  return (
+    <button
+      type="button"
+      onClick={() => onVer(h)}
+      className="flex w-full items-center gap-3 rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-left transition-transform active:scale-[0.99] active:bg-gray-50"
+    >
+      <span className={cn('h-10 w-1.5 shrink-0 rounded-full', CAT_HECHO_COLOR[h.cat])} />
+      <span className="min-w-0 flex-1">
+        {h.codigo && (
+          <span className="block font-mono text-lg font-bold uppercase leading-tight text-rodziny-900">
+            {h.codigo}
+          </span>
+        )}
+        <span className="block truncate text-sm font-semibold text-gray-900">{h.nombre}</span>
+        <span className="block text-xs text-gray-500">
+          {mostrarFecha ? `${ddmm(h.fecha)} · ` : ''}
+          {horaDe(h.createdAt)}
+          {h.responsable ? ` · ${h.responsable}` : ''}
+        </span>
+      </span>
+      <span className="shrink-0 text-right">
+        <span className="block text-sm font-bold text-gray-800">{h.cantidadStr}</span>
+        {h.pasta && (
+          <span className={cn('block text-[11px]', enFreezer ? 'text-blue-600' : 'text-emerald-700')}>
+            {enFreezer ? '⏳ falta porcionar' : '❄️ en cámara'}
+          </span>
+        )}
+      </span>
+    </button>
+  );
+}
+
+// ── Ficha de un lote ─────────────────────────────────────────────────────────
+// Se abre al tocar un lote (de "Hecho hoy", del calendario o buscando por
+// código). Muestra el código grande, con qué se hizo y en qué estado está, y
+// deja cargar otra tanda de lo mismo con la receta/pasta ya elegida.
+function FichaLote({
+  lote,
+  onCerrar,
+  onIr,
+}: {
+  lote: LoteHecho;
+  onCerrar: () => void;
+  onIr: (v: Vista, id?: string) => void;
+}) {
+  const p = lote.pasta;
+  const enFreezer = p?.ubicacion === 'freezer_produccion';
+  const hora = horaDe(lote.createdAt);
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40" onClick={onCerrar}>
+      <div
+        className="max-h-[85vh] w-full max-w-md overflow-y-auto rounded-t-2xl bg-white p-4 shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <span
+              className={cn(
+                'inline-block rounded px-2 py-0.5 text-[11px] font-semibold text-white',
+                CAT_HECHO_COLOR[lote.cat],
+              )}
+            >
+              {CAT_HECHO_LABEL[lote.cat]}
+            </span>
+            <h3 className="mt-1 text-lg font-bold leading-tight text-gray-900">{lote.nombre}</h3>
+          </div>
+          <button
+            type="button"
+            onClick={onCerrar}
+            className="shrink-0 rounded px-3 py-1 text-2xl leading-none text-gray-400"
+            aria-label="Cerrar"
+          >
+            ×
+          </button>
+        </div>
+
+        {lote.codigo && (
+          <div className="mt-3 rounded-lg border-2 border-rodziny-700 bg-rodziny-50 p-3 text-center">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-rodziny-700">
+              Código del lote
+            </p>
+            <p className="mt-0.5 select-all font-mono text-3xl font-bold uppercase text-rodziny-900">
+              {lote.codigo}
+            </p>
+          </div>
+        )}
+
+        <dl className="mt-3 space-y-1.5 text-sm">
+          <Dato k="Cantidad" v={lote.cantidadStr} />
+          <Dato k="Fecha" v={`${ddmm(lote.fecha)}${hora ? ` · ${hora}` : ''}`} />
+          <Dato k="Responsable" v={lote.responsable} />
+          {p && (
+            <Dato
+              k="Relleno"
+              v={
+                p.rellenoNombre
+                  ? `${p.rellenoNombre}${p.rellenoKg != null ? ` · ${kgStr(p.rellenoKg)}` : ''}`
+                  : 'Sin relleno'
+              }
+            />
+          )}
+          {p && p.masas.length > 0 && (
+            <Dato
+              k={p.masas.length > 1 ? 'Masas' : 'Masa'}
+              v={p.masas
+                .map((m) => `${m.nombre}${m.kg != null ? ` · ${kgStr(m.kg)}` : ''}`)
+                .join(' + ')}
+            />
+          )}
+          {p && (
+            <Dato
+              k="Estado"
+              v={
+                enFreezer
+                  ? '⏳ En freezer, falta porcionar'
+                  : `❄️ En cámara${p.fechaPorcionado ? ` · porcionado ${ddmm(p.fechaPorcionado)}` : ''}${
+                      p.responsablePorcionado ? ` por ${p.responsablePorcionado}` : ''
+                    }`
+              }
+            />
+          )}
+          <Dato k="Notas" v={lote.notas} />
+        </dl>
+
+        <div className="mt-4 space-y-2">
+          {enFreezer && (
+            <button
+              type="button"
+              onClick={() => onIr('porcionar-pasta')}
+              className="w-full rounded-lg bg-blue-600 py-3 text-base font-semibold text-white shadow transition-transform active:scale-[0.98]"
+            >
+              ✂️ Porcionar
+            </button>
+          )}
+          {lote.vista !== 'inicio' && (
+            <button
+              type="button"
+              onClick={() => onIr(lote.vista, lote.preseleccionId ?? undefined)}
+              className="w-full rounded-lg bg-rodziny-700 py-3 text-base font-semibold text-white shadow transition-transform active:scale-[0.98]"
+            >
+              ➕ Cargar otra tanda
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onCerrar}
+            className="w-full rounded-lg border border-gray-300 py-3 text-sm font-semibold text-gray-700"
+          >
+            Cerrar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Dato({ k, v }: { k: string; v: string | null | undefined }) {
+  if (!v) return null;
+  return (
+    <div className="flex justify-between gap-3">
+      <dt className="shrink-0 text-gray-500">{k}</dt>
+      <dd className="text-right font-medium text-gray-900">{v}</dd>
     </div>
   );
 }
@@ -1232,20 +2005,31 @@ type ItemMes = {
   receta: { nombre: string } | null;
 };
 
-function CalendarioPlan({ local }: { local: 'vedia' | 'saavedra' }) {
+function CalendarioPlan({
+  local,
+  onVerLote,
+}: {
+  local: 'vedia' | 'saavedra';
+  onVerLote: (l: LoteHecho) => void;
+}) {
   const hoyStr = hoy();
+  // Semana (lun-dom) por defecto: es lo que el chef mira a diario. El mes
+  // queda a un toque.
+  const [modo, setModo] = useState<'semana' | 'mes'>('semana');
   const [ancla, setAncla] = useState(() => {
     const [a, m] = hoyStr.split('-').map(Number);
     return { anio: a, mes: m - 1 }; // mes 0-11
   });
+  const [lunes, setLunes] = useState(() => lunesDe(hoyStr));
   const [diaSel, setDiaSel] = useState<string | null>(hoyStr);
 
-  const desde = `${ancla.anio}-${String(ancla.mes + 1).padStart(2, '0')}-01`;
+  const mesStr = `${ancla.anio}-${String(ancla.mes + 1).padStart(2, '0')}`;
   const ultimoDia = new Date(ancla.anio, ancla.mes + 1, 0).getDate();
-  const hasta = `${ancla.anio}-${String(ancla.mes + 1).padStart(2, '0')}-${String(ultimoDia).padStart(2, '0')}`;
+  const desde = modo === 'mes' ? `${mesStr}-01` : lunes;
+  const hasta = modo === 'mes' ? `${mesStr}-${String(ultimoDia).padStart(2, '0')}` : sumarDias(lunes, 6);
 
   const { data: items, isLoading } = useQuery({
-    queryKey: ['cocina-plan-mes-qr', local, desde],
+    queryKey: ['cocina-plan-mes-qr', local, desde, hasta],
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cocina_pizarron_items')
@@ -1258,6 +2042,8 @@ function CalendarioPlan({ local }: { local: 'vedia' | 'saavedra' }) {
       return data as unknown as ItemMes[];
     },
   });
+  // Lo que se cargó cada día del rango, para mostrarlo al tocar el día.
+  const { data: hechos } = useLotesHechos(local, desde, hasta);
 
   // Por día: cuántos renglones hay y cuántos siguen abiertos.
   const porDia = useMemo(() => {
@@ -1271,52 +2057,101 @@ function CalendarioPlan({ local }: { local: 'vedia' | 'saavedra' }) {
     return m;
   }, [items]);
 
+  const hechosPorDia = useMemo(() => {
+    const m = new Map<string, LoteHecho[]>();
+    for (const h of hechos ?? []) {
+      const arr = m.get(h.fecha) ?? [];
+      arr.push(h);
+      m.set(h.fecha, arr);
+    }
+    return m;
+  }, [hechos]);
+
   const delDia = useMemo(
     () => (items ?? []).filter((it) => it.fecha_objetivo === diaSel),
     [items, diaSel],
   );
+  const hechosDelDia = diaSel ? (hechosPorDia.get(diaSel) ?? []) : [];
 
-  // La grilla: se rellena con vacíos hasta el día de semana del 1°.
+  // La grilla. Mes: se rellena con vacíos hasta el día de semana del 1° y
+  // arranca en domingo, como el almanaque. Semana: 7 celdas de lunes a domingo.
   const offsetInicial = new Date(ancla.anio, ancla.mes, 1).getDay(); // 0 = domingo
-  const celdas: (string | null)[] = [
-    ...Array<null>(offsetInicial).fill(null),
-    ...Array.from({ length: ultimoDia }, (_, i) => {
-      return `${ancla.anio}-${String(ancla.mes + 1).padStart(2, '0')}-${String(i + 1).padStart(2, '0')}`;
-    }),
-  ];
+  const celdas: (string | null)[] =
+    modo === 'mes'
+      ? [
+          ...Array<null>(offsetInicial).fill(null),
+          ...Array.from({ length: ultimoDia }, (_, i) => `${mesStr}-${String(i + 1).padStart(2, '0')}`),
+        ]
+      : Array.from({ length: 7 }, (_, i) => sumarDias(lunes, i));
+  const cabecera = modo === 'mes' ? ['D', 'L', 'M', 'M', 'J', 'V', 'S'] : ['L', 'M', 'M', 'J', 'V', 'S', 'D'];
 
-  function moverMes(delta: number) {
-    setAncla((a) => {
-      const d = new Date(a.anio, a.mes + delta, 1);
-      return { anio: d.getFullYear(), mes: d.getMonth() };
-    });
+  function mover(delta: number) {
+    if (modo === 'mes') {
+      setAncla((a) => {
+        const d = new Date(a.anio, a.mes + delta, 1);
+        return { anio: d.getFullYear(), mes: d.getMonth() };
+      });
+    } else {
+      setLunes((l) => sumarDias(l, 7 * delta));
+    }
     setDiaSel(null);
   }
 
+  function cambiarModo(m: 'semana' | 'mes') {
+    if (m === modo) return;
+    setModo(m);
+    // Al cambiar de vista, volver a pararse en hoy: es lo que se espera.
+    setLunes(lunesDe(hoyStr));
+    const [a, mm] = hoyStr.split('-').map(Number);
+    setAncla({ anio: a, mes: mm - 1 });
+    setDiaSel(hoyStr);
+  }
+
+  const titulo =
+    modo === 'mes'
+      ? `${NOMBRE_MES[ancla.mes]} ${ancla.anio}`
+      : `Semana del ${ddmm(lunes)} al ${ddmm(sumarDias(lunes, 6))}`;
+
   return (
     <div className="rounded-lg border border-gray-200 bg-white p-3">
-      <div className="flex items-center justify-between">
+      <div className="flex rounded-lg border border-gray-300 p-0.5 text-xs font-semibold">
+        {(['semana', 'mes'] as const).map((m) => (
+          <button
+            key={m}
+            type="button"
+            onClick={() => cambiarModo(m)}
+            className={cn(
+              'flex-1 rounded-md py-1.5 capitalize',
+              modo === m ? 'bg-gray-900 text-white' : 'text-gray-600',
+            )}
+          >
+            {m}
+          </button>
+        ))}
+      </div>
+
+      <div className="mt-2 flex items-center justify-between">
         <button
-          onClick={() => moverMes(-1)}
+          onClick={() => mover(-1)}
           className="rounded px-3 py-2 text-lg font-bold text-gray-600 active:bg-gray-100"
-          aria-label="Mes anterior"
+          aria-label={modo === 'mes' ? 'Mes anterior' : 'Semana anterior'}
         >
           ‹
         </button>
-        <p className="text-sm font-semibold capitalize text-gray-800">
-          {NOMBRE_MES[ancla.mes]} {ancla.anio}
+        <p className={cn('text-sm font-semibold text-gray-800', modo === 'mes' && 'capitalize')}>
+          {titulo}
         </p>
         <button
-          onClick={() => moverMes(1)}
+          onClick={() => mover(1)}
           className="rounded px-3 py-2 text-lg font-bold text-gray-600 active:bg-gray-100"
-          aria-label="Mes siguiente"
+          aria-label={modo === 'mes' ? 'Mes siguiente' : 'Semana siguiente'}
         >
           ›
         </button>
       </div>
 
       <div className="mt-2 grid grid-cols-7 gap-1 text-center text-[10px] text-gray-400">
-        {['D', 'L', 'M', 'M', 'J', 'V', 'S'].map((d, i) => (
+        {cabecera.map((d, i) => (
           <span key={i}>{d}</span>
         ))}
       </div>
@@ -1325,6 +2160,7 @@ function CalendarioPlan({ local }: { local: 'vedia' | 'saavedra' }) {
         {celdas.map((f, i) => {
           if (!f) return <span key={`v${i}`} />;
           const info = porDia.get(f);
+          const nHechos = hechosPorDia.get(f)?.length ?? 0;
           const esHoy = f === hoyStr;
           const sel = f === diaSel;
           return (
@@ -1332,21 +2168,29 @@ function CalendarioPlan({ local }: { local: 'vedia' | 'saavedra' }) {
               key={f}
               onClick={() => setDiaSel(sel ? null : f)}
               className={cn(
-                'flex h-10 flex-col items-center justify-center rounded text-xs',
+                'flex flex-col items-center justify-center rounded text-xs',
+                modo === 'mes' ? 'h-11' : 'h-14',
                 sel ? 'bg-rodziny-700 text-white' : 'text-gray-700 active:bg-gray-100',
                 !sel && esHoy && 'ring-2 ring-rodziny-600',
-                !sel && !info && 'text-gray-300',
+                !sel && !info && nHechos === 0 && 'text-gray-300',
               )}
             >
               <span className={cn('leading-none', esHoy && 'font-bold')}>{Number(f.slice(-2))}</span>
-              {info && (
-                <span
-                  className={cn(
-                    'mt-0.5 h-1.5 w-1.5 rounded-full',
-                    sel ? 'bg-white' : info.abiertos > 0 ? 'bg-amber-500' : 'bg-green-500',
-                  )}
-                />
-              )}
+              <span className="mt-1 flex h-3 items-center gap-1">
+                {info && (
+                  <span
+                    className={cn(
+                      'h-1.5 w-1.5 rounded-full',
+                      sel ? 'bg-white' : info.abiertos > 0 ? 'bg-amber-500' : 'bg-green-500',
+                    )}
+                  />
+                )}
+                {nHechos > 0 && (
+                  <span className={cn('text-[10px] font-semibold leading-none', sel ? 'text-white' : 'text-gray-500')}>
+                    ✓{nHechos}
+                  </span>
+                )}
+              </span>
             </button>
           );
         })}
@@ -1357,7 +2201,7 @@ function CalendarioPlan({ local }: { local: 'vedia' | 'saavedra' }) {
       {diaSel && (
         <div className="mt-3 border-t border-gray-100 pt-3">
           <p className="text-xs font-semibold text-gray-700">
-            {diaSel === hoyStr ? 'Hoy' : diaSel.split('-').reverse().join('/')}
+            📋 Plan · {diaSel === hoyStr ? 'hoy' : diaSel.split('-').reverse().join('/')}
           </p>
           {delDia.length === 0 ? (
             <p className="mt-1 text-xs text-gray-400">Sin plan cargado ese día.</p>
@@ -1374,6 +2218,20 @@ function CalendarioPlan({ local }: { local: 'vedia' | 'saavedra' }) {
               ))}
             </ul>
           )}
+
+          <p className="mt-3 text-xs font-semibold text-gray-700">
+            ✅ Hecho{hechosDelDia.length > 0 ? ` · ${hechosDelDia.length}` : ''}
+          </p>
+          {hechosDelDia.length === 0 ? (
+            <p className="mt-1 text-xs text-gray-400">Nada cargado ese día.</p>
+          ) : (
+            <div className="mt-1 space-y-1.5">
+              {hechosDelDia.map((h) => (
+                <FilaHecho key={`${h.cat}-${h.id}`} h={h} onVer={onVerLote} />
+              ))}
+            </div>
+          )}
+
           {diaSel !== hoyStr && (
             <p className="mt-2 text-[10px] leading-snug text-gray-400">
               Esto es solo para mirar. Lo que cargues siempre se registra con la fecha de
@@ -1946,6 +2804,7 @@ function FormPasta({
   lotesRelleno,
   lotesMasa,
   pastaRecetas,
+  productoIdInicial,
   cargasHoy = [],
   onGuardado,
   onVolver,
@@ -1959,13 +2818,17 @@ function FormPasta({
     receta_id: string;
     receta: { tipo: string; rol: string | null } | { tipo: string; rol: string | null }[] | null;
   }[];
+  /** Pasta que quedó elegida al venir de la ficha de un lote ("otra tanda"). */
+  productoIdInicial?: string;
   cargasHoy?: CargaHoyItem[];
   /** El segundo argumento es el código del lote tal cual lo guardó la base. */
   onGuardado: (msg: string, codigo?: string | null) => void;
   onVolver: () => void;
 }) {
   const [loteRellenoId, setLoteRellenoId] = useState('');
-  const [productoId, setProductoId] = useState('');
+  const [productoId, setProductoId] = useState(() =>
+    productoIdInicial && productos.some((p) => p.id === productoIdInicial) ? productoIdInicial : '',
+  );
   const [loteMasaId, setLoteMasaId] = useState('');
   const [masaKg, setMasaKg] = useState('');
   const [rellenoKg, setRellenoKg] = useState('');
@@ -3481,17 +4344,24 @@ function FormPanaderia({
 function FormMasa({
   local,
   recetas,
+  recetaIdInicial,
   cargasHoy = [],
   onGuardado,
   onVolver,
 }: {
   local: string;
   recetas: Receta[];
+  /** Receta que quedó elegida al venir de la ficha de un lote ("otra tanda"). */
+  recetaIdInicial?: string;
   cargasHoy?: CargaHoyItem[];
   onGuardado: (msg: string) => void;
   onVolver: () => void;
 }) {
-  const [recetaId, setRecetaId] = useState(recetas[0]?.id ?? '');
+  const [recetaId, setRecetaId] = useState(() =>
+    recetaIdInicial && recetas.some((r) => r.id === recetaIdInicial)
+      ? recetaIdInicial
+      : (recetas[0]?.id ?? ''),
+  );
   const [cantRecetas, setCantRecetas] = useState('1');
   const [kgProducidos, setKgProducidos] = useState('');
   const [responsable, setResponsable] = useState('');
