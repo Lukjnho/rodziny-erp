@@ -6,7 +6,7 @@ import { useAuth } from '@/lib/auth';
 import { useCostosRecetas } from '@/modules/cocina/hooks/useCostosRecetas';
 import { useConfigCosteo } from '@/modules/cocina/hooks/useConfigCosteo';
 import { useComisionMpConfig } from '../hooks/useComisionMpConfig';
-import { CANALES_PRECIO, type CanalPrecio } from '../hooks/usePreciosCanal';
+import { type CanalPrecio } from '../hooks/usePreciosCanal';
 import { SUBCATEGORIA_LABEL } from '@/modules/cocina/recetas/modelo';
 import { useFudoHuerfanos } from '@/modules/productos/hooks/useFudoHuerfanos';
 
@@ -123,12 +123,6 @@ function agruparPorSub(items: ItemMenu[]): { sub: string; rows: ItemMenu[] }[] {
       return a.sub.localeCompare(b.sub);
     });
 }
-
-const CANAL_LABEL: Record<CanalPrecio, string> = {
-  plato: 'Salón',
-  vianda: 'Vianda',
-  congelado: 'Congelado',
-};
 
 type FiltroLocal = 'vedia' | 'saavedra';
 

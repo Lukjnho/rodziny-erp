@@ -160,7 +160,7 @@ export function FinanzasPage() {
 
       {tab === 'compras' && <GastosPage embedded />}
       {tab === 'edr' && <EstadoResultados embedded />}
-      {tab === 'flujo' && <FlujoCaja onNavigateToTab={(t) => setTab(t as Tab)} />}
+      {tab === 'flujo' && <FlujoCaja />}
       {tab === 'conciliacion' && <ConciliacionTab />}
       {tab === 'proyeccion' && <ProyeccionFlujo />}
       {tab === 'cierre_mes' && (

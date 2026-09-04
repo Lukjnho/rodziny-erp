@@ -249,7 +249,7 @@ function esMpLucasAuto(d: Dividendo): boolean {
 
 // ── componente principal ─────────────────────────────────────────────────────
 
-export function FlujoCaja({ onNavigateToTab }: { onNavigateToTab?: (tab: string) => void } = {}) {
+export function FlujoCaja() {
   const qc = useQueryClient();
   const { user } = useAuth();
   const { data: proveedoresMap } = useProveedoresMap();

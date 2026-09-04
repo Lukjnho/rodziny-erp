@@ -222,7 +222,6 @@ function parseMercadoPagoNuevo(lines: string[]): MovimientoRaw[] {
   const iDate = colIdx('TRANSACTION_DATE');
   const iAmount = colIdx('TRANSACTION_AMOUNT');
   const iFee = colIdx('FEE_AMOUNT');
-  const iNet = colIdx('SETTLEMENT_NET_AMOUNT');
   const iTxType = colIdx('TRANSACTION_TYPE');
   const iMethod = colIdx('PAYMENT_METHOD');
   const iMethodT = colIdx('PAYMENT_METHOD_TYPE');
@@ -474,7 +473,6 @@ export function parseGalicia(csv: string, filename: string): MovimientoRaw[] {
     // Saldo Galicia viene con + al frente: "+677024,22"
     const saldo = saldoStr ? parseNum(saldoStr.replace('+', '')) : null;
 
-    const concepto = cols[6] ?? '';
     const leyenda1 = cols[10] ?? ''; // Leyenda Adicional1: contiene "INVERTIRONLINE S.A.U.", nombre de origen, etc.
 
     // Descripción enriquecida: descripción + leyenda adicional (origen del movimiento)
