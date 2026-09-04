@@ -1,7 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { supabase } from '@/lib/supabase';
+// Pantalla pública de tablet: va SIEMPRE como rol anon, igual que /produccion,
+// /pizarron, /fichar, /recepcion y /deposito. Con el cliente normal, si alguien
+// dejó su usuario logueado en esa tablet, el cierre de turno corría como él: si
+// ese usuario no tiene permiso de cocina, la RLS le bloquea los UPDATE y los
+// descuentos de stock se pierden EN SILENCIO (0 filas, sin error) mientras la
+// pantalla dice que guardó bien.
+import { supabaseAnon as supabase } from '@/lib/supabaseAnon';
 import { cn } from '@/lib/utils';
 import { mensajeErrorAmigable } from '@/lib/erroresSupabase';
 import { invalidarStockCocina } from './lib/invalidarStock';
