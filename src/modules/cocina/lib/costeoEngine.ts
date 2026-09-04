@@ -194,17 +194,13 @@ export interface CosteoContext {
   prodByNombre: Map<string, ProductoRow>;
   prodByNombreSimpl: Map<string, ProductoRow>;
   recetaByNombreLocal: Map<string, RecetaRow>;
-  recetaByNombre: Map<string, RecetaRow>;
   recetaByNombreSimplLocal: Map<string, RecetaRow>;
-  recetaByNombreSimpl: Map<string, RecetaRow>;
   // Índices restringidos a tipo='subreceta'. Cuando el ingrediente lleva prefijo
   // "Subreceta " explícito, se buscan acá primero — así una colisión nombre
   // receta-vendible vs subreceta no devuelve la vendible (que típicamente no
   // tiene rendimiento_kg y rompe el costeo).
   subrecetaByNombreLocal: Map<string, RecetaRow>;
-  subrecetaByNombre: Map<string, RecetaRow>;
   subrecetaByNombreSimplLocal: Map<string, RecetaRow>;
-  subrecetaByNombreSimpl: Map<string, RecetaRow>;
   ingsPorReceta: Map<string, IngredienteRow[]>;
 }
 
@@ -229,31 +225,23 @@ export function buildCosteoContext(
   }
 
   const recetaByNombreLocal = new Map<string, RecetaRow>();
-  const recetaByNombre = new Map<string, RecetaRow>();
   const recetaByNombreSimplLocal = new Map<string, RecetaRow>();
-  const recetaByNombreSimpl = new Map<string, RecetaRow>();
   const subrecetaByNombreLocal = new Map<string, RecetaRow>();
-  const subrecetaByNombre = new Map<string, RecetaRow>();
   const subrecetaByNombreSimplLocal = new Map<string, RecetaRow>();
-  const subrecetaByNombreSimpl = new Map<string, RecetaRow>();
   for (const r of recetas) {
     const k = normalizarNombre(r.nombre);
     const kl = `${k}|${r.local ?? ''}`;
     if (!recetaByNombreLocal.has(kl)) recetaByNombreLocal.set(kl, r);
-    if (!recetaByNombre.has(k)) recetaByNombre.set(k, r);
     const ks = simplificarNombre(r.nombre);
     if (ks) {
       const ksl = `${ks}|${r.local ?? ''}`;
       if (!recetaByNombreSimplLocal.has(ksl)) recetaByNombreSimplLocal.set(ksl, r);
-      if (!recetaByNombreSimpl.has(ks)) recetaByNombreSimpl.set(ks, r);
     }
     if (r.tipo === 'subreceta') {
       if (!subrecetaByNombreLocal.has(kl)) subrecetaByNombreLocal.set(kl, r);
-      if (!subrecetaByNombre.has(k)) subrecetaByNombre.set(k, r);
       if (ks) {
         const ksl = `${ks}|${r.local ?? ''}`;
         if (!subrecetaByNombreSimplLocal.has(ksl)) subrecetaByNombreSimplLocal.set(ksl, r);
-        if (!subrecetaByNombreSimpl.has(ks)) subrecetaByNombreSimpl.set(ks, r);
       }
     }
   }
@@ -271,13 +259,9 @@ export function buildCosteoContext(
     prodByNombre,
     prodByNombreSimpl,
     recetaByNombreLocal,
-    recetaByNombre,
     recetaByNombreSimplLocal,
-    recetaByNombreSimpl,
     subrecetaByNombreLocal,
-    subrecetaByNombre,
     subrecetaByNombreSimplLocal,
-    subrecetaByNombreSimpl,
     ingsPorReceta,
   };
 }
@@ -340,8 +324,13 @@ export function costearReceta(
     const nombreNorm = normalizarNombre(ing.nombre);
     const nombreSimpl = simplificarNombre(ing.nombre);
 
-    // 1) intentar resolver como subreceta: primero por (nombre, local) para respetar el local de la receta padre
-    //    Fallbacks: nombre normalizado → nombre simplificado con local → nombre simplificado sin local
+    // 1) intentar resolver como subreceta, SIEMPRE dentro del local de la receta padre.
+    //    Antes, si no la encontraba ahí, la buscaba en el otro local sin avisar: por eso 9
+    //    productos SIN GLUTEN de Saavedra se costeaban con las masas de trigo de Vedia
+    //    (migración 175). Decisión de Lucas (4-sep-2026): si una receta necesita una
+    //    subreceta, tiene que existir en SU local; si no está, se carga ahí. Cruzar de
+    //    local no es un arreglo, es esconder el problema.
+    //    Orden: subreceta exacta → subreceta simplificada → receta exacta → receta simplificada.
     //
     //    Si el ingrediente lleva prefijo "Subreceta " explícito, miramos PRIMERO
     //    los índices restringidos a tipo='subreceta'. Esto evita el bug en el
@@ -354,17 +343,13 @@ export function costearReceta(
       if (esSubrecetaPrefijo) {
         subrecetaMatch =
           ctx.subrecetaByNombreLocal.get(`${nombreNorm}|${localPadre}`) ??
-          ctx.subrecetaByNombre.get(nombreNorm) ??
           (nombreSimpl ? ctx.subrecetaByNombreSimplLocal.get(`${nombreSimpl}|${localPadre}`) : null) ??
-          (nombreSimpl ? ctx.subrecetaByNombreSimpl.get(nombreSimpl) : null) ??
           null;
       }
       if (!subrecetaMatch) {
         subrecetaMatch =
           ctx.recetaByNombreLocal.get(`${nombreNorm}|${localPadre}`) ??
-          ctx.recetaByNombre.get(nombreNorm) ??
           (nombreSimpl ? ctx.recetaByNombreSimplLocal.get(`${nombreSimpl}|${localPadre}`) : null) ??
-          (nombreSimpl ? ctx.recetaByNombreSimpl.get(nombreSimpl) : null) ??
           null;
       }
     }
