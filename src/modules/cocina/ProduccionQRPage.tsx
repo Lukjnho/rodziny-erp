@@ -2834,9 +2834,6 @@ function FormPasta({
   const [loteMasaId, setLoteMasaId] = useState('');
   const [masaKg, setMasaKg] = useState('');
   const [rellenoKg, setRellenoKg] = useState('');
-  const [muzzarellaGramos, setMuzzarellaGramos] = useState('');
-  const [semolinGramos, setSemolinGramos] = useState('');
-  const [huevoGramos, setHuevoGramos] = useState('');
   // Armado itemizado (ñoqui SG): kg de papa a usar + cantidad real por ingrediente
   // (key = nombre del ingrediente). La sugerencia = por_kg × kgPapa, editable.
   const [kgPapa, setKgPapa] = useState('');
@@ -2995,22 +2992,6 @@ function FormPasta({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [usaArmadoItemizado, kgPapa, loteRellenoId]);
 
-  useEffect(() => {
-    if (!requiereSemolinHuevo) {
-      setSemolinGramos('');
-      setHuevoGramos('');
-      return;
-    }
-    const kg = parseDecimal(rellenoKg);
-    if (kg <= 0) {
-      setSemolinGramos('');
-      setHuevoGramos('');
-      return;
-    }
-    setSemolinGramos(String(Math.round(kg * (ratioSemolinPorKg ?? 0))));
-    setHuevoGramos(String(Math.round(kg * (ratioHuevoPorKg ?? 0))));
-  }, [requiereSemolinHuevo, rellenoKg, ratioSemolinPorKg, ratioHuevoPorKg]);
-
   async function guardar() {
     if (!productoId) {
       setError('Seleccioná qué pasta estás armando');
@@ -3033,16 +3014,6 @@ function FormPasta({
       );
       return;
     }
-    if (requiereSemolinHuevo) {
-      if (!semolinGramos || Number(semolinGramos) <= 0) {
-        setError('Cargá los gramos de semolín agregados al puré');
-        return;
-      }
-      if (!huevoGramos || Number(huevoGramos) <= 0) {
-        setError('Cargá los gramos de huevo agregados al puré');
-        return;
-      }
-    }
     if (usaArmadoItemizado) {
       if (kgPureNum <= 0) {
         setError('Indicá los kg de puré a ocupar');
@@ -3055,11 +3026,6 @@ function FormPasta({
         setError(`Cargá la cantidad de ${faltante.nombre}`);
         return;
       }
-    }
-    // Muzzarella obligatoria en ñoquis rellenos: sin gramos no se puede guardar.
-    if (esConMuzzarella && (!muzzarellaGramos || Number(muzzarellaGramos) <= 0)) {
-      setError('Los ñoquis rellenos llevan muzzarella. Cargá los gramos antes de guardar.');
-      return;
     }
     if (!responsable.trim()) {
       setError('Elegí responsable');
@@ -3141,9 +3107,6 @@ function FormPasta({
           : rellenoKg
             ? parseDecimal(rellenoKg)
             : null,
-        muzzarella_gramos: esConMuzzarella && muzzarellaGramos ? Number(muzzarellaGramos) : null,
-        semolin_gramos: requiereSemolinHuevo && semolinGramos ? Number(semolinGramos) : null,
-        huevo_gramos: requiereSemolinHuevo && huevoGramos ? Number(huevoGramos) : null,
         // Sin relleno (fideos): el campo ingresado son porciones (bolsitas 140g)
         // y va directo a cámara. Con relleno: el campo son bandejas pendientes
         // de porcionar al día siguiente (bolsitas 200g).
@@ -3610,96 +3573,42 @@ function FormPasta({
           </div>
         )}
 
+        {/* El puré lleva semolín y huevo. Antes se le pedía al cocinero que los
+            tecleara y ese dato NO lo miraba nadie (ni el costeo, ni un reporte):
+            ahora la pantalla le DICE cuánto va, que es lo que de verdad necesita
+            estando frente a la balanza. El ratio sale de la receta. */}
         {requiereSemolinHuevo && (() => {
           const pureKg = parseDecimal(rellenoKg);
-          const tienePure = pureKg > 0;
           const semolinSug =
-            tienePure && ratioSemolinPorKg ? Math.round(pureKg * ratioSemolinPorKg) : null;
+            pureKg > 0 && ratioSemolinPorKg ? Math.round(pureKg * ratioSemolinPorKg) : null;
           const huevoSug =
-            tienePure && ratioHuevoPorKg ? Math.round(pureKg * ratioHuevoPorKg) : null;
-          const semolinReal = Number(semolinGramos);
-          const huevoReal = Number(huevoGramos);
-          const desvSem =
-            semolinSug && semolinReal > 0 ? Math.abs(semolinReal - semolinSug) / semolinSug : 0;
-          const desvHue =
-            huevoSug && huevoReal > 0 ? Math.abs(huevoReal - huevoSug) / huevoSug : 0;
-          const fueraDeRango = desvSem > 0.1 || desvHue > 0.1;
+            pureKg > 0 && ratioHuevoPorKg ? Math.round(pureKg * ratioHuevoPorKg) : null;
           return (
             <div className="rounded border border-amber-200 bg-amber-50 p-3">
-              <p className="mb-2 text-[11px] text-amber-900">
-                El puré lleva semolín y huevo: sugerencia automática a partir del puré usado
-                ({ratioSemolinPorKg}g semolín + {ratioHuevoPorKg}g huevo por kg). Editable.
+              <p className="text-[11px] text-amber-900">
+                <strong>El puré lleva semolín y huevo.</strong> La receta pide{' '}
+                {ratioSemolinPorKg}g de semolín y {ratioHuevoPorKg}g de huevo por cada kg de puré.
               </p>
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-amber-900">
-                    Semolín (g)
-                  </label>
-                  <input
-                    type="number"
-                    inputMode="numeric"
-                    value={semolinGramos}
-                    onChange={(e) => setSemolinGramos(e.target.value)}
-                    className="w-full rounded border border-amber-300 bg-white px-3 py-2.5 text-sm"
-                    placeholder="0"
-                  />
-                  {semolinSug != null && semolinReal > 0 && desvSem > 0.1 && (
-                    <p className="mt-1 text-[10px] text-amber-700">
-                      ⚠ Sugerido ~{semolinSug}g (±{Math.round(desvSem * 100)}%)
-                    </p>
-                  )}
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-amber-900">
-                    Huevo (g)
-                  </label>
-                  <input
-                    type="number"
-                    inputMode="numeric"
-                    value={huevoGramos}
-                    onChange={(e) => setHuevoGramos(e.target.value)}
-                    className="w-full rounded border border-amber-300 bg-white px-3 py-2.5 text-sm"
-                    placeholder="0"
-                  />
-                  {huevoSug != null && huevoReal > 0 && desvHue > 0.1 && (
-                    <p className="mt-1 text-[10px] text-amber-700">
-                      ⚠ Sugerido ~{huevoSug}g (±{Math.round(desvHue * 100)}%)
-                    </p>
-                  )}
-                </div>
-              </div>
-              {fueraDeRango && (
-                <p className="mt-2 text-[11px] font-medium text-amber-800">
-                  Los valores cargados se alejan más de 10% del ratio teórico. Confirmá que es
-                  intencional antes de guardar.
+              {semolinSug != null && huevoSug != null ? (
+                <p className="mt-2 text-base font-semibold text-amber-900">
+                  Para {pureKg} kg de puré van {semolinSug}g de semolín y {huevoSug}g de huevo.
+                </p>
+              ) : (
+                <p className="mt-2 text-[11px] text-amber-800">
+                  Poné arriba los kg de puré y te digo cuánto va de cada uno.
                 </p>
               )}
             </div>
           );
         })()}
 
+        {/* Queda el recordatorio, se fue el campo: los gramos cargados no los
+            leía ninguna pantalla, ningún reporte ni el costeo. */}
         {esConMuzzarella && (
-          <div className="rounded border border-yellow-200 bg-yellow-50 p-3">
-            <label className="mb-1 block text-xs font-medium text-yellow-900">
-              Muzzarella usada (gramos)
-            </label>
-            <input
-              type="number"
-              inputMode="numeric"
-              value={muzzarellaGramos}
-              onChange={(e) => setMuzzarellaGramos(e.target.value)}
-              className="w-full rounded border border-yellow-300 bg-white px-3 py-2.5 text-sm"
-              placeholder="500"
-            />
-            {muzzarellaGramos && Number(muzzarellaGramos) > 0 ? (
-              <p className="mt-1 text-[10px] text-yellow-800">
-                ≈ {(Number(muzzarellaGramos) / 1000).toFixed(2).replace('.', ',')} kg
-              </p>
-            ) : (
-              <p className="mt-1 text-[11px] font-medium text-yellow-800">
-                ⚠ Los ñoquis rellenos llevan muzzarella. Cargá los gramos antes de guardar.
-              </p>
-            )}
+          <div className="rounded border border-yellow-200 bg-yellow-50 px-3 py-2">
+            <p className="text-[11px] font-medium text-yellow-900">
+              🧀 Acordate: los ñoquis rellenos llevan muzzarella.
+            </p>
           </div>
         )}
 

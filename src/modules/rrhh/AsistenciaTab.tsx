@@ -407,13 +407,9 @@ export function AsistenciaTab() {
 
       {/* ── KPIs ──────────────────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <KpiMini
-          label="Fichajes"
-          value={kpis.totalFichajes}
-          color="gray"
-          activo={false}
-          onClick={() => {}}
-        />
+        {/* Sin onClick: este es el unico que no filtra nada, asi que se dibuja
+            como numero y no como boton. Antes parecia clickeable y no hacia nada. */}
+        <KpiMini label="Fichajes" value={kpis.totalFichajes} color="gray" />
         <KpiMini
           label="Asistencias completas"
           value={kpis.totalCompletos}
@@ -574,14 +570,16 @@ function KpiMini({
   label,
   value,
   color,
-  activo,
+  activo = false,
   onClick,
 }: {
   label: string;
   value: number;
   color: 'gray' | 'green' | 'red' | 'amber';
-  activo: boolean;
-  onClick: () => void;
+  activo?: boolean;
+  /** Sin onClick el recuadro es solo un numero: se dibuja como texto, no como
+   *  boton, asi nadie lo toca esperando que filtre. */
+  onClick?: () => void;
 }) {
   const colorClass = {
     gray: 'text-gray-900',
@@ -595,17 +593,26 @@ function KpiMini({
     red: 'ring-red-500',
     amber: 'ring-amber-500',
   }[color];
+  const contenido = (
+    <>
+      <p className="text-[10px] font-medium uppercase tracking-wide text-gray-500">{label}</p>
+      <p className={cn('mt-1 text-2xl font-bold', colorClass)}>{value}</p>
+    </>
+  );
+  const base = 'rounded-lg border border-gray-200 bg-white p-3 text-left transition-all';
+  // Sin accion no es un boton: ni cursor, ni foco de teclado, ni promesa de que
+  // al tocarlo pase algo. Es solo el numero.
+  if (!onClick) return <div className={base}>{contenido}</div>;
   return (
     <button
       onClick={onClick}
       className={cn(
-        'rounded-lg border border-gray-200 bg-white p-3 text-left transition-all',
+        base,
         color !== 'gray' && 'cursor-pointer hover:shadow-sm',
         activo && `ring-2 ${ringClass} shadow-sm`,
       )}
     >
-      <p className="text-[10px] font-medium uppercase tracking-wide text-gray-500">{label}</p>
-      <p className={cn('mt-1 text-2xl font-bold', colorClass)}>{value}</p>
+      {contenido}
     </button>
   );
 }
