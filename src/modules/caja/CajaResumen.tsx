@@ -5,6 +5,7 @@ import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
 import { abrirVentanaCaja, RUTA_POS } from '@/lib/ventanaCaja';
 import { TURNOS } from '@/lib/turnosCaja';
+import { RetirosSinClasificar } from './RetirosSinClasificar';
 import {
   efectivoEsperadoEnCaja,
   useTurnosAbiertos,
@@ -123,6 +124,11 @@ export function CajaResumen() {
           </ul>
         )}
       </section>
+
+      {/* Plata que salió del cajón y nadie dijo si volvió. Solo para quien
+          además tiene Finanzas o Gastos: es el mismo permiso que pide la RLS de
+          esos cierres, así que al cajero mostrarle esto le daría siempre cero. */}
+      {veEsperado && <RetirosSinClasificar />}
 
       <p className="mt-3 text-xs text-gray-400">
         Acá se ven <strong>solo los turnos abiertos</strong>, en vivo. Cuando el cajero cierra el
