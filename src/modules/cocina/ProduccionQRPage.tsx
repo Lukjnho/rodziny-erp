@@ -1235,9 +1235,11 @@ export function ProduccionQRPage() {
 
       {vista === 'cerrar-masa' && (
         <FormCerrarMasa
-          lotesAbiertos={(lotesMasaHoy ?? []).filter(
-            (m) => m.fecha === hoy() && m.kg_sobrante === null,
-          )}
+          // Deja cerrar las de los últimos 7 días, no solo las de hoy: la masa de
+          // ayer si no, no se puede cerrar desde ningún lado y se vuelve a armar
+          // la pila de masas abiertas (había 215, ver migración 173). El contador
+          // del inicio sigue contando solo las de hoy, para no empujar de más.
+          lotesAbiertos={(lotesMasaHoy ?? []).filter((m) => m.kg_sobrante === null)}
           onGuardado={(msg) => onGuardado(msg)}
           onVolver={() => irA('inicio')}
         />
@@ -4641,6 +4643,7 @@ function FormCerrarMasa({
               {lotesAbiertos.map((m) => (
                 <option key={m.id} value={m.id}>
                   {m.receta?.nombre ?? 'Masa'} — {m.kg_producidos} kg
+                  {m.fecha === hoy() ? '' : ` (del ${ddmm(m.fecha)})`}
                 </option>
               ))}
             </select>
@@ -4651,6 +4654,11 @@ function FormCerrarMasa({
             <span className="text-sm font-semibold text-amber-900">
               {masaSel?.receta?.nombre ?? 'Masa'} — {masaSel?.kg_producidos} kg
             </span>
+            {masaSel && masaSel.fecha !== hoy() && (
+              <span className="block text-[11px] text-amber-700">
+                Amasada el {ddmm(masaSel.fecha)}, no hoy
+              </span>
+            )}
           </div>
         )}
 
