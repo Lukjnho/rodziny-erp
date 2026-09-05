@@ -5,10 +5,16 @@
 //   - ventas_pagos    (un row por payment, para mantener trazabilidad)
 //   - dividendos      (auto-generados de pagos con medio "Mercadopago Lucas")
 //
-// Body: { local: "vedia" | "saavedra", anio: "2026" }
-// Reemplaza por completo los datos del año dado para ese local.
+// Dos modos:
+//   MES  { local, anio: "2026", meses?: ["2026-08"] }  → borra y repone meses enteros.
+//          Es el de siempre. Corre en el cron de las 8 como CORRECTOR: Fudo no avisa
+//          cuando alguien modifica una venta vieja, así que una pasada completa por día.
+//   DÍA  { local, dia: "2026-09-04" | "hoy" }          → borra y repone SOLO ese día.
+//          Le pide a Fudo únicamente ese día (filter[closedAt]) y con eso alcanza una
+//          sola llamada: un día son ~90 ventas y la página es de 500. Es el que corre
+//          cada 15 minutos para que el stock del mostrador esté al día.
 
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4'
+import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4'
 
 const CREDENCIALES: Record<string, { apiKey: string; apiSecret: string }> = {
   vedia: {
@@ -32,10 +38,30 @@ const corsHeaders = {
 }
 
 const tokenCache: Record<string, { token: string; exp: number }> = {}
+const MARGEN_TOKEN_MS = 5 * 60 * 1000
 
-async function autenticar(local: string): Promise<string> {
+// Token en DOS niveles: la memoria de esta instancia y la tabla `fudo_tokens`,
+// que lo comparte entre todas.
+//
+// ⚠️ POR QUÉ HACE FALTA EL SEGUNDO NIVEL. Cada instancia de la función arranca con
+// la memoria vacía. Con la caché en RAM sola, pasar a un sync cada 15 minutos
+// significaba pedirle un login nuevo a Fudo en cada arranque en frío, y Fudo
+// bloquea cuando son demasiados. La tabla ya existía esperando esto.
+async function autenticar(supabase: SupabaseClient, local: string): Promise<string> {
   const cached = tokenCache[local]
-  if (cached && cached.exp * 1000 - Date.now() > 5 * 60 * 1000) return cached.token
+  if (cached && cached.exp * 1000 - Date.now() > MARGEN_TOKEN_MS) return cached.token
+
+  // El que dejó otra instancia, si todavía sirve.
+  const { data: guardado } = await supabase
+    .from('fudo_tokens')
+    .select('token, exp')
+    .eq('local', local)
+    .maybeSingle()
+  if (guardado?.token && Number(guardado.exp) * 1000 - Date.now() > MARGEN_TOKEN_MS) {
+    tokenCache[local] = { token: guardado.token, exp: Number(guardado.exp) }
+    return guardado.token
+  }
+
   const creds = CREDENCIALES[local]
   if (!creds) throw new Error(`Sin credenciales para local "${local}"`)
   const res = await fetch(AUTH_URL, {
@@ -46,7 +72,17 @@ async function autenticar(local: string): Promise<string> {
   if (!res.ok) throw new Error(`Auth Fudo falló: ${res.status}`)
   const { token, exp } = await res.json()
   tokenCache[local] = { token, exp }
+  // Guardarlo es best-effort: si falla, seguimos con el de la RAM.
+  await supabase
+    .from('fudo_tokens')
+    .upsert({ local, token, exp, actualizado_at: new Date().toISOString() }, { onConflict: 'local' })
   return token
+}
+
+// El día de HOY en hora Argentina (UTC-3). Sin esto, un sync disparado después de
+// las 21 (que en UTC ya es el día siguiente) traería un día todavía vacío.
+function hoyAR(): string {
+  return new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString().slice(0, 10)
 }
 
 async function fudoGet(token: string, endpoint: string, params: Record<string, string> = {}) {
@@ -115,11 +151,24 @@ Deno.serve(async (req) => {
   try {
     const body = await req.json().catch(() => ({}))
     const local: string = body.local
-    const anio: string = String(body.anio ?? new Date().getFullYear())
     const iniciadoPor: string | null = body.iniciado_por ?? null
 
     if (!local) throw new Error('Falta parámetro: local')
     if (!CREDENCIALES[local]) throw new Error(`Local "${local}" sin credenciales Fudo`)
+
+    // ── MODO DÍA vs MODO MES ────────────────────────────────────────────────
+    // Con `dia` se pide, se borra y se repone UN SOLO DÍA. Sin `dia`, se mantiene
+    // el comportamiento de siempre (meses enteros).
+    const diaRaw: string | null = body.dia ?? null
+    const dia: string | null = diaRaw === 'hoy' ? hoyAR() : diaRaw
+    const esModoDia = dia !== null
+    if (esModoDia && !/^\d{4}-\d{2}-\d{2}$/.test(dia)) {
+      throw new Error('dia inválido (formato YYYY-MM-DD o "hoy")')
+    }
+
+    const anio: string = esModoDia
+      ? dia.substring(0, 4)
+      : String(body.anio ?? new Date().getFullYear())
     if (!/^\d{4}$/.test(anio)) throw new Error('anio inválido (formato YYYY)')
 
     // Registrar inicio del sync. El frontend lee finished_at para el "Última sync hace X min".
@@ -130,15 +179,19 @@ Deno.serve(async (req) => {
       .single()
     runId = runData?.id ?? null
 
-    const token = await autenticar(local)
+    const token = await autenticar(supabase, local)
 
     // Permite sincronizar solo meses específicos para evitar timeouts cuando
     // un local tiene muchos tickets/items (Vedia con año entero supera 150s).
     // Si no se pasa, sincroniza el año completo.
+    // En modo día el "mes" es solo el del día pedido: así ninguna consulta que
+    // todavía filtre por periodo se abre al año entero sin querer.
     const mesesBody = body.meses
-    const mesesSync: string[] = Array.isArray(mesesBody) && mesesBody.length > 0
-      ? (mesesBody as string[]).filter((m) => /^\d{4}-\d{2}$/.test(m)).sort()
-      : Array.from({ length: 12 }, (_, i) => `${anio}-${String(i + 1).padStart(2, '0')}`)
+    const mesesSync: string[] = esModoDia
+      ? [dia.substring(0, 7)]
+      : Array.isArray(mesesBody) && mesesBody.length > 0
+        ? (mesesBody as string[]).filter((m) => /^\d{4}-\d{2}$/.test(m)).sort()
+        : Array.from({ length: 12 }, (_, i) => `${anio}-${String(i + 1).padStart(2, '0')}`)
 
     const primerMes = mesesSync[0]
     const ultimoMes = mesesSync[mesesSync.length - 1]
@@ -146,10 +199,25 @@ Deno.serve(async (req) => {
     const yNext = mF === 12 ? yF + 1 : yF
     const mNext = mF === 12 ? 1 : mF + 1
 
-    // Rango ARG → UTC: ARG 00:00 = UTC 03:00. Tope inclusivo del último mes
-    // = UTC 02:59:59 del día 1 del mes siguiente.
-    const inicioUTC = `${primerMes}-01T03:00:00Z`
-    const finUTC = `${yNext}-${String(mNext).padStart(2, '0')}-01T02:59:59Z`
+    // Rango ARG → UTC: ARG 00:00 = UTC 03:00.
+    //   · modo día: [D 03:00Z, D+1 03:00Z). Verificado contra la API: el 3-sep-2026
+    //     filtrado así devuelve 93 ventas, exactamente los 93 tickets que ya teníamos.
+    //   · modo mes: del día 1 del primer mes al 02:59:59 del 1 del mes siguiente.
+    // finUTC es el tope INCLUSIVO (el corte que se hace acá en JS); finExclusivoUTC
+    // es el que entiende el filtro de la API.
+    let inicioUTC: string
+    let finUTC: string
+    let finExclusivoUTC: string
+    if (esModoDia) {
+      inicioUTC = `${dia}T03:00:00Z`
+      const sig = new Date(new Date(inicioUTC).getTime() + 24 * 60 * 60 * 1000)
+      finExclusivoUTC = sig.toISOString().slice(0, 19) + 'Z'
+      finUTC = new Date(sig.getTime() - 1000).toISOString().slice(0, 19) + 'Z'
+    } else {
+      inicioUTC = `${primerMes}-01T03:00:00Z`
+      finUTC = `${yNext}-${String(mNext).padStart(2, '0')}-01T02:59:59Z`
+      finExclusivoUTC = `${yNext}-${String(mNext).padStart(2, '0')}-01T03:00:00Z`
+    }
 
     // Cargar paymentMethods (catalogo) — para resolver el nombre del medio.
     // Si el endpoint no existe o cambia de formato, seguimos con map vacío.
@@ -230,20 +298,6 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Búsqueda binaria de la última página
-    let lo = 1
-    let hi = 1000
-    while (lo < hi) {
-      const mid = Math.floor((lo + hi + 1) / 2)
-      const test = await fudoGet(token, 'sales', {
-        'page[size]': String(PAGE_SIZE),
-        'page[number]': String(mid),
-      })
-      if (test.data.length > 0) lo = mid
-      else hi = mid - 1
-    }
-    const ultimaPagina = lo
-
     interface TicketAcum {
       sale: JsonApiResource
       payments: JsonApiResource[]
@@ -256,36 +310,26 @@ Deno.serve(async (req) => {
     const itemsMap = new Map<string, JsonApiResource>()
     const ventaIds = new Set<string>()
 
-    let pag = ultimaPagina
-    let terminamos = false
-
-    while (pag >= 1 && !terminamos) {
-      const res = await fudoGet(token, 'sales', {
-        'page[size]': String(PAGE_SIZE),
-        'page[number]': String(pag),
-        include: 'payments,cashRegister,discounts,items',
-      })
-
-      if (res.data.length === 0) {
-        pag--
-        continue
-      }
-
-      // Indexar payments, discounts e items del included
+    // Procesa una página de `sales`: indexa lo incluido y acumula los tickets que
+    // caen dentro del rango. Devuelve true si vio una venta ANTERIOR al inicio, que
+    // en el recorrido hacia atrás del modo mes es la señal de cortar.
+    function procesarPagina(
+      res: { data: JsonApiResource[]; included?: JsonApiResource[] },
+    ): boolean {
+      let pasamosElInicio = false
       if (res.included) {
-        for (const r of res.included as JsonApiResource[]) {
+        for (const r of res.included) {
           if (r.type === 'Payment') paymentsMap.set(r.id, r)
           else if (r.type === 'Discount') discountsMap.set(r.id, r)
           else if (r.type === 'Item') itemsMap.set(r.id, r)
         }
       }
-
-      for (const sale of res.data as JsonApiResource[]) {
+      for (const sale of res.data) {
         const closedAt = sale.attributes.closedAt as string | null
         if (!closedAt) continue
 
         if (closedAt < inicioUTC) {
-          terminamos = true
+          pasamosElInicio = true
           continue
         }
         if (closedAt > finUTC) continue
@@ -321,8 +365,56 @@ Deno.serve(async (req) => {
 
         tickets.push({ sale, payments: ticketPayments, discounts: ticketDiscounts, items: ticketItems })
       }
+      return pasamosElInicio
+    }
 
-      pag--
+    if (esModoDia) {
+      // UNA llamada alcanza: un día son ~90 ventas y la página es de 500. El while
+      // queda por si algún día se pasa de 500 (o si cambia PAGE_SIZE).
+      // ⚠️ `sort=-closedAt` NO sirve como atajo: Fudo lo acepta con HTTP 200 pero
+      // devuelve las ventas con closedAt en null. Por eso se filtra por rango.
+      let p = 1
+      while (true) {
+        const res = await fudoGet(token, 'sales', {
+          'page[size]': String(PAGE_SIZE),
+          'page[number]': String(p),
+          'filter[closedAt]': `and(gte.${inicioUTC},lt.${finExclusivoUTC})`,
+          include: 'payments,cashRegister,discounts,items',
+        })
+        procesarPagina(res)
+        if (!res.data?.length || res.data.length < PAGE_SIZE) break
+        p++
+      }
+    } else {
+      // Modo mes: sin filtro. Búsqueda binaria de la última página y después hacia
+      // atrás hasta pasarse del inicio del rango.
+      let lo = 1
+      let hi = 1000
+      while (lo < hi) {
+        const mid = Math.floor((lo + hi + 1) / 2)
+        const test = await fudoGet(token, 'sales', {
+          'page[size]': String(PAGE_SIZE),
+          'page[number]': String(mid),
+        })
+        if (test.data.length > 0) lo = mid
+        else hi = mid - 1
+      }
+
+      let pag = lo
+      let terminamos = false
+      while (pag >= 1 && !terminamos) {
+        const res = await fudoGet(token, 'sales', {
+          'page[size]': String(PAGE_SIZE),
+          'page[number]': String(pag),
+          include: 'payments,cashRegister,discounts,items',
+        })
+        if (res.data.length === 0) {
+          pag--
+          continue
+        }
+        terminamos = procesarPagina(res)
+        pag--
+      }
     }
 
     // Construir filas para insertar
@@ -396,11 +488,12 @@ Deno.serve(async (req) => {
     // Excel de Fudo. La API pública v1alpha1 no los expone, así que si los
     // borráramos sin más, perderíamos el dato bueno cargado por UploadFudo.
     // Estrategia: leer los previos ANTES de borrar y mergear al re-insertar.
-    const { data: previos } = await supabase
+    let qPrevios = supabase
       .from('ventas_tickets')
       .select('fudo_id, iva, total_neto, es_fiscal')
       .eq('local', local)
-      .in('periodo', meses)
+    qPrevios = esModoDia ? qPrevios.eq('fecha', dia) : qPrevios.in('periodo', meses)
+    const { data: previos } = await qPrevios
     const fiscalPrevio = new Map<
       string,
       { iva: number; total_neto: number | null; es_fiscal: boolean }
@@ -568,9 +661,20 @@ Deno.serve(async (req) => {
     // solo. Sin esta condición también borraba las ventas cobradas por el POS
     // propio — todas las mañanas, en silencio. `ventas_pagos` recibió la columna
     // `origen` en la migración 150 justamente para poder filtrar acá.
-    await supabase.from('ventas_tickets').delete().eq('local', local).in('periodo', meses).eq('origen', 'fudo')
-    await supabase.from('ventas_pagos').delete().eq('local', local).in('periodo', meses).eq('origen', 'fudo')
-    await supabase.from('ventas_items').delete().eq('local', local).in('periodo', meses).eq('origen', 'fudo')
+    //
+    // ⚠️ SI EL BORRADO FALLA, NO SE INSERTA. Estas tres líneas antes ignoraban el
+    // error: si el delete no entraba (timeout, permisos, RLS), el insert de abajo
+    // duplicaba todo en silencio. Con el sync cada 15 minutos eso multiplicaría las
+    // ventas del día una y otra vez sin que salte ningún error. Por eso ahora tira
+    // la excepción, que el catch de abajo deja registrada en fudo_sync_runs.
+    for (const tabla of ['ventas_tickets', 'ventas_pagos', 'ventas_items']) {
+      let q = supabase.from(tabla).delete().eq('local', local).eq('origen', 'fudo')
+      q = esModoDia ? q.eq('fecha', dia) : q.in('periodo', meses)
+      const { error: errBorrado } = await q
+      if (errBorrado) {
+        throw new Error(`No se pudo borrar ${tabla} antes de reponer: ${errBorrado.message}`)
+      }
+    }
     // OJO: no se borran dividendos acá. El import ya no es dueño de esa tabla
     // (la fuente es el cierre de caja). Borrar por creado_por='import_fudo'
     // volaría los dividendos históricos de abr/may-2026, que se cargaron por este
@@ -624,13 +728,12 @@ Deno.serve(async (req) => {
       const PAGINA = 1000
       let desde = 0
       while (true) {
-        const { data, error } = await supabase
+        let qIds = supabase
           .from('ventas_tickets')
           .select('id, fudo_id')
           .eq('local', local)
-          .in('periodo', meses)
-          .order('fudo_id')
-          .range(desde, desde + PAGINA - 1)
+        qIds = esModoDia ? qIds.eq('fecha', dia) : qIds.in('periodo', meses)
+        const { data, error } = await qIds.order('fudo_id').range(desde, desde + PAGINA - 1)
         if (error) {
           errores.push(`leer ids de tickets: ${error.message}`)
           break
@@ -671,22 +774,29 @@ Deno.serve(async (req) => {
 
     // Cortesías y descuentos en edr_partidas (informativo, no afecta cálculos del EdR).
     // Upsert por (local, periodo, concepto) — reemplaza el monto del año entero.
+    //
+    // ⚠️ EN MODO DÍA ESTE BLOQUE NO CORRE. El acumulador vio UN día nada más, y acá
+    // se borran las partidas del MES entero antes de reponer: si corriera cada 15
+    // minutos, el mes quedaría con las cortesías de hoy solamente. Las rehace la
+    // pasada completa de las 8.
     const partidasRows: { local: string; periodo: string; concepto: string; monto: number }[] = []
-    for (const periodo of meses) {
-      const d = descPorMes[periodo]
-      if (!d) continue
-      if (d.cortesias_monto > 0) partidasRows.push({ local, periodo, concepto: 'cortesias_monto', monto: d.cortesias_monto })
-      if (d.cortesias_cant > 0) partidasRows.push({ local, periodo, concepto: 'cortesias_cant', monto: d.cortesias_cant })
-      if (d.otros_descuentos > 0) partidasRows.push({ local, periodo, concepto: 'otros_descuentos', monto: d.otros_descuentos })
+    if (!esModoDia) {
+      for (const periodo of meses) {
+        const d = descPorMes[periodo]
+        if (!d) continue
+        if (d.cortesias_monto > 0) partidasRows.push({ local, periodo, concepto: 'cortesias_monto', monto: d.cortesias_monto })
+        if (d.cortesias_cant > 0) partidasRows.push({ local, periodo, concepto: 'cortesias_cant', monto: d.cortesias_cant })
+        if (d.otros_descuentos > 0) partidasRows.push({ local, periodo, concepto: 'otros_descuentos', monto: d.otros_descuentos })
+      }
+      // Borrar partidas viejas de descuentos para los meses que volvimos a sincronizar
+      await supabase
+        .from('edr_partidas')
+        .delete()
+        .eq('local', local)
+        .in('periodo', meses)
+        .in('concepto', ['cortesias_monto', 'cortesias_cant', 'otros_descuentos'])
+      if (partidasRows.length) await insertChunk('edr_partidas', partidasRows)
     }
-    // Borrar partidas viejas de descuentos para los meses que volvimos a sincronizar
-    await supabase
-      .from('edr_partidas')
-      .delete()
-      .eq('local', local)
-      .in('periodo', meses)
-      .in('concepto', ['cortesias_monto', 'cortesias_cant', 'otros_descuentos'])
-    if (partidasRows.length) await insertChunk('edr_partidas', partidasRows)
 
     // Resumen por mes para el response
     const resumenPorMes: Record<string, { tickets: number; bruto: number }> = {}
@@ -717,6 +827,8 @@ Deno.serve(async (req) => {
         data: {
           local,
           anio,
+          modo: esModoDia ? 'dia' : 'mes',
+          dia,
           ticketsImportados: ticketsRows.length,
           pagosImportados: pagosRows.length,
           itemsImportados: ventasItemsRows.length,
