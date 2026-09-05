@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 // Pantalla pública de tablet: va SIEMPRE como rol anon, igual que /produccion,
@@ -104,6 +104,58 @@ function ventasFudoDelProducto(producto: Producto, ranking: FudoRankingItem[] | 
   return total;
 }
 
+// Qué turno se está cerrando, según el reloj.
+//
+// ⚠️ ANTES ARRANCABA SIEMPRE EN 'mediodia'. El que cerraba a las once de la noche
+// tenía que acordarse de tocar "Noche"; si no lo tocaba, el guardado PISABA el
+// conteo del mediodía (el cierre se borra y se repone por local/fecha/tipo/turno).
+// Un dedazo esperando pasar, en la pantalla que define el stock del mostrador.
+function turnoPorReloj(): Turno {
+  // Argentina = UTC-3 sin horario de verano, mismo criterio que hoyAR().
+  const h = new Date(Date.now() - 3 * 60 * 60 * 1000).getUTCHours();
+  // 05:00–16:59 mediodía · 17:00–04:59 noche (la madrugada sigue siendo el turno
+  // noche del día operativo anterior, igual que en hoyAR()).
+  return h >= 5 && h < 17 ? 'mediodia' : 'noche';
+}
+
+/** Hora del día en formato HH:MM, hora Argentina. */
+function horaAR(iso: string): string {
+  const d = new Date(new Date(iso).getTime() - 3 * 60 * 60 * 1000);
+  return (
+    String(d.getUTCHours()).padStart(2, '0') + ':' + String(d.getUTCMinutes()).padStart(2, '0')
+  );
+}
+
+/** Lee un casillero como número. Vacío o basura = 0, nunca NaN en pantalla. */
+function numeroDe(s: string): number {
+  const v = Number((s ?? '').trim().replace(',', '.'));
+  return Number.isFinite(v) ? v : 0;
+}
+
+/** Un renglón del detalle: etiqueta chica a la izquierda, número mono a la derecha. */
+function RenglonDetalle({ k, v, fuerte }: { k: string; v: number; fuerte?: boolean }) {
+  return (
+    <div className="flex items-baseline justify-between py-0.5">
+      <span
+        className={cn(
+          'text-[10px] uppercase tracking-wider',
+          fuerte ? 'font-semibold text-zinc-700' : 'text-zinc-400',
+        )}
+      >
+        {k}
+      </span>
+      <span
+        className={cn(
+          'font-mono text-sm tabular-nums',
+          fuerte ? 'font-semibold text-zinc-900' : 'text-zinc-600',
+        )}
+      >
+        {v}
+      </span>
+    </div>
+  );
+}
+
 // Corte de la jornada operativa (hora AR). El turno noche cierra hasta la ~01hs:
 // para que esos cierres se imputen al día que corresponde (y no al siguiente),
 // todo lo cargado entre las 00:00 y las 04:59 AR cuenta como el día anterior.
@@ -192,7 +244,12 @@ interface FilaPasta {
 function CierrePastas({ local }: { local: Local }) {
   const qc = useQueryClient();
   const fecha = hoyAR();
-  const [turno, setTurno] = useState<Turno>('mediodia');
+  const [turno, setTurno] = useState<Turno>(turnoPorReloj);
+  // Qué renglón tiene el detalle abierto. Uno solo por vez: la pantalla se mira
+  // parado y con la tablet en una mano, no es un tablero para estudiar.
+  const [abierto, setAbierto] = useState<string | null>(null);
+  // Productos donde la persona YA tipeó un número. Ver el efecto de hidratación.
+  const tocados = useRef<Set<string>>(new Set());
   const [responsable, setResponsable] = useState('');
   const [filas, setFilas] = useState<Record<string, FilaPasta>>({});
   const [mensaje, setMensaje] = useState<string | null>(null);
@@ -227,6 +284,29 @@ function CierrePastas({ local }: { local: Local }) {
     refetchInterval: 60_000,
   });
 
+  // Lo que hay en la cámara para bajar. Sin este dato el que cuenta ve "quedan 12"
+  // y no sabe si en el freezer hay cero o doscientas, que es justo la decisión que
+  // tiene que tomar parado ahí. anon puede leer esta vista (verificado 5-sep-2026).
+  const { data: enCamara } = useQuery({
+    queryKey: ['mostrador-camara', local],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('v_cocina_stock_pastas')
+        .select('producto_id, porciones_neto_camara')
+        .eq('local', local);
+      if (error) throw error;
+      const m = new Map<string, number>();
+      for (const r of (data ?? []) as Array<{
+        producto_id: string;
+        porciones_neto_camara: number | null;
+      }>) {
+        m.set(r.producto_id, Math.max(0, Number(r.porciones_neto_camara) || 0));
+      }
+      return m;
+    },
+    refetchInterval: 2 * 60 * 1000,
+  });
+
   // Cierre actual del turno (si ya cargaron y vuelven a editar)
   const { data: cierreActual } = useQuery({
     queryKey: ['mostrador-cierre-actual', local, fecha, turno],
@@ -247,6 +327,7 @@ function CierrePastas({ local }: { local: Local }) {
         entrega: number | null;
         vendido: number | null;
         responsable: string | null;
+        created_at: string;
       }>;
     },
   });
@@ -297,42 +378,53 @@ function CierrePastas({ local }: { local: Local }) {
     },
   });
 
-  // Inicio de la ventana de Fudo: el cierre más antiguo entre los "últimos cierres"
-  // por producto. Llamamos a Fudo UNA vez con ese rango y filtramos por producto en
-  // memoria. Si no hay cierres, arrancamos hoy 00:00 AR.
-  const fudoDesdeISO = useMemo(() => {
-    if (!ultimosCierres || ultimosCierres.size === 0) {
-      // Hoy 00:00 ART = 03:00 UTC
-      return `${fecha}T03:00:00Z`;
-    }
-    let min: string | null = null;
-    for (const c of ultimosCierres.values()) {
-      if (!min || c.created_at < min) min = c.created_at;
-    }
-    return new Date(min!).toISOString();
+  // Las ventanas de venta, agrupadas por el último conteo de cada producto.
+  //
+  // ⚠️ ANTES SE USABA UNA SOLA VENTANA: la del conteo MÁS VIEJO de todos los
+  // productos. Como el Scarpinocc de Vedia se contó el 31-ago y el resto anoche,
+  // a CADA pasta se le restaban cinco días de ventas y el "vendido" salía inflado.
+  // Con la diferencia en vivo eso haría aparecer "sobran 40" donde en realidad
+  // cuadra, y ofrecería anotar traspasos que nunca existieron.
+  //
+  // Medido el 5-sep-2026: son 2 ventanas distintas por local (los productos se
+  // cuentan casi todos en la misma tanda), así que esto son 2 llamadas a Fudo en
+  // vez de 1 — no una por producto.
+  const ventanas = useMemo(() => {
+    if (!ultimosCierres || ultimosCierres.size === 0) return [`${fecha}T03:00:00Z`];
+    const set = new Set<string>();
+    for (const c of ultimosCierres.values()) set.add(new Date(c.created_at).toISOString());
+    return [...set].sort();
   }, [ultimosCierres, fecha]);
 
-  // Ventas Fudo desde fudoDesdeISO hasta ahora. Pedimos fechaDesde/fechaHasta amplios
-  // (la edge function va a usar el override desdeISO igualmente).
-  const { data: fudoDesdeCierre } = useQuery({
-    queryKey: ['mostrador-fudo-desde-cierre', local, fudoDesdeISO],
+  const { data: fudoPorVentana } = useQuery({
+    queryKey: ['mostrador-fudo-por-ventana', local, ventanas],
     queryFn: async () => {
       const ahoraISO = new Date().toISOString();
-      const { data, error } = await supabase.functions.invoke('fudo-productos', {
-        body: {
-          local,
-          fechaDesde: fudoDesdeISO.slice(0, 10),
-          fechaHasta: ahoraISO.slice(0, 10),
-          desdeISO: fudoDesdeISO,
-          hastaISO: ahoraISO,
-        },
-      });
-      if (error || !data?.ok) return null;
-      return data.data as FudoData;
+      const m = new Map<string, FudoData | null>();
+      for (const desdeISO of ventanas) {
+        const { data, error } = await supabase.functions.invoke('fudo-productos', {
+          body: {
+            local,
+            fechaDesde: desdeISO.slice(0, 10),
+            fechaHasta: ahoraISO.slice(0, 10),
+            desdeISO,
+            hastaISO: ahoraISO,
+          },
+        });
+        m.set(desdeISO, !error && data?.ok ? (data.data as FudoData) : null);
+      }
+      return m;
     },
     staleTime: 60_000, // refrescar máximo cada minuto (Fudo es prácticamente real-time)
     refetchInterval: 2 * 60_000,
   });
+
+  // Cambiar de turno (o de día, o de local) empieza un conteo NUEVO: lo que se
+  // tipeó antes no aplica. Sin esto, la preservación de abajo arrastraría los
+  // números del mediodía al conteo de la noche.
+  useEffect(() => {
+    tocados.current.clear();
+  }, [turno, fecha, local]);
 
   // Hidratar filas: inicial = último cierre, entrega = Σ traspasos posteriores,
   // vendido = ventas Fudo del producto desde ese cierre. Si ya hay cierre cargado
@@ -360,7 +452,9 @@ function CierrePastas({ local }: { local: Local }) {
             (ultimo == null || t.created_at > ultimo.created_at),
         )
         .reduce((s, t) => s + (t.porciones ?? 0), 0);
-      const vendido = ventasFudoDelProducto(p, fudoDesdeCierre?.ranking);
+      // Cada pasta mira su propia ventana: la que arranca en SU último conteo.
+      const ventana = ultimo ? new Date(ultimo.created_at).toISOString() : ventanas[0];
+      const vendido = ventasFudoDelProducto(p, fudoPorVentana?.get(ventana)?.ranking);
       nuevas[p.id] = {
         inicial: String(inicial),
         entrega: String(entrega),
@@ -368,18 +462,65 @@ function CierrePastas({ local }: { local: Local }) {
         real: '',
       };
     }
-    setFilas(nuevas);
+    // ⚠️ PRESERVAR LO QUE YA SE TIPEÓ. Este efecto depende de `traspasos`, que se
+    // recarga solo cada 60 segundos: si alguien anotaba una bajada desde el depósito
+    // mientras acá estaban contando, este setFilas le borraba TODOS los números a la
+    // persona, en silencio y sin manera de recuperarlos.
+    setFilas((prev) => {
+      const salida: Record<string, FilaPasta> = {};
+      for (const [pid, fila] of Object.entries(nuevas)) {
+        salida[pid] = tocados.current.has(pid)
+          ? { ...fila, real: prev[pid]?.real ?? fila.real }
+          : fila;
+      }
+      return salida;
+    });
     if (cierreActual && cierreActual.length > 0 && cierreActual[0].responsable) {
       setResponsable(cierreActual[0].responsable);
     }
-  }, [pastas, cierreActual, ultimosCierres, traspasos, fudoDesdeCierre]);
+  }, [pastas, cierreActual, ultimosCierres, traspasos, fudoPorVentana, ventanas]);
 
   function setCampo(pid: string, campo: keyof FilaPasta, valor: string) {
+    if (campo === 'real') tocados.current.add(pid);
     setFilas((prev) => ({
       ...prev,
       [pid]: { ...prev[pid], [campo]: valor },
     }));
   }
+
+  // El traspaso que faltó anotar.
+  //
+  // 🔑 POR QUÉ ESTE BOTÓN. De los 16 casos en 90 días donde el conteo dio mucho más
+  // de lo esperado, NINGUNO era un dedazo: era pasta bajada del freezer que nadie
+  // anotó (contaron 61 donde figuraban 11). Ese papel que falta es el que rompe el
+  // stock, y el único momento en que alguien se acuerda es justo ahora, contando.
+  const anotarTraspaso = useMutation({
+    mutationFn: async ({ productoId, porciones }: { productoId: string; porciones: number }) => {
+      const { data, error } = await supabase
+        .from('cocina_traspasos')
+        .insert({
+          producto_id: productoId,
+          local,
+          fecha: hoyAR(),
+          hora: new Date().toTimeString().slice(0, 8),
+          porciones,
+          responsable: responsable.trim() || null,
+          notas: 'Anotado desde el cierre de mostrador: la cuenta daba de más',
+        })
+        .select('id');
+      if (error) throw error;
+      // Un INSERT que la RLS bloquea devuelve 0 filas SIN error. Sin este chequeo,
+      // el botón diría "listo" y no habría quedado nada anotado.
+      if (!data || data.length === 0) {
+        throw new Error('La base no confirmó la bajada. Avisale a Lucas antes de seguir.');
+      }
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['mostrador-traspasos-cierre'] });
+      qc.invalidateQueries({ queryKey: ['mostrador-camara'] });
+    },
+    onError: (e: Error) => window.alert(mensajeErrorAmigable(e, 'No se pudo anotar la bajada')),
+  });
 
   const guardar = useMutation({
     mutationFn: async () => {
@@ -527,63 +668,119 @@ function CierrePastas({ local }: { local: Local }) {
     return <div className="py-12 text-center text-sm text-gray-400">Cargando…</div>;
   }
 
+  const contadas = visibles.filter((p) => (filas[p.id]?.real ?? '').trim() !== '').length;
+  const yaCerrado = cierreActual && cierreActual.length > 0 ? cierreActual[0] : null;
+
   return (
-    <div className="mx-auto max-w-3xl space-y-3 p-3">
-      <div className="rounded-lg border border-gray-200 bg-white p-3">
-        <label className="mb-1 block text-xs font-medium text-gray-700">Turno</label>
-        <div className="mb-3 flex gap-2">
+    // pb-28 deja lugar al botón fijo de abajo, que en la tablet queda siempre a mano.
+    <div className="mx-auto max-w-3xl p-3 pb-28">
+      {/* ── Cabecera: turno, quién cuenta, cuánto falta ─────────────────────── */}
+      <div className="border border-zinc-300 bg-white">
+        <div className="flex">
           {(['mediodia', 'noche'] as const).map((t) => (
             <button
               key={t}
               onClick={() => setTurno(t)}
               className={cn(
-                'flex-1 rounded border px-3 py-2 text-sm font-medium transition',
+                'flex-1 border-b px-3 py-3 text-xs font-semibold uppercase tracking-wider transition',
                 turno === t
-                  ? 'border-rodziny-600 bg-rodziny-50 text-rodziny-700'
-                  : 'border-gray-300 bg-white text-gray-500',
+                  ? 'border-zinc-900 bg-zinc-900 text-white'
+                  : 'border-zinc-200 bg-white text-zinc-400',
               )}
             >
-              {t === 'mediodia' ? '🌅 Mediodía' : '🌇 Noche'}
+              {t === 'mediodia' ? 'Mediodía' : 'Noche'}
             </button>
           ))}
         </div>
-        <label className="mb-1 block text-xs font-medium text-gray-700">Responsable *</label>
-        <input
-          type="text"
-          value={responsable}
-          onChange={(e) => setResponsable(e.target.value)}
-          placeholder="Tu nombre"
-          className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
-        />
-        {cierreActual && cierreActual.length > 0 && (
-          <p className="mt-2 text-[11px] text-amber-700">
-            ⚠️ Ya hay un cierre cargado en este turno. Al guardar se reemplaza.
+
+        <div className="flex items-center gap-3 p-3">
+          <input
+            type="text"
+            value={responsable}
+            onChange={(e) => setResponsable(e.target.value)}
+            placeholder="Tu nombre"
+            className="min-w-0 flex-1 border border-zinc-300 px-3 py-2.5 text-base text-zinc-800 placeholder:text-zinc-400 focus:border-zinc-900 focus:outline-none"
+          />
+          <div className="shrink-0 text-right">
+            <p className="text-[10px] uppercase tracking-wider text-zinc-400">Contadas</p>
+            <p className="font-mono text-lg font-semibold tabular-nums text-zinc-800">
+              {contadas}
+              <span className="text-zinc-400">/{visibles.length}</span>
+            </p>
+          </div>
+        </div>
+
+        {yaCerrado && (
+          <p className="border-t border-amber-300 bg-amber-50 px-3 py-2 text-[11px] leading-snug text-amber-900">
+            Este turno ya está cerrado
+            {yaCerrado.responsable ? ' por ' + yaCerrado.responsable : ''} a las{' '}
+            {horaAR(yaCerrado.created_at)}. Si guardás de nuevo, se reemplaza.
           </p>
         )}
       </div>
 
       {visibles.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-gray-300 bg-white p-6 text-center">
-          <p className="text-2xl">📦</p>
-          <p className="mt-2 text-sm font-medium text-gray-700">
-            No hay pastas cargadas
-          </p>
-          <p className="mt-1 text-xs text-gray-500">
+        <div className="mt-3 border border-dashed border-zinc-300 bg-white p-6 text-center">
+          <p className="text-sm font-medium text-zinc-700">No hay pastas cargadas</p>
+          <p className="mt-1 text-xs text-zinc-500">
             Cargalas en Cocina → Productos con tipo "pasta" para que aparezcan acá.
           </p>
         </div>
       ) : (
         <>
-          <div className="rounded-lg border border-gray-200 bg-white">
+          {/* ── Un renglón por pasta. Cerrado muestra UNA línea; el detalle se abre
+                tocándola. Parado y con la tablet en una mano hay que ver el nombre,
+                el casillero y si cuadra: nada más. ─────────────────────────────── */}
+          <div className="mt-3 border border-zinc-300 bg-white">
             {visibles.map((p, idx) => {
               const f = filas[p.id] ?? { inicial: '', entrega: '', vendido: '', real: '' };
+              const inicial = numeroDe(f.inicial);
+              const entrega = numeroDe(f.entrega);
+              const vendido = numeroDe(f.vendido);
+              const esperado = Math.max(0, inicial + entrega - vendido);
+              const tieneReal = f.real.trim() !== '';
+              const dif = tieneReal ? numeroDe(f.real) - esperado : 0;
+              const camara = enCamara?.get(p.id) ?? null;
+              const estaAbierto = abierto === p.id;
+              const estado = !tieneReal
+                ? 'deberían quedar ' + esperado
+                : dif === 0
+                  ? 'cuadra'
+                  : dif < 0
+                    ? 'faltan ' + -dif
+                    : 'sobran ' + dif;
+
               return (
-                <div
-                  key={p.id}
-                  className={cn('p-3', idx < visibles.length - 1 && 'border-b border-gray-100')}
-                >
-                  <p className="text-sm font-medium text-gray-800">{p.nombre}</p>
-                  <div className="mt-2 flex items-center gap-2">
+                <div key={p.id} className={cn(idx > 0 && 'border-t border-zinc-200')}>
+                  <div className="flex items-center gap-3 px-3 py-2.5">
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-semibold uppercase tracking-tight text-zinc-800">
+                        {p.nombre}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => setAbierto(estaAbierto ? null : p.id)}
+                        className="mt-0.5 flex items-center gap-1.5 py-0.5 font-mono text-[11px] tabular-nums"
+                      >
+                        <span
+                          className={cn(
+                            'inline-block text-zinc-400 transition-transform',
+                            estaAbierto && 'rotate-90',
+                          )}
+                        >
+                          ›
+                        </span>
+                        <span
+                          className={cn(
+                            tieneReal && dif !== 0
+                              ? 'font-semibold text-amber-700'
+                              : 'text-zinc-500',
+                          )}
+                        >
+                          {estado}
+                        </span>
+                      </button>
+                    </div>
                     <input
                       type="number"
                       inputMode="numeric"
@@ -591,36 +788,81 @@ function CierrePastas({ local }: { local: Local }) {
                       min="0"
                       value={f.real}
                       onChange={(e) => setCampo(p.id, 'real', e.target.value)}
-                      placeholder="0"
-                      className="w-full rounded border-2 border-gray-300 px-3 py-2 text-right text-base font-medium tabular-nums focus:border-rodziny-500 focus:outline-none"
+                      placeholder="—"
+                      className={cn(
+                        'w-24 shrink-0 border-2 py-2.5 text-center font-mono text-2xl tabular-nums text-zinc-900 focus:border-zinc-900 focus:outline-none',
+                        tieneReal ? 'border-zinc-800 bg-white' : 'border-zinc-200 bg-zinc-50',
+                      )}
                     />
-                    <span className="text-xs text-gray-500">porc.</span>
                   </div>
+
+                  {estaAbierto && (
+                    <div className="border-t border-zinc-200 bg-zinc-50 px-3 py-3">
+                      <RenglonDetalle k="Quedaban del turno anterior" v={inicial} />
+                      <RenglonDetalle k="Bajaron del freezer" v={entrega} />
+                      <RenglonDetalle k="Se vendieron" v={vendido} />
+                      <div className="my-1.5 border-t border-zinc-300" />
+                      <RenglonDetalle k="Deberían quedar" v={esperado} fuerte />
+                      {camara != null && <RenglonDetalle k="Hay en cámara" v={camara} />}
+
+                      {tieneReal && dif > 0 && (
+                        <button
+                          type="button"
+                          disabled={anotarTraspaso.isPending}
+                          onClick={() => {
+                            const ok = window.confirm(
+                              '¿Bajaste ' +
+                                dif +
+                                ' porciones de ' +
+                                p.nombre +
+                                ' del freezer sin anotarlo? Lo anoto ahora y la cuenta cierra.',
+                            );
+                            if (ok) anotarTraspaso.mutate({ productoId: p.id, porciones: dif });
+                          }}
+                          className="mt-3 w-full bg-zinc-900 px-3 py-3 text-xs font-semibold uppercase tracking-wider text-white disabled:opacity-50"
+                        >
+                          {anotarTraspaso.isPending
+                            ? 'Anotando…'
+                            : 'Anotar ' + dif + ' bajadas del freezer'}
+                        </button>
+                      )}
+                      {tieneReal && dif < 0 && (
+                        <p className="mt-3 text-[11px] leading-snug text-zinc-500">
+                          Faltan {-dif}. Puede ser merma, o una venta que todavía no entró al
+                          sistema.
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </div>
               );
             })}
           </div>
 
-          <div className="flex flex-wrap gap-3 px-2 text-[10px] text-gray-500">
-            <span>
-              Cargá el stock real (físico) que queda al cierre del turno. Esto define el stock
-              inicial del mostrador para el próximo turno.
-            </span>
-          </div>
+          <p className="mt-2 px-1 text-[10px] leading-snug text-zinc-400">
+            Cargá el stock físico que queda al cierre del turno. Ese número define el stock
+            inicial del turno siguiente.
+          </p>
 
           {mensaje && (
-            <div className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-center text-sm">
+            <p className="mt-3 border border-zinc-300 bg-white px-3 py-2 text-center text-sm text-zinc-700">
               {mensaje}
-            </div>
+            </p>
           )}
 
-          <button
-            onClick={() => guardar.mutate()}
-            disabled={guardar.isPending}
-            className="w-full rounded-lg bg-rodziny-800 py-3 text-base font-semibold text-white hover:bg-rodziny-700 disabled:opacity-50"
-          >
-            {guardar.isPending ? 'Guardando…' : 'Guardar cierre de turno'}
-          </button>
+          {/* Botón fijo abajo: en la tablet la lista se va para arriba y guardar
+              quedaba fuera de pantalla. */}
+          <div className="fixed inset-x-0 bottom-0 border-t border-zinc-300 bg-white p-3">
+            <div className="mx-auto max-w-3xl">
+              <button
+                onClick={() => guardar.mutate()}
+                disabled={guardar.isPending}
+                className="w-full bg-rodziny-800 py-4 text-sm font-semibold uppercase tracking-wider text-white disabled:opacity-50"
+              >
+                {guardar.isPending ? 'Guardando…' : 'Guardar cierre de turno'}
+              </button>
+            </div>
+          </div>
         </>
       )}
     </div>
