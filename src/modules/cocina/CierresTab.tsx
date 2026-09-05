@@ -340,7 +340,8 @@ function DetalleDia({ local, fecha }: { local: Local; fecha: string }) {
                 <th className="px-4 py-2">Tipo</th>
                 <th className="px-4 py-2">Turno</th>
                 <th className="px-4 py-2 text-right">Inicial</th>
-                <th className="px-4 py-2 text-right">Entrega</th>
+                {/* Traspaso en Vedia, produccion en Saavedra: "Entro" vale para los dos. */}
+                <th className="px-4 py-2 text-right">Entro</th>
                 <th className="px-4 py-2 text-right">Real</th>
                 <th className="px-4 py-2">Responsable</th>
               </tr>

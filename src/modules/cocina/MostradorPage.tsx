@@ -133,7 +133,15 @@ function numeroDe(s: string): number {
 }
 
 /** Un renglón del detalle: etiqueta chica a la izquierda, número mono a la derecha. */
-function RenglonDetalle({ k, v, fuerte }: { k: string; v: number; fuerte?: boolean }) {
+function RenglonDetalle({
+  k,
+  v,
+  fuerte,
+}: {
+  k: string;
+  v: number | string;
+  fuerte?: boolean;
+}) {
   return (
     <div className="flex items-baseline justify-between py-0.5">
       <span
@@ -185,7 +193,10 @@ export function MostradorPage() {
           <div className="flex h-6 w-6 items-center justify-center rounded bg-rodziny-600 text-xs font-bold">
             R
           </div>
-          <span className="text-sm font-semibold">Cierre de mostrador</span>
+          {/* En Saavedra no hay mostrador: se cuenta la camara. El rotulo lo dice. */}
+          <span className="text-sm font-semibold">
+            {local === 'saavedra' ? 'Conteo de camara' : 'Cierre de mostrador'}
+          </span>
         </div>
         <span className="text-rodziny-200 text-xs">{local === 'vedia' ? 'Vedia' : 'Saavedra'}</span>
       </div>
@@ -282,6 +293,37 @@ function CierrePastas({ local }: { local: Local }) {
       return data as Array<{ producto_id: string; porciones: number; created_at: string }>;
     },
     refetchInterval: 60_000,
+  });
+
+  // ⚠️ LOS DOS LOCALES NO FUNCIONAN IGUAL, Y NO ES UN OLVIDO.
+  //
+  // Vedia tiene la fábrica sectorizada: la pasta viaja de la cámara al mostrador y
+  // ese viaje se anota (503 traspasos desde abril). Saavedra tiene todo en un mismo
+  // ambiente: lo que se produce va derecho a la cámara y de ahí se vende, sin etapa
+  // intermedia. Por eso `cocina_traspasos` NO TIENE UNA SOLA FILA de Saavedra en
+  // cinco meses, y por eso las migraciones 125 y 161 ya usan el cierre de turno como
+  // baseline de cámara para ese local.
+  //
+  // Consecuencia para esta pantalla: lo que hace subir el stock es el TRASPASO en
+  // Vedia y la PRODUCCIÓN en Saavedra. Usar traspasos en Saavedra hacía que 1 de cada
+  // 4 conteos del mediodía diera "de más" sin motivo real.
+  const esSaavedra = local === 'saavedra';
+
+  const { data: lotesProducidos } = useQuery({
+    queryKey: ['mostrador-lotes-producidos', local],
+    enabled: esSaavedra,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('cocina_lotes_pasta')
+        .select('producto_id, porciones, created_at')
+        .eq('local', local)
+        .not('porciones', 'is', null)
+        .order('created_at', { ascending: false })
+        .limit(500);
+      if (error) throw error;
+      return data as Array<{ producto_id: string; porciones: number; created_at: string }>;
+    },
+    refetchInterval: 2 * 60 * 1000,
   });
 
   // Lo que hay en la cámara para bajar. Sin este dato el que cuenta ve "quedan 12"
@@ -445,13 +487,23 @@ function CierrePastas({ local }: { local: Local }) {
       }
       const ultimo = ultimosCierres?.get(p.id) ?? null;
       const inicial = ultimo?.cantidad_real ?? 0;
-      const entrega = (traspasos ?? [])
-        .filter(
-          (t) =>
-            t.producto_id === p.id &&
-            (ultimo == null || t.created_at > ultimo.created_at),
-        )
-        .reduce((s, t) => s + (t.porciones ?? 0), 0);
+      // Lo que ENTRÓ al stock desde el último conteo: traspaso en Vedia, producción
+      // en Saavedra (ver el comentario largo arriba).
+      const entrega = esSaavedra
+        ? (lotesProducidos ?? [])
+            .filter(
+              (l) =>
+                l.producto_id === p.id &&
+                (ultimo == null || l.created_at > ultimo.created_at),
+            )
+            .reduce((s, l) => s + (l.porciones ?? 0), 0)
+        : (traspasos ?? [])
+            .filter(
+              (t) =>
+                t.producto_id === p.id &&
+                (ultimo == null || t.created_at > ultimo.created_at),
+            )
+            .reduce((s, t) => s + (t.porciones ?? 0), 0);
       // Cada pasta mira su propia ventana: la que arranca en SU último conteo.
       const ventana = ultimo ? new Date(ultimo.created_at).toISOString() : ventanas[0];
       const vendido = ventasFudoDelProducto(p, fudoPorVentana?.get(ventana)?.ranking);
@@ -478,7 +530,16 @@ function CierrePastas({ local }: { local: Local }) {
     if (cierreActual && cierreActual.length > 0 && cierreActual[0].responsable) {
       setResponsable(cierreActual[0].responsable);
     }
-  }, [pastas, cierreActual, ultimosCierres, traspasos, fudoPorVentana, ventanas]);
+  }, [
+    pastas,
+    cierreActual,
+    ultimosCierres,
+    traspasos,
+    lotesProducidos,
+    esSaavedra,
+    fudoPorVentana,
+    ventanas,
+  ]);
 
   function setCampo(pid: string, campo: keyof FilaPasta, valor: string) {
     if (campo === 'real') tocados.current.add(pid);
@@ -664,6 +725,17 @@ function CierrePastas({ local }: { local: Local }) {
     });
   }, [pastas, filas, cierreActual]);
 
+  // ¿Llegó el dato de ventas? Hoy sale de la API de Fudo. El día que Fudo se corte
+  // —o simplemente si falla la llamada— esto queda en false y la pantalla deja de
+  // hablar de "faltan": sin saber cuánto se vendió, un faltante no se puede afirmar.
+  // Lo que SÍ se puede afirmar sin ventas es el sobrante, porque las ventas solo
+  // restan: si contaste más de lo máximo posible, entró algo sin registrar. Punto.
+  const hayDatoDeVentas = useMemo(() => {
+    if (!fudoPorVentana) return false;
+    for (const v of fudoPorVentana.values()) if (v) return true;
+    return false;
+  }, [fudoPorVentana]);
+
   if (loadingPastas) {
     return <div className="py-12 text-center text-sm text-gray-400">Cargando…</div>;
   }
@@ -737,18 +809,44 @@ function CierrePastas({ local }: { local: Local }) {
               const inicial = numeroDe(f.inicial);
               const entrega = numeroDe(f.entrega);
               const vendido = numeroDe(f.vendido);
-              const esperado = Math.max(0, inicial + entrega - vendido);
+              // TOPE = lo máximo que pudo haber (lo que quedaba + lo que entró).
+              // ESPERADO = el tope menos lo vendido.
+              const tope = inicial + entrega;
+              const esperado = Math.max(0, tope - vendido);
               const tieneReal = f.real.trim() !== '';
-              const dif = tieneReal ? numeroDe(f.real) - esperado : 0;
+              const real = numeroDe(f.real);
+              const dif = real - esperado;
+              // 🔑 EL EXCEDENTE ES UNA CERTEZA, el "dif" es una estimación. Las ventas
+              // solo RESTAN: si se contó más que el tope, entró algo que no se registró,
+              // y eso es verdad aunque el dato de ventas esté mal o no exista. Por eso
+              // la ACCIÓN se dispara con el excedente y no con el dif.
+              const excedente = real - tope;
               const camara = enCamara?.get(p.id) ?? null;
               const estaAbierto = abierto === p.id;
+
+              const ultimoConteo = ultimosCierres?.get(p.id) ?? null;
+              const lotesDesdeConteo = esSaavedra
+                ? (lotesProducidos ?? []).filter(
+                    (l) =>
+                      l.producto_id === p.id &&
+                      (ultimoConteo == null || l.created_at > ultimoConteo.created_at),
+                  )
+                : [];
+
               const estado = !tieneReal
-                ? 'deberían quedar ' + esperado
-                : dif === 0
-                  ? 'cuadra'
-                  : dif < 0
-                    ? 'faltan ' + -dif
-                    : 'sobran ' + dif;
+                ? hayDatoDeVentas
+                  ? 'deberían quedar ' + esperado
+                  : 'puede haber hasta ' + tope
+                : excedente > 0
+                  ? 'sobran ' + excedente
+                  : hayDatoDeVentas
+                    ? dif === 0
+                      ? 'cuadra'
+                      : dif < 0
+                        ? 'faltan ' + -dif
+                        : 'sobran ' + dif
+                    : 'ok';
+              const marcado = tieneReal && (excedente > 0 || (hayDatoDeVentas && dif !== 0));
 
               return (
                 <div key={p.id} className={cn(idx > 0 && 'border-t border-zinc-200')}>
@@ -772,9 +870,7 @@ function CierrePastas({ local }: { local: Local }) {
                         </span>
                         <span
                           className={cn(
-                            tieneReal && dif !== 0
-                              ? 'font-semibold text-amber-700'
-                              : 'text-zinc-500',
+                            marcado ? 'font-semibold text-amber-700' : 'text-zinc-500',
                           )}
                         >
                           {estado}
@@ -798,35 +894,81 @@ function CierrePastas({ local }: { local: Local }) {
 
                   {estaAbierto && (
                     <div className="border-t border-zinc-200 bg-zinc-50 px-3 py-3">
-                      <RenglonDetalle k="Quedaban del turno anterior" v={inicial} />
-                      <RenglonDetalle k="Bajaron del freezer" v={entrega} />
-                      <RenglonDetalle k="Se vendieron" v={vendido} />
+                      <RenglonDetalle
+                        k={esSaavedra ? 'Quedaban del conteo anterior' : 'Quedaban del turno anterior'}
+                        v={inicial}
+                      />
+                      <RenglonDetalle
+                        k={esSaavedra ? 'Se produjo desde entonces' : 'Bajaron del freezer'}
+                        v={entrega}
+                      />
+                      {esSaavedra && lotesDesdeConteo.length > 0 && (
+                        <div className="mb-1 pl-3">
+                          {lotesDesdeConteo.map((l) => (
+                            <p
+                              key={l.created_at + l.porciones}
+                              className="font-mono text-[10px] text-zinc-400"
+                            >
+                              · {l.porciones} porc. a las {horaAR(l.created_at)}
+                            </p>
+                          ))}
+                        </div>
+                      )}
+                      <RenglonDetalle k="Se vendieron" v={hayDatoDeVentas ? vendido : 'sin dato'} />
                       <div className="my-1.5 border-t border-zinc-300" />
-                      <RenglonDetalle k="Deberían quedar" v={esperado} fuerte />
-                      {camara != null && <RenglonDetalle k="Hay en cámara" v={camara} />}
+                      <RenglonDetalle
+                        k={hayDatoDeVentas ? 'Deberían quedar' : 'Puede haber hasta'}
+                        v={hayDatoDeVentas ? esperado : tope}
+                        fuerte
+                      />
+                      {/* En Saavedra la cámara ES este stock: mostrarla aparte sería
+                          contar dos veces el mismo pote. */}
+                      {camara != null && !esSaavedra && (
+                        <RenglonDetalle k="Hay en cámara" v={camara} />
+                      )}
 
-                      {tieneReal && dif > 0 && (
+                      {/* Vedia: el papel que falta es el traspaso, y se anota acá. */}
+                      {tieneReal && excedente > 0 && !esSaavedra && (
                         <button
                           type="button"
                           disabled={anotarTraspaso.isPending}
                           onClick={() => {
                             const ok = window.confirm(
                               '¿Bajaste ' +
-                                dif +
+                                excedente +
                                 ' porciones de ' +
                                 p.nombre +
                                 ' del freezer sin anotarlo? Lo anoto ahora y la cuenta cierra.',
                             );
-                            if (ok) anotarTraspaso.mutate({ productoId: p.id, porciones: dif });
+                            if (ok)
+                              anotarTraspaso.mutate({ productoId: p.id, porciones: excedente });
                           }}
                           className="mt-3 w-full bg-zinc-900 px-3 py-3 text-xs font-semibold uppercase tracking-wider text-white disabled:opacity-50"
                         >
                           {anotarTraspaso.isPending
                             ? 'Anotando…'
-                            : 'Anotar ' + dif + ' bajadas del freezer'}
+                            : 'Anotar ' + excedente + ' bajadas del freezer'}
                         </button>
                       )}
-                      {tieneReal && dif < 0 && (
+
+                      {/* Saavedra: acá no hay traspaso que anotar. Lo que falta es la
+                          producción, y se carga en la pantalla de Producción, no en esta.
+                          Lo que sí hace esta pantalla es MOSTRAR qué figura cargado, que
+                          es el dato que nadie tenía a mano. */}
+                      {tieneReal && excedente > 0 && esSaavedra && (
+                        <div className="mt-3 border border-amber-300 bg-amber-50 px-3 py-2">
+                          <p className="text-[11px] font-semibold leading-snug text-amber-900">
+                            Contaste {excedente} más de lo que podía haber.
+                          </p>
+                          <p className="mt-1 text-[11px] leading-snug text-amber-800">
+                            {lotesDesdeConteo.length === 0
+                              ? 'No figura ninguna producción cargada desde el conteo anterior. Fijate si falta cargarla en la pantalla de Producción.'
+                              : 'Puede que falte cargar una producción: arriba está la que sí figura.'}
+                          </p>
+                        </div>
+                      )}
+
+                      {tieneReal && excedente <= 0 && hayDatoDeVentas && dif < 0 && (
                         <p className="mt-3 text-[11px] leading-snug text-zinc-500">
                           Faltan {-dif}. Puede ser merma, o una venta que todavía no entró al
                           sistema.
