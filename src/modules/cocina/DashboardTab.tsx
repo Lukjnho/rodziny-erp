@@ -786,8 +786,6 @@ interface StockPastaDB {
   porcionesEnProcesoEst: number;
   /** Hay bandejas y NO se puede estimar: mostrar "?" en vez de un 0 que miente. */
   sinRatio: boolean;
-  /** Ajuste manual acumulado del MOSTRADOR (otro stock, no se suma a cámara). */
-  porcionesAjusteMostrador: number;
 }
 
 // Normaliza nombres para matchear entre PRODUCTOS_COCINA y la tabla cocina_productos.
@@ -909,22 +907,16 @@ export function DashboardTab() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('v_cocina_stock_pastas')
-        // El ajuste de mostrador se pide aparte del select común: NO entra en
-        // ningún neto de cámara, se usa más abajo para estimar el mostrador,
-        // que es otro stock físico.
-        .select(SELECT_STOCK_PASTAS + ', porciones_ajuste_mostrador')
+        .select(SELECT_STOCK_PASTAS)
         .eq('local', local);
       if (error) throw error;
       const m = new Map<string, StockPastaDB>();
-      for (const r of (data ?? []) as unknown as Array<
-        StockPastaRow & { porciones_ajuste_mostrador: number | null }
-      >) {
+      for (const r of (data ?? []) as unknown as StockPastaRow[]) {
         m.set(normNombre(r.nombre), {
           porcionesVendibles: vendibleHoy(r),
           bandejasEnProceso: bandejasEnProceso(r),
           porcionesEnProcesoEst: Number(r.porciones_en_proceso_est) || 0,
           sinRatio: r.en_proceso_sin_ratio === true,
-          porcionesAjusteMostrador: Number(r.porciones_ajuste_mostrador) || 0,
         });
       }
       return m;
@@ -956,173 +948,38 @@ export function DashboardTab() {
     refetchIntervalInBackground: false,
   });
 
-  // ── Query: traspasos de HOY (cámara → mostrador) ──
-  // Se usan para estimar lo que hay en el freezer del mostrador hoy:
-  // mostrador = traspasos_hoy − ventas_fudo_hoy − merma_hoy
-  const { data: traspasosHoy } = useQuery({
-    queryKey: ['cocina_traspasos_hoy', local, hoy],
+  // ── Query: la cuenta única del mostrador (migración 170) ──
+  // Acá vivían OCHO consultas para estimar lo que hay en el mostrador: traspasos
+  // de hoy, merma de hoy por producto, ventas Fudo de hoy, el último cierre por
+  // producto, el rango Fudo desde el cierre, y traspasos / mermas / ajustes
+  // históricos. Todas juntas espejaban lo que la vista hace en la base — y el
+  // tab Stock tenía su propia versión, parecida pero no igual.
+  //
+  // 🔑 La vista descuenta las ventas posteriores al conteo DE ESE producto porque
+  // ventas_tickets guarda la hora; la API de Fudo no la da, así que acá se
+  // redondeaba ("si el cierre fue hoy, no descontamos ventas"). Y desde la
+  // migración 180 las ventas entran cada 15 minutos, que era la condición para
+  // que esta cuenta sirva en vivo.
+  const { data: stockMostrador } = useQuery({
+    queryKey: ['cocina-stock-mostrador', local],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from('cocina_traspasos')
-        .select('producto_id, porciones')
-        .eq('local', local)
-        .eq('fecha', hoy);
-      if (error) throw error;
-      const m = new Map<string, number>();
-      for (const r of (data ?? []) as Array<{ producto_id: string; porciones: number | null }>) {
-        m.set(r.producto_id, (m.get(r.producto_id) ?? 0) + (Number(r.porciones) || 0));
-      }
-      return m;
-    },
-    refetchInterval: 60_000,
-  });
-
-  // ── Query: merma de HOY agregada por producto (para descontar del mostrador) ──
-  const { data: mermaHoyPorProducto } = useQuery({
-    queryKey: ['cocina_merma_hoy_por_producto', local, hoy],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('cocina_merma')
-        .select('producto_id, porciones')
-        .eq('local', local)
-        .eq('fecha', hoy);
+        .from('v_cocina_stock_mostrador')
+        .select('producto_id, porciones_mostrador')
+        .eq('local', local);
       if (error) throw error;
       const m = new Map<string, number>();
       for (const r of (data ?? []) as Array<{
-        producto_id: string | null;
-        porciones: number | null;
+        producto_id: string
+        porciones_mostrador: number | null
       }>) {
-        if (!r.producto_id) continue;
-        m.set(r.producto_id, (m.get(r.producto_id) ?? 0) + (Number(r.porciones) || 0));
+        m.set(r.producto_id, Number(r.porciones_mostrador) || 0);
       }
       return m;
     },
-    refetchInterval: 60_000,
-  });
-
-  // ── Query: ventas Fudo SOLO de HOY (para descontar del mostrador cuando no hay cierre) ──
-  const { data: fudoHoy } = useQuery({
-    queryKey: ['fudo-consumo-hoy', local, hoy],
-    queryFn: async () => {
-      const { data, error } = await supabase.functions.invoke('fudo-productos', {
-        body: { local, fechaDesde: hoy, fechaHasta: hoy },
-      });
-      if (error || !data?.ok) return null;
-      return data.data as FudoData;
-    },
-    staleTime: 2 * 60 * 1000,
+    // Las ventas entran por cron cada 15 minutos y no hay realtime sobre
+    // ventas_items: sin esto el número se queda clavado con la pantalla abierta.
     refetchInterval: 5 * 60 * 1000,
-  });
-
-  // ── Query: último cierre por producto (tipo='pasta') ──
-  // El cierre confirma físicamente lo que quedó al cerrar el turno y se usa
-  // como punto de partida del siguiente. Eventos posteriores se aplican encima.
-  const { data: cierresPorProducto } = useQuery({
-    queryKey: ['dashboard-cierres-pastas', local],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('cocina_cierre_dia')
-        .select('producto_id, local, fecha, turno, cantidad_real, created_at')
-        .eq('local', local)
-        .eq('tipo', 'pasta')
-        .order('created_at', { ascending: false });
-      if (error) throw error;
-      const m = new Map<
-        string,
-        { fecha: string; created_at: string; cantidad_real: number }
-      >();
-      for (const c of (data ?? []) as Array<{
-        producto_id: string;
-        fecha: string;
-        cantidad_real: number;
-        created_at: string;
-      }>) {
-        if (!m.has(c.producto_id))
-          m.set(c.producto_id, {
-            fecha: c.fecha,
-            created_at: c.created_at,
-            cantidad_real: Number(c.cantidad_real),
-          });
-      }
-      return m;
-    },
-  });
-
-  // Rango Fudo desde el cierre más antiguo (para descontar ventas posteriores).
-  const fudoDesdeFechaDash = useMemo(() => {
-    if (!cierresPorProducto || cierresPorProducto.size === 0) return hoy;
-    let masAntigua: string | null = null;
-    for (const c of cierresPorProducto.values()) {
-      if (c.fecha < hoy) {
-        if (!masAntigua || c.fecha < masAntigua) masAntigua = c.fecha;
-      }
-    }
-    if (!masAntigua) return hoy;
-    const d = new Date(masAntigua + 'T12:00:00');
-    d.setDate(d.getDate() + 1);
-    return d.toISOString().slice(0, 10);
-  }, [cierresPorProducto, hoy]);
-
-  const { data: fudoDesdeCierreDash } = useQuery({
-    queryKey: ['dashboard-fudo-desde-cierre', local, fudoDesdeFechaDash, hoy],
-    queryFn: async () => {
-      const { data, error } = await supabase.functions.invoke('fudo-productos', {
-        body: { local, fechaDesde: fudoDesdeFechaDash, fechaHasta: hoy },
-      });
-      if (error || !data?.ok) return null;
-      return data.data as FudoData;
-    },
-    staleTime: 2 * 60 * 1000,
-  });
-
-  // Traspasos / merma históricos por producto (no solo hoy) para sumar lo posterior al cierre.
-  const { data: traspasosTodos } = useQuery({
-    queryKey: ['dashboard-traspasos-todos', local],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('cocina_traspasos')
-        .select('producto_id, porciones, created_at')
-        .eq('local', local);
-      if (error) throw error;
-      return (data ?? []) as Array<{
-        producto_id: string;
-        porciones: number;
-        created_at: string;
-      }>;
-    },
-  });
-
-  const { data: mermasTodas } = useQuery({
-    queryKey: ['dashboard-mermas-todas', local],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('cocina_merma')
-        .select('producto_id, porciones, created_at')
-        .eq('local', local);
-      if (error) throw error;
-      return (data ?? []) as Array<{
-        producto_id: string | null;
-        porciones: number;
-        created_at: string;
-      }>;
-    },
-  });
-
-  const { data: ajustesMostradorTodos } = useQuery({
-    queryKey: ['dashboard-ajustes-mostrador', local],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('cocina_ajustes_stock')
-        .select('producto_id, delta, created_at')
-        .eq('local', local)
-        .eq('ubicacion', 'mostrador');
-      if (error) throw error;
-      return (data ?? []) as Array<{
-        producto_id: string;
-        delta: number;
-        created_at: string;
-      }>;
-    },
   });
 
   // ── Query: lotes activos de cocina_lotes_produccion (raw, sin agregar) ──
@@ -1415,68 +1272,13 @@ export function DashboardTab() {
       const enColaPorciones = stockDB?.porcionesEnProcesoEst ?? 0;
       const enColaSinEstimar = stockDB?.sinRatio ?? false;
 
-      // Stock en el freezer del mostrador.
-      // Si hay cierre previo (turno anterior): base = cierre.cantidad_real + eventos posteriores.
-      // Si no hay cierre: cálculo viejo (traspasos_hoy − ventas_hoy − merma_hoy + ajustes_mostrador_acum).
+      // Lo que hay en el mostrador viene HECHO de la base (migracion 170):
+      // ultimo conteo fisico + traspasos - ventas - merma + ajustes posteriores.
       const prodDBPreview = productosDB?.get(normNombre(prod.nombre));
-      let enMostradorPorciones = 0;
-      if (prod.tipo === 'pasta' && prodDBPreview) {
-        const cierre = cierresPorProducto?.get(prodDBPreview.id) ?? null;
-        const nombres = prod.fudoNombres ?? [prod.nombre];
-
-        if (cierre) {
-          // Eventos posteriores al cierre
-          const traspasosPost = (traspasosTodos ?? [])
-            .filter(
-              (t) => t.producto_id === prodDBPreview.id && t.created_at > cierre.created_at,
-            )
-            .reduce((s, t) => s + Number(t.porciones), 0);
-          const mermaPost = (mermasTodas ?? [])
-            .filter(
-              (m) =>
-                m.producto_id === prodDBPreview.id && m.created_at > cierre.created_at,
-            )
-            .reduce((s, m) => s + Number(m.porciones), 0);
-          const ajustesPost = (ajustesMostradorTodos ?? [])
-            .filter(
-              (a) => a.producto_id === prodDBPreview.id && a.created_at > cierre.created_at,
-            )
-            .reduce((s, a) => s + Number(a.delta), 0);
-
-          // Ventas Fudo posteriores: solo si el cierre fue antes de hoy (fudoDesdeCierreDash
-          // arranca el día siguiente al cierre). Si el cierre fue HOY, asumimos que es el
-          // dato más reciente y no descontamos ventas adicionales.
-          let ventasPost = 0;
-          if (cierre.fecha < hoy && fudoDesdeCierreDash?.ranking) {
-            for (const n of nombres) {
-              const f = fudoDesdeCierreDash.ranking.find(
-                (r) => r.nombre.toLowerCase() === n.toLowerCase(),
-              );
-              if (f) ventasPost += f.cantidad;
-            }
-          }
-
-          enMostradorPorciones = Math.max(
-            0,
-            cierre.cantidad_real + traspasosPost - ventasPost - mermaPost + ajustesPost,
-          );
-        } else {
-          // Sin cierre: cálculo viejo
-          const traspHoy = traspasosHoy?.get(prodDBPreview.id) ?? 0;
-          const mermaH = mermaHoyPorProducto?.get(prodDBPreview.id) ?? 0;
-          let vendidosHoy = 0;
-          if (fudoHoy?.ranking) {
-            for (const n of nombres) {
-              const f = fudoHoy.ranking.find(
-                (r) => r.nombre.toLowerCase() === n.toLowerCase(),
-              );
-              if (f) vendidosHoy += f.cantidad;
-            }
-          }
-          const ajusteMostrador = stockDB?.porcionesAjusteMostrador ?? 0;
-          enMostradorPorciones = Math.max(0, traspHoy - vendidosHoy - mermaH + ajusteMostrador);
-        }
-      }
+      const enMostradorPorciones =
+        prod.tipo === 'pasta' && prodDBPreview
+          ? (stockMostrador?.get(prodDBPreview.id) ?? 0)
+          : 0;
 
       // Ventas diarias promedio desde Fudo
       const nombres = prod.fudoNombres ?? [prod.nombre];
@@ -1615,15 +1417,7 @@ export function DashboardTab() {
     ventanaDias,
     productosDB,
     stockPastasDB,
-    traspasosHoy,
-    mermaHoyPorProducto,
-    fudoHoy,
-    cierresPorProducto,
-    fudoDesdeCierreDash,
-    traspasosTodos,
-    mermasTodas,
-    ajustesMostradorTodos,
-    hoy,
+    stockMostrador,
     local,
   ]);
 

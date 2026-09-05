@@ -267,7 +267,13 @@ function CierrePastas({ local }: { local: Local }) {
         .eq('tipo', 'pasta')
         .order('created_at', { ascending: false });
       if (error) throw error;
-      const m = new Map<string, { cantidad_real: number; created_at: string }>();
+      // Se guarda el último conteo (el primero que aparece, porque viene ordenado
+      // de más nuevo a más viejo) Y el máximo histórico de ese producto, que es lo
+      // que usa el guardarraíl de abajo para detectar un dedazo.
+      const m = new Map<
+        string,
+        { cantidad_real: number; created_at: string; maxHistorico: number }
+      >();
       for (const c of (data ?? []) as Array<{
         producto_id: string;
         cantidad_real: number;
@@ -276,8 +282,15 @@ function CierrePastas({ local }: { local: Local }) {
         turno: string;
       }>) {
         if (c.fecha === fecha && c.turno === turno) continue; // saltar el cierre actual
-        if (!m.has(c.producto_id)) {
-          m.set(c.producto_id, { cantidad_real: c.cantidad_real, created_at: c.created_at });
+        const previo = m.get(c.producto_id);
+        if (!previo) {
+          m.set(c.producto_id, {
+            cantidad_real: c.cantidad_real,
+            created_at: c.created_at,
+            maxHistorico: c.cantidad_real,
+          });
+        } else if (c.cantidad_real > previo.maxHistorico) {
+          previo.maxHistorico = c.cantidad_real;
         }
       }
       return m;
@@ -374,6 +387,73 @@ function CierrePastas({ local }: { local: Local }) {
       const conDatos = Object.entries(filas).filter(([, f]) => f.real.trim() !== '');
       if (conDatos.length === 0) throw new Error('Cargá al menos un producto con stock real');
 
+      const num = (s: string) => Number(s.trim().replace(/\s/g, '').replace(',', '.'));
+      // Inicial/Entrega/Vendido se autocompletan en el QR (cierre previo + traspasos +
+      // ventas Fudo). Guardamos siempre un número (0 si vacío) para que la tabla de
+      // "Detalle del día" nunca muestre "—" y el cuadre Inicial+Entrega−Vendido=Real
+      // se pueda verificar contra el conteo físico.
+      const numOrZero = (s: string) => {
+        const v = num(s);
+        return Number.isFinite(v) ? v : 0;
+      };
+
+      // ⚠️ VALIDAR ANTES DE BORRAR. Esta comprobación estaba DESPUÉS del delete: si
+      // alguien tipeaba cualquier cosa en un casillero, el cierre del turno YA se
+      // había borrado y el error dejaba al turno sin ningún conteo guardado.
+      const malo = conDatos.find(([, f]) => {
+        const v = num(f.real);
+        return !Number.isFinite(v) || v < 0;
+      });
+      if (malo) {
+        const nom = pastas?.find((p) => p.id === malo[0])?.nombre ?? 'una pasta';
+        throw new Error(
+          `Revisá el stock real de "${nom}": "${malo[1].real}" no es un número válido.`,
+        );
+      }
+
+      // Guardarraíl del dedazo. El 4-sep-2026 se cargaron 610 porciones de
+      // tagliatelles donde iban 61: la pantalla lo aceptó sin chistar, y ese número
+      // manda el stock del mostrador hasta el conteo siguiente.
+      //
+      // 🔑 SE COMPARA CONTRA EL MÁXIMO HISTÓRICO DE ESE PRODUCTO, no contra lo que
+      // figura que bajó. Probado contra los últimos 90 días (2.111 conteos):
+      //   · contra lo que bajó  → saltaría 16 veces, y NINGUNA es un dedazo: son
+      //     reposiciones que nadie anotó como traspaso (contaron 61 y figuraban 11).
+      //     Un aviso que salta por eso se clickea que sí sin leerlo y deja de servir.
+      //   · contra el máximo histórico → saltaría 1 vez en 90 días, y sí agarra el 610
+      //     (el máximo de ese producto era 71).
+      //
+      // NO bloquea: el que cuenta es el que sabe, y la regla del proyecto es que el
+      // turno siempre se pueda cerrar. Solo obliga a mirar el número una vez.
+      const sospechosos = conDatos
+        .map(([pid, f]) => {
+          const real = num(f.real);
+          const maxHist = ultimosCierres?.get(pid)?.maxHistorico ?? 0;
+          // Sin historia todavía, un número redondo grande igual merece una mirada.
+          const exagerado =
+            maxHist > 0 ? real > maxHist * 2 && real - maxHist >= 50 : real >= 200;
+          if (!exagerado) return null;
+          const nombre = pastas?.find((p) => p.id === pid)?.nombre ?? 'una pasta';
+          return { nombre, real, maxHist };
+        })
+        .filter((x): x is { nombre: string; real: number; maxHist: number } => x !== null);
+
+      if (sospechosos.length > 0) {
+        const detalle = sospechosos
+          .map((x) =>
+            x.maxHist > 0
+              ? `• ${x.nombre}: pusiste ${x.real}. Lo más que hubo alguna vez fue ${x.maxHist}.`
+              : `• ${x.nombre}: pusiste ${x.real}, y no hay conteos anteriores para comparar.`,
+          )
+          .join('\n');
+        const seguir = window.confirm(
+          `Revisá estos números antes de guardar:\n\n${detalle}\n\n¿Los guardo igual?`,
+        );
+        if (!seguir) {
+          throw new Error('No se guardó nada. Corregí los números y volvé a intentar.');
+        }
+      }
+
       // Borrar el cierre previo de este turno por sus columnas naturales
       // (local/fecha/tipo/turno), NO por los ids del snapshot `cierreActual`:
       // si ese snapshot estaba viejo (otro guardado, otra pestaña) quedaban filas
@@ -387,26 +467,6 @@ function CierrePastas({ local }: { local: Local }) {
         .eq('turno', turno);
       if (errDel) throw errDel;
 
-      const num = (s: string) => Number(s.trim().replace(/\s/g, '').replace(',', '.'));
-      const malo = conDatos.find(([, f]) => {
-        const v = num(f.real);
-        return !Number.isFinite(v) || v < 0;
-      });
-      if (malo) {
-        const nom = pastas?.find((p) => p.id === malo[0])?.nombre ?? 'una pasta';
-        throw new Error(
-          `Revisá el stock real de "${nom}": "${malo[1].real}" no es un número válido.`,
-        );
-      }
-
-      // Inicial/Entrega/Vendido se autocompletan en el QR (cierre previo + traspasos +
-      // ventas Fudo). Guardamos siempre un número (0 si vacío) para que la tabla de
-      // "Detalle del día" nunca muestre "—" y el cuadre Inicial+Entrega−Vendido=Real
-      // se pueda verificar contra el conteo físico.
-      const numOrZero = (s: string) => {
-        const v = num(s);
-        return Number.isFinite(v) ? v : 0;
-      };
       const payload = conDatos.map(([productoId, f]) => ({
         fecha,
         local,

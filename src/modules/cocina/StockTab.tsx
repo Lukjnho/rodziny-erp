@@ -43,33 +43,19 @@ interface LotePasta {
 // su propia columna. El baseline del conteo físico ya está aplicado adentro de
 // la vista: acá no se recalcula nada.
 type FilaVistaStock = StockPastaRow & { porciones_merma: number | null };
-interface Traspaso {
-  producto_id: string;
-  porciones: number;
-  local: string;
-  created_at: string;
-}
-interface Merma {
-  producto_id: string;
-  porciones: number;
-  local: string;
-  created_at: string;
-}
-interface AjusteStock {
+
+/** Una fila de v_cocina_stock_mostrador (migración 170). */
+interface FilaVistaMostrador {
   producto_id: string;
   local: string;
-  ubicacion: 'camara' | 'mostrador';
-  delta: number;
-  created_at: string;
+  /** Lo que debería haber en el mostrador. Nunca negativo. */
+  porciones_mostrador: number | null;
+  /** El mismo número con signo: si da negativo, se vendió más de lo que figura que bajó. */
+  porciones_mostrador_crudo: number | null;
 }
-interface CierreDia {
-  producto_id: string;
-  local: string;
-  fecha: string; // YYYY-MM-DD
-  turno: 'mediodia' | 'noche';
-  cantidad_real: number;
-  created_at: string;
-}
+// Los tipos Traspaso / Merma / AjusteStock / CierreDia vivian aca para armar el
+// mostrador a mano. Ese calculo ahora lo hace la base (v_cocina_stock_mostrador),
+// asi que la pantalla no necesita conocer las tablas crudas.
 interface FudoRankingItem {
   nombre: string;
   cantidad: number;
@@ -94,12 +80,10 @@ interface StockRow {
   sinEstimar: boolean; // hay bandejas y no se puede estimar → mostrar "?"
   bandejasViejas: number; // bandejas en freezer con ≥3 días — alerta
   loteMasViejoFecha: string | null; // fecha YYYY-MM-DD del lote más antiguo en freezer_produccion
-  vendidoHoy: number;
   mostrador: number; // clamp >= 0 para mostrar
   mostradorRaw: number; // valor real (puede ser negativo si las ventas exceden traspasos+ajustes)
   merma: number;
   stock: number; // neto de cámara, tal como lo da la base (ya sin negativos)
-  ajusteMostrador: number;
   demanda7d: number; // porciones vendidas (Fudo) en los últimos 7 días
   demandaDiaria: number; // demanda7d / días reales del rango
   diasCobertura: number | null; // stock cámara / demandaDiaria (null si no hay demanda)
@@ -252,8 +236,9 @@ export function StockTab() {
         'postgres_changes',
         { event: '*', schema: 'public', table: 'cocina_traspasos' },
         () => {
-          qc.invalidateQueries({ queryKey: ['cocina-stock-traspasos'] });
-          qc.invalidateQueries({ queryKey: ['cocina-stock-traspasos-hoy'] });
+          // Un traspaso baja la cámara Y sube el mostrador: se refrescan las dos.
+          qc.invalidateQueries({ queryKey: ['cocina-stock-mostrador'] });
+          qc.invalidateQueries({ queryKey: ['cocina-stock-vista-pastas'] });
         },
       )
       .on(
@@ -265,8 +250,10 @@ export function StockTab() {
         'postgres_changes',
         { event: '*', schema: 'public', table: 'cocina_merma' },
         () => {
-          qc.invalidateQueries({ queryKey: ['cocina-stock-merma'] });
-          qc.invalidateQueries({ queryKey: ['cocina-stock-merma-hoy'] });
+          // La merma resta en las dos ubicaciones. Antes acá se invalidaban los
+          // crudos y la vista de cámara quedaba vieja hasta recargar la pestaña.
+          qc.invalidateQueries({ queryKey: ['cocina-stock-mostrador'] });
+          qc.invalidateQueries({ queryKey: ['cocina-stock-vista-pastas'] });
         },
       )
       .subscribe();
@@ -355,86 +342,6 @@ export function StockTab() {
     refetchOnMount: 'always',
   });
 
-  const { data: traspasos } = useQuery({
-    queryKey: ['cocina-stock-traspasos'],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('cocina_traspasos')
-        .select('producto_id, porciones, local, created_at');
-      if (error) throw error;
-      return data as Traspaso[];
-    },
-  });
-
-  const { data: traspasosHoy } = useQuery({
-    queryKey: ['cocina-stock-traspasos-hoy', hoy],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('cocina_traspasos')
-        .select('producto_id, porciones, local')
-        .eq('fecha', hoy);
-      if (error) throw error;
-      return data as Traspaso[];
-    },
-  });
-
-  const { data: mermas } = useQuery({
-    queryKey: ['cocina-stock-merma'],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('cocina_merma')
-        .select('producto_id, porciones, local, created_at');
-      if (error) throw error;
-      return data as Merma[];
-    },
-  });
-
-  const { data: mermasHoy } = useQuery({
-    queryKey: ['cocina-stock-merma-hoy', hoy],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('cocina_merma')
-        .select('producto_id, porciones, local')
-        .eq('fecha', hoy);
-      if (error) throw error;
-      return data as Merma[];
-    },
-  });
-
-  // Ajustes manuales de stock (deltas acumulados por producto + ubicación)
-  const { data: ajustes } = useQuery({
-    queryKey: ['cocina-ajustes-stock'],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('cocina_ajustes_stock')
-        .select('producto_id, local, ubicacion, delta, created_at');
-      if (error) throw error;
-      return (data ?? []) as AjusteStock[];
-    },
-  });
-
-  // Último cierre de mostrador por producto (tipo='pasta'). Define el "stock inicial"
-  // del próximo turno: cuando el equipo confirma físicamente lo que quedó al cerrar,
-  // ese valor se usa como base y los eventos posteriores se aplican encima.
-  const { data: cierresPorProducto } = useQuery({
-    queryKey: ['cocina-cierres-pastas'],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('cocina_cierre_dia')
-        .select('producto_id, local, fecha, turno, cantidad_real, created_at')
-        .eq('tipo', 'pasta')
-        .order('created_at', { ascending: false });
-      if (error) throw error;
-      // Quedarse con el más reciente por (producto_id, local)
-      const m = new Map<string, CierreDia>();
-      for (const c of (data ?? []) as CierreDia[]) {
-        const key = `${c.producto_id}|${c.local}`;
-        if (!m.has(key)) m.set(key, c);
-      }
-      return m;
-    },
-  });
-
   // ── Stock de cámara: la cuenta única de la base (migración 161) ────────────
   // Esta pantalla reimplementaba en el navegador el baseline del conteo físico
   // y todas las restas de la vista: unas 130 líneas que espejaban a mano un
@@ -457,6 +364,37 @@ export function StockTab() {
       return m;
     },
     refetchOnMount: 'always',
+  });
+
+  // ── Stock de mostrador: la cuenta única de la base (migración 170) ─────────
+  // Misma historia que la de cámara. Esta pantalla armaba el número a mano con
+  // seis consultas crudas (último cierre + traspasos + merma + ajustes, cada una
+  // por duplicado para "hoy") MÁS dos llamadas en vivo a la API de Fudo. El
+  // Dashboard lo armaba con las suyas y el QR con las suyas: tres definiciones
+  // del mismo dato, que daban distinto en los bordes.
+  //
+  // 🔑 La vista puede algo que esto no podía: descuenta las ventas posteriores al
+  // conteo DE ESE producto, porque ventas_tickets guarda la hora. La API de Fudo
+  // no la devuelve, así que acá se redondeaba ("si el cierre fue hoy, no
+  // descontamos"). Y desde la migración 180 las ventas entran cada 15 minutos,
+  // que es lo que hacía falta para que esta cuenta sirva en vivo.
+  const { data: stockMostrador } = useQuery({
+    queryKey: ['cocina-stock-mostrador'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('v_cocina_stock_mostrador')
+        .select('producto_id, local, porciones_mostrador, porciones_mostrador_crudo');
+      if (error) throw error;
+      const m = new Map<string, FilaVistaMostrador>();
+      for (const r of (data ?? []) as FilaVistaMostrador[]) {
+        m.set(`${r.producto_id}|${r.local}`, r);
+      }
+      return m;
+    },
+    refetchOnMount: 'always',
+    // Las ventas entran por cron cada 15 minutos y no hay realtime sobre
+    // ventas_items: sin esto, el número se quedaría clavado con la pantalla abierta.
+    refetchInterval: 5 * 60 * 1000,
   });
 
   const guardarAjuste = useMutation({
@@ -515,62 +453,6 @@ export function StockTab() {
   // (credenciales en las Edge Functions fudo-*). Antes esto era solo Vedia.
   const localesScope = useMemo<string[]>(() => [filtroLocal], [filtroLocal]);
 
-  // Ventas Fudo de HOY por local. Una llamada a fudo-productos por local.
-  const { data: fudoHoy } = useQuery({
-    queryKey: ['cocina-stock-fudo-hoy', localesScope, hoy],
-    queryFn: async () => {
-      const res: Record<string, FudoData | null> = {};
-      for (const loc of localesScope) {
-        const { data, error } = await supabase.functions.invoke('fudo-productos', {
-          body: { local: loc, fechaDesde: hoy, fechaHasta: hoy },
-        });
-        res[loc] = !error && data?.ok ? (data.data as FudoData) : null;
-      }
-      return res;
-    },
-    staleTime: 2 * 60 * 1000, // refrescar cada 2 min
-  });
-
-  // Fecha "desde" POR LOCAL = día siguiente al cierre más antiguo (anterior a
-  // hoy) de ese local. Si todos los cierres son de hoy o no hay, alcanza "hoy".
-  const fudoDesdeFechaPorLocal = useMemo(() => {
-    const out: Record<string, string> = {};
-    for (const loc of localesScope) {
-      let masAntigua: string | null = null;
-      if (cierresPorProducto) {
-        for (const c of cierresPorProducto.values()) {
-          if (c.local !== loc) continue;
-          if (c.fecha < hoy && (!masAntigua || c.fecha < masAntigua)) masAntigua = c.fecha;
-        }
-      }
-      if (!masAntigua) {
-        out[loc] = hoy;
-        continue;
-      }
-      const d = new Date(masAntigua + 'T12:00:00');
-      d.setDate(d.getDate() + 1);
-      out[loc] = d.toISOString().slice(0, 10);
-    }
-    return out;
-  }, [cierresPorProducto, hoy, localesScope]);
-
-  // Ventas Fudo desde el último cierre relevante de cada local, para descontar
-  // del mostrador acumulado. Si la fecha desde == hoy, devuelve lo mismo que fudoHoy.
-  const { data: fudoDesdeCierre } = useQuery({
-    queryKey: ['cocina-stock-fudo-desde-cierre', fudoDesdeFechaPorLocal, hoy],
-    queryFn: async () => {
-      const res: Record<string, FudoData | null> = {};
-      for (const loc of Object.keys(fudoDesdeFechaPorLocal)) {
-        const { data, error } = await supabase.functions.invoke('fudo-productos', {
-          body: { local: loc, fechaDesde: fudoDesdeFechaPorLocal[loc], fechaHasta: hoy },
-        });
-        res[loc] = !error && data?.ok ? (data.data as FudoData) : null;
-      }
-      return res;
-    },
-    staleTime: 2 * 60 * 1000,
-  });
-
   // Ventas Fudo de los últimos 7 días por local. Alimenta el estado por demanda
   // (días de cobertura) y la columna "Demanda 7d". Ventana independiente de las
   // de "hoy"/"desde cierre" (que sirven para descontar mostrador).
@@ -589,8 +471,7 @@ export function StockTab() {
     staleTime: 10 * 60 * 1000, // demanda histórica: refrescar cada 10 min
   });
 
-  const isLoading =
-    !productos || !lotesPasta || !traspasos || !mermas || !traspasosHoy || !mermasHoy;
+  const isLoading = !productos || !lotesPasta || !stockVista || !stockMostrador;
 
   // Última carga de pastas en el local activo (MAX created_at). null si no hay lotes.
   const ultimaCargaPastas = useMemo<UltimaCargaInfo | null>(() => {
@@ -605,8 +486,7 @@ export function StockTab() {
 
   // Calcular stock por producto × local
   const stockRows = useMemo(() => {
-    if (!productos || !lotesPasta || !traspasos || !mermas || !traspasosHoy || !mermasHoy)
-      return [];
+    if (!productos || !lotesPasta) return [];
 
     const rows: StockRow[] = [];
     const locales: string[] = [filtroLocal];
@@ -651,68 +531,15 @@ export function StockTab() {
                 null,
               )
             : null;
-        // Vendido hoy de Fudo: descuenta de "En mostrador" (mostradorRaw).
-        const vendidoHoy = ventasFudoDelProducto(prod, fudoHoy?.[loc]?.ranking);
-
-        // El ajuste de MOSTRADOR sigue acá: es otro stock físico, con su propio
-        // cierre de turno, y la vista de cámara no lo resuelve.
-        const ajusteMostrador = (ajustes ?? [])
-          .filter(
-            (a) => a.producto_id === prod.id && a.local === loc && a.ubicacion === 'mostrador',
-          )
-          .reduce((s, a) => s + Number(a.delta), 0);
-
-        // Stock mostrador: usa el último cierre como punto de partida si existe.
-        // Si no hay cierre, fallback al cálculo viejo (traspasos_hoy − ventas_hoy − merma_hoy + ajustes_hoy).
-        const cierre = cierresPorProducto?.get(`${prod.id}|${loc}`) ?? null;
-        let mostrador: number;
-        let mostradorRaw: number;
-        if (cierre) {
-          // Eventos posteriores al cierre (created_at > cierre.created_at)
-          const traspasosPost = (traspasos ?? [])
-            .filter(
-              (t) =>
-                t.producto_id === prod.id && t.local === loc && t.created_at > cierre.created_at,
-            )
-            .reduce((s, t) => s + t.porciones, 0);
-          const mermaPost = (mermas ?? [])
-            .filter(
-              (m) =>
-                m.producto_id === prod.id && m.local === loc && m.created_at > cierre.created_at,
-            )
-            .reduce((s, m) => s + m.porciones, 0);
-          const ajustesPost = (ajustes ?? [])
-            .filter(
-              (a) =>
-                a.producto_id === prod.id &&
-                a.local === loc &&
-                a.ubicacion === 'mostrador' &&
-                a.created_at > cierre.created_at,
-            )
-            .reduce((s, a) => s + Number(a.delta), 0);
-
-          // Ventas Fudo: si el cierre fue HOY, asumimos que es lo más reciente y no
-          // descontamos ventas posteriores (Fudo no devuelve timestamp por venta para
-          // filtrar por hora exacta del cierre).
-          let ventasPost = 0;
-          if (cierre.fecha < hoy) {
-            ventasPost = ventasFudoDelProducto(prod, fudoDesdeCierre?.[loc]?.ranking);
-          }
-
-          mostradorRaw =
-            Number(cierre.cantidad_real) + traspasosPost - ventasPost - mermaPost + ajustesPost;
-          mostrador = Math.max(0, mostradorRaw);
-        } else {
-          // Sin cierre todavía: lógica anterior (solo "hoy")
-          const traspasadoHoy = traspasosHoy
-            .filter((t) => t.producto_id === prod.id && t.local === loc)
-            .reduce((s, t) => s + t.porciones, 0);
-          const mermaDelDia = mermasHoy
-            .filter((m) => m.producto_id === prod.id && m.local === loc)
-            .reduce((s, m) => s + m.porciones, 0);
-          mostradorRaw = traspasadoHoy - vendidoHoy - mermaDelDia + ajusteMostrador;
-          mostrador = Math.max(0, mostradorRaw);
-        }
+        // El mostrador también viene HECHO de la base (migración 170): arranca del
+        // último conteo físico de ESE producto y le aplica lo posterior
+        // (traspasos − ventas − merma + ajustes). Antes se rearmaba acá con seis
+        // consultas crudas y dos llamadas en vivo a Fudo, y encima redondeaba: si
+        // el conteo era de hoy, no descontaba ninguna venta, porque la API de Fudo
+        // no devuelve la hora. La vista sí la tiene (ventas_tickets.hora).
+        const vistaMostrador = stockMostrador?.get(`${prod.id}|${loc}`) ?? null;
+        const mostrador = Number(vistaMostrador?.porciones_mostrador) || 0;
+        const mostradorRaw = Number(vistaMostrador?.porciones_mostrador_crudo) || 0;
 
         // Demanda real: ventas Fudo de los últimos 7 días (vía fudo_nombres).
         // El estado se mide en días de cobertura del stock de cámara contra la
@@ -731,12 +558,10 @@ export function StockTab() {
           sinEstimar,
           bandejasViejas,
           loteMasViejoFecha,
-          vendidoHoy,
           mostrador,
           mostradorRaw,
           merma: mermaTotal,
           stock,
-          ajusteMostrador,
           demanda7d,
           demandaDiaria,
           diasCobertura,
@@ -746,22 +571,7 @@ export function StockTab() {
     }
 
     return rows.sort((a, b) => a.stock - b.stock); // los de menor stock primero
-  }, [
-    productos,
-    lotesPasta,
-    traspasos,
-    mermas,
-    traspasosHoy,
-    mermasHoy,
-    fudoHoy,
-    fudoDesdeCierre,
-    fudo7d,
-    cierresPorProducto,
-    stockVista,
-    hoy,
-    ajustes,
-    filtroLocal,
-  ]);
+  }, [productos, lotesPasta, fudo7d, stockVista, stockMostrador, filtroLocal]);
 
   const kpis = useMemo(() => {
     const totalProductos = stockRows.filter((r) => r.stock > 0).length;

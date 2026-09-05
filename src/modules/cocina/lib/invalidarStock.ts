@@ -11,6 +11,9 @@ import type { QueryClient } from '@tanstack/react-query';
 // están en pantalla en ese momento); el resto solo queda marcado para refrescar
 // al abrirlas. Por eso la lista puede ser amplia sin costo real.
 const KEYS_STOCK_COCINA = [
+  // Las DOS cuentas únicas de la base: cámara (mig 161) y mostrador (mig 170).
+  'cocina-stock-vista-pastas',
+  'cocina-stock-mostrador',
   // Vista canónica + crudos de pastas (StockTab / TraspasosTab / Dashboard)
   'cocina_stock_pastas',
   'cocina-stock-lotes',
