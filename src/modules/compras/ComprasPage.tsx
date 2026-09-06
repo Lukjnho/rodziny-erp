@@ -10,6 +10,7 @@ import { LocalSelector } from '@/components/ui/LocalSelector';
 import { formatARS, fmtCantidad, cn } from '@/lib/utils';
 import { hoyAR } from '@/lib/fechaAR';
 import { parseDecimal, normalizarDecimal, equivalenteKgGramos } from '@/lib/numero';
+import { UNIDADES_CATALOGO, ETIQUETA_UNIDAD } from '@/lib/unidades';
 import {
   parseFudoGastos,
   type DetalleRow,
@@ -4341,15 +4342,14 @@ function ModalProducto({
               className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm"
             >
               {/* Los values son los canónicos del stock ("unid.", "L"): si acá se
-                  guardaba "unidad"/"litro" se creaban variantes del mismo insumo. */}
-              <option value="unid.">unidad</option>
-              <option value="kg">kg</option>
-              <option value="L">litro</option>
-              <option value="paquete">paquete</option>
-              <option value="caja">caja</option>
-              <option value="bolsa">bolsa</option>
-              <option value="botella">botella</option>
-              <option value="lata">lata</option>
+                  guardaba "unidad"/"litro" se creaban variantes del mismo insumo.
+                  La lista salió de acá a @/lib/unidades para que la cocina use la
+                  MISMA, que era de donde venía la divergencia. */}
+              {UNIDADES_CATALOGO.map((u) => (
+                <option key={u} value={u}>
+                  {ETIQUETA_UNIDAD[u] ?? u}
+                </option>
+              ))}
             </select>
           </div>
 

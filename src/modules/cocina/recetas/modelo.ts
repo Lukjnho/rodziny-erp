@@ -7,6 +7,8 @@
  * Calculadora. Por eso se separó en vez de borrarse con la pantalla.
  */
 
+import { UNIDADES_RECETA, unidadParaReceta } from '@/lib/unidades';
+
 export interface Ingrediente {
   id: string;
   receta_id: string;
@@ -151,7 +153,14 @@ export const ROL_LABEL: Record<SubrecetaRol, string> = {
   otros: 'Otros',
 };
 
-export const UNIDADES = ['g', 'kg', 'ml', 'lt', 'oz', 'unid', 'cdta', 'cda'] as const;
+/**
+ * Unidades que ofrece el renglón de receta. Vienen del vocabulario único.
+ *
+ * Antes esta lista era propia y tenía 'lt' y 'unid' (las formas que el almacén NO
+ * usa) más 'cdta' y 'cda', que estaban ofrecidas pero no las eligió nadie nunca y
+ * además el costeo no sabía convertirlas: elegirlas daba "unidad desconocida".
+ */
+export const UNIDADES = UNIDADES_RECETA;
 
 /** Un producto del módulo Compras, tal como lo ofrece el buscador de ingredientes. */
 export interface ProductoCompras {
@@ -164,15 +173,21 @@ export interface ProductoCompras {
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
+/**
+ * Unidad con la que se guarda un renglón de receta cuando se trae un insumo del
+ * almacén. Delega en el vocabulario único (@/lib/unidades).
+ *
+ * ⚠️ ANTES ESTA FUNCIÓN TENÍA DOS DEFECTOS, y los dos dejaban rastro en la base:
+ *   1. Devolvía 'lt' y 'unid' donde el almacén guarda 'L' y 'unid.'. Como el
+ *      único que la llama es el selector de ingredientes, venía fabricando la
+ *      divergencia de a un renglón por vez (53 en 'lt', 196 en 'unid').
+ *   2. Para cualquier unidad que no reconociera devolvía 'g'. Un insumo comprado
+ *      en "botella" se convertía en gramos, sin un solo error en pantalla.
+ * Ahora, si no la reconoce, deja la unidad del insumo tal cual: es la verdad, y
+ * el costeo la marca como desconocida en vez de inventar un peso.
+ */
 export function mapearUnidad(unidadCompras: string): string {
-  const u = unidadCompras.toLowerCase().trim();
-  if (u === 'kg' || u === 'kgs') return 'kg';
-  if (u === 'g' || u === 'gr' || u === 'grs' || u === 'gramos') return 'g';
-  if (u === 'lt' || u === 'l' || u === 'lts' || u === 'litros' || u === 'litro') return 'lt';
-  if (u === 'ml' || u === 'mililitros') return 'ml';
-  if (u === 'unid.' || u === 'unid' || u === 'u' || u === 'unidades' || u === 'unidad')
-    return 'unid';
-  return 'g'; // default
+  return unidadParaReceta(unidadCompras) ?? (unidadCompras ?? '').trim();
 }
 
 export function formatCantidad(n: number): string {

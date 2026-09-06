@@ -5,6 +5,12 @@
 // costeo guardado: resolución de subrecetas, match por nombre, merma, conversión de
 // unidades y detección de referencia circular. Si esto se duplicara, el costo que ve
 // el usuario mientras edita divergiría del costo guardado.
+//
+// Las unidades NO se definen acá: viven en @/lib/unidades, que es el único
+// vocabulario del ERP. Antes este archivo tenía su propia copia y el modelo de
+// recetas tenía otra, y no coincidían.
+
+import { normalizarUnidad, aBase } from '@/lib/unidades';
 
 export interface RecetaRow {
   id: string;
@@ -59,57 +65,6 @@ export interface CostoReceta {
   costoPorPorcion: number | null;
   detalles: DetalleIngrediente[];
   advertencias: string[];
-}
-
-export function normalizarUnidad(u: string): string {
-  const x = (u ?? '').toLowerCase().trim();
-  if (x === 'kg' || x === 'kgs') return 'kg';
-  if (x === 'g' || x === 'gr' || x === 'grs' || x === 'gramos' || x === 'gramo') return 'g';
-  if (x === 'lt' || x === 'l' || x === 'lts' || x === 'litros' || x === 'litro') return 'lt';
-  if (x === 'ml' || x === 'mililitros') return 'ml';
-  if (x === 'oz' || x === 'onza' || x === 'onzas') return 'oz';
-  if (
-    x === 'unid.' ||
-    x === 'unid' ||
-    x === 'u' ||
-    x === 'unidades' ||
-    x === 'unidad' ||
-    // Envases discretos: el ERP los ofrece en Compras como "unidad" funcional.
-    // Para costear bebidas en ml/oz se usa contenido_ml.
-    x === 'botella' ||
-    x === 'botellas' ||
-    x === 'lata' ||
-    x === 'latas' ||
-    x === 'paquete' ||
-    x === 'paquetes' ||
-    x === 'caja' ||
-    x === 'cajas' ||
-    x === 'bolsa' ||
-    x === 'bolsas'
-  )
-    return 'unid';
-  if (x === 'cda' || x === 'cdta') return x;
-  return x;
-}
-
-// 1 oz redondeada a 30 ml para simplificar costeo de barra (estándar interno
-// Rodziny). Si más adelante queremos el valor exacto (29.5735) cambiarlo acá.
-const ML_POR_OZ = 30;
-
-// factor de unidad → unidad base del grupo
-// peso: base g; volumen: base ml; unidad: base unid
-function aBase(
-  cantidad: number,
-  unidad: string,
-): { cantidad: number; grupo: 'peso' | 'vol' | 'unid' | null } {
-  const u = normalizarUnidad(unidad);
-  if (u === 'kg') return { cantidad: cantidad * 1000, grupo: 'peso' };
-  if (u === 'g') return { cantidad, grupo: 'peso' };
-  if (u === 'lt') return { cantidad: cantidad * 1000, grupo: 'vol' };
-  if (u === 'ml') return { cantidad, grupo: 'vol' };
-  if (u === 'oz') return { cantidad: cantidad * ML_POR_OZ, grupo: 'vol' };
-  if (u === 'unid') return { cantidad, grupo: 'unid' };
-  return { cantidad, grupo: null };
 }
 
 function normalizarNombre(n: string): string {

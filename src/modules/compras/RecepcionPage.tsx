@@ -5,27 +5,30 @@ import { supabaseAnon as supabase } from '@/lib/supabaseAnon';
 import { comprimirImagen } from '@/lib/comprimirImagen';
 import { cn } from '@/lib/utils';
 import { normalizarDecimal, parseDecimal, formatNum, equivalenteKgGramos } from '@/lib/numero';
+import { normalizarUnidad, esContinua } from '@/lib/unidades';
 
 // Umbrales de sanity por unidad. Calibrados con percentiles de los últimos 60d
 // de movimientos_stock (entradas): kg p95=71, unid p95=400, L p95=72. El
 // "confirma" cubre compras grandes legítimas (harina, papa, etc); el "bloquea"
 // frena cargas claramente erróneas por confusión punto/coma (ej. tipear
 // "25.000" en lugar de "25,000").
+//
+// Las claves son las CANÓNICAS de @/lib/unidades. Antes había seis entradas para
+// tres unidades ("L"/"l"/"lt", "unid"/"unid."/"unidad") porque el vocabulario no
+// era único: cada forma de escribir la misma unidad necesitaba su propia fila, y
+// la que faltara caía al umbral de "unid" — el más permisivo, o sea justo el que
+// no frena nada.
 const UMBRALES_RECEPCION: Record<string, { confirma: number; bloquea: number }> = {
   kg: { confirma: 500, bloquea: 5000 },
-  L: { confirma: 200, bloquea: 2000 },
-  l: { confirma: 200, bloquea: 2000 },
   lt: { confirma: 200, bloquea: 2000 },
   unid: { confirma: 2000, bloquea: 20000 },
-  'unid.': { confirma: 2000, bloquea: 20000 },
-  unidad: { confirma: 2000, bloquea: 20000 },
 };
 
 function evaluarCantidadRecepcion(
   cant: number,
   unidad: string,
 ): 'ok' | 'confirma' | 'bloquea' {
-  const u = UMBRALES_RECEPCION[unidad] ?? UMBRALES_RECEPCION.unid;
+  const u = UMBRALES_RECEPCION[normalizarUnidad(unidad)] ?? UMBRALES_RECEPCION.unid;
   if (cant >= u.bloquea) return 'bloquea';
   if (cant >= u.confirma) return 'confirma';
   return 'ok';
@@ -392,7 +395,7 @@ function RecepcionPageInner() {
                 const valor =
                   p.costo_unitario != null ? cantPrev * p.costo_unitario : null;
                 const alarma = valor != null && valor >= 500000;
-                const esPeso = ['kg', 'L', 'l', 'lt'].includes(p.unidad);
+                const esPeso = esContinua(p.unidad);
                 const lectura = esPeso ? equivalenteKgGramos(cantPrev) : null;
                 return (
                   <div
