@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { mensajeErrorAmigable } from '@/lib/erroresSupabase';
 import { invalidarStockCocina } from './lib/invalidarStock';
+import { ventasPorDias, ticketsPorDiaSemana, type VentasCocina } from './lib/ventasCocina';
 import {
   SELECT_STOCK_PASTAS,
   vendibleHoy,
@@ -706,18 +707,12 @@ interface StockPorReceta {
   recetaId: string | null;
 }
 
-interface FudoProductoRanking {
-  nombre: string;
-  cantidad: number;
-  facturacion: number;
-  categoria: string;
-}
-
-interface FudoData {
-  dias: number;
-  ranking: FudoProductoRanking[];
-  porDiaSemana: Record<number, { tickets: number; total: number }>;
-  porHora: Record<number, { tickets: number; total: number }>;
+// Antes venía de la API de Fudo en vivo y traía además `facturacion`, `categoria` y
+// `porHora`, que no usaba nadie. Ahora sale de nuestra base (ver lib/ventasCocina).
+// De lo que traía Fudo sobrevive `porDiaSemana`, porque de ahí sale el factor
+// "mañana se vende más o menos que el promedio" del plan de producción.
+interface FudoData extends VentasCocina {
+  porDiaSemana: Record<number, { tickets: number }>;
 }
 
 interface ProductoDB {
@@ -1039,16 +1034,15 @@ export function DashboardTab() {
     },
   });
 
-  // ── Query: ventas promedio de Fudo (últimos 14 días) ──
+  // ── Query: ventas promedio de los últimos 14 días ──
   const { data: fudoData, isLoading: fudoLoading } = useQuery({
-    queryKey: ['fudo-consumo', local, hace14, hoy],
-    queryFn: async () => {
-      const { data, error } = await supabase.functions.invoke('fudo-productos', {
-        body: { local, fechaDesde: hace14, fechaHasta: hoy },
-      });
-      if (error) throw new Error(error.message);
-      if (!data?.ok) throw new Error(data?.error ?? 'Error');
-      return data.data as FudoData;
+    queryKey: ['cocina-consumo-14d', local, hace14, hoy],
+    queryFn: async (): Promise<FudoData> => {
+      const [ventas, porDiaSemana] = await Promise.all([
+        ventasPorDias(supabase, local, hace14, hoy),
+        ticketsPorDiaSemana(supabase, local, hace14, hoy),
+      ]);
+      return { ...ventas, porDiaSemana };
     },
     staleTime: 10 * 60 * 1000,
   });
@@ -1160,15 +1154,8 @@ export function DashboardTab() {
   // ── Query: ventas de la VENTANA reciente (configurable: 1/3/7 días) ──
   // Termina ayer (no incluye hoy porque el día está incompleto).
   const { data: fudoReciente } = useQuery({
-    queryKey: ['fudo-consumo-reciente', local, ventanaDesde, ventanaHasta],
-    queryFn: async () => {
-      const { data, error } = await supabase.functions.invoke('fudo-productos', {
-        body: { local, fechaDesde: ventanaDesde, fechaHasta: ventanaHasta },
-      });
-      if (error) return null;
-      if (!data?.ok) return null;
-      return data.data as FudoData;
-    },
+    queryKey: ['cocina-consumo-reciente', local, ventanaDesde, ventanaHasta],
+    queryFn: async () => ventasPorDias(supabase, local, ventanaDesde, ventanaHasta),
     staleTime: 30 * 60 * 1000,
   });
 

@@ -5,6 +5,7 @@ import { mensajeErrorAmigable } from '@/lib/erroresSupabase';
 import { cn } from '@/lib/utils';
 import { hoyAR } from '@/lib/fechaAR';
 import { normNombre } from '../DashboardTab';
+import { ventasPorDias } from '../lib/ventasCocina';
 import { SELECT_STOCK_PASTAS, paraPlanificar, type StockPastaRow } from '../lib/stockPastas';
 import {
   calcularCobertura,
@@ -341,18 +342,10 @@ export function PlanProduccionEditor({
   );
   const hoyStr = useMemo(() => new Date().toISOString().split('T')[0], []);
 
-  // Ventas Fudo últimos 14 días (promedio diario por producto)
-  type FudoRanking = { nombre: string; cantidad: number };
-  type FudoResp = { ranking: FudoRanking[]; dias: number };
+  // Ventas de los últimos 14 días (promedio diario por producto), de nuestra base.
   const { data: fudoData } = useQuery({
-    queryKey: ['cocina-fudo-demanda-plan', local, hace14, hoyStr],
-    queryFn: async () => {
-      const { data, error } = await supabase.functions.invoke('fudo-productos', {
-        body: { local, fechaDesde: hace14, fechaHasta: hoyStr },
-      });
-      if (error || !data?.ok) return null;
-      return data.data as FudoResp;
-    },
+    queryKey: ['cocina-demanda-plan', local, hace14, hoyStr],
+    queryFn: async () => ventasPorDias(supabase, local, hace14, hoyStr),
     staleTime: 10 * 60 * 1000,
   });
 

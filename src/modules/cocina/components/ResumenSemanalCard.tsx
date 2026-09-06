@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
 import { calcularCobertura, type ResultadoCob } from '../lib/cobertura';
+import { ventasPorDias } from '../lib/ventasCocina';
 import { SELECT_STOCK_PASTAS, paraPlanificar, type StockPastaRow } from '../lib/stockPastas';
 
 // El Resumen semanal estima la COBERTURA de cada producto esta semana:
@@ -42,11 +43,6 @@ interface ItemPlan {
   // Si el chef eligió a qué vendible imputar este relleno (ej: pure → ñoquis
   // rellenos o simples). NULL = legacy (matchea por receta_id).
   destino_producto_id: string | null;
-}
-
-interface FudoResp {
-  ranking: { nombre: string; cantidad: number }[];
-  dias: number;
 }
 
 type Estado = 'cubre' | 'ajustado' | 'corto' | 'sobra' | 'sin_demanda';
@@ -276,22 +272,16 @@ export function ResumenSemanalCard({
     data: fudoData,
     isError: fudoError,
   } = useQuery({
-    queryKey: ['resumen-semanal-fudo', local, hace14, hoyStr],
-    queryFn: async () => {
-      const { data, error } = await supabase.functions.invoke('fudo-productos', {
-        body: { local, fechaDesde: hace14, fechaHasta: hoyStr },
-      });
-      // Lanzar (en vez de devolver null) para que React Query REINTENTE y no
-      // cachee un "0 ventas" falso cuando Fudo tiene un 500 transitorio.
-      if (error || !data?.ok)
-        throw new Error(error?.message ?? data?.error ?? 'Fudo no disponible');
-      return data.data as FudoResp;
-    },
+    queryKey: ['resumen-semanal-ventas', local, hace14, hoyStr],
+    // La RPC lanza si falla (no devuelve null), así React Query REINTENTA en vez de
+    // cachear un "0 ventas" falso ante un error transitorio. Eso importa: un cero
+    // silencioso acá se lee como "no se vendió nada" y desarma el plan.
+    queryFn: async () => ventasPorDias(supabase, local, hace14, hoyStr),
     staleTime: 10 * 60 * 1000,
     retry: 2,
     retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 8000),
-    // Mantener la última demanda buena mientras reintenta, así un blip de Fudo
-    // no deja todo en "s/ vta.".
+    // Mantener la última demanda buena mientras reintenta, así un blip no deja
+    // todo en "s/ vta.".
     placeholderData: (prev) => prev,
   });
 

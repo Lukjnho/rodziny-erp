@@ -11,6 +11,7 @@ import { supabaseAnon as supabase } from '@/lib/supabaseAnon';
 import { cn } from '@/lib/utils';
 import { mensajeErrorAmigable } from '@/lib/erroresSupabase';
 import { invalidarStockCocina } from './lib/invalidarStock';
+import { ventasDesde, type VentasCocina, type RankingVenta } from './lib/ventasCocina';
 import { normalizarDecimal, parseDecimal, equivalenteKgGramos } from '@/lib/numero';
 import { PRODUCTOS_COCINA, normNombre } from './DashboardTab';
 
@@ -64,16 +65,10 @@ interface Producto {
   fudo_nombres?: string[] | null;
 }
 
-interface FudoRankingItem {
-  nombre: string;
-  cantidad: number;
-  facturacion: number;
-  categoria: string;
-}
-
-interface FudoData {
-  ranking: FudoRankingItem[];
-}
+// Antes venía de la API de Fudo en vivo. Ahora sale de nuestra base, por una RPC
+// que devuelve SÓLO nombre y cantidad — sin un peso — justamente para que esta
+// pantalla, que es pública y entra como `anon`, pueda leerla sin exponer plata.
+type FudoData = VentasCocina;
 
 // Mapa nombre normalizado → config con fudoNombres del DashboardTab (legacy hardcodeado).
 const PRODUCTO_POR_NOMBRE = new Map(
@@ -84,9 +79,12 @@ function normFudoNombre(s: string) {
   return s.toLowerCase().trim().replace(/\s+/g, ' ');
 }
 
-// Resuelve cuántas ventas Fudo le corresponden a un producto del catálogo:
+// Resuelve cuántas ventas le corresponden a un producto del catálogo:
 // prioridad fudo_nombres en DB > mapa hardcodeado > nombre literal.
-function ventasFudoDelProducto(producto: Producto, ranking: FudoRankingItem[] | undefined) {
+// El cruce sigue siendo POR NOMBRE porque el nombre que guarda `ventas_items` es el
+// mismo que devolvía la API de Fudo (verificado: 49 de 49 productos coinciden en
+// Vedia). Cuando el POS sea el único origen, esto se puede pasar a `receta_id`.
+function ventasFudoDelProducto(producto: Producto, ranking: RankingVenta[] | undefined) {
   if (!ranking || ranking.length === 0) return 0;
   let nombres: string[];
   if (producto.fudo_nombres && producto.fudo_nombres.length > 0) {
@@ -439,26 +437,20 @@ function CierrePastas({ local }: { local: Local }) {
   }, [ultimosCierres, fecha]);
 
   const { data: fudoPorVentana } = useQuery({
-    queryKey: ['mostrador-fudo-por-ventana', local, ventanas],
+    queryKey: ['mostrador-ventas-por-ventana', local, ventanas],
     queryFn: async () => {
       const ahoraISO = new Date().toISOString();
       const m = new Map<string, FudoData | null>();
       for (const desdeISO of ventanas) {
-        const { data, error } = await supabase.functions.invoke('fudo-productos', {
-          body: {
-            local,
-            fechaDesde: desdeISO.slice(0, 10),
-            fechaHasta: ahoraISO.slice(0, 10),
-            desdeISO,
-            hastaISO: ahoraISO,
-          },
-        });
-        m.set(desdeISO, !error && data?.ok ? (data.data as FudoData) : null);
+        m.set(desdeISO, await ventasDesde(supabase, local, desdeISO, ahoraISO));
       }
       return m;
     },
-    staleTime: 60_000, // refrescar máximo cada minuto (Fudo es prácticamente real-time)
-    refetchInterval: 2 * 60_000,
+    // Las ventas entran a nuestra base cada 15 minutos (cron de la mig 180), así que
+    // pedirlas más seguido no trae nada nuevo. Antes esto pegaba contra la API de
+    // Fudo, que sí era casi en vivo.
+    staleTime: 5 * 60_000,
+    refetchInterval: 5 * 60_000,
   });
 
   // Cambiar de turno (o de día, o de local) empieza un conteo NUEVO: lo que se

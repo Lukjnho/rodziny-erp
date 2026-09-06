@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { mensajeErrorAmigable } from '@/lib/erroresSupabase';
 import { invalidarStockCocina } from './lib/invalidarStock';
+import { ventasPorDias, type VentasCocina, type RankingVenta } from './lib/ventasCocina';
 import { KPICard } from '@/components/ui/KPICard';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
@@ -56,16 +57,9 @@ interface FilaVistaMostrador {
 // Los tipos Traspaso / Merma / AjusteStock / CierreDia vivian aca para armar el
 // mostrador a mano. Ese calculo ahora lo hace la base (v_cocina_stock_mostrador),
 // asi que la pantalla no necesita conocer las tablas crudas.
-interface FudoRankingItem {
-  nombre: string;
-  cantidad: number;
-  facturacion: number;
-  categoria: string;
-}
-interface FudoData {
-  dias: number;
-  ranking: FudoRankingItem[];
-}
+// Antes esto venía de la API de Fudo en vivo y traía además `facturacion` y
+// `categoria`, que no usaba nadie. Ahora sale de nuestra base (ver lib/ventasCocina).
+type FudoData = VentasCocina;
 
 // Cocina es una herramienta operativa por local: nunca vista combinada.
 // El admin elige Vedia o Saavedra (default Vedia); al cocinero con
@@ -199,7 +193,7 @@ function normFudoNombre(s: string) {
   return s.toLowerCase().trim().replace(/\s+/g, ' ');
 }
 
-function ventasFudoDelProducto(producto: Producto, ranking: FudoRankingItem[] | undefined) {
+function ventasFudoDelProducto(producto: Producto, ranking: RankingVenta[] | undefined) {
   if (!ranking || ranking.length === 0) return 0;
   // Prioridad: fudo_nombres del producto en DB (configurable desde el editor)
   // > mapa hardcodeado PRODUCTOS_COCINA (legacy) > nombre del producto literal.
@@ -457,14 +451,11 @@ export function StockTab() {
   // (días de cobertura) y la columna "Demanda 7d". Ventana independiente de las
   // de "hoy"/"desde cierre" (que sirven para descontar mostrador).
   const { data: fudo7d } = useQuery({
-    queryKey: ['cocina-stock-fudo-7d', localesScope, hace7, hoy],
+    queryKey: ['cocina-stock-ventas-7d', localesScope, hace7, hoy],
     queryFn: async () => {
       const res: Record<string, FudoData | null> = {};
       for (const loc of localesScope) {
-        const { data, error } = await supabase.functions.invoke('fudo-productos', {
-          body: { local: loc, fechaDesde: hace7, fechaHasta: hoy },
-        });
-        res[loc] = !error && data?.ok ? (data.data as FudoData) : null;
+        res[loc] = await ventasPorDias(supabase, loc, hace7, hoy);
       }
       return res;
     },
@@ -1295,13 +1286,10 @@ function CatalogoStock({
     return d.toISOString().slice(0, 10);
   }, [hoyDem]);
   const { data: fudo7d } = useQuery({
-    queryKey: ['cocina-stock-fudo-7d', [local], hace7, hoyDem],
+    queryKey: ['cocina-stock-ventas-7d', [local], hace7, hoyDem],
     queryFn: async () => {
       const res: Record<string, FudoData | null> = {};
-      const { data, error } = await supabase.functions.invoke('fudo-productos', {
-        body: { local, fechaDesde: hace7, fechaHasta: hoyDem },
-      });
-      res[local] = !error && data?.ok ? (data.data as FudoData) : null;
+      res[local] = await ventasPorDias(supabase, local, hace7, hoyDem);
       return res;
     },
     staleTime: 10 * 60 * 1000,
