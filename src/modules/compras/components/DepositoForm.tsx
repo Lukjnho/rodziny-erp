@@ -2,6 +2,8 @@ import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabaseAnon as supabase } from '@/lib/supabaseAnon';
 import { cn } from '@/lib/utils';
+import { normalizarDecimal, parseDecimal, equivalenteKgGramos } from '@/lib/numero';
+import { normalizarUnidad } from '@/lib/unidades';
 
 interface Producto {
   id: string;
@@ -9,6 +11,31 @@ interface Producto {
   unidad: string;
   categoria: string;
   stock_actual: number;
+}
+
+// Umbrales de sanity, los mismos que ya tenía /recepcion y que a esta pantalla
+// NUNCA se le pusieron. Calibrados contra las 5.145 salidas de producción: el
+// escalón de "confirmá" molesta al 0,3-1,5% de las cargas, y lo que agarra ahí
+// son 445 kg de orégano, 500 kg de levadura fresca, 680 kg de manteca. El de
+// "bloquea" frenó 23 cargas en cinco meses y las 23 son imposibles (74.000 kg de
+// cuadril, 9.415 de jamón). Cero falsos positivos.
+//
+// Las unidades van con tope más alto a propósito: 1.000 sorbetes o 1.000 bolsas
+// de arranque SON cargas reales de todos los meses.
+//
+// El tope duro está TAMBIÉN en la base (mig 182, registrar_salida_deposito). Este
+// de acá es para avisar antes y con un mensaje mejor, no para ser la única puerta.
+const UMBRALES_SALIDA: Record<string, { confirma: number; bloquea: number }> = {
+  kg: { confirma: 100, bloquea: 1000 },
+  lt: { confirma: 100, bloquea: 1000 },
+  unid: { confirma: 500, bloquea: 5000 },
+};
+
+function evaluarCantidad(cant: number, unidad: string): 'ok' | 'confirma' | 'bloquea' {
+  const u = UMBRALES_SALIDA[normalizarUnidad(unidad)] ?? UMBRALES_SALIDA.unid;
+  if (cant >= u.bloquea) return 'bloquea';
+  if (cant >= u.confirma) return 'confirma';
+  return 'ok';
 }
 
 export function DepositoForm({ local }: { local: 'vedia' | 'saavedra' }) {
@@ -69,8 +96,28 @@ export function DepositoForm({ local }: { local: 'vedia' | 'saavedra' }) {
   const registrarMut = useMutation({
     mutationFn: async () => {
       if (!seleccionado || !cantidad) throw new Error('Faltan datos');
-      const cant = parseFloat(cantidad.replace(',', '.'));
+      // parseDecimal, no parseFloat a mano: lee el formato argentino que escribe
+      // normalizarDecimal en el input (coma decimal), igual que /recepcion.
+      const cant = parseDecimal(cantidad);
       if (!cant || cant <= 0) throw new Error('Cantidad inválida');
+
+      const nivel = evaluarCantidad(cant, seleccionado.unidad);
+      if (nivel === 'bloquea') {
+        throw new Error(
+          `${cant} ${seleccionado.unidad} de ${seleccionado.nombre} es una cantidad imposible. ` +
+            `Fijate si sobra un cero o si pusiste un punto donde iba una coma.`,
+        );
+      }
+      if (nivel === 'confirma') {
+        const lectura =
+          normalizarUnidad(seleccionado.unidad) === 'kg' ? equivalenteKgGramos(cant) : null;
+        const ok = window.confirm(
+          `¿Seguro que salieron ${cant} ${seleccionado.unidad} de ${seleccionado.nombre}?` +
+            (lectura ? `\n\nEso es ${lectura}.` : '') +
+            `\n\nEs mucho más de lo habitual. Si te equivocaste, cancelá y corregilo.`,
+        );
+        if (!ok) return;
+      }
 
       // Resta de stock + movimiento de salida en una sola transacción atómica.
       // Vía RPC SECURITY DEFINER (mig 106) porque el QR /deposito corre como anon
@@ -141,16 +188,45 @@ export function DepositoForm({ local }: { local: 'vedia' | 'saavedra' }) {
               <label className="mb-1 block text-sm font-medium text-gray-700">
                 Cantidad ({seleccionado.unidad})
               </label>
+              {/* type="text" + normalizarDecimal, no type="number": cualquier "."
+                  pasa a "," al instante, así el operario ve siempre formato
+                  argentino y desaparece la ambigüedad punto-decimal / punto-de-miles.
+                  Es lo mismo que hace /recepcion desde hace meses; acá faltaba, y
+                  por eso entraron 4.300 kg de queso sin que nada chillara. */}
               <input
-                type="number"
+                type="text"
                 inputMode="decimal"
-                step="any"
                 value={cantidad}
-                onChange={(e) => setCantidad(e.target.value)}
+                onChange={(e) => setCantidad(normalizarDecimal(e.target.value))}
                 placeholder="0"
                 className="w-full rounded-lg border-2 border-gray-300 px-4 py-3 text-lg font-medium focus:border-rodziny-500 focus:outline-none"
                 autoFocus
               />
+              {/* La lectura humana: "= 4 toneladas 300 kg" hace obvio el disparate
+                  de un vistazo, sin tener que contar ceros. */}
+              {(() => {
+                const cant = parseDecimal(cantidad);
+                if (!cant || cant <= 0) return null;
+                // Sólo para kg: la lectura habla en kilos y gramos, así que en
+                // litros o unidades diría cualquier cosa.
+                const lectura =
+                  normalizarUnidad(seleccionado.unidad) === 'kg'
+                    ? equivalenteKgGramos(cant)
+                    : null;
+                const nivel = evaluarCantidad(cant, seleccionado.unidad);
+                if (!lectura && nivel === 'ok') return null;
+                return (
+                  <p
+                    className={cn(
+                      'mt-1 text-[11px] tabular-nums',
+                      nivel === 'ok' ? 'text-gray-500' : 'font-semibold text-red-700',
+                    )}
+                  >
+                    {lectura ? `= ${lectura}` : `${cant} ${seleccionado.unidad}`}
+                    {nivel !== 'ok' && ' — es muchísimo, revisalo'}
+                  </p>
+                );
+              })()}
             </div>
 
             {/* Motivo */}
