@@ -100,13 +100,20 @@ function leerModoBienalPersistido(): BienalCfg | null {
   }
 }
 
+/**
+ * Lo que esta pantalla sabe de una persona. Es EXACTAMENTE lo que devuelven
+ * `fichaje_login` y `fichaje_sesion` (migración 185): ni el DNI, ni el PIN, ni
+ * un solo dato de plata.
+ *
+ * ⚠️ Antes acá se hacía `select('*')` sobre `empleados` con la clave pública, y
+ * eso mandaba al navegador el sueldo, el CBU y el PIN de todo el personal. El
+ * PIN ahora se compara adentro de la base y no sale nunca.
+ */
 interface Empleado {
   id: string;
   nombre: string;
   apellido: string;
-  dni: string;
   local: 'vedia' | 'saavedra';
-  pin_fichaje: string | null;
   horario_tipo: 'fijo' | 'flexible';
   horas_semanales_requeridas: number | null;
 }
@@ -248,10 +255,8 @@ export function FicharPage() {
       return;
     }
     supabase
-      .from('empleados')
-      .select('*')
-      .eq('id', id)
-      .single()
+      .rpc('fichaje_sesion', { p_id: id })
+      .maybeSingle()
       .then(({ data }) => {
         if (data) setEmpleado(data as Empleado);
         setCargando(false);
@@ -341,23 +346,18 @@ function Login({
       return;
     }
     setLoading(true);
+    // El PIN se compara ADENTRO de la base (migración 185). Antes se traía la
+    // ficha entera al navegador y se comparaba acá, lo que obligaba a que la
+    // tabla de empleados fuera legible con la clave pública: sueldos, DNI, CBU
+    // y los PIN de todos quedaban a la vista de cualquiera.
     const { data, error: dbError } = await supabase
-      .from('empleados')
-      .select('*')
-      .eq('dni', dni.trim())
-      .eq('activo', true)
+      .rpc('fichaje_login', { p_dni: dni.trim(), p_pin: pin.trim() })
       .maybeSingle();
     setLoading(false);
     if (dbError || !data) {
-      setError('DNI no encontrado');
-      return;
-    }
-    if (!data.pin_fichaje) {
-      setError('Tu PIN no está configurado. Avisá a RRHH');
-      return;
-    }
-    if (data.pin_fichaje !== pin.trim()) {
-      setError('PIN incorrecto');
+      // A propósito no se distingue "ese DNI no existe" de "el PIN está mal":
+      // si se distinguiera, cualquiera podría probar DNIs para ver quién trabaja acá.
+      setError('DNI o PIN incorrecto. Si nunca te dieron un PIN, avisale a RRHH');
       return;
     }
     onLogin(data as Empleado);
@@ -583,9 +583,10 @@ function Inicio({
         const { count: cronoTotal } = await supabase
           .from('cronograma')
           .select('*', { count: 'exact', head: true });
-        // Test: count empleados
+        // Test: count empleados (por la vista pública: la tabla ya no es legible
+        // con la clave pública — migración 186)
         const { count: empTotal } = await supabase
-          .from('empleados')
+          .from('v_empleados_publicos')
           .select('*', { count: 'exact', head: true });
         // Fetch directo a Supabase REST bypasseando el cliente, con cache-buster
         let directCount = -1;
@@ -619,7 +620,6 @@ function Inicio({
             {
               empleado_id: empleado.id,
               empleado_nombre: `${empleado.nombre} ${empleado.apellido}`,
-              dni: empleado.dni,
               hoy_device: hoy,
               ahora_iso: ahoraDev.toISOString(),
               tz,

@@ -23,8 +23,10 @@ export function ResponsableSelect({ local, value, onChange }: Props) {
   const { data: empleados, isLoading } = useQuery({
     queryKey: ['cocina-qr-empleados-produccion', local],
     queryFn: async () => {
+      // Vista pública: nombre y puesto, nada de plata. La tabla `empleados` ya
+      // no se puede leer con la clave pública (migración 186).
       const { data, error } = await supabase
-        .from('empleados')
+        .from('v_empleados_publicos')
         .select('id, nombre, apellido')
         .eq('local', local)
         .eq('activo', true)
