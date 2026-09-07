@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
-import { ORIGEN_VENTAS_OFICIAL } from '@/lib/origenVentas';
+import { VISTA_TICKETS_OFICIAL } from '@/lib/origenVentas';
 
 export type LocalVentas = 'vedia' | 'saavedra' | 'consolidado';
 
@@ -71,10 +71,10 @@ async function traerTickets(local: LocalVentas, periodo: string): Promise<Ticket
   // paginado igual que el resto del ERP (Supabase corta en 1000 filas)
   while (true) {
     let q = supabase
-      .from('ventas_tickets')
+      // la lista ya trae solo la venta oficial de cada local (mig 188)
+      .from(VISTA_TICKETS_OFICIAL)
       .select('local, fecha, hora, total_bruto, medio_pago')
       .eq('periodo', periodo)
-      .eq('origen', ORIGEN_VENTAS_OFICIAL) // no mezclar con las ventas del POS propio
       .neq('estado', 'Cancelada')
       .neq('estado', 'Eliminada')
       .or('es_dividendo.is.null,es_dividendo.eq.false') // excluye dividendos de Lucas

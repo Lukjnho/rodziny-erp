@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
-import { ORIGEN_VENTAS_OFICIAL } from '@/lib/origenVentas';
+import { ORIGEN_FUDO } from '@/lib/origenVentas';
 
 // Nombre Fudo (ventas_items.nombre) agregado por últimos 2 meses con info de
 // vinculación. Si vinculadoA != null, ese nombre ya está mapeado a una receta
@@ -42,7 +42,9 @@ export function useFudoHuerfanos(local: 'vedia' | 'saavedra' | null) {
       const { data, error } = await supabase
         .from('ventas_items')
         .select('nombre, cantidad, total')
-        .eq('origen', ORIGEN_VENTAS_OFICIAL) // esta pantalla es sobre nombres de Fudo
+        // ESTA es la única que sigue con 'fudo' escrito a mano, a propósito: la
+        // pantalla es SOBRE los nombres que manda Fudo, no sobre la venta oficial.
+        .eq('origen', ORIGEN_FUDO)
         .in('periodo', periodos)
         .eq('local', local!);
       if (error) throw error;

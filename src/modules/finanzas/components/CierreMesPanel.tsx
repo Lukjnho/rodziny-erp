@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
-import { ORIGEN_VENTAS_OFICIAL } from '@/lib/origenVentas';
+import { VISTA_TICKETS_OFICIAL } from '@/lib/origenVentas';
 import { useAuth } from '@/lib/auth';
 import { formatARS, formatFecha, cn } from '@/lib/utils';
 
@@ -108,9 +108,11 @@ export function CierreMesPanel({ onNavigateToTab }: Props) {
     queryKey: ['cmes_ventas_fudo', periodo],
     queryFn: async () => {
       const { data } = await supabase
-        .from('ventas_tickets')
+        // la lista ya trae solo la venta oficial de cada local (mig 188). Acá
+        // importa de verdad: este panel es SIEMPRE consolidado, y en el corte de
+        // Fudo cada casa va a tener su propia fuente oficial.
+        .from(VISTA_TICKETS_OFICIAL)
         .select('local, total_bruto, iva, es_fiscal')
-        .eq('origen', ORIGEN_VENTAS_OFICIAL) // no mezclar con las ventas del POS propio
         .eq('periodo', periodo);
       return data ?? [];
     },

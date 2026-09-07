@@ -9,14 +9,28 @@
  * Si los reportes leyeran todo, cada venta se contaría dos veces y se romperían
  * Ventas, EdR, Flujo de Caja e Ingeniería de Menú a la vez.
  *
- * Por eso TODO reporte lee solo la fuente oficial. Las ventas de prueba de la
- * caja quedan guardadas y visibles desde el propio POS, pero no ensucian ningún
- * número del negocio.
+ * Hasta la migración 188 esto era una constante ('fudo') escrita acá y repetida
+ * como `.eq('origen', ...)` en ocho pantallas. **Ya no.** El corte de Fudo pasa
+ * local por local (Saavedra primero, Vedia después) y cuatro de esas consultas
+ * miran las DOS casas en la misma query, así que una constante no podía
+ * contestarlas.
  *
- * CUÁNDO SE CAMBIA: cuando un local deje de usar Fudo y el POS propio pase a ser
- * la fuente de verdad. Ahí esto pasa a 'pos'. Si en algún momento hay que hacerlo
- * local por local (Vedia en POS y Saavedra todavía en Fudo), esto tiene que
- * volverse una función de `local` — y en ese caso hay que agregar el valor a las
- * queryKey de React Query, porque si no la caché de un local le contesta al otro.
+ * AHORA la regla vive en la base, en `ventas_origen_oficial` (un renglón por
+ * local), y los reportes leen estas dos listas, que ya vienen filtradas fila por
+ * fila. El día del corte en un local es un `update` de un renglón: sin deploy y
+ * reversible en diez segundos.
+ *
+ *     update public.ventas_origen_oficial set origen = 'pos' where local = 'saavedra';
+ *
+ * ⚠️ Después de ese update hay que RECARGAR las pantallas abiertas: React Query
+ * se guarda la respuesta anterior un rato y sigue mostrando los números viejos.
  */
-export const ORIGEN_VENTAS_OFICIAL = 'fudo';
+export const VISTA_TICKETS_OFICIAL = 'v_ventas_tickets_oficial';
+export const VISTA_ITEMS_OFICIAL = 'v_ventas_items_oficial';
+
+/**
+ * El literal 'fudo', para lo poco que de verdad habla DE FUDO y no de "la venta
+ * oficial" — hoy, solo la pantalla de huérfanos de Fudo en Productos. No usarlo
+ * en un reporte: para eso están las dos listas de arriba.
+ */
+export const ORIGEN_FUDO = 'fudo';

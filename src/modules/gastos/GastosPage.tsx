@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
-import { ORIGEN_VENTAS_OFICIAL } from '@/lib/origenVentas';
+import { VISTA_TICKETS_OFICIAL } from '@/lib/origenVentas';
 import { PageContainer } from '@/components/layout/PageContainer';
 import { LocalSelector } from '@/components/ui/LocalSelector';
 import { KPICard } from '@/components/ui/KPICard';
@@ -139,11 +139,11 @@ export function GastosPage({ embedded = false }: { embedded?: boolean } = {}) {
       let from = 0;
       while (true) {
         let q = supabase
-          .from('ventas_tickets')
+          // la lista ya trae solo la venta oficial de cada local (mig 188)
+          .from(VISTA_TICKETS_OFICIAL)
           .select('total_bruto')
           .gte('fecha', desde)
           .lte('fecha', hasta)
-          .eq('origen', ORIGEN_VENTAS_OFICIAL) // no mezclar con las ventas del POS propio
           .neq('estado', 'Cancelada')
           .neq('estado', 'Eliminada')
           .or('es_dividendo.is.null,es_dividendo.eq.false')

@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
-import { ORIGEN_VENTAS_OFICIAL } from '@/lib/origenVentas';
+import { VISTA_ITEMS_OFICIAL } from '@/lib/origenVentas';
 import { useAuth } from '@/lib/auth';
 import { formatARS, cn } from '@/lib/utils';
 import {
@@ -80,10 +80,10 @@ export function MenuEngineeringTab() {
     enabled: periodosSel.length > 0,
     queryFn: async () => {
       const { data, error } = await supabase
-        .from('ventas_items')
+        // la lista ya trae solo la venta oficial de cada local (mig 188)
+        .from(VISTA_ITEMS_OFICIAL)
         .select('categoria')
         .eq('local', local)
-        .eq('origen', ORIGEN_VENTAS_OFICIAL) // no mezclar con las ventas del POS propio
         .in('periodo', periodosSel)
         .not('categoria', 'is', null);
       if (error) throw error;
