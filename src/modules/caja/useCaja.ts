@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { avisarCambioDeTurno, escucharCambioDeTurno } from '@/lib/avisoCaja';
+import { mensajeErrorAmigable } from '@/lib/erroresSupabase';
 
 export type LocalCaja = 'vedia' | 'saavedra';
 
@@ -754,44 +755,69 @@ export interface PagoVenta {
   monto: number;
 }
 
-/**
- * Deshace un ticket que quedó a medio guardar porque falló el paso siguiente
- * (los renglones o los cobros). Devuelve el error que hay que tirar.
- *
- * ⚠️ El borrado se CHEQUEA. La única regla que le permite borrar al cajero
- * (`ventas_tickets_caja_deshacer`) exige que el ticket no tenga cobros, no tenga
- * comprobante y que el turno siga abierto. Si alguna no se cumple, la base
- * devuelve cero filas SIN ERROR y el ticket queda colgado del turno: el tablero
- * del ERP suma el total de TODOS los tickets del turno, así que muestra más
- * plata cobrada de la que se cobró. Antes esto pasaba en silencio.
- */
-async function deshacerTicket(ticketId: string, causa: { message: string }): Promise<unknown> {
-  const { data, error } = await supabase
-    .from('ventas_tickets')
-    .delete()
-    .eq('id', ticketId)
-    .select('id');
-  if (error || !data || data.length === 0) {
-    return new Error(
-      `${causa.message}\n\nAdemás quedó un ticket a medio guardar (${ticketId}) que no se pudo ` +
-        'deshacer solo. Anotá ese número y avisá para limpiarlo: hasta que se borre, el turno va a ' +
-        'mostrar más cobrado de lo que se cobró de verdad.',
-    );
-  }
-  return causa;
+/** Lo que devuelve un cobro. */
+export interface ResultadoCobro {
+  ticketId: string;
+  /** el total que guardó la BASE, no la suma del navegador */
+  total: number;
+  /**
+   * true = la base reconoció el MISMO intento (se cortó la conexión y el cajero
+   * volvió a apretar Cobrar) y devolvió la venta que ya estaba cobrada. No se
+   * cobró de nuevo: la pantalla NO tiene que reimprimir la comanda, o cocina
+   * hace el plato dos veces.
+   */
+  yaEstaba: boolean;
 }
 
 /**
- * Guarda una venta: el ticket, sus líneas y sus pagos.
+ * De qué pasta cuelga esta salsa, en NÚMERO de renglón.
  *
- * Cada línea queda apuntando al producto REAL del catálogo (receta_id o
- * cocina_producto_id), no a un nombre suelto — que es justamente lo que el
- * modelo canónico (migración 141) vino a resolver.
+ * Busca la pasta más cercana hacia arriba, que es la que el cajero tiene a la
+ * vista cuando agrega la salsa (agregar() la inserta justo debajo de ella).
+ * Antes esto se resolvía con un mapa key → número que se quedaba con la ÚLTIMA
+ * pasta de la lista y, si no encontraba ninguna, dejaba la salsa suelta EN
+ * SILENCIO (linea_padre_id null): exactamente el problema de Fudo que este
+ * modelo vino a resolver. Ahora, si no aparece, no se cobra.
+ */
+function nroDeLaMadre(lineas: LineaVenta[], idxHija: number, padreKey: string): number {
+  for (let i = idxHija - 1; i >= 0; i--) {
+    const candidata = lineas[i];
+    if (!candidata.padreKey && candidata.item.key === padreKey) return i + 1;
+  }
+  throw new Error(
+    `"${lineas[idxHija].item.nombre}" quedó sin la pasta de la que cuelga. ` +
+      'Sacalo de la lista y volvé a cargarlo con su pasta.',
+  );
+}
+
+/**
+ * Guarda una venta: el ticket, sus renglones y sus cobros. UN SOLO VIAJE.
+ *
+ * Antes eran cuatro viajes y, si fallaba el segundo, el tercero o el cuarto,
+ * había que borrar el ticket a mano. Ese borrado devolvía CERO FILAS SIN ERROR
+ * cuando la base no lo dejaba (el turno se había cerrado en el medio, o el
+ * ticket ya tenía un cobro), y el ticket quedaba colgado del turno inflando el
+ * "cuánto lleva cobrado". Ahora lo hace todo la base en una sola transacción: si
+ * algo falla, no queda ni el ticket, ni los renglones, ni los cobros.
+ *
+ * Las CUENTAS las hace la base. Acá se manda cantidad, precio y porcentaje de
+ * descuento, y el total que se muestra es el que devolvió la base: el cartel
+ * "Cobrado $X" y la fila guardada no se pueden separar.
+ *
+ * Del cobro va sólo el medio y el monto: el nombre, la cuenta contable y si esa
+ * plata es dividendo los pone la base leyendo medios_pago.
+ *
+ * `idempotencia` la manda la PANTALLA y es de la VENTA, no de esta función: si
+ * viviera acá adentro sobreviviría a todas las ventas del turno y podría
+ * confundir la venta del cliente siguiente con la anterior.
  */
 export function useCobrarVenta() {
   const qc = useQueryClient();
+
   return useMutation({
     mutationFn: async (input: {
+      /** llave de ESTE intento de cobro (la genera Mostrador, ver CajaPage) */
+      idempotencia: string;
       local: LocalCaja;
       caja: string;
       turnoId: string;
@@ -802,135 +828,77 @@ export function useCobrarVenta() {
       convenioId: string | null;
       lineas: LineaVenta[];
       pagos: PagoVenta[];
-    }) => {
-      // `total` es lo que se COBRA: ya tiene el descuento restado. Es la columna
-      // que leen todas las pantallas viejas, así que no puede ser el bruto.
-      const importes = input.lineas.map(importesDeLinea);
-      const total = importes.reduce((s, i) => s + i.total, 0);
-      const descuentoTotal = importes.reduce((s, i) => s + i.descuento, 0);
-      const periodo = input.fecha.slice(0, 7);
-      const mediosUnicos = [...new Set(input.pagos.map((p) => p.medio.id))];
-      const unicoMedio = mediosUnicos.length === 1 ? input.pagos[0].medio : null;
+    }): Promise<ResultadoCobro> => {
+      if (input.lineas.length === 0) throw new Error('No hay nada para cobrar.');
+      if (input.pagos.length === 0) throw new Error('No se puede guardar una venta sin cobro.');
 
-      const { data: ticket, error: eTicket } = await supabase
-        .from('ventas_tickets')
-        .insert({
-          local: input.local,
-          fudo_id: null,
-          origen: 'pos',
-          cierre_caja_id: input.turnoId,
-          fecha: input.fecha,
-          hora: input.hora,
-          periodo,
-          caja: input.caja,
-          cliente: input.cliente,
-          convenio_id: input.convenioId,
-          descuento_total: descuentoTotal,
-          estado: 'Cerrada',
-          tipo_venta: 'mostrador',
-          // Con varios medios se guarda "Mixto", igual que hace el import de Fudo
-          medio_pago: unicoMedio ? unicoMedio.nombre : 'Mixto',
-          medio_pago_id: unicoMedio ? unicoMedio.id : null,
-          total_bruto: total,
-          es_fiscal: false,
-          es_dividendo: false,
-        })
-        .select('id')
-        .single();
-      if (eTicket) throw eTicket;
-      const ticketId = ticket.id as string;
-
-      const fila = (l: LineaVenta, nroLinea: number) => {
-        const { descuento, total: totalLinea } = importesDeLinea(l);
-        return {
-          ticket_id: ticketId,
-          local: input.local,
-          periodo,
-          fecha: input.fecha,
-          linea: nroLinea,
-          codigo: l.item.codigo,
-          nombre: l.item.nombre,
-          categoria: l.item.categoria,
-          subcategoria: null,
-          cantidad: l.cantidad,
-          precio_unitario: l.item.precio,
-          descuento_pct: l.descuentoPct ?? 0,
-          descuento_monto: descuento,
-          total: totalLinea,
-          receta_id: l.item.tipo === 'receta' ? l.item.refId : null,
-          cocina_producto_id: l.item.tipo === 'producto' ? l.item.refId : null,
-          origen: 'pos',
-        };
-      };
-
-      // Dos pasadas: primero las líneas sueltas y las "madres" (las pastas), y
-      // recién después las que cuelgan, ya sabiendo el id de su madre.
-      const conNumero = input.lineas.map((l, i) => ({ linea: l, nro: i + 1 }));
-      const madres = conNumero.filter((x) => !x.linea.padreKey);
-      const hijas = conNumero.filter((x) => x.linea.padreKey);
-
-      const { data: madresGuardadas, error: eItems } = await supabase
-        .from('ventas_items')
-        .insert(madres.map((x) => fila(x.linea, x.nro)))
-        .select('id, linea');
-      if (eItems) {
-        // el ticket no puede quedar sin líneas: se deshace y se avisa
-        throw await deshacerTicket(ticketId, eItems);
-      }
-
-      if (hijas.length > 0) {
-        // nro de línea → id, para resolver a qué pasta cuelga cada salsa
-        const idPorNro = new Map<number, string>();
-        for (const m of (madresGuardadas ?? []) as { id: string; linea: number }[]) {
-          idPorNro.set(m.linea, m.id);
-        }
-        const nroPorKey = new Map<string, number>();
-        for (const m of madres) nroPorKey.set(m.linea.item.key, m.nro);
-
-        const { error: eHijas } = await supabase.from('ventas_items').insert(
-          hijas.map((x) => {
-            const nroMadre = nroPorKey.get(x.linea.padreKey!);
-            return {
-              ...fila(x.linea, x.nro),
-              linea_padre_id: nroMadre ? (idPorNro.get(nroMadre) ?? null) : null,
-              vinculo_origen: 'pos' as const,
-            };
-          }),
-        );
-        if (eHijas) {
-          throw await deshacerTicket(ticketId, eHijas);
-        }
-      }
-
-      const filasPagos = input.pagos.map((p) => ({
-        ticket_id: ticketId,
-        local: input.local,
-        periodo,
-        fudo_ticket_id: `pos-${ticketId}`,
-        fecha: input.fecha,
-        medio_pago: p.medio.nombre,
-        medio_pago_id: p.medio.id,
-        monto: p.monto,
-        tipo_venta: 'mostrador',
-        caja: input.caja,
-        es_dividendo: p.medio.codigo === 'mp_lucas',
-        // sin esto el importador de Fudo los borraría todas las mañanas junto
-        // con los suyos (migración 150)
-        origen: 'pos',
+      // `linea` es la posición en la venta, NO el orden en que se guarda: es lo
+      // que ordena la comanda (Tagliatelle / Bolognesa). La base guarda primero
+      // las pastas y después las salsas, pero cada renglón conserva su número.
+      const lineas = input.lineas.map((l, i) => ({
+        linea: i + 1,
+        padre_linea: l.padreKey ? nroDeLaMadre(input.lineas, i, l.padreKey) : null,
+        codigo: l.item.codigo,
+        nombre: l.item.nombre,
+        categoria: l.item.categoria,
+        cantidad: l.cantidad,
+        precio_unitario: l.item.precio,
+        descuento_pct: l.descuentoPct ?? 0,
+        // El tipo viaja aparte y la base decide en qué columna va el id. Si
+        // llegaran las dos vacías, un trigger se pone a adivinar el producto por
+        // el nombre y puede enganchar OTRA receta sin avisar.
+        tipo: l.item.tipo,
+        ref_id: l.item.refId,
       }));
 
-      const { error: ePagos } = await supabase.from('ventas_pagos').insert(filasPagos);
-      if (ePagos) {
-        // borrar el ticket arrastra líneas y pagos por ON DELETE CASCADE
-        throw await deshacerTicket(ticketId, ePagos);
+      const pagos = input.pagos.map((p) => ({
+        medio_pago_id: p.medio.id,
+        monto: p.monto,
+      }));
+
+      const { data, error } = await supabase.rpc('cobrar_venta', {
+        p_idempotencia: input.idempotencia,
+        p_local: input.local,
+        p_caja: input.caja,
+        p_turno_id: input.turnoId,
+        p_fecha: input.fecha,
+        p_hora: input.hora,
+        p_cliente: input.cliente,
+        p_convenio_id: input.convenioId,
+        p_lineas: lineas,
+        p_pagos: pagos,
+        // el salón va a mandar 'salon' por acá cuando se migren las mesas (190)
+        p_tipo_venta: 'mostrador',
+      });
+
+      // ⚠️ La llave del intento NO se toca acá pase lo que pase. Es lo único que
+      // impide que el click siguiente cobre dos veces: mientras siga viva, la
+      // base reconoce el intento y devuelve la misma venta en vez de cobrar de
+      // nuevo. La suelta la pantalla, y sólo cuando el ticket se vacía.
+      if (error) {
+        // La función tira sus errores en criollo (P0001) y el helper los deja
+        // pasar tal cual; los que traduce son los técnicos de Postgres, que
+        // antes llegaban a la pantalla del cajero en inglés.
+        throw new Error(mensajeErrorAmigable(error, 'No se pudo cobrar'));
       }
 
-      return { ticketId, total };
+      if (!data) {
+        throw new Error(
+          'No se pudo cobrar: la base no confirmó la venta. Fijate en "Ventas del turno" ' +
+            'antes de volver a cobrar, no sea cosa que se cobre dos veces.',
+        );
+      }
+
+      const r = data as { ticket_id: string; total: number | string; ya_estaba: boolean };
+      return { ticketId: r.ticket_id, total: Number(r.total), yaEstaba: !!r.ya_estaba };
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['caja-ventas-turno'] });
       // el panel del ERP muestra cuánto lleva cobrado el turno
       qc.invalidateQueries({ queryKey: ['caja-turnos-abiertos'] });
+      // el POS corre en otra ventana: sin este aviso, el tablero del ERP y el
+      // cartel "Turno en curso" del menú se enteran recién al minuto siguiente
+      avisarCambioDeTurno();
     },
   });
 }

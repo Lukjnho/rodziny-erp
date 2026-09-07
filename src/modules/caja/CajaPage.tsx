@@ -513,6 +513,36 @@ function AbrirTurno({
 
 // ── Mostrador ────────────────────────────────────────────────────────────────
 
+/**
+ * Llave del intento de cobro.
+ *
+ * Es de la VENTA: nace cuando se empieza a cargar el ticket y muere cuando el
+ * ticket se vacía (porque se cobró o porque el cajero apretó Vaciar). Mientras
+ * viva, si el cajero vuelve a apretar Cobrar después de un corte de conexión, la
+ * base reconoce el intento y devuelve la MISMA venta en vez de cobrarle dos
+ * veces al cliente.
+ *
+ * Vive en sessionStorage y no en memoria porque el POS se recarga (F5, la PWA
+ * que se refresca sola): si se perdiera en cada recarga, el reintento de después
+ * de un F5 cobraría de nuevo. Si el navegador no deja guardar, seguimos igual
+ * con una llave en memoria — se pierde la protección contra la recarga, no el
+ * cobro.
+ */
+function llaveIntentoCobro(turnoId: string, renovar = false): string {
+  const clave = `rodziny.cobro.${turnoId}`;
+  try {
+    if (!renovar) {
+      const guardada = sessionStorage.getItem(clave);
+      if (guardada) return guardada;
+    }
+    const nueva = crypto.randomUUID();
+    sessionStorage.setItem(clave, nueva);
+    return nueva;
+  } catch {
+    return crypto.randomUUID();
+  }
+}
+
 function Mostrador({
   local,
   caja,
@@ -546,6 +576,26 @@ function Mostrador({
   const [verVenta, setVerVenta] = useState<VentaTurno | null>(null);
   const [buscarVenta, setBuscarVenta] = useState('');
   const buscadorRef = useRef<HTMLInputElement>(null);
+
+  // Llave del intento de cobro en curso. Ver llaveIntentoCobro().
+  const [intentoCobro, setIntentoCobro] = useState<string>(() => llaveIntentoCobro(turno.id));
+  const primerRenderIntento = useRef(true);
+
+  // La llave se renueva cuando el ticket queda vacío: ahí se terminó una venta
+  // (se cobró, o el cajero apretó Vaciar) y lo que venga después es otra.
+  //
+  // ⚠️ La primera pasada NO renueva a propósito: si el POS se acaba de recargar,
+  // el ticket está vacío pero puede haber una venta cobrada con la llave
+  // guardada de la que el navegador nunca supo el resultado. Manteniéndola, si
+  // el cajero vuelve a cargar esa misma venta la base la reconoce y no la cobra
+  // dos veces; si carga otra, avisa y le dice que apriete Vaciar.
+  useEffect(() => {
+    if (primerRenderIntento.current) {
+      primerRenderIntento.current = false;
+      return;
+    }
+    if (lineas.length === 0) setIntentoCobro(llaveIntentoCobro(turno.id, true));
+  }, [lineas.length, turno.id]);
 
   const catalogo = catalogoQ.data ?? [];
   const convenios = conveniosQ.data ?? [];
@@ -1113,6 +1163,7 @@ function Mostrador({
           onConfirmar={async (pagos, queImprimir) => {
             const { fecha, hora } = ahoraAR();
             const res = await cobrar.mutateAsync({
+              idempotencia: intentoCobro,
               local,
               caja,
               turnoId: turno.id,
@@ -1124,6 +1175,25 @@ function Mostrador({
               pagos,
             });
             const numero = res.ticketId.slice(0, 8);
+
+            // La base reconoció que es el MISMO intento (se había cortado la
+            // conexión y el cobro sí había entrado). No se cobró de nuevo, así
+            // que tampoco se manda la comanda otra vez: cocina no tiene que
+            // hacer el plato dos veces. Vaciar el ticket renueva la llave.
+            if (res.yaEstaba) {
+              setLineas([]);
+              setCliente('');
+              setConvenioId('');
+              setCobrando(false);
+              setAviso(
+                `Esta venta YA estaba cobrada · ticket ${numero}. No se cobró de nuevo. ` +
+                  'Si hace falta el ticket, reimprimilo desde "Ventas del turno".',
+              );
+              setTimeout(() => setAviso(null), 12000);
+              buscadorRef.current?.focus();
+              return;
+            }
+
             if (queImprimir) setDoc(armarDoc(queImprimir, numero, pagos));
             setLineas([]);
             setCliente('');
