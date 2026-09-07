@@ -27,3 +27,6 @@ dist-ssr
 *.sw?
 # Added by code-review-graph
 .code-review-graph/
+
+# Config local de Claude Code (hooks de esta maquina, no del equipo)
+.claude/settings.local.json
