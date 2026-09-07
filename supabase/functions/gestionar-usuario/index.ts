@@ -57,6 +57,15 @@ Deno.serve(async (req) => {
       if (!email || !password) return json({ ok: false, error: 'Email y contraseña son obligatorios' });
       if (password.length < 6) return json({ ok: false, error: 'La contraseña debe tener al menos 6 caracteres' });
 
+      // El local se valida ANTES de crear el login: antes, un valor mal escrito
+      // se ignoraba en silencio y el usuario quedaba sin local — que para un
+      // cajero significa ver y cobrar en las dos casas.
+      const localPedido = body.local_restringido;
+      const tieneLocal = localPedido !== undefined && localPedido !== null && localPedido !== '';
+      if (tieneLocal && localPedido !== 'vedia' && localPedido !== 'saavedra') {
+        return json({ ok: false, error: `Local desconocido: "${localPedido}". Tiene que ser vedia o saavedra.` });
+      }
+
       const { data: created, error: createErr } = await admin.auth.admin.createUser({
         email, password, email_confirm: true,
       });
@@ -67,16 +76,32 @@ Deno.serve(async (req) => {
       // El trigger on_auth_user_created ya insertó el perfil; lo completamos.
       const patch: Record<string, unknown> = {};
       if (body.nombre) patch.nombre = String(body.nombre).trim();
-      if (body.local_restringido === 'vedia' || body.local_restringido === 'saavedra') {
-        patch.local_restringido = body.local_restringido;
-      }
+      if (tieneLocal) patch.local_restringido = localPedido;
       if (body.permisos && typeof body.permisos === 'object') {
         for (const [k, v] of Object.entries(body.permisos)) {
           if (PERMISOS_VALIDOS.has(k)) patch[k] = !!v;
         }
       }
       if (Object.keys(patch).length > 0) {
-        await admin.from('perfiles').update(patch).eq('user_id', created.user.id);
+        // ⚠️ Se chequea el error Y las filas. Antes este update iba pelado y la
+        // pantalla decía "usuario creado" igual: si fallaba, o si corría antes
+        // de que el disparador insertara el perfil, quedaba un usuario sin rol
+        // y sin local. Para un cajero eso es ver y cobrar en las dos casas.
+        const { data: actualizado, error: ePerfil } = await admin
+          .from('perfiles')
+          .update(patch)
+          .eq('user_id', created.user.id)
+          .select('user_id');
+        if (ePerfil || !actualizado || actualizado.length === 0) {
+          return json({
+            ok: false,
+            error:
+              'El usuario se creó y ya puede entrar, pero NO se le pudieron guardar el rol ni el local' +
+              (ePerfil ? ` (${ePerfil.message})` : ' (no apareció su perfil)') +
+              '. Configuralo a mano en la tabla ANTES de que lo use.',
+            user_id: created.user.id,
+          });
+        }
       }
       return json({ ok: true, user_id: created.user.id });
     }

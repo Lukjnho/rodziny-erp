@@ -629,7 +629,33 @@ export function useCerrarTurno() {
       // cajero puede borrar y recargar sus renglones, así un cierre que falla a
       // mitad de camino se puede reintentar sin chocar con la clave única. Una
       // vez cerrado ya no los toca (no tiene permiso de UPDATE).
-      await supabase.from('cierres_caja_medios').delete().eq('cierre_caja_id', input.turnoId);
+      //
+      // ⚠️ El borrado se cuenta contra lo que había. La regla que lo permite
+      // (`cierres_caja_medios_caja_delete`) exige que el turno siga abierto; si
+      // no se cumple, la base borra CERO FILAS SIN ERROR y el insert de abajo
+      // revienta contra la clave única con un mensaje que no dice nada. El
+      // cajero veía "clave duplicada" en el peor momento: al cerrar la caja.
+      const { data: mediosPrevios, error: eLeerMedios } = await supabase
+        .from('cierres_caja_medios')
+        .select('medio_pago_id')
+        .eq('cierre_caja_id', input.turnoId);
+      if (eLeerMedios) throw eLeerMedios;
+
+      if ((mediosPrevios?.length ?? 0) > 0) {
+        const { data: borrados, error: eBorrarMedios } = await supabase
+          .from('cierres_caja_medios')
+          .delete()
+          .eq('cierre_caja_id', input.turnoId)
+          .select('medio_pago_id');
+        if (eBorrarMedios) throw eBorrarMedios;
+        if ((borrados?.length ?? 0) < mediosPrevios!.length) {
+          throw new Error(
+            'No se pudieron borrar los renglones del arqueo anterior, así que el cierre se frenó ' +
+              'antes de escribir nada. Suele pasar cuando el turno ya figura cerrado: actualizá la ' +
+              'pantalla y fijate cómo quedó antes de volver a intentar.',
+          );
+        }
+      }
 
       if (input.medios.length > 0) {
         const { error: eMedios } = await supabase.from('cierres_caja_medios').insert(
@@ -729,6 +755,33 @@ export interface PagoVenta {
 }
 
 /**
+ * Deshace un ticket que quedó a medio guardar porque falló el paso siguiente
+ * (los renglones o los cobros). Devuelve el error que hay que tirar.
+ *
+ * ⚠️ El borrado se CHEQUEA. La única regla que le permite borrar al cajero
+ * (`ventas_tickets_caja_deshacer`) exige que el ticket no tenga cobros, no tenga
+ * comprobante y que el turno siga abierto. Si alguna no se cumple, la base
+ * devuelve cero filas SIN ERROR y el ticket queda colgado del turno: el tablero
+ * del ERP suma el total de TODOS los tickets del turno, así que muestra más
+ * plata cobrada de la que se cobró. Antes esto pasaba en silencio.
+ */
+async function deshacerTicket(ticketId: string, causa: { message: string }): Promise<unknown> {
+  const { data, error } = await supabase
+    .from('ventas_tickets')
+    .delete()
+    .eq('id', ticketId)
+    .select('id');
+  if (error || !data || data.length === 0) {
+    return new Error(
+      `${causa.message}\n\nAdemás quedó un ticket a medio guardar (${ticketId}) que no se pudo ` +
+        'deshacer solo. Anotá ese número y avisá para limpiarlo: hasta que se borre, el turno va a ' +
+        'mostrar más cobrado de lo que se cobró de verdad.',
+    );
+  }
+  return causa;
+}
+
+/**
  * Guarda una venta: el ticket, sus líneas y sus pagos.
  *
  * Cada línea queda apuntando al producto REAL del catálogo (receta_id o
@@ -822,8 +875,7 @@ export function useCobrarVenta() {
         .select('id, linea');
       if (eItems) {
         // el ticket no puede quedar sin líneas: se deshace y se avisa
-        await supabase.from('ventas_tickets').delete().eq('id', ticketId);
-        throw eItems;
+        throw await deshacerTicket(ticketId, eItems);
       }
 
       if (hijas.length > 0) {
@@ -846,8 +898,7 @@ export function useCobrarVenta() {
           }),
         );
         if (eHijas) {
-          await supabase.from('ventas_tickets').delete().eq('id', ticketId);
-          throw eHijas;
+          throw await deshacerTicket(ticketId, eHijas);
         }
       }
 
@@ -871,8 +922,7 @@ export function useCobrarVenta() {
       const { error: ePagos } = await supabase.from('ventas_pagos').insert(filasPagos);
       if (ePagos) {
         // borrar el ticket arrastra líneas y pagos por ON DELETE CASCADE
-        await supabase.from('ventas_tickets').delete().eq('id', ticketId);
-        throw ePagos;
+        throw await deshacerTicket(ticketId, ePagos);
       }
 
       return { ticketId, total };

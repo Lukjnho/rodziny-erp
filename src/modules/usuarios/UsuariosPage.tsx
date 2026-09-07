@@ -41,7 +41,9 @@ const PRESETS: {
     // con este permiso solo alcanza los arqueos y las ventas del POS
     // (migración 146).
     permisos: { puede_ver_caja: true },
-    local: 'vedia',
+    // ⚠️ A propósito SIN local: acá estaba clavado 'vedia' y el cajero de la
+    // otra casa nacía cobrando en la casa equivocada, sin que saltara un error.
+    // Ahora el alta obliga a elegirlo.
   },
   {
     key: 'control_cocina',
@@ -108,6 +110,28 @@ export function UsuariosPage() {
       if (vars.user_id === usuarioActual?.id) refetchPerfil();
     },
   });
+
+  // El local dejó de ser un dato de adorno: para un cajero decide qué plata ve
+  // y en qué casa se anota lo que cobra. Antes solo se podía poner al crear el
+  // usuario y corregirlo después era ir a la base a mano.
+  //
+  // ⚠️ Cambiarlo con la caja abierta le esconde su propio turno: el POS le
+  // ofrece abrir uno nuevo y el viejo queda abierto para siempre con la plata
+  // adentro, y solo lo destraba un administrador. Por eso se avisa antes.
+  const cambiarLocal = (p: Perfil, valor: string) => {
+    const nuevo = valor === '' ? null : (valor as 'saavedra' | 'vedia');
+    if (nuevo === (p.local_restringido ?? null)) return;
+    if (p.puede_ver_caja || p.es_admin) {
+      const seguir = window.confirm(
+        `Vas a cambiarle el local a ${p.nombre}.\n\n` +
+          'Si tiene la caja abierta, cerrala ANTES de hacer esto: si no, el turno le desaparece ' +
+          'de la pantalla, abre uno nuevo, y el viejo queda abierto con la plata adentro.\n\n' +
+          '¿Seguimos?',
+      );
+      if (!seguir) return;
+    }
+    actualizar.mutate({ user_id: p.user_id, patch: { local_restringido: nuevo } });
+  };
 
   // Resetear la contraseña de un usuario (vía edge function, requiere admin).
   const resetearPassword = async (p: Perfil) => {
@@ -186,10 +210,23 @@ export function UsuariosPage() {
                       <td className="px-3 py-2">
                         <div className="font-medium capitalize text-gray-900">{p.nombre}</div>
                         {esYo && <div className="text-[9px] text-rodziny-700">(vos)</div>}
-                        {p.local_restringido && (
-                          <div className="text-[9px] capitalize text-gray-400">
-                            solo {p.local_restringido}
-                          </div>
+                        {perfilActual?.es_admin ? (
+                          <select
+                            value={p.local_restringido ?? ''}
+                            onChange={(e) => cambiarLocal(p, e.target.value)}
+                            title="Con qué local trabaja. Para un cajero, esto decide qué plata ve y en qué casa se anota lo que cobra."
+                            className="mt-1 rounded border border-gray-200 bg-white px-1 py-0.5 text-[10px] text-gray-600"
+                          >
+                            <option value="">Los dos locales</option>
+                            <option value="saavedra">Solo Saavedra</option>
+                            <option value="vedia">Solo Vedia</option>
+                          </select>
+                        ) : (
+                          p.local_restringido && (
+                            <div className="text-[9px] capitalize text-gray-400">
+                              solo {p.local_restringido}
+                            </div>
+                          )
                         )}
                       </td>
                       <td className="px-2 py-2 text-center">
@@ -227,12 +264,21 @@ export function UsuariosPage() {
                             checked={p.es_admin || (p[m.campo] as boolean)}
                             disabled={p.es_admin}
                             title={p.es_admin ? 'Admin tiene todos los módulos' : ''}
-                            onChange={(e) =>
+                            onChange={(e) => {
+                              // Un cajero sin local ve y cobra en las dos casas:
+                              // la casilla no se prende hasta que tenga uno.
+                              if (m.key === 'caja' && e.target.checked && !p.local_restringido) {
+                                window.alert(
+                                  `Antes de darle la Caja a ${p.nombre}, elegile un local acá al lado.\n\n` +
+                                    'Un cajero sin local ve y cobra en las dos casas.',
+                                );
+                                return;
+                              }
                               actualizar.mutate({
                                 user_id: p.user_id,
                                 patch: { [m.campo]: e.target.checked } as Partial<Perfil>,
-                              })
-                            }
+                              });
+                            }}
                             className="h-4 w-4"
                           />
                         </td>
@@ -300,9 +346,15 @@ function CrearUsuarioModal({
       setError('La contraseña debe tener al menos 6 caracteres');
       return;
     }
+    const preset = PRESETS.find((p) => p.key === presetKey);
+    // El local de un cajero no es un dato de adorno: decide qué plata ve y en
+    // qué casa se anota lo que cobra. Sin local ve y cobra en las dos.
+    if (preset?.permisos.puede_ver_caja && !local) {
+      setError('Un cajero necesita local: elegí Saavedra o Vedia. Sin local, ve y cobra en las dos casas.');
+      return;
+    }
     setGuardando(true);
     setError('');
-    const preset = PRESETS.find((p) => p.key === presetKey);
     const { data, error: errInvoke } = await supabase.functions.invoke('gestionar-usuario', {
       body: {
         accion: 'crear',
@@ -385,7 +437,7 @@ function CrearUsuarioModal({
                 onChange={(e) => setLocal(e.target.value as '' | 'saavedra' | 'vedia')}
                 className={inputCls}
               >
-                <option value="">Todos</option>
+                <option value="">Los dos locales</option>
                 <option value="saavedra">Saavedra</option>
                 <option value="vedia">Vedia</option>
               </select>
