@@ -69,6 +69,12 @@ const CajaResumen = lazy(() =>
 const SalonConfigPage = lazy(() =>
   import('@/modules/salon/SalonConfigPage').then((m) => ({ default: m.SalonConfigPage })),
 );
+const SalonMozoPage = lazy(() =>
+  import('@/modules/salon/SalonMozoPage').then((m) => ({ default: m.SalonMozoPage })),
+);
+const MesasMostradorPage = lazy(() =>
+  import('@/modules/salon/MesasMostradorPage').then((m) => ({ default: m.MesasMostradorPage })),
+);
 const IntegracionesPage = lazy(() =>
   import('@/modules/integraciones/IntegracionesPage').then((m) => ({ default: m.IntegracionesPage })),
 );
@@ -119,7 +125,7 @@ function RutaFinanzas({ children }: { children: ReactNode }) {
 // ni RRHH al costado tentando errores. Normalmente además corre en su propia
 // ventana (ver src/lib/ventanaCaja.ts); /caja queda para el ERP, mostrando el
 // arqueo en curso.
-const RUTAS_PANTALLA_COMPLETA = ['/caja/pos'];
+const RUTAS_PANTALLA_COMPLETA = ['/caja/pos', '/caja/mesas', '/salon/mozo'];
 
 function AppInterna() {
   const { user, perfil, cargando } = useAuth();
@@ -197,6 +203,27 @@ function AppInterna() {
               element={
                 <Ruta modulo="salon">
                   <SalonConfigPage />
+                </Ruta>
+              }
+            />
+            {/* La pantalla del mozo, para el teléfono: abre la mesa, carga los
+                platos y avisa que piden la cuenta. No cobra. */}
+            <Route
+              path="/salon/mozo"
+              element={
+                <Ruta modulo="salon">
+                  <SalonMozoPage />
+                </Ruta>
+              }
+            />
+            {/* Las mesas vistas desde el mostrador, que es donde se cobran. Va
+                aparte de /caja/pos para no meterle mano al POS, que es lo único
+                que hoy maneja plata de verdad. */}
+            <Route
+              path="/caja/mesas"
+              element={
+                <Ruta modulo="caja">
+                  <MesasMostradorPage />
                 </Ruta>
               }
             />

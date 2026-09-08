@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
+import { Navigate } from 'react-router-dom';
 import { PageContainer } from '@/components/layout/PageContainer';
 import { LocalSelector } from '@/components/ui/LocalSelector';
 import { useAuth } from '@/lib/auth';
@@ -77,22 +78,9 @@ export function SalonConfigPage() {
     }
   }
 
-  if (!perfil?.es_admin) {
-    return (
-      <PageContainer title="Salón">
-        <div className="rounded-lg border border-gray-200 bg-white p-8 text-center">
-          <div className="mb-3 text-4xl">🍽️</div>
-          <h3 className="mb-1 text-lg font-semibold text-gray-700">
-            El plano lo arma administración
-          </h3>
-          <p className="text-sm text-gray-500">
-            Los espacios y las mesas se configuran desde una cuenta de administrador. La pantalla
-            para tomar pedidos en la mesa todavía no está lista.
-          </p>
-        </div>
-      </PageContainer>
-    );
-  }
+  // El mozo no viene acá a configurar nada: se va derecho a sus mesas. El plano
+  // lo arma administración (y la base opina lo mismo: no tiene con qué tocarlo).
+  if (!perfil?.es_admin) return <Navigate to="/salon/mozo" replace />;
 
   return (
     <PageContainer title="Salón — espacios y mesas">

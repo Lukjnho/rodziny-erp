@@ -190,6 +190,16 @@ export function CajaPage() {
             <div className="text-xs text-gray-400">Cajero</div>
           </div>
           <Reloj />
+          {/* Las mesas del salón se cobran acá, en el mostrador, pero viven en
+              su propia pantalla: meterlas adentro de este archivo es el cambio
+              con más chances de romper lo único que hoy cobra de verdad. */}
+          <Link
+            to="/caja/mesas"
+            className="rounded border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+            title="Ver las mesas del salón y cobrarlas"
+          >
+            🍽 Mesas
+          </Link>
           {/* La impresora se configura acá y no en el ERP a propósito: es DE
               ESTA PC. Cada caja tiene la suya, y quien la elige es quien está
               sentado adelante. */}
