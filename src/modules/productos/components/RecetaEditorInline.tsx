@@ -50,6 +50,11 @@ interface ProductoVinculado {
   local: string;
   controla_stock: boolean | null;
   minimo_produccion: number | null;
+  // 💣 `activo` NO es lo mismo que `controla_stock`. `controla_stock` decide si el
+  // producto entra en Cocina › Stock y en el plan; `activo` decide si el producto
+  // EXISTE para el QR de producción, el conteo de cámara y el pizarrón. Apagar el
+  // control no lo saca del QR: por eso hacía falta esta casilla.
+  activo: boolean;
 }
 
 const TIPOS_RECETA: RecetaTipo[] = ['receta', 'subreceta'];
@@ -224,7 +229,7 @@ export function RecetaEditorInline({
   // producto → { controla, minimo (string para el input) }. Se sincroniza cuando
   // llega la query; se persiste en cocina_productos al guardar.
   const [controlStock, setControlStock] = useState<
-    Record<string, { controla: boolean; minimo: string }>
+    Record<string, { controla: boolean; minimo: string; activo: boolean }>
   >({});
 
   const local = creando ? localState : (receta?.local ?? localRestringido ?? 'vedia');
@@ -239,7 +244,7 @@ export function RecetaEditorInline({
     queryFn: async (): Promise<ProductoVinculado[]> => {
       const { data, error } = await supabase
         .from('cocina_productos')
-        .select('id, nombre, tipo, local, controla_stock, minimo_produccion')
+        .select('id, nombre, tipo, local, controla_stock, minimo_produccion, activo')
         .eq('receta_id', receta!.id)
         .order('nombre');
       if (error) throw error;
@@ -393,6 +398,7 @@ export function RecetaEditorInline({
           next[p.id] = {
             controla: p.controla_stock ?? true,
             minimo: p.minimo_produccion != null ? String(p.minimo_produccion) : '',
+            activo: p.activo,
           };
         }
       }
@@ -685,11 +691,23 @@ export function RecetaEditorInline({
           if (minimoCtrl != null && (Number.isNaN(minimoCtrl) || minimoCtrl < 0)) {
             throw new Error(`El mínimo de "${p.nombre}" debe ser un número válido`);
           }
-          const { error: errCtrl } = await supabase
+          // .select() y contar filas: un UPDATE que la RLS bloquea NO da error,
+          // devuelve cero filas. Sin esto la pantalla diría "guardado" sin guardar.
+          const { data: tocadas, error: errCtrl } = await supabase
             .from('cocina_productos')
-            .update({ controla_stock: edit.controla, minimo_produccion: minimoCtrl })
-            .eq('id', p.id);
+            .update({
+              controla_stock: edit.controla,
+              minimo_produccion: minimoCtrl,
+              activo: edit.activo,
+            })
+            .eq('id', p.id)
+            .select('id');
           if (errCtrl) throw errCtrl;
+          if (!tocadas || tocadas.length === 0) {
+            throw new Error(
+              `No se pudo guardar "${p.nombre}": puede que te falte el permiso del módulo Cocina.`,
+            );
+          }
         }
         // Refresca catálogo de stock, plan de producción y ABM del producto.
         qc.invalidateQueries({ queryKey: ['cocina-productos'] });
@@ -1161,7 +1179,11 @@ export function RecetaEditorInline({
           </label>
           <div className="space-y-3">
             {productosVinculados.map((p) => {
-              const edit = controlStock[p.id] ?? { controla: true, minimo: '' };
+              const edit = controlStock[p.id] ?? {
+                controla: true,
+                minimo: '',
+                activo: p.activo,
+              };
               return (
                 <div key={p.id} className="rounded border border-gray-100 bg-gray-50/60 p-2">
                   {productosVinculados.length > 1 && (
@@ -1171,6 +1193,27 @@ export function RecetaEditorInline({
                     </p>
                   )}
                   <label className="flex items-center gap-2 text-sm text-gray-700">
+                    <input
+                      type="checkbox"
+                      checked={edit.activo}
+                      onChange={(e) =>
+                        setControlStock((prev) => ({
+                          ...prev,
+                          [p.id]: { ...edit, activo: e.target.checked },
+                        }))
+                      }
+                      className="h-4 w-4"
+                    />
+                    Producto activo
+                  </label>
+                  {!edit.activo && (
+                    <p className="mt-1 text-[10px] italic text-amber-700">
+                      Apagado deja de ofrecerse en el QR de producción, en el conteo de cámara y
+                      en el pizarrón. No se borra nada: los lotes y las ventas viejas quedan como
+                      están y lo podés volver a prender desde acá.
+                    </p>
+                  )}
+                  <label className="mt-2 flex items-center gap-2 text-sm text-gray-700">
                     <input
                       type="checkbox"
                       checked={edit.controla}

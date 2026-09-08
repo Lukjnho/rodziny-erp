@@ -258,6 +258,42 @@ export function StockTab() {
 
   // Toggle admin: sacar/poner un producto del control de stock (independiente de
   // 'activo'). Lo usan la tabla Pastas (Vedia) y el catálogo (Saavedra).
+  // Prender / apagar el producto entero. OJO: NO es lo mismo que el toggle de
+  // control de stock de acá abajo. `controla_stock` decide si el producto entra en
+  // esta tabla y en el plan; `activo` decide si EXISTE para el QR de producción, el
+  // conteo de cámara y el pizarrón de pared. Apagar el control no lo saca del QR.
+  const [avisoActivo, setAvisoActivo] = useState<string | null>(null);
+  const toggleActivo = useMutation({
+    mutationFn: async ({ id, valor }: { id: string; valor: boolean; nombre: string }) => {
+      // .select() y contar filas: un UPDATE que la RLS bloquea no da error, devuelve
+      // cero filas, y la pantalla se refrescaría como si hubiera funcionado.
+      const { data, error } = await supabase
+        .from('cocina_productos')
+        .update({ activo: valor })
+        .eq('id', id)
+        .select('id');
+      if (error) throw error;
+      if (!data || data.length === 0) {
+        throw new Error('No se guardó: puede que te falte el permiso del módulo Cocina.');
+      }
+    },
+    onSuccess: (_d, vars) => {
+      setAvisoActivo(
+        vars.valor
+          ? `"${vars.nombre}" volvió a estar activo: ya aparece en el QR y en el conteo.`
+          : `"${vars.nombre}" quedó apagado. Lo encontrás en "Apagados" para volver a prenderlo.`,
+      );
+      qc.invalidateQueries({ queryKey: ['cocina-productos'] });
+      qc.invalidateQueries({ queryKey: ['cocina-catalogo-lotes'] });
+      qc.invalidateQueries({ queryKey: ['cocina-stock-vista-pastas'] });
+    },
+    onError: (err: unknown) => {
+      setAvisoActivo(
+        err instanceof Error ? err.message : 'No se pudo cambiar el estado del producto.',
+      );
+    },
+  });
+
   const toggleControlaStock = useMutation({
     mutationFn: async ({ id, valor }: { id: string; valor: boolean }) => {
       const { error } = await supabase
@@ -316,6 +352,23 @@ export function StockTab() {
         .from('cocina_productos')
         .select('*')
         .eq('activo', true)
+        .order('nombre');
+      if (error) throw error;
+      return data as Producto[];
+    },
+  });
+
+  // Productos APAGADOS. Va en una query aparte a propósito: la de arriba alimenta
+  // todas las tablas de esta pantalla y sacarle el `activo` haría aparecer productos
+  // jubilados en el conteo del día. Acá solo se usan para la sección "Apagados",
+  // que es el único lugar del ERP desde donde se los puede volver a prender.
+  const { data: productosApagados } = useQuery({
+    queryKey: ['cocina-productos', 'apagados'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('cocina_productos')
+        .select('*')
+        .eq('activo', false)
         .order('nombre');
       if (error) throw error;
       return data as Producto[];
@@ -923,6 +976,17 @@ export function StockTab() {
           filtroLocal={filtroLocal}
           onReactivar={(id) => toggleControlaStock.mutate({ id, valor: true })}
           toggleDisabled={toggleControlaStock.isPending}
+        />
+      )}
+
+      {esAdmin && (
+        <ApagadosSection
+          productos={productosApagados ?? []}
+          filtroLocal={filtroLocal}
+          aviso={avisoActivo}
+          onCerrarAviso={() => setAvisoActivo(null)}
+          onActivar={(id, nombre) => toggleActivo.mutate({ id, valor: true, nombre })}
+          toggleDisabled={toggleActivo.isPending}
         />
       )}
 
@@ -1770,6 +1834,110 @@ function SinControlSection({
                           disabled={toggleDisabled}
                           onToggle={() => onReactivar(p.id)}
                         />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Sección "Apagados" (colapsable, solo admin) ──────────────────────────────
+// Los productos apagados no salen en ninguna otra pantalla del ERP: ni en las
+// tablas de arriba, ni en el QR, ni en el conteo de cámara. Esta sección es el
+// único lugar desde donde se los vuelve a prender, y existe justamente para que
+// apagar algo no sea un camino de ida.
+
+function ApagadosSection({
+  productos,
+  filtroLocal,
+  aviso,
+  onCerrarAviso,
+  onActivar,
+  toggleDisabled,
+}: {
+  productos: Producto[];
+  filtroLocal: FiltroLocal;
+  aviso: string | null;
+  onCerrarAviso: () => void;
+  onActivar: (id: string, nombre: string) => void;
+  toggleDisabled: boolean;
+}) {
+  const [abierto, setAbierto] = useState(false);
+  const items = useMemo(
+    () =>
+      productos
+        .filter((p) => p.local === filtroLocal)
+        .sort((a, b) => a.tipo.localeCompare(b.tipo) || a.nombre.localeCompare(b.nombre)),
+    [productos, filtroLocal],
+  );
+
+  return (
+    <div className="pt-6">
+      <button
+        onClick={() => setAbierto((v) => !v)}
+        className="flex items-center gap-2 text-base font-semibold text-gray-800"
+      >
+        <span className="text-xs">{abierto ? '▼' : '▶'}</span>
+        Apagados
+        <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600">
+          {items.length}
+        </span>
+      </button>
+
+      {aviso && (
+        <div className="mt-3 flex items-start justify-between gap-3 rounded-lg border border-green-200 bg-green-50 px-4 py-2 text-sm text-green-800">
+          <span>{aviso}</span>
+          <button onClick={onCerrarAviso} className="text-green-700 hover:text-green-900">
+            ✕
+          </button>
+        </div>
+      )}
+
+      {abierto && (
+        <div className="mt-3">
+          <p className="mb-2 text-xs text-gray-500">
+            Un producto apagado deja de ofrecerse en el QR de producción, en el conteo de cámara y
+            en el pizarrón. No se borra nada: sus lotes y sus ventas quedan como están. Para
+            apagar uno, andá a su receta en <strong>Productos › Costeo</strong>.
+          </p>
+          {items.length === 0 ? (
+            <p className="rounded-lg border border-dashed border-gray-200 px-4 py-6 text-center text-sm text-gray-400">
+              No hay productos apagados en{' '}
+              <span className="capitalize">{filtroLocal}</span>.
+            </p>
+          ) : (
+            <div className="overflow-x-auto rounded-lg border border-surface-border bg-white">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-surface-border bg-gray-50 text-left text-xs uppercase text-gray-500">
+                    <th className="px-4 py-2">Producto</th>
+                    <th className="px-4 py-2">Tipo</th>
+                    <th className="px-4 py-2">Código</th>
+                    <th className="px-4 py-2 text-center">Activar</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {items.map((p) => (
+                    <tr key={p.id} className="border-b border-surface-border">
+                      <td className="px-4 py-2 font-medium text-gray-600">{p.nombre}</td>
+                      <td className="px-4 py-2 text-gray-500">
+                        {TIPO_LABEL_SIN_CONTROL[p.tipo] ?? p.tipo}
+                      </td>
+                      <td className="px-4 py-2 font-mono text-xs text-gray-500">{p.codigo}</td>
+                      <td className="px-4 py-2 text-center">
+                        <button
+                          onClick={() => onActivar(p.id, p.nombre)}
+                          disabled={toggleDisabled}
+                          className="rounded border border-rodziny-300 px-3 py-1 text-xs font-medium text-rodziny-700 hover:bg-rodziny-50 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          Volver a activar
+                        </button>
                       </td>
                     </tr>
                   ))}
