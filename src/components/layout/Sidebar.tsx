@@ -12,6 +12,7 @@ const MODULOS_FINANZAS: Modulo[] = ['finanzas', 'edr', 'gastos', 'amortizaciones
 const NAV: { to: string; label: string; icon: string; modulo: Modulo | 'finanzas-grupo' }[] = [
   { to: '/', label: 'Inicio', icon: '🏠', modulo: 'dashboard' },
   { to: '/caja', label: 'Caja', icon: '🧮', modulo: 'caja' },
+  { to: '/salon', label: 'Salón', icon: '🍽️', modulo: 'salon' },
   { to: '/ventas', label: 'Ventas', icon: '📈', modulo: 'ventas' },
   { to: '/finanzas', label: 'Finanzas', icon: '💰', modulo: 'finanzas-grupo' },
   { to: '/rrhh', label: 'RRHH', icon: '👥', modulo: 'rrhh' },

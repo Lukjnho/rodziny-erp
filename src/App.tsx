@@ -66,6 +66,9 @@ const CajaPage = lazy(() =>
 const CajaResumen = lazy(() =>
   import('@/modules/caja/CajaResumen').then((m) => ({ default: m.CajaResumen })),
 );
+const SalonConfigPage = lazy(() =>
+  import('@/modules/salon/SalonConfigPage').then((m) => ({ default: m.SalonConfigPage })),
+);
 const IntegracionesPage = lazy(() =>
   import('@/modules/integraciones/IntegracionesPage').then((m) => ({ default: m.IntegracionesPage })),
 );
@@ -184,6 +187,16 @@ function AppInterna() {
               element={
                 <Ruta modulo="caja">
                   <CajaPage />
+                </Ruta>
+              }
+            />
+            {/* El plano del salón: espacios y mesas. Lo arma administración; de
+                acá leen después el teléfono del mozo y el mostrador. */}
+            <Route
+              path="/salon"
+              element={
+                <Ruta modulo="salon">
+                  <SalonConfigPage />
                 </Ruta>
               }
             />

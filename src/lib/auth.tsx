@@ -20,7 +20,8 @@ export type Modulo =
   | 'agenda'
   | 'convenios'
   | 'integraciones'
-  | 'caja';
+  | 'caja'
+  | 'salon';
 
 export interface Perfil {
   user_id: string;
@@ -45,6 +46,10 @@ export interface Perfil {
   // Caja = el POS propio (abrir turno, cobrar, cerrar arqueo). Es un módulo
   // aparte porque lo usa el cajero, que no tiene por qué ver finanzas.
   puede_ver_caja: boolean;
+  // Salón = las mesas (mig 190). Lo usa el mozo desde el teléfono. El PLANO
+  // —espacios y mesas— lo arma solo administración; este permiso alcanza para
+  // mirarlo y para tomar pedidos, no para editarlo.
+  puede_ver_salon: boolean;
   // Gate de UI (no es módulo del sidebar): controla si el usuario ve las alertas
   // financieras de supervisión en el Inicio (extractos atrasados, gastos/pagos
   // fijos vencidos, conciliación). Independiente de poder cargar gastos.
@@ -177,6 +182,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return perfil.puede_ver_integraciones;
       case 'caja':
         return perfil.puede_ver_caja;
+      case 'salon':
+        return perfil.puede_ver_salon;
     }
   };
 

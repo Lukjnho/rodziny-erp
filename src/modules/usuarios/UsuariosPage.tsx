@@ -21,6 +21,7 @@ const MODULOS: { key: Modulo; label: string; campo: keyof Perfil }[] = [
   { key: 'agenda', label: 'Agenda', campo: 'puede_ver_agenda' },
   { key: 'convenios', label: 'Convenios', campo: 'puede_ver_convenios' },
   { key: 'caja', label: 'Caja (POS)', campo: 'puede_ver_caja' },
+  { key: 'salon', label: 'Salón (mesas)', campo: 'puede_ver_salon' },
   { key: 'integraciones', label: 'Integraciones (docs contador)', campo: 'puede_ver_integraciones' },
   { key: 'usuarios', label: 'Usuarios', campo: 'puede_ver_usuarios' },
 ];
