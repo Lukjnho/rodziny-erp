@@ -254,6 +254,9 @@ export function RecetaEditorInline({
   const [altaTipo, setAltaTipo] = useState<TipoProducto | ''>('');
   const [altaUnidad, setAltaUnidad] = useState('');
   const [altaMinimo, setAltaMinimo] = useState('');
+  // Solo pastas: se PREGUNTA, nunca se deduce. Deducirlo fue el bug del mezzelune
+  // (migración 160) y además la base lo exige con un CHECK.
+  const [altaLlevaRelleno, setAltaLlevaRelleno] = useState<boolean | null>(null);
   const [altaGuardando, setAltaGuardando] = useState(false);
   const [altaError, setAltaError] = useState('');
 
@@ -278,6 +281,13 @@ export function RecetaEditorInline({
     if (!receta) return;
     if (!tipoAlta) {
       setAltaError('Elegí el tipo para saber en qué lista de Cocina va.');
+      return;
+    }
+    // La base tampoco lo deja pasar (CHECK de la migración 160), pero acá el aviso
+    // se entiende: si el QR no sabe si la pasta lleva relleno vuelve a adivinar, y
+    // adivinando fue como desapareció el mezzelune.
+    if (tipoAlta === 'pasta' && altaLlevaRelleno == null) {
+      setAltaError('Decí si esta pasta lleva relleno: de eso depende que aparezca para porcionar.');
       return;
     }
     const minimoNum = altaMinimo.trim() === '' ? null : Number(altaMinimo.replace(',', '.'));
@@ -343,6 +353,14 @@ export function RecetaEditorInline({
           controla_stock: true,
           minimo_produccion: minimoNum,
           receta_id: receta.id,
+          // Solo tiene sentido en pastas; en el resto queda en NULL.
+          lleva_relleno: tipoAlta === 'pasta' ? altaLlevaRelleno : null,
+          // El cruce con las ventas es POR NOMBRE y lo hace el PRODUCTO, no la
+          // receta (MostradorPage lee cocina_productos.fudo_nombres). Si el
+          // producto nace con la lista vacía, el conteo de cámara descuenta CERO
+          // ventas y canta "faltan N" todos los días. La receta ya tiene el
+          // vínculo cargado: se copia acá para que nazca cruzando bien.
+          fudo_nombres: receta.fudo_productos ?? [],
         });
         if (errIns) throw errIns;
       }
@@ -1087,6 +1105,31 @@ export function RecetaEditorInline({
                 className="w-full rounded border border-gray-300 px-2 py-1.5 text-right text-sm tabular-nums"
               />
             </div>
+            {tipoAlta === 'pasta' && (
+              // basis-full: la pregunta se lleva todo el ancho y el botón cae abajo,
+              // así no se puede apretar "Ponerla en Stock" sin haberla visto.
+              <div className="basis-full">
+                <label className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-gray-500">
+                  ¿Lleva relleno?
+                </label>
+                <select
+                  value={altaLlevaRelleno == null ? '' : altaLlevaRelleno ? 'si' : 'no'}
+                  onChange={(e) =>
+                    setAltaLlevaRelleno(e.target.value === '' ? null : e.target.value === 'si')
+                  }
+                  className="rounded border border-gray-300 px-2 py-1.5 text-sm"
+                >
+                  <option value="">— Elegí una opción —</option>
+                  <option value="si">Sí — se arma con un relleno y después se porciona</option>
+                  <option value="no">No — es fideo, se embolsa y va directo a cámara</option>
+                </select>
+                <p className="mt-1 text-[11px] leading-tight text-gray-500">
+                  De esto depende el circuito en el QR de producción. Las que llevan relleno quedan
+                  en el freezer esperando el paso «Porcionar»; los fideos entran derecho a cámara.
+                  Los ñoquis van en <strong>Sí</strong>: el puré se carga como si fuera el relleno.
+                </p>
+              </div>
+            )}
             <button
               type="button"
               onClick={ponerEnStock}
