@@ -57,13 +57,16 @@ export function AnalisisGastos({ local }: Props) {
         periodo: string;
         importe_total: number | null;
         importe_neto: number | null;
+        creado_manual: boolean | null;
       }[] = [];
       let from = 0;
       // paginado: sin esto Supabase corta en 1000 filas y la matriz anual subcuenta
       while (true) {
         let q = supabase
           .from('gastos')
-          .select('categoria, subcategoria, categoria_id, periodo, importe_total, importe_neto')
+          .select(
+            'categoria, subcategoria, categoria_id, periodo, importe_total, importe_neto, creado_manual',
+          )
           .gte('periodo', `${año}-01`)
           .lte('periodo', `${año}-12`)
           .neq('cancelado', true)
@@ -166,8 +169,16 @@ export function AnalisisGastos({ local }: Props) {
     let cantFacturas = 0;
 
     // Meses que ya tienen sueldos cargados en RRHH (pagos_sueldos). En esos meses
-    // los sueldos salen de ahí y se IGNORAN las filas "Sueldos" de la tabla gastos,
-    // para no contar dos veces (anti doble-conteo entre fuentes).
+    // los sueldos salen de ahí y se IGNORAN las filas "Sueldos" que entraron por la
+    // importación vieja, para no contar dos veces (anti doble-conteo entre fuentes).
+    //
+    // 💣 Lo que NO se ignora: las filas cargadas a mano en el formulario. Desde
+    // abr-2026 el sueldo mensual vive en RRHH, así que una fila de "Sueldos" que
+    // alguien carga a mano hoy es otra cosa —una changa, un runner, un franco
+    // cubierto— y es plata que salió igual. La regla vieja miraba el mes entero y se
+    // las llevaba puestas: $720.000 en 2026 que no aparecían en ninguna pantalla.
+    // Medido el 9-sep-2026: en los tres meses donde conviven las dos fuentes, el
+    // 100% de lo que hay en gastos son filas manuales y no hay una sola importada.
     const mesesSueldoRRHH = new Set<string>();
     for (const p of pagosSueldos ?? []) {
       if (Number(p.monto) || 0) mesesSueldoRRHH.add(p.periodo.substring(0, 7));
@@ -189,10 +200,20 @@ export function AnalisisGastos({ local }: Props) {
       const cat = resuelto?.cat || g.categoria || 'Sin categoría';
       const sub = resuelto?.sub || g.subcategoria || cat;
       const mes = g.periodo;
-      const monto = Number(g.importe_neto ?? g.importe_total) || 0;
+      // El neto en 0 es "no lo cargaron", no "vale cero". Con ?? el 0 se quedaba, el
+      // monto daba 0 y la factura entera desaparecía: ni en el rubro, ni en el total,
+      // ni en el conteo. Medido el 9-sep-2026: 76 facturas por $14.761.906 invisibles
+      // (la Bienal de $3.025.000, la deuda de obra social de $1.634.514, etc.).
+      const monto = Number(g.importe_neto) || Number(g.importe_total) || 0;
       if (!monto) continue;
-      // si este mes tiene sueldos en RRHH, descarto las filas "Sueldos" de gastos
-      if (cat === 'Gastos de RRHH' && sub === 'Sueldos' && mesesSueldoRRHH.has(mes)) continue;
+      // si este mes tiene sueldos en RRHH, descarto las filas "Sueldos" IMPORTADAS
+      if (
+        cat === 'Gastos de RRHH' &&
+        sub === 'Sueldos' &&
+        !g.creado_manual &&
+        mesesSueldoRRHH.has(mes)
+      )
+        continue;
       cantFacturas++;
       addMonto(cat, sub, mes, monto);
     }
