@@ -115,6 +115,43 @@ export async function ventasDesde(
 }
 
 /**
+ * Lo que SALIÓ DE LA CÁMARA entre dos instantes, por id de producto.
+ *
+ * NO es lo mismo que `ventasDesde`, y la diferencia importa:
+ *
+ * · Engancha por ID, no por nombre. `ventasDesde` devuelve el nombre tal cual lo
+ *   escribió Fudo y la pantalla lo compara contra los `fudo_nombres` cargados a
+ *   mano. Cuando falta un alias, el producto cuenta CERO y el conteo marca un
+ *   faltante que no existe: medido el 8-sep-2026, la Mezzelune de Bondiola de
+ *   Vedia contaba 0 de 168 porciones por semana.
+ *
+ * · Los platos de una mesa se cuentan cuando la comanda va a la cocina, no cuando
+ *   se cobra la mesa una hora y media después.
+ *
+ * Devuelve un mapa producto_id → cantidad. Sólo id y cantidad, sin un peso, para
+ * que esta pantalla —que es pública y entra como anon— pueda leerla. Ver la
+ * migración 195.
+ */
+export async function salidasDeCamara(
+  client: SupabaseClient,
+  local: string,
+  desdeISO: string,
+  hastaISO: string,
+): Promise<Map<string, number>> {
+  const { data, error } = await client.rpc('cocina_salidas_de_camara', {
+    p_local: local,
+    p_desde: desdeISO,
+    p_hasta: hastaISO,
+  });
+  if (error) throw error;
+  const m = new Map<string, number>();
+  for (const r of (data ?? []) as Array<{ producto_id: string; cantidad: number | string }>) {
+    m.set(r.producto_id, Number(r.cantidad));
+  }
+  return m;
+}
+
+/**
  * Tickets por día de semana (0 = domingo). Alimenta el factor "mañana se vende más
  * o menos que el promedio" del plan de producción.
  */

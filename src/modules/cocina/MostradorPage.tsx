@@ -11,9 +11,8 @@ import { supabaseAnon as supabase } from '@/lib/supabaseAnon';
 import { cn } from '@/lib/utils';
 import { mensajeErrorAmigable } from '@/lib/erroresSupabase';
 import { invalidarStockCocina } from './lib/invalidarStock';
-import { ventasDesde, type VentasCocina, type RankingVenta } from './lib/ventasCocina';
+import { salidasDeCamara } from './lib/ventasCocina';
 import { normalizarDecimal, parseDecimal, equivalenteKgGramos } from '@/lib/numero';
-import { PRODUCTOS_COCINA, normNombre } from './DashboardTab';
 
 type Local = 'vedia' | 'saavedra';
 type Turno = 'mediodia' | 'noche';
@@ -62,45 +61,23 @@ interface Producto {
   id: string;
   nombre: string;
   codigo: string;
-  fudo_nombres?: string[] | null;
 }
 
-// Antes venía de la API de Fudo en vivo. Ahora sale de nuestra base, por una RPC
-// que devuelve SÓLO nombre y cantidad — sin un peso — justamente para que esta
-// pantalla, que es pública y entra como `anon`, pueda leerla sin exponer plata.
-type FudoData = VentasCocina;
-
-// Mapa nombre normalizado → config con fudoNombres del DashboardTab (legacy hardcodeado).
-const PRODUCTO_POR_NOMBRE = new Map(
-  PRODUCTOS_COCINA.map((p) => [normNombre(p.nombre), p] as const),
-);
-
-function normFudoNombre(s: string) {
-  return s.toLowerCase().trim().replace(/\s+/g, ' ');
-}
-
-// Resuelve cuántas ventas le corresponden a un producto del catálogo:
-// prioridad fudo_nombres en DB > mapa hardcodeado > nombre literal.
-// El cruce sigue siendo POR NOMBRE porque el nombre que guarda `ventas_items` es el
-// mismo que devolvía la API de Fudo (verificado: 49 de 49 productos coinciden en
-// Vedia). Cuando el POS sea el único origen, esto se puede pasar a `receta_id`.
-function ventasFudoDelProducto(producto: Producto, ranking: RankingVenta[] | undefined) {
-  if (!ranking || ranking.length === 0) return 0;
-  let nombres: string[];
-  if (producto.fudo_nombres && producto.fudo_nombres.length > 0) {
-    nombres = producto.fudo_nombres;
-  } else {
-    const cfg = PRODUCTO_POR_NOMBRE.get(normNombre(producto.nombre));
-    nombres = cfg?.fudoNombres ?? [producto.nombre];
-  }
-  let total = 0;
-  for (const n of nombres) {
-    const objetivo = normFudoNombre(n);
-    const hit = ranking.find((r) => normFudoNombre(r.nombre) === objetivo);
-    if (hit) total += hit.cantidad;
-  }
-  return total;
-}
+// Lo que salió de la cámara en una ventana: producto_id → porciones.
+//
+// ⚠️ ANTES ESTO SE CRUZABA POR NOMBRE, y ahí vivía un faltante fantasma. La
+// pantalla juntaba los `fudo_nombres` cargados a mano en cada producto y los
+// comparaba contra el nombre que Fudo le puso a la venta. Cuando faltaba un alias
+// —o cuando el plato se vende en un combo con otro nombre— el producto contaba
+// CERO vendido, el esperado quedaba inflado y la pantalla ofrecía anotar una merma
+// que nunca existió. Medido el 8-sep-2026, últimos 7 días:
+//     vedia    · Mezzelune de Bondiola ··· contaba 0 de 168
+//     saavedra · Cresta di Gallo ········· contaba 8 de 71
+// Ahora el enganche lo hace la base por id de producto (mig 195, y el nombre queda
+// como último recurso adentro de la función). Además cuenta los platos de las mesas
+// del salón a la hora en que la comanda va a la cocina, que es cuando la pasta sale
+// de la cámara de verdad — no una hora y media después, cuando se cobra.
+type SalidasPorVentana = Map<string, Map<string, number>>;
 
 // Qué turno se está cerrando, según el reloj.
 //
@@ -268,7 +245,7 @@ function CierrePastas({ local }: { local: Local }) {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cocina_productos')
-        .select('id, nombre, codigo, fudo_nombres')
+        .select('id, nombre, codigo')
         .eq('tipo', 'pasta')
         .eq('activo', true)
         .eq('local', local)
@@ -436,19 +413,24 @@ function CierrePastas({ local }: { local: Local }) {
     return [...set].sort();
   }, [ultimosCierres, fecha]);
 
-  const { data: fudoPorVentana } = useQuery({
-    queryKey: ['mostrador-ventas-por-ventana', local, ventanas],
+  const { data: salidasPorVentana } = useQuery<SalidasPorVentana>({
+    // 🔑 La clave cambió de nombre a propósito: lo que guarda adentro ya no es la
+    // misma forma que antes, y una clave repetida haría que una pestaña abierta de
+    // ayer le sirva a ésta la respuesta vieja.
+    queryKey: ['mostrador-salidas-por-ventana', local, ventanas],
     queryFn: async () => {
       const ahoraISO = new Date().toISOString();
-      const m = new Map<string, FudoData | null>();
+      const m: SalidasPorVentana = new Map();
       for (const desdeISO of ventanas) {
-        m.set(desdeISO, await ventasDesde(supabase, local, desdeISO, ahoraISO));
+        m.set(desdeISO, await salidasDeCamara(supabase, local, desdeISO, ahoraISO));
       }
       return m;
     },
-    // Las ventas entran a nuestra base cada 15 minutos (cron de la mig 180), así que
-    // pedirlas más seguido no trae nada nuevo. Antes esto pegaba contra la API de
-    // Fudo, que sí era casi en vivo.
+    // Lo de Fudo entra a nuestra base cada 15 minutos (cron de la mig 180) y lo del
+    // mostrador propio al cobrar, así que pedirlo más seguido casi no trae nada
+    // nuevo. Lo único que sí es instantáneo son las comandas del salón; 5 minutos de
+    // atraso ahí es aceptable porque el conteo se hace al cerrar el turno, con las
+    // mesas ya levantadas.
     staleTime: 5 * 60_000,
     refetchInterval: 5 * 60_000,
   });
@@ -498,7 +480,7 @@ function CierrePastas({ local }: { local: Local }) {
             .reduce((s, t) => s + (t.porciones ?? 0), 0);
       // Cada pasta mira su propia ventana: la que arranca en SU último conteo.
       const ventana = ultimo ? new Date(ultimo.created_at).toISOString() : ventanas[0];
-      const vendido = ventasFudoDelProducto(p, fudoPorVentana?.get(ventana)?.ranking);
+      const vendido = salidasPorVentana?.get(ventana)?.get(p.id) ?? 0;
       nuevas[p.id] = {
         inicial: String(inicial),
         entrega: String(entrega),
@@ -529,7 +511,7 @@ function CierrePastas({ local }: { local: Local }) {
     traspasos,
     lotesProducidos,
     esSaavedra,
-    fudoPorVentana,
+    salidasPorVentana,
     ventanas,
   ]);
 
@@ -717,16 +699,16 @@ function CierrePastas({ local }: { local: Local }) {
     });
   }, [pastas, filas, cierreActual]);
 
-  // ¿Llegó el dato de ventas? Hoy sale de la API de Fudo. El día que Fudo se corte
-  // —o simplemente si falla la llamada— esto queda en false y la pantalla deja de
-  // hablar de "faltan": sin saber cuánto se vendió, un faltante no se puede afirmar.
+  // ¿Llegó el dato de lo que salió? Si la llamada falla, esto queda en false y la
+  // pantalla deja de hablar de "faltan": sin saber cuánto salió de la cámara, un
+  // faltante no se puede afirmar.
   // Lo que SÍ se puede afirmar sin ventas es el sobrante, porque las ventas solo
   // restan: si contaste más de lo máximo posible, entró algo sin registrar. Punto.
   const hayDatoDeVentas = useMemo(() => {
-    if (!fudoPorVentana) return false;
-    for (const v of fudoPorVentana.values()) if (v) return true;
+    if (!salidasPorVentana) return false;
+    for (const v of salidasPorVentana.values()) if (v) return true;
     return false;
-  }, [fudoPorVentana]);
+  }, [salidasPorVentana]);
 
   if (loadingPastas) {
     return <div className="py-12 text-center text-sm text-gray-400">Cargando…</div>;
