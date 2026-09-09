@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
 import { calcularCobertura, type ResultadoCob } from '../lib/cobertura';
-import { ventasPorDias } from '../lib/ventasCocina';
+import { salidasPorDias } from '../lib/ventasCocina';
 import { SELECT_STOCK_PASTAS, paraPlanificar, type StockPastaRow } from '../lib/stockPastas';
 
 // El Resumen semanal estima la COBERTURA de cada producto esta semana:
@@ -28,7 +28,6 @@ interface ProductoCat {
   nombre: string;
   tipo: string;
   receta_id: string | null;
-  fudo_nombres: string[] | null;
 }
 
 interface ItemPlan {
@@ -108,7 +107,7 @@ export function ResumenSemanalCard({
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cocina_productos')
-        .select('id, nombre, tipo, receta_id, fudo_nombres')
+        .select('id, nombre, tipo, receta_id')
         .eq('local', local)
         .eq('activo', true)
         .eq('controla_stock', true);
@@ -276,7 +275,7 @@ export function ResumenSemanalCard({
     // La RPC lanza si falla (no devuelve null), así React Query REINTENTA en vez de
     // cachear un "0 ventas" falso ante un error transitorio. Eso importa: un cero
     // silencioso acá se lee como "no se vendió nada" y desarma el plan.
-    queryFn: async () => ventasPorDias(supabase, local, hace14, hoyStr),
+    queryFn: async () => salidasPorDias(supabase, local, hace14, hoyStr),
     staleTime: 10 * 60 * 1000,
     retry: 2,
     retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 8000),

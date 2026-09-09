@@ -5,7 +5,7 @@ import { mensajeErrorAmigable } from '@/lib/erroresSupabase';
 import { cn } from '@/lib/utils';
 import { hoyAR } from '@/lib/fechaAR';
 import { normNombre } from '../DashboardTab';
-import { ventasPorDias } from '../lib/ventasCocina';
+import { salidasPorDias } from '../lib/ventasCocina';
 import { SELECT_STOCK_PASTAS, paraPlanificar, type StockPastaRow } from '../lib/stockPastas';
 import {
   calcularCobertura,
@@ -345,7 +345,7 @@ export function PlanProduccionEditor({
   // Ventas de los últimos 14 días (promedio diario por producto), de nuestra base.
   const { data: fudoData } = useQuery({
     queryKey: ['cocina-demanda-plan', local, hace14, hoyStr],
-    queryFn: async () => ventasPorDias(supabase, local, hace14, hoyStr),
+    queryFn: async () => salidasPorDias(supabase, local, hace14, hoyStr),
     staleTime: 10 * 60 * 1000,
   });
 
@@ -359,7 +359,7 @@ export function PlanProduccionEditor({
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cocina_productos')
-        .select('id, nombre, tipo, receta_id, fudo_nombres')
+        .select('id, nombre, tipo, receta_id')
         .eq('local', local)
         .eq('activo', true)
         .eq('controla_stock', true);

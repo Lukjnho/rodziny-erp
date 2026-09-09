@@ -151,6 +151,33 @@ export async function salidasDeCamara(
   return m;
 }
 
+export interface SalidasCocina {
+  /** producto_id → porciones que salieron en el rango. */
+  porProducto: Map<string, number>;
+  dias: number;
+}
+
+/**
+ * Lo mismo que `salidasDeCamara` pero entre dos fechas, ambas inclusive. Es el
+ * reemplazo de `ventasPorDias` para todo lo que sabe el id del producto: engancha
+ * por id en vez de por nombre, así un alias de Fudo que nadie cargó deja de
+ * convertirse en un cero silencioso.
+ */
+export async function salidasPorDias(
+  client: SupabaseClient,
+  local: string,
+  fechaDesde: string,
+  fechaHasta: string,
+): Promise<SalidasCocina> {
+  const porProducto = await salidasDeCamara(
+    client,
+    local,
+    inicioDelDiaAR(fechaDesde).toISOString(),
+    finDelDiaAR(fechaHasta).toISOString(),
+  );
+  return { porProducto, dias: diasDelRango(fechaDesde, fechaHasta) };
+}
+
 /**
  * Tickets por día de semana (0 = domingo). Alimenta el factor "mañana se vende más
  * o menos que el promedio" del plan de producción.

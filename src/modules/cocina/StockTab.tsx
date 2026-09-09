@@ -3,12 +3,12 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { mensajeErrorAmigable } from '@/lib/erroresSupabase';
 import { invalidarStockCocina } from './lib/invalidarStock';
-import { ventasPorDias, type VentasCocina, type RankingVenta } from './lib/ventasCocina';
+import { salidasPorDias, type SalidasCocina } from './lib/ventasCocina';
 import { KPICard } from '@/components/ui/KPICard';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
 import { hoyAR } from '@/lib/fechaAR';
-import { PRODUCTOS_COCINA, normNombre } from './DashboardTab';
+import { normNombre } from './DashboardTab';
 import {
   SELECT_STOCK_PASTAS,
   vendibleHoy,
@@ -59,7 +59,7 @@ interface FilaVistaMostrador {
 // asi que la pantalla no necesita conocer las tablas crudas.
 // Antes esto venía de la API de Fudo en vivo y traía además `facturacion` y
 // `categoria`, que no usaba nadie. Ahora sale de nuestra base (ver lib/ventasCocina).
-type FudoData = VentasCocina;
+type FudoData = SalidasCocina;
 
 // Cocina es una herramienta operativa por local: nunca vista combinada.
 // El admin elige Vedia o Saavedra (default Vedia); al cocinero con
@@ -182,35 +182,16 @@ const HOY = () => {
   return `${y}-${m}-${day}`;
 };
 
-// Mapa nombre normalizado → config con fudoNombres (para resolver ventas de Fudo por producto)
-const PRODUCTO_POR_NOMBRE = new Map(
-  PRODUCTOS_COCINA.map((p) => [normNombre(p.nombre), p] as const),
-);
-
-// Fudo puede devolver el nombre con distinta capitalización o espacios extra; normalizar
-// antes de comparar para no perder ventas por mismatch cosmético.
-function normFudoNombre(s: string) {
-  return s.toLowerCase().trim().replace(/\s+/g, ' ');
-}
-
-function ventasFudoDelProducto(producto: Producto, ranking: RankingVenta[] | undefined) {
-  if (!ranking || ranking.length === 0) return 0;
-  // Prioridad: fudo_nombres del producto en DB (configurable desde el editor)
-  // > mapa hardcodeado PRODUCTOS_COCINA (legacy) > nombre del producto literal.
-  let nombres: string[];
-  if (producto.fudo_nombres && producto.fudo_nombres.length > 0) {
-    nombres = producto.fudo_nombres;
-  } else {
-    const cfg = PRODUCTO_POR_NOMBRE.get(normNombre(producto.nombre));
-    nombres = cfg?.fudoNombres ?? [producto.nombre];
-  }
-  let total = 0;
-  for (const n of nombres) {
-    const objetivo = normFudoNombre(n);
-    const hit = ranking.find((r) => normFudoNombre(r.nombre) === objetivo);
-    if (hit) total += hit.cantidad;
-  }
-  return total;
+// Cuánto salió de este producto en la ventana.
+//
+// ⚠️ ANTES SE BUSCABA POR NOMBRE, juntando los `fudo_nombres` del producto y
+// comparándolos contra el nombre que Fudo le puso a la venta. Cuando faltaba un
+// alias el producto daba CERO demanda y esta pantalla lo mostraba con cobertura
+// infinita teniendo la cámara vacía. Medido en 7 días: la Mezzelune de Bondiola de
+// Vedia daba 0 con 168 porciones vendidas. Ahora lo engancha la base por id de
+// producto (mig 195) y el nombre queda de último recurso, adentro de la función.
+function salidasDelProducto(producto: Producto, salidas: Map<string, number> | undefined) {
+  return salidas?.get(producto.id) ?? 0;
 }
 
 export function StockTab() {
@@ -508,7 +489,7 @@ export function StockTab() {
     queryFn: async () => {
       const res: Record<string, FudoData | null> = {};
       for (const loc of localesScope) {
-        res[loc] = await ventasPorDias(supabase, loc, hace7, hoy);
+        res[loc] = await salidasPorDias(supabase, loc, hace7, hoy);
       }
       return res;
     },
@@ -588,7 +569,7 @@ export function StockTab() {
         // Demanda real: ventas Fudo de los últimos 7 días (vía fudo_nombres).
         // El estado se mide en días de cobertura del stock de cámara contra la
         // venta diaria promedio; la columna muestra la demanda semanal + 15%.
-        const demanda7d = ventasFudoDelProducto(prod, fudo7d?.[loc]?.ranking);
+        const demanda7d = salidasDelProducto(prod, fudo7d?.[loc]?.porProducto);
         const diasRango = fudo7d?.[loc]?.dias ?? 0;
         const demandaDiaria = diasRango > 0 ? demanda7d / diasRango : 0;
         const diasCobertura = demandaDiaria > 0 ? stock / demandaDiaria : null;
@@ -1353,12 +1334,12 @@ function CatalogoStock({
     queryKey: ['cocina-stock-ventas-7d', [local], hace7, hoyDem],
     queryFn: async () => {
       const res: Record<string, FudoData | null> = {};
-      res[local] = await ventasPorDias(supabase, local, hace7, hoyDem);
+      res[local] = await salidasPorDias(supabase, local, hace7, hoyDem);
       return res;
     },
     staleTime: 10 * 60 * 1000,
   });
-  const rankingDem = fudo7d?.[local]?.ranking;
+  const salidasDem = fudo7d?.[local]?.porProducto;
 
   // ── Puente receta vendible → subreceta Base ────────────────────────────────
   // El QR de salsas carga contra la subreceta *Base* (rol='salsa_base') desde
@@ -1543,7 +1524,12 @@ function CatalogoStock({
                       stock <= 0 ? 'sin-stock' : min && stock < min ? 'bajo' : 'ok';
                     // Demanda 7d: solo para productos de venta directa. Si no tiene
                     // mapeo Fudo y no registró ventas, mostramos "—" (ej: salsas).
-                    const demanda = ventasFudoDelProducto(p, rankingDem);
+                    // 🔑 El NÚMERO ya no sale de `fudo_nombres` (viene enganchado por
+                    // id desde la base, mig 195); `fudo_nombres` quedó sólo como la
+                    // seña de "esto se vende directo", que es lo que decide si va un
+                    // número o un guión. Cambiarlo por otra regla movería qué filas
+                    // muestran demanda, y eso es otra conversación.
+                    const demanda = salidasDelProducto(p, salidasDem);
                     const tieneMapeoFudo = (p.fudo_nombres?.length ?? 0) > 0;
                     const demandaLabel =
                       tieneMapeoFudo || demanda > 0

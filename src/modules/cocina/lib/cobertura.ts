@@ -3,8 +3,15 @@
 // fuente de verdad evita que las marcas del editor y el Resumen se contradigan.
 //
 //   disponible = (stock actual − pedidos) + producción planificada
-//   estado     = disponible / demanda semanal (Fudo 7d)
-import { PRODUCTOS_COCINA, normNombre } from '../DashboardTab';
+//   estado     = disponible / demanda semanal
+//
+// ⚠️ LA DEMANDA YA NO SE BUSCA POR NOMBRE (8-sep-2026, mig 195). Antes esto juntaba
+// los `fudo_nombres` del producto y los comparaba contra el nombre que Fudo le puso
+// a la venta; cuando faltaba un alias el producto quedaba con demanda CERO y el
+// plan lo marcaba como "sobra" teniendo la cámara vacía. Medido en 7 días: la
+// Mezzelune de Bondiola de Vedia daba 0 con 168 porciones vendidas. Ahora la base
+// devuelve la demanda por id de producto.
+import { normNombre } from '../DashboardTab';
 
 export type EstadoCobertura = 'cubre' | 'ajustado' | 'corto' | 'sobra' | 'sin_demanda';
 
@@ -13,7 +20,6 @@ export interface ProductoCob {
   nombre: string;
   tipo: string;
   receta_id: string | null;
-  fudo_nombres: string[] | null;
 }
 
 // Un ítem de plan, ya sea leído del pizarrón guardado o construido en vivo
@@ -28,7 +34,8 @@ export interface ItemPlanCob {
 }
 
 export interface FudoCob {
-  ranking: { nombre: string; cantidad: number }[];
+  /** producto_id → porciones que salieron en el rango (mig 195). */
+  porProducto: Map<string, number>;
   dias: number;
 }
 
@@ -51,18 +58,6 @@ const ORDEN_ESTADO: Record<EstadoCobertura, number> = {
   sobra: 3,
   sin_demanda: 4,
 };
-
-const PRODUCTO_POR_NOMBRE = new Map(
-  PRODUCTOS_COCINA.map((p) => [normNombre(p.nombre), p] as const),
-);
-
-// Nombres de venta en Fudo por prioridad: fudo_nombres del producto (DB) >
-// mapa hardcodeado PRODUCTOS_COCINA (legacy) > nombre literal del producto.
-function nombresFudoDe(prod: ProductoCob): string[] {
-  if (prod.fudo_nombres && prod.fudo_nombres.length > 0) return prod.fudo_nombres;
-  const cfg = PRODUCTO_POR_NOMBRE.get(normNombre(prod.nombre));
-  return cfg?.fudoNombres ?? [prod.nombre];
-}
 
 export interface ArgsCobertura {
   productos: ProductoCob[];
@@ -91,11 +86,7 @@ export function calcularCobertura(args: ArgsCobertura): ResultadoCob[] {
 
   function demandaSemanalDe(prod: ProductoCob): number {
     if (!fudoData || fudoData.dias <= 0) return 0;
-    const objetivos = nombresFudoDe(prod).map((n) => n.toLowerCase().trim());
-    let total = 0;
-    for (const r of fudoData.ranking) {
-      if (objetivos.includes(r.nombre.toLowerCase().trim())) total += r.cantidad;
-    }
+    const total = fudoData.porProducto.get(prod.id) ?? 0;
     return (total / fudoData.dias) * 7;
   }
 
