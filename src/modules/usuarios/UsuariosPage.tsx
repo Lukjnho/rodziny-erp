@@ -22,6 +22,15 @@ const MODULOS: { key: Modulo; label: string; campo: keyof Perfil }[] = [
   { key: 'convenios', label: 'Convenios', campo: 'puede_ver_convenios' },
   { key: 'caja', label: 'Caja (POS)', campo: 'puede_ver_caja' },
   { key: 'salon', label: 'Salón (mesas)', campo: 'puede_ver_salon' },
+  // Estos dos no son módulos: son dos botones del POS. Antes había que dar
+  // `ventas` o `finanzas` para prenderlos, y eso le devolvía al cajero la plata de
+  // la otra casa (mig 196). El rótulo dice lo que pasa al tildarlos.
+  { key: 'anular_ventas', label: 'Caja: anular una venta cobrada', campo: 'puede_anular_ventas' },
+  {
+    key: 'ver_esperado_caja',
+    label: 'Caja: ver el esperado (saca el arqueo a ciegas)',
+    campo: 'puede_ver_esperado_caja',
+  },
   { key: 'integraciones', label: 'Integraciones (docs contador)', campo: 'puede_ver_integraciones' },
   { key: 'usuarios', label: 'Usuarios', campo: 'puede_ver_usuarios' },
 ];

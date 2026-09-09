@@ -21,7 +21,13 @@ export type Modulo =
   | 'convenios'
   | 'integraciones'
   | 'caja'
-  | 'salon';
+  | 'salon'
+  // Los dos de abajo NO son módulos: no tienen pantalla ni entran al menú. Son
+  // dos botones del POS que antes salían de `ventas` y de `finanzas`/`gastos`, y
+  // pedir cualquiera de esos dos permisos le devolvía al cajero la plata de la
+  // otra casa. Ahora tienen casilla propia (mig 196).
+  | 'anular_ventas'
+  | 'ver_esperado_caja';
 
 export interface Perfil {
   user_id: string;
@@ -50,6 +56,15 @@ export interface Perfil {
   // —espacios y mesas— lo arma solo administración; este permiso alcanza para
   // mirarlo y para tomar pedidos, no para editarlo.
   puede_ver_salon: boolean;
+  // Anular una venta YA COBRADA desde el POS. La base solo la deja borrar si es
+  // del turno abierto, de su propio local y sin comprobante fiscal (mig 196).
+  // Existe para no tener que dar `ventas` entero, que además deja editar
+  // cualquier venta vieja.
+  puede_anular_ventas: boolean;
+  // ⚠️ APAGA EL ARQUEO A CIEGAS de esta persona: le muestra cuánto tendría que
+  // haber ANTES de contar la plata, con lo cual el conteo deja de servir como
+  // control. Es una decisión de negocio, no un permiso técnico.
+  puede_ver_esperado_caja: boolean;
   // Gate de UI (no es módulo del sidebar): controla si el usuario ve las alertas
   // financieras de supervisión en el Inicio (extractos atrasados, gastos/pagos
   // fijos vencidos, conciliación). Independiente de poder cargar gastos.
@@ -184,6 +199,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return perfil.puede_ver_caja;
       case 'salon':
         return perfil.puede_ver_salon;
+      case 'anular_ventas':
+        return perfil.puede_anular_ventas;
+      case 'ver_esperado_caja':
+        return perfil.puede_ver_esperado_caja;
     }
   };
 

@@ -908,11 +908,15 @@ export function useCobrarVenta() {
  * (ON DELETE CASCADE). El arqueo se recalcula solo, porque el esperado sale de
  * sumar los cobros del turno.
  *
- * ⚠️ Esto NO lo puede hacer el cajero: la migración 151 le dejó ver y cobrar,
- * pero no borrar ni editar. Hace falta permiso de ventas (o ser administrador).
- * Y la base no protesta cuando falta el permiso: simplemente no borra nada. Por
- * eso se cuentan las filas afectadas y se avisa en criollo, en vez de dejar que
- * la pantalla diga "listo" sin haber borrado nada.
+ * ⚠️ Esto NO lo puede hacer un cajero cualquiera: la migración 151 le dejó ver y
+ * cobrar, pero no borrar ni editar. Hace falta el permiso de ventas, ser
+ * administrador, o tener la casilla "Caja: anular una venta cobrada" de la
+ * migración 196 — que además exige que el turno siga abierto, que la venta sea de
+ * su propio local y que no tenga comprobante fiscal.
+ *
+ * 💣 Y la base no protesta cuando falta el permiso: simplemente no borra nada, 0
+ * filas y error nulo. Por eso se cuentan las filas afectadas y se avisa en
+ * criollo, en vez de dejar que la pantalla diga "listo" sin haber borrado nada.
  */
 export function useAnularVenta(turnoId: string | null) {
   const qc = useQueryClient();
@@ -925,7 +929,7 @@ export function useAnularVenta(turnoId: string | null) {
       if (error) throw error;
       if (!count) {
         throw new Error(
-          'No se pudo anular la venta. Hace falta un administrador: pedile ayuda para borrarla.',
+          'No se pudo anular la venta. Puede ser que el turno ya esté cerrado, que la venta tenga factura hecha, o que te falte permiso. Pedile ayuda a un administrador.',
         );
       }
     },

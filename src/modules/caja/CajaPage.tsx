@@ -565,9 +565,16 @@ function Mostrador({
   onCerrado: () => void;
 }) {
   const { tienePermiso } = useAuth();
-  // Quién puede ver los esperados: administración (finanzas o gastos) y los
-  // admin. El cajero puro NO — ver "arqueo a ciegas" más abajo.
-  const veEsperado = tienePermiso('finanzas') || tienePermiso('gastos');
+  // Quién puede ver los esperados: administración (finanzas o gastos), los admin,
+  // y ahora también quien tenga la casilla propia. El cajero puro NO — ver
+  // "arqueo a ciegas" más abajo.
+  //
+  // 🔑 La casilla existe para no tener que darle `finanzas` o `gastos` a un cajero
+  // solo por este número: hasta la mig 196, cualquiera de esos dos le devolvía la
+  // plata de la otra casa, sin cartel. Ahora el candado de local aguanta igual,
+  // pero la casilla sigue siendo lo correcto: es un botón, no un módulo.
+  const veEsperado =
+    tienePermiso('finanzas') || tienePermiso('gastos') || tienePermiso('ver_esperado_caja');
 
   const catalogoQ = useCatalogoCaja(local);
   const ventasQ = useVentasDelTurno(turno.id);
@@ -1237,9 +1244,11 @@ function Mostrador({
           caja={caja}
           fechaTurno={turno.fecha}
           turnoId={turno.id}
-          // el mismo permiso que pide la base (migración 151): el cajero ve el
-          // cartel, el administrador puede anular de verdad
-          puedeAnular={tienePermiso('ventas')}
+          // El mismo permiso que pide la base: el cajero ve el cartel, y anula de
+          // verdad el que tenga `ventas` (administración) o la casilla propia de
+          // la mig 196. Con la casilla la base es más estricta que con `ventas`:
+          // solo el turno abierto, solo su local y solo sin comprobante fiscal.
+          puedeAnular={tienePermiso('ventas') || tienePermiso('anular_ventas')}
           onCerrar={() => setVerVenta(null)}
           onImprimir={(d) => setDoc(d)}
         />
