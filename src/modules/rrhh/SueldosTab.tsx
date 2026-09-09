@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth';
 import { cn, formatARS } from '@/lib/utils';
+import { mensajeErrorAmigable } from '@/lib/erroresSupabase';
 import { procesarComprobantePago } from '@/lib/ocrComprobantePago';
 import type { Empleado } from './RRHHPage';
 import {
@@ -32,6 +33,12 @@ import { PanelErroresCaja, type CierreCajaError } from './sueldos/PanelErroresCa
 import { SeccionImpuestos } from './sueldos/SeccionImpuestos';
 
 type FiltroLocal = 'todos' | 'vedia' | 'saavedra';
+
+// Seña interna para cortar el registro de un pago cuando la persona cancela el
+// aviso de "esto se lleva puesto el comprobante". No es un error de verdad y por
+// eso no se muestra: ver `cambiarPago`.
+const PAGO_CANCELADO = '__pago_cancelado__';
+
 type PanelEstado = {
   tipo: 'adelantos' | 'sanciones' | 'descuentos' | 'bonos' | 'errores_caja';
   empleadoId: string;
@@ -164,6 +171,14 @@ export function SueldosTab() {
   const [busqueda, setBusqueda] = useState('');
   const [panel, setPanel] = useState<PanelEstado>(null);
   const [expandido, setExpandido] = useState<string | null>(null); // empleado_id expandido
+  // Lo que el sync automático de pagos NO pudo hacer. Va como cartel arriba de
+  // todo, no como `alert`: el sync corre solo a los 2 segundos de abrir, y un
+  // cartel que aparece sin que nadie toque nada no se puede interrumpir a mano.
+  //
+  // Se guarda junto con el período al que pertenece y abajo solo se muestra si
+  // coincide con el que está en pantalla. Sin eso, el aviso de la quincena
+  // pasada quedaba colgado al navegar y hablaba de pagos que ya no se ven.
+  const [avisoSync, setAvisoSync] = useState<{ periodo: string; texto: string } | null>(null);
 
   // Modal de pago mixto (efectivo + transferencia)
   const [mixtoModal, setMixtoModal] = useState<{
@@ -382,6 +397,49 @@ export function SueldosTab() {
       numeroOperacion?: string | null;
       comprobantePath?: string | null;
     }) => {
+      // 0) QUÉ SE VA A PISAR, ANTES DE PISAR NADA.
+      //
+      // Rehacer un pago reemplaza las filas de `pagos_sueldos` de ese empleado y
+      // período. En esas filas puede estar la PRUEBA de que la plata se movió: el
+      // N° de operación, el comprobante subido y el enlace a la conciliación con
+      // el extracto. Eso no se recupera de ningún lado. Se pregunta primero y se
+      // nombra exactamente lo que se pierde — el que aprieta puede estar solo
+      // corrigiendo un monto y no tener idea de que se lleva puesto el respaldo.
+      const { data: previos, error: errPrevios } = await supabase
+        .from('pagos_sueldos')
+        .select('id, numero_operacion, comprobante_pago_path, conciliado_movimiento_id')
+        .eq('empleado_id', payload.empleado_id)
+        .eq('periodo', payload.periodo);
+      // 💣 Si no se pudo preguntar, NO se borra: acá "vacío" y "no pude leer" se
+      // ven igual, y confundirlos es justo lo que borraba comprobantes solo.
+      if (errPrevios) throw errPrevios;
+
+      const conRespaldo = (previos ?? []).filter(
+        (p) => p.numero_operacion || p.comprobante_pago_path || p.conciliado_movimiento_id,
+      );
+      if (conRespaldo.length > 0) {
+        const seVa = [
+          conRespaldo.some((p) => p.numero_operacion) ? 'el N° de operación' : null,
+          conRespaldo.some((p) => p.comprobante_pago_path) ? 'el comprobante' : null,
+          conRespaldo.some((p) => p.conciliado_movimiento_id)
+            ? 'la conciliación con el extracto'
+            : null,
+        ]
+          .filter(Boolean)
+          .join(', ');
+        const sigo = window.confirm(
+          `⚠️ El pago de ${payload.empleado_nombre} ya tiene respaldo del banco: ${seVa}.\n\n` +
+            `Si seguís, esa fila se reemplaza y ${seVa} se pierde` +
+            (payload.medio === null ? ', y además el pago queda desmarcado' : '') +
+            `. No hay forma de recuperarlo.\n\n¿Lo rehacés igual?`,
+        );
+        // Cancelar no toca nada. Se corta con esta seña en vez de con un `return`
+        // limpio para que el modal NO se cierre: los que llaman cierran recién
+        // cuando la promesa sale bien, y cerrarlo acá le borraría al que cargó el
+        // comprobante y el N° de operación todo lo que acaba de tipear.
+        if (!sigo) throw new Error(PAGO_CANCELADO);
+      }
+
       // 1) Actualizar liquidación
       const { error: errLiq } = await supabase.from('liquidaciones_quincenales').upsert(
         {
@@ -395,15 +453,31 @@ export function SueldosTab() {
       );
       if (errLiq) throw errLiq;
 
-      // 2) Borrar filas previas de pagos_sueldos para este (empleado, periodo)
-      const { error: errDel } = await supabase
-        .from('pagos_sueldos')
-        .delete()
-        .eq('empleado_id', payload.empleado_id)
-        .eq('periodo', payload.periodo);
-      if (errDel) throw errDel;
+      const idsPrevios = (previos ?? []).map((p) => p.id);
 
-      if (payload.medio === null) return; // desmarcar pago: solo borra
+      // 💣 Un DELETE que la regla de seguridad bloquea devuelve CERO filas y error
+      // nulo — probado contra esta misma tabla. Por eso todos los borrados de acá
+      // abajo cuentan las filas que sacaron, y no se conforman con "no hubo error".
+      async function borrarPrevias() {
+        if (idsPrevios.length === 0) return;
+        const { data: borradas, error } = await supabase
+          .from('pagos_sueldos')
+          .delete()
+          .in('id', idsPrevios)
+          .select('id');
+        if (error) throw error;
+        if ((borradas?.length ?? 0) < idsPrevios.length) {
+          throw new Error(
+            'No se pudieron borrar todos los pagos anteriores de este empleado. Fijate en la fila antes de volver a intentar: puede haber quedado más de un pago cargado.',
+          );
+        }
+      }
+
+      // 2) Desmarcar el pago es solo borrar: no hay fila nueva que poner.
+      if (payload.medio === null) {
+        await borrarPrevias();
+        return;
+      }
 
       const baseRow = {
         empleado_id: payload.empleado_id,
@@ -446,15 +520,29 @@ export function SueldosTab() {
         rows = [rowEfectivo(payload.monto)];
       }
 
+      // 3) PRIMERO SE GUARDA LA NUEVA, DESPUÉS SE BORRA LA VIEJA.
+      //
+      // 🔑 El orden importa y antes estaba al revés. Si el insert fallaba después
+      // del borrado —se cortó internet, la base tardó— el empleado quedaba sin
+      // NINGUNA fila de pago: plata pagada de verdad y ni rastro en el sistema, sin
+      // manera de saber que pasó. Guardando primero, el peor caso es que queden dos
+      // filas: se ve en pantalla, avisa el error de abajo y se arregla. Un
+      // duplicado a la vista es mucho menos grave que un pago borrado en silencio.
       const { error: errIns } = await supabase.from('pagos_sueldos').insert(rows);
       if (errIns) throw errIns;
+      await borrarPrevias();
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['liquidaciones'] });
       qc.invalidateQueries({ queryKey: ['pagos_sueldos_periodo'] });
       qc.invalidateQueries({ queryKey: ['fc_pagos_sueldos'] });
     },
-    onError: (e: Error) => window.alert(`Error al registrar pago: ${e.message}`),
+    onError: (e: Error) => {
+      // El que canceló el aviso ya sabe que no pasó nada: no se le pone un cartel
+      // de error encima.
+      if (e.message === PAGO_CANCELADO) return;
+      window.alert(`Error al registrar pago: ${e.message}`);
+    },
   });
 
   const updateModalidad = useMutation({
@@ -817,69 +905,134 @@ export function SueldosTab() {
     // Debounce: solo sincronizar una vez por ciclo de render
     syncRef.current = true;
     const timeout = setTimeout(async () => {
-      // Qué hay registrado hoy. Se consulta acá y no desde `filas` para no
-      // trabajar con datos viejos del render anterior.
-      const { data: previos } = await supabase
-        .from('pagos_sueldos')
-        .select(
-          'id, empleado_id, cuenta, numero_operacion, comprobante_pago_path, conciliado_movimiento_id',
-        )
-        .eq('periodo', periodoActual)
-        .in(
-          'empleado_id',
-          aSync.map((f) => f.empleado.id),
-        );
+      const problemas: string[] = [];
+      try {
+        // Qué hay registrado hoy. Se consulta acá y no desde `filas` para no
+        // trabajar con datos viejos del render anterior.
+        const { data: previos, error: errorPrevios } = await supabase
+          .from('pagos_sueldos')
+          .select(
+            'id, empleado_id, cuenta, numero_operacion, comprobante_pago_path, conciliado_movimiento_id',
+          )
+          .eq('periodo', periodoActual)
+          .in(
+            'empleado_id',
+            aSync.map((f) => f.empleado.id),
+          );
 
-      for (const fila of aSync) {
-        const suyos = (previos ?? []).filter((p) => p.empleado_id === fila.empleado.id);
-
-        // Un pago respaldado por el banco (comprobante, N° de operación o ya
-        // conciliado contra el extracto) NO se toca: la plata que se movió es la
-        // que se movió. Si después cambió el total de la liquidación, el
-        // desfasaje se muestra en pantalla en vez de pisar el registro del pago
-        // — que además dejaría la conciliación apuntando a un monto que no fue.
-        const respaldadoPorBanco = suyos.some(
-          (p) => p.numero_operacion || p.comprobante_pago_path || p.conciliado_movimiento_id,
-        );
-        if (respaldadoPorBanco) continue;
-
-        if (suyos.length === 1) {
-          // Caso normal de un pago puro: solo cambió el monto. Se actualiza la
-          // fila en vez de borrarla, así no se pierden `cuenta` ni el resto de
-          // los datos que este sync no conoce.
-          await supabase
-            .from('pagos_sueldos')
-            .update({
-              monto: fila.total,
-              medio_pago: fila.medioPago as 'efectivo' | 'transferencia',
-              fecha_pago: fila.liquidacion?.fecha_pago ?? hoyYmd,
-              updated_at: new Date().toISOString(),
-            })
-            .eq('id', suyos[0].id);
-        } else {
-          // 0 filas (nunca se registró) o varias (venía de un pago mixto que
-          // ahora es puro): hay que rehacerla. Se arrastra la cuenta si existía.
-          await supabase
-            .from('pagos_sueldos')
-            .delete()
-            .eq('empleado_id', fila.empleado.id)
-            .eq('periodo', periodoActual);
-          await supabase.from('pagos_sueldos').insert({
-            empleado_id: fila.empleado.id,
+        // 💣 SI NO SE PUDO PREGUNTAR, NO SE ESCRIBE NADA.
+        //
+        // Esta lectura es la que decide si un pago tiene respaldo del banco. Antes
+        // el error no se miraba, y en Supabase lo que falla no grita: devuelve
+        // vacío. Con `previos` vacío, "¿tiene comprobante?" contestaba que no, se
+        // caía el candado, y el pago se borraba y se recreaba SIN el N° de
+        // operación, sin el comprobante y sin la conciliación contra el extracto.
+        // O sea: el candado que protege la plata se abría solo, justo cuando la
+        // base estaba fallando, y sin un cartel en pantalla.
+        if (errorPrevios) {
+          setAvisoSync({
             periodo: periodoActual,
-            fecha_pago: fila.liquidacion?.fecha_pago ?? hoyYmd,
+            texto:
+              'No pude leer los pagos ya registrados, así que no toqué ninguno. ' +
+              mensajeErrorAmigable(errorPrevios) +
+              ' Los montos de esta pantalla pueden no coincidir con lo guardado: recargá antes de dar por bueno un pago.',
+          });
+          return;
+        }
+
+        for (const fila of aSync) {
+          const suyos = (previos ?? []).filter((p) => p.empleado_id === fila.empleado.id);
+          const quien = `${fila.empleado.apellido}, ${fila.empleado.nombre}`;
+
+          // Un pago respaldado por el banco (comprobante, N° de operación o ya
+          // conciliado contra el extracto) NO se toca: la plata que se movió es la
+          // que se movió. Si después cambió el total de la liquidación, el
+          // desfasaje se muestra en pantalla en vez de pisar el registro del pago
+          // — que además dejaría la conciliación apuntando a un monto que no fue.
+          const respaldadoPorBanco = suyos.some(
+            (p) => p.numero_operacion || p.comprobante_pago_path || p.conciliado_movimiento_id,
+          );
+          if (respaldadoPorBanco) continue;
+
+          const camposDelMonto = {
             monto: fila.total,
             medio_pago: fila.medioPago as 'efectivo' | 'transferencia',
-            cuenta: suyos.find((p) => p.cuenta)?.cuenta ?? null,
-            local: fila.empleado.local,
-            empleado_nombre: `${fila.empleado.apellido}, ${fila.empleado.nombre}`,
+            fecha_pago: fila.liquidacion?.fecha_pago ?? hoyYmd,
             updated_at: new Date().toISOString(),
-          });
+          };
+
+          if (suyos.length === 0) {
+            // Nunca se registró: se crea. Acá no hay nada que perder.
+            const { error } = await supabase.from('pagos_sueldos').insert({
+              empleado_id: fila.empleado.id,
+              periodo: periodoActual,
+              cuenta: null,
+              local: fila.empleado.local,
+              empleado_nombre: quien,
+              ...camposDelMonto,
+            });
+            if (error) problemas.push(`${quien}: ${mensajeErrorAmigable(error)}`);
+            continue;
+          }
+
+          // Con una fila es el caso normal; con varias, viene de un pago mixto que
+          // ahora es puro. En los dos se ACTUALIZA la fila que ya existe.
+          //
+          // 🔑 ANTES, con varias, se borraban todas y se insertaba una nueva. Si el
+          // insert fallaba después del borrado, el pago quedaba borrado y listo. Se
+          // conserva la fila que tiene cuenta cargada (o la primera) y se borran las
+          // sobrantes DESPUÉS: nunca hay un momento sin ninguna fila, y de paso no
+          // se pierde el `id`, que es a lo que apunta la conciliación.
+          const aConservar = suyos.find((p) => p.cuenta) ?? suyos[0];
+          const { data: actualizadas, error: errorUpdate } = await supabase
+            .from('pagos_sueldos')
+            .update(camposDelMonto)
+            .eq('id', aConservar.id)
+            .select('id');
+          if (errorUpdate) {
+            problemas.push(`${quien}: ${mensajeErrorAmigable(errorUpdate)}`);
+            continue;
+          }
+          // 💣 Un UPDATE que la regla de seguridad bloquea devuelve CERO filas y
+          // error nulo: sin este chequeo, "no tenés permiso" se ve igual que "listo".
+          if (!actualizadas || actualizadas.length === 0) {
+            problemas.push(`${quien}: no me dejó actualizar el pago (¿permisos?).`);
+            continue;
+          }
+
+          const sobrantes = suyos.filter((p) => p.id !== aConservar.id).map((p) => p.id);
+          if (sobrantes.length > 0) {
+            const { data: borradas, error: errorDelete } = await supabase
+              .from('pagos_sueldos')
+              .delete()
+              .in('id', sobrantes)
+              .select('id');
+            if (errorDelete) {
+              problemas.push(`${quien}: ${mensajeErrorAmigable(errorDelete)}`);
+            } else if ((borradas?.length ?? 0) !== sobrantes.length) {
+              problemas.push(`${quien}: quedaron filas de pago duplicadas sin borrar.`);
+            }
+          }
         }
+
+        setAvisoSync(
+          problemas.length === 0
+            ? null
+            : {
+                periodo: periodoActual,
+                texto:
+                  'No pude actualizar ' +
+                  (problemas.length === 1 ? 'un pago' : `${problemas.length} pagos`) +
+                  ' al monto nuevo. ' +
+                  problemas[0] +
+                  ' Lo de la pantalla puede no ser lo que está guardado.',
+              },
+        );
+        qc.invalidateQueries({ queryKey: ['pagos_sueldos_periodo'] });
+        qc.invalidateQueries({ queryKey: ['fc_pagos_sueldos'] });
+      } finally {
+        syncRef.current = false;
       }
-      qc.invalidateQueries({ queryKey: ['pagos_sueldos_periodo'] });
-      qc.invalidateQueries({ queryKey: ['fc_pagos_sueldos'] });
-      syncRef.current = false;
     }, 2000); // esperar 2s para no bombardear en cada re-render
     return () => {
       clearTimeout(timeout);
@@ -922,6 +1075,23 @@ export function SueldosTab() {
 
   return (
     <div className="space-y-4">
+      {/* ── Lo que el sync no pudo hacer ──────────────────────────────────────
+            Va arriba de todo y en rojo porque lo que avisa es que la pantalla y
+            la base pueden estar diciendo cosas distintas sobre plata pagada. */}
+      {avisoSync?.periodo === periodoActual && (
+        <div className="flex items-start gap-2 rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-800">
+          <span aria-hidden>⚠️</span>
+          <p className="flex-1">{avisoSync.texto}</p>
+          <button
+            onClick={() => setAvisoSync(null)}
+            className="rounded px-2 text-red-500 hover:bg-red-100"
+            aria-label="Cerrar el aviso"
+          >
+            ×
+          </button>
+        </div>
+      )}
+
       {/* ── Toolbar ───────────────────────────────────────────────────────── */}
       <div className="flex flex-wrap items-center gap-3 rounded-lg border border-gray-200 bg-white p-3">
         <div className="flex items-center gap-1">
