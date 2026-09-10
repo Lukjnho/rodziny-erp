@@ -2,6 +2,7 @@ import { Fragment, useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { formatARS, cn } from '@/lib/utils';
+import { MontoInput } from '@/components/ui/MontoInput';
 import { useAuth } from '@/lib/auth';
 import { useCostosRecetas } from '@/modules/cocina/hooks/useCostosRecetas';
 import { useConfigCosteo } from '@/modules/cocina/hooks/useConfigCosteo';
@@ -929,33 +930,30 @@ function PrecioInput({
   placeholder?: number;
   onGuardar: (precio: number) => void;
 }) {
-  const [raw, setRaw] = useState(valor != null ? String(valor) : '');
+  // 💣 Antes esto guardaba el precio como texto con String(valor) y al salir del
+  // campo lo volvía a leer con el parser de TIPEO, que borra los puntos. Con un
+  // precio con centavos (2350.5 -> "2350.5" -> 23505) bastaba con entrar al
+  // campo y salir, SIN escribir nada, para multiplicarlo por 10 y guardarlo.
+  // Ahora el valor es número de punta a punta y MontoInput maneja el texto.
+  const [borrador, setBorrador] = useState<number | null>(valor);
 
   const [ultimoValor, setUltimoValor] = useState(valor);
   if (valor !== ultimoValor) {
     setUltimoValor(valor);
-    setRaw(valor != null ? String(valor) : '');
+    setBorrador(valor);
   }
 
-  const commit = () => {
-    const t = raw.trim().replace(/\./g, '').replace(',', '.');
-    if (t === '') return;
-    const num = parseFloat(t);
-    if (!isNaN(num) && num >= 0 && num !== valor) onGuardar(num);
+  const commit = (n: number | null) => {
+    if (n == null || n < 0 || n === valor) return;
+    onGuardar(n);
   };
 
   return (
-    <input
-      type="text"
-      inputMode="numeric"
-      value={raw}
+    <MontoInput
+      value={borrador}
+      onChange={setBorrador}
+      onCommit={commit}
       placeholder={placeholder != null ? `= ${placeholder}` : 'sin precio'}
-      onChange={(e) => setRaw(e.target.value)}
-      onBlur={commit}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-        if (e.key === 'Escape') setRaw(valor != null ? String(valor) : '');
-      }}
       className="w-24 rounded border border-gray-200 px-2 py-1 text-right text-sm tabular-nums focus:border-rodziny-400 focus:outline-none"
     />
   );

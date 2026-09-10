@@ -32,6 +32,9 @@ export function MontoInput({
 }: MontoInputProps) {
   const [display, setDisplay] = useState<string>(value != null ? formatear(value) : '');
   const editingRef = useRef(false);
+  // Se levanta cuando la persona aprieta Escape: le avisa al onBlur que este
+  // no es un cierre normal y que NO tiene que confirmar lo que se tecleó.
+  const cancelandoRef = useRef(false);
 
   useEffect(() => {
     if (!editingRef.current) {
@@ -55,8 +58,27 @@ export function MontoInput({
         setDisplay(fmt);
         onChange(parsear(fmt));
       }}
+      onKeyDown={(e) => {
+        // Enter confirma (sale del campo, que es lo que dispara el guardado).
+        if (e.key === 'Enter') {
+          (e.target as HTMLInputElement).blur();
+          return;
+        }
+        // Escape se arrepiente: vuelve al valor que había y no guarda nada.
+        if (e.key === 'Escape') {
+          cancelandoRef.current = true;
+          onChange(value);
+          setDisplay(value != null ? formatear(value) : '');
+          (e.target as HTMLInputElement).blur();
+        }
+      }}
       onBlur={() => {
         editingRef.current = false;
+        if (cancelandoRef.current) {
+          cancelandoRef.current = false;
+          setDisplay(value != null ? formatear(value) : '');
+          return;
+        }
         const parsed = parsear(display);
         setDisplay(parsed != null ? formatear(parsed) : '');
         onCommit?.(parsed);
