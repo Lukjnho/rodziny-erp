@@ -6,8 +6,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "R=\"${CLAUDE_PROJECT_DIR:-$PWD}/graphify-out/GRAPH_REPORT.md\"; if [ -f \"$R\" ]; then echo \"MAPA (graphify): $(grep -m1 'nodes' \"$R\" | sed 's/^- //')\"; echo \"  Armado: $(date -r \"$R\" '+%d-%b %H:%M' 2>/dev/null). El CODIGO se refresca solo en cada commit.\"; echo \"  OJO: documentos, .md e imagenes NO entran en ese refresco -> correr '/graphify . --update' a mano.\"; else echo 'MAPA (graphify): NO armado en esta maquina -> correr /graphify . ; mientras tanto usar Grep/Read normalmente.'; fi",
-            "timeout": 15
+            "command": "D=\"${CLAUDE_PROJECT_DIR:-$PWD}\"; PY=\"$(cat \"$D/graphify-out/.graphify_python\" 2>/dev/null | tr -d '[:space:]')\"; if [ -x \"$PY\" ] && [ -f \"$D/scripts/graphify/nombrar.py\" ]; then (cd \"$D\" && \"$PY\" scripts/graphify/nombrar.py >/dev/null 2>&1); fi; R=\"$D/graphify-out/GRAPH_REPORT.md\"; if [ -f \"$R\" ]; then echo \"MAPA (graphify): $(grep -m1 'nodes' \"$R\" | sed 's/^- //')\"; echo \"  Armado: $(date -r \"$R\" '+%d-%b %H:%M' 2>/dev/null). El CODIGO se refresca solo en cada commit; los nombres en castellano de los barrios se reaplican al arrancar.\"; echo \"  OJO: documentos, .md e imagenes NO entran en ese refresco -> correr '/graphify . --update' a mano.\"; else echo 'MAPA (graphify): NO armado en esta maquina -> correr /graphify . ; mientras tanto usar Grep/Read normalmente.'; fi",
+            "timeout": 20
           }
         ]
       }
