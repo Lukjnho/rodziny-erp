@@ -9,6 +9,7 @@ import { useComisionMpConfig } from '../hooks/useComisionMpConfig';
 import { type CanalPrecio } from '../hooks/usePreciosCanal';
 import { SUBCATEGORIA_LABEL } from '@/modules/cocina/recetas/modelo';
 import { useFudoHuerfanos } from '@/modules/productos/hooks/useFudoHuerfanos';
+import { usePrecioCobrado } from '@/modules/productos/hooks/usePrecioCobrado';
 
 // El Menú es una PROYECCIÓN de Costeo: lista las recetas marcadas "vendible"
 // (su costo sale del motor de Costeo, no se duplica) + las bebidas de reventa
@@ -471,6 +472,8 @@ export function MenuTab() {
         </div>
       </div>
 
+      <PreciosDesalineados local={filtroLocal} items={items} precios={precios} />
+
       <ArmarPlato
         items={items}
         filtroLocal={filtroLocal}
@@ -713,6 +716,105 @@ function HuerfanosSinCandidato({ local }: { local: FiltroLocal }) {
             </span>
             <span className="whitespace-nowrap rounded bg-amber-100 px-1.5 py-0.5 text-[10px] tabular-nums text-amber-900">
               {h.uds} uds · {formatARS(h.total)}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+// Aviso: productos cuyo precio de carta NO es el que se está cobrando.
+//
+// Desde la mig 192 el POS propio cobra el precio de la CARTA, no el que manda
+// la pantalla. O sea que el día que se prenda la caja, cada producto de esta
+// lista pasa a cobrarse por un precio distinto al de hoy sin que nadie lo haya
+// decidido. Por eso el aviso va ARRIBA y no al pie: es plata, no información.
+//
+// No dice cuál de los dos precios está bien — eso lo decide Lucas. Puede ser
+// que la carta tenga un aumento que nunca se aplicó, o que el mostrador haya
+// cambiado un precio y la carta quedó vieja. El sistema muestra los dos.
+function PreciosDesalineados({
+  local,
+  items,
+  precios,
+}: {
+  local: FiltroLocal;
+  items: ItemMenu[];
+  precios: Map<string, Partial<Record<CanalPrecio, number>>>;
+}) {
+  const { data: cobrados, dias, isLoading } = usePrecioCobrado(local);
+
+  const desalineados = useMemo(() => {
+    const out: {
+      nombre: string;
+      carta: number;
+      cobrado: number;
+      uds: number;
+      ultima: string;
+    }[] = [];
+    for (const p of items) {
+      if (p.local !== local) continue;
+      const cob = cobrados.get(p.refId);
+      if (!cob) continue;
+      const carta = precios.get(p.key)?.plato;
+      if (carta == null || !Number.isFinite(carta)) continue;
+      // Un peso de diferencia ya es un precio distinto: el candado de la mig
+      // 192 compara exacto, no redondea.
+      if (Math.abs(cob.precio - carta) < 1) continue;
+      out.push({
+        nombre: p.nombre,
+        carta: Number(carta),
+        cobrado: cob.precio,
+        uds: cob.uds,
+        ultima: cob.ultima,
+      });
+    }
+    // Primero lo que más plata mueve: diferencia por unidades vendidas.
+    return out.sort(
+      (a, b) =>
+        Math.abs(b.cobrado - b.carta) * b.uds - Math.abs(a.cobrado - a.carta) * a.uds,
+    );
+  }, [items, local, cobrados, precios]);
+
+  if (isLoading || desalineados.length === 0) return null;
+
+  return (
+    <section className="rounded-lg border border-amber-300 bg-amber-50 p-3">
+      <header className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-sm font-semibold text-amber-900">
+          ⚠ La carta no dice lo que se está cobrando
+        </h3>
+        <span className="text-[10px] text-amber-700">
+          {desalineados.length} producto{desalineados.length === 1 ? '' : 's'} · últ. {dias} días
+        </span>
+      </header>
+      <p className="mb-2 text-[11px] leading-relaxed text-amber-800">
+        En estos productos el precio de la carta y el que se cobró esta semana no coinciden.{' '}
+        <strong>Cuando la caja propia esté prendida va a cobrar el de la carta</strong>, así que
+        conviene decidir cuál es el bueno antes. Si el que vale es el de la derecha, corregilo
+        acá abajo; si el que vale es el de la carta, hay que cambiarlo en el mostrador.
+      </p>
+      <ul className="divide-y divide-amber-100 overflow-hidden rounded bg-white">
+        {desalineados.map((d) => (
+          <li
+            key={d.nombre}
+            className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-2 py-1.5 text-xs"
+          >
+            <span className="flex-1 truncate font-medium text-gray-800" title={d.nombre}>
+              {d.nombre}
+            </span>
+            <span className="whitespace-nowrap tabular-nums text-gray-600">
+              carta <strong className="text-gray-800">{formatARS(d.carta)}</strong>
+              <span className="mx-1.5 text-gray-300">→</span>
+              se cobra <strong className="text-amber-900">{formatARS(d.cobrado)}</strong>
+            </span>
+            <span
+              className="whitespace-nowrap rounded bg-amber-100 px-1.5 py-0.5 text-[10px] tabular-nums text-amber-900"
+              title={`Última venta a ese precio: ${d.ultima}`}
+            >
+              {d.cobrado > d.carta ? '+' : ''}
+              {formatARS(d.cobrado - d.carta)} × {d.uds} u
             </span>
           </li>
         ))}
