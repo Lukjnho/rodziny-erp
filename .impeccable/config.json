@@ -8,6 +8,15 @@
         "value": "inter",
         "createdAt": "2026-09-08T12:52:46.590Z",
         "reason": "Lucas dijo que la tipografia la esta trabajando en otra sesion (landing + manual de marca). El ERP no la cambia desde aca."
+      },
+      {
+        "rule": "gray-on-color",
+        "value": "*",
+        "files": [
+          "src/modules/finanzas/components/CierreCaja.tsx"
+        ],
+        "createdAt": "2026-09-10T16:50:18.235Z",
+        "reason": "Falso positivo del detector: cruza el color base del texto con el fondo del hover. La clase del boton de caja fuerte es 'bg-gray-100 text-gray-500 hover:bg-amber-100 hover:text-amber-700' — en hover cambian los DOS, asi que gris-sobre-ambar nunca se renderiza. Codigo previo, no tocado por la tanda de montos."
       }
     ]
   }
