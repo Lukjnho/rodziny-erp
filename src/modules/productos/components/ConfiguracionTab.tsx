@@ -101,9 +101,13 @@ function SeccionGenerales() {
     },
   ];
 
+  // Vacío = no está cargado. NO devolver '0.0': durante meses este campo mostró
+  // un cero que parecía un valor configurado, y el resto del sistema calculaba
+  // con ese cero. Un campo en blanco se ve como lo que es, algo que falta.
   function display(c: ConfigCosteo | undefined, k: keyof ConfigCosteo): string {
-    if (!c) return '0.0';
-    return (c[k] * 100).toFixed(1);
+    const v = c?.[k];
+    if (v == null) return '';
+    return (v * 100).toFixed(1);
   }
 
   function guardar(k: keyof ConfigCosteo) {
@@ -152,7 +156,15 @@ function SeccionGenerales() {
                   </button>
                 )}
               </div>
-              <div className="mt-1 text-[10px] leading-tight text-gray-400">{it.hint}</div>
+              {/* El que falta se avisa acá, que es la pantalla donde se carga. */}
+              {config && config[it.key] == null ? (
+                <div className="mt-1 text-[10px] font-medium leading-tight text-red-600">
+                  ⚠ Sin cargar. Cada pantalla está usando su propio valor por
+                  defecto, y no todas usan el mismo.
+                </div>
+              ) : (
+                <div className="mt-1 text-[10px] leading-tight text-gray-400">{it.hint}</div>
+              )}
             </div>
           );
         })}

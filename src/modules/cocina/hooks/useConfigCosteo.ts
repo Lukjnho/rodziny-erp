@@ -12,23 +12,36 @@ const CLAVES = [
 
 type Clave = (typeof CLAVES)[number];
 
+// 💣 Todos los campos son `number | null`, y el null NO es un descuido.
+//
+// Antes esto devolvía `number` y el dato que faltaba llegaba como CERO. El
+// problema es que quien lo lee escribe `config?.iva_pct ?? 0.21` esperando que
+// el respaldo salte — y no salta nunca: `??` solo actúa sobre null/undefined, y
+// cero no es ninguno de los dos. Con la fila de IVA sin cargar, `neto = precio
+// / (1 + 0)` = precio, y TODOS los márgenes del menú salían 21 puntos más altos
+// de lo que son. Sin un solo cartel.
+//
+// `null` = "no está cargado". Cero = "está cargado y vale cero", que es un
+// valor legítimo (una comisión del 0% existe). Son cosas distintas y ahora se
+// distinguen. El valor por defecto lo elige cada pantalla, no este hook.
 export interface ConfigCosteo {
-  margen_seguridad_pct: number;
-  iva_pct: number;
-  comision_pago_pct: number;
+  margen_seguridad_pct: number | null;
+  iva_pct: number | null;
+  comision_pago_pct: number | null;
   // % de descuento por pago en efectivo (ej. 0.25 = 25%).
-  descuento_efectivo_pct: number;
+  descuento_efectivo_pct: number | null;
   // Tope de descuento por convenio con empresas (ej. 0.15 = 15%).
-  descuento_convenio_pct: number;
+  descuento_convenio_pct: number | null;
 }
 
-function toNumber(v: unknown): number {
-  if (typeof v === 'number') return v;
+function toNumber(v: unknown): number | null {
+  if (typeof v === 'number') return isFinite(v) ? v : null;
   if (typeof v === 'string') {
+    if (v.trim() === '') return null;
     const n = parseFloat(v);
-    return isNaN(n) ? 0 : n;
+    return isNaN(n) ? null : n;
   }
-  return 0;
+  return null;
 }
 
 export function useConfigCosteo() {

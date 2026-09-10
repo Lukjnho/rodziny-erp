@@ -99,11 +99,18 @@ export function CalculadoraTab() {
   }, [ingredientes]);
 
   // Lookup de subreceta por nombre (para resolver anidadas). Prefiere activa.
+  //
+  // 💣 La clave incluye el LOCAL a propósito. Antes era solo el nombre, y eso
+  // hacía que una receta de Saavedra que nombra una subreceta que ahí no está
+  // cargada agarrara la de Vedia sin avisar. Saavedra es 100% sin gluten y
+  // Vedia no: bajar una masa de trigo a una receta sin gluten es el peor error
+  // que puede cometer esta pantalla. Si falta en el local, NO se expande —
+  // el renglón queda a la vista sin abrir, que es la señal correcta.
   const subrecetaPorNombre = useMemo(() => {
     const mapa = new Map<string, Receta>();
     for (const r of recetas ?? []) {
       if (r.tipo !== 'subreceta') continue;
-      const clave = normNombre(r.nombre);
+      const clave = `${r.local}|${normNombre(r.nombre)}`;
       const previa = mapa.get(clave);
       if (!previa || (!previa.activo && r.activo)) mapa.set(clave, r);
     }
@@ -131,7 +138,8 @@ export function CalculadoraTab() {
         }
 
         const nombreSub = ing.nombre.replace(/^subreceta\s+/i, '').trim();
-        const sub = subrecetaPorNombre.get(normNombre(nombreSub));
+        // Solo la subreceta DE ESTE LOCAL. Si no está, se deja sin expandir.
+        const sub = subrecetaPorNombre.get(`${local}|${normNombre(nombreSub)}`);
         const rinde = sub ? Number(sub.rendimiento_kg) || 0 : 0;
 
         if (sub && rinde > 0) {
@@ -159,7 +167,7 @@ export function CalculadoraTab() {
       });
     }
     return fn;
-  }, [ingredientesPorReceta, subrecetaPorNombre]);
+  }, [ingredientesPorReceta, subrecetaPorNombre, local]);
 
   // Subrecetas elegibles en el selector.
   const subrecetasDelLocal = useMemo(() => {
