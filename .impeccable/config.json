@@ -1,0 +1,14 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "overused-font",
+        "value": "inter",
+        "createdAt": "2026-09-08T12:52:46.590Z",
+        "reason": "Lucas dijo que la tipografia la esta trabajando en otra sesion (landing + manual de marca). El ERP no la cambia desde aca."
+      }
+    ]
+  }
+}

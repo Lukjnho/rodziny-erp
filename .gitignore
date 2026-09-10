@@ -33,3 +33,6 @@ dist-ssr
 
 # Mapa de graphify: se regenera con /graphify, no se versiona
 graphify-out/
+
+# Impeccable: la cache por sesion es de esta maquina, no del equipo
+.impeccable/hook.cache.json
