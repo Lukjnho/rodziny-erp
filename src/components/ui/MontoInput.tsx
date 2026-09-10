@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
+import { montoADisplay, montoDesdeTipeo, montoMientrasEscribe } from '@/lib/monto';
 
 interface MontoInputProps {
   value: number | null;
@@ -12,39 +13,12 @@ interface MontoInputProps {
   autoFocus?: boolean;
 }
 
-function formatear(n: number): string {
-  // Supabase devuelve `numeric` como string en runtime aunque el tipo diga `number`.
-  // Si llega un string, String#toLocaleString ignora el locale y retorna el crudo
-  // ("1885406.89" en vez de "1.885.406,89"). Coercionamos defensivamente.
-  const num = typeof n === 'number' ? n : Number(n);
-  if (!isFinite(num)) return '';
-  return num.toLocaleString('es-AR', {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 2,
-  });
-}
-
-function formatearMientrasEscribe(s: string): string {
-  const limpio = s.replace(/[^\d,]/g, '');
-  const partes = limpio.split(',');
-  const enteroSinFormat = partes[0] ?? '';
-  const enteroNum = enteroSinFormat ? parseInt(enteroSinFormat, 10) : 0;
-  const enteroFmt = isNaN(enteroNum)
-    ? ''
-    : enteroNum.toLocaleString('es-AR', { useGrouping: true });
-  if (partes.length === 1) {
-    return enteroSinFormat ? enteroFmt : '';
-  }
-  const dec = partes[1].slice(0, 2);
-  return `${enteroFmt},${dec}`;
-}
-
-function parsear(s: string): number | null {
-  if (!s.trim()) return null;
-  const norm = s.replace(/\./g, '').replace(',', '.');
-  const n = parseFloat(norm);
-  return isFinite(n) ? n : null;
-}
+// Las tres funciones que este componente usaba en privado viven ahora en
+// `lib/monto.ts`, para que las pantallas que todavía manejan el monto como
+// texto puedan usar el MISMO camino en vez de escribirse el suyo.
+const formatear = montoADisplay;
+const formatearMientrasEscribe = montoMientrasEscribe;
+const parsear = montoDesdeTipeo;
 
 export function MontoInput({
   value,
