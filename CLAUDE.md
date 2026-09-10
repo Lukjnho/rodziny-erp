@@ -68,6 +68,17 @@ Facturación ARCA…). **Lo nuevo va en el barrio que ya existe**, no en uno pro
 aparece ningún barrio que lo contenga, eso es la señal de que falta hablarlo con Lucas,
 no de que haya que inventar una carpeta.
 
+### Los barrios se llaman en castellano, y eso se mantiene solo
+
+Los nombres viven en **`scripts/graphify/barrios.json`** (versionado, viaja entre las dos
+máquinas). Se aplican con:
+
+    "$(cat graphify-out/.graphify_python)" scripts/graphify/nombrar.py
+
+Ese script escribe también la **firma** (`.graphify_labels.json.sig`) sin la cual graphify
+tira todos los nombres en el commit siguiente. **Barrio nuevo que valga la pena nombrar =
+un renglón más en `barrios.json` y volver a correrlo.** Es acumulativo: solo mejora.
+
 ### 💣 Trampas del mapa
 
 - **El extra `[sql]` es obligatorio.** Sin él los 207 archivos de la base **aportan cero**

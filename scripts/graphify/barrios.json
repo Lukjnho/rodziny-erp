@@ -1,0 +1,62 @@
+{
+  "_leeme": [
+    "Nombres en castellano de los barrios del mapa de graphify.",
+    "La clave es el archivo que MAS pesa en ese barrio; el valor es como lo llamamos.",
+    "Se aplican con: node/py scripts/graphify/nombrar.py  (ver el encabezado de ese archivo).",
+    "Agregar aca cada barrio nuevo que valga la pena nombrar. Es acumulativo: solo se mejora."
+  ],
+
+  "src/App.tsx": "Arranque y rutas",
+  "src/components/CalendarioPagos.tsx": "Calendario de pagos",
+  "src/components/ui/KPICard.tsx": "Componentes visuales",
+  "src/lib/push.ts": "Sesion y notificaciones",
+
+  "src/modules/agenda/ListaTab.tsx": "Agenda",
+  "src/modules/almacen/PedidosTab.tsx": "Almacen: pedidos",
+  "src/modules/caja/CajaPage.tsx": "Caja",
+  "src/modules/caja/comprobanteFiscal.ts": "Caja: comprobante e impresion",
+  "src/modules/compras/ComprasPage.tsx": "Compras",
+  "src/modules/compras/ConciliacionTab.tsx": "Conciliacion bancaria",
+  "src/modules/convenios/MedicionTab.tsx": "Convenios",
+
+  "src/modules/cocina/MostradorPage.tsx": "Cocina: mostrador",
+  "src/modules/cocina/PizarronPage.tsx": "Cocina: pizarron",
+  "src/modules/cocina/ProduccionQRPage.tsx": "Cocina: carga por QR",
+  "src/modules/cocina/ProduccionTab.tsx": "Cocina: produccion del dia",
+  "src/modules/cocina/StockTab.tsx": "Cocina: stock",
+  "src/modules/cocina/components/PlanProduccionEditor.tsx": "Cocina: editor del plan",
+  "src/modules/cocina/components/PlanSemanal.tsx": "Cocina: plan semanal",
+  "src/modules/cocina/recetas/modelo.ts": "Cocina: modelo de recetas",
+
+  "src/modules/finanzas/components/ChecklistPagos.tsx": "Pagos fijos: checklist",
+  "src/modules/finanzas/components/FlujoCaja.tsx": "Flujo de caja",
+  "src/modules/finanzas/parsers/parseFudoVentas.ts": "Importador de Fudo",
+
+  "src/modules/gastos/AnalisisGastos.tsx": "Gastos: analisis",
+  "src/modules/gastos/NuevoGastoForm.tsx": "Gastos: alta de gasto",
+  "src/modules/gastos/PagarGastoModal.tsx": "Gastos: pagar",
+  "src/modules/gastos/types.ts": "Gastos: tipos y proveedores",
+
+  "src/modules/integraciones/IntegracionesPage.tsx": "Integraciones",
+
+  "src/modules/productos/components/ConfiguracionTab.tsx": "Productos: configuracion",
+  "src/modules/productos/components/MenuTab.tsx": "Productos: la carta",
+  "src/modules/productos/components/RecetaEditorInline.tsx": "Productos: editor de recetas",
+
+  "src/modules/rrhh/AguinaldoTab.tsx": "Aguinaldo",
+  "src/modules/rrhh/AsistenciaTab.tsx": "Asistencia y horas",
+  "src/modules/rrhh/BienalTab.tsx": "Bienal (evento)",
+  "src/modules/rrhh/FicharPage.tsx": "Fichaje de entrada y salida",
+  "src/modules/rrhh/RRHHPage.tsx": "RRHH: panel y legajos",
+  "src/modules/rrhh/SueldosTab.tsx": "Sueldos",
+  "src/modules/rrhh/VacacionesTab.tsx": "Vacaciones",
+  "src/modules/rrhh/utils.ts": "RRHH: calculos comunes",
+
+  "src/modules/salon/useMesas.ts": "Salon: mesas y mozos",
+
+  "scripts/mapa-erp/generar.cjs": "Mapa del ERP (generador)",
+
+  "supabase/functions/arca-facturar/wsfev1.ts": "Facturacion ARCA",
+  "supabase/migrations/001_finanzas.sql": "Base: tablas de finanzas",
+  "supabase/migrations/138_medios_pago_cuenta_efectivo_y_triggers.sql": "Base: medios de pago"
+}
