@@ -35,6 +35,24 @@ export function montoADisplay(n: number | string | null | undefined): string {
 }
 
 /**
+ * Camino BASE → NÚMERO. Toma lo que devolvió Supabase para una columna de plata
+ * y lo deja como número, o `null` si el campo está vacío.
+ *
+ * Existe porque una columna `numeric` llega como texto ("152350.50") y ese
+ * texto tiene el punto como DECIMAL — al revés que el que teclea una persona.
+ * Es el único lugar del ERP donde un punto que viene de la base se interpreta,
+ * y por eso está separado de `montoDesdeTipeo`: confundirlos es el bug.
+ *
+ * Ojo: conserva el 0. Un cierre de caja con 0 contado no es lo mismo que uno
+ * sin cargar, así que solo `null`/`undefined`/'' dan `null`.
+ */
+export function montoDesdeBase(v: number | string | null | undefined): number | null {
+  if (v == null || v === '') return null;
+  const n = typeof v === 'number' ? v : Number(v);
+  return isFinite(n) ? n : null;
+}
+
+/**
  * Camino TIPEO → NÚMERO. Interpreta lo que tecleó una persona.
  * El punto se descarta (es separador de miles) y la coma es el decimal.
  *

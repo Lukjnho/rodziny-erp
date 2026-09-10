@@ -4,6 +4,8 @@ import { supabase } from '@/lib/supabase';
 import { formatARS } from '@/lib/utils';
 import { cn } from '@/lib/utils';
 import { LocalSelector } from '@/components/ui/LocalSelector';
+import { MontoInput } from '@/components/ui/MontoInput';
+import { montoDesdeBase } from '@/lib/monto';
 import { obtenerVentasFudo, CAJA_FUDO_ID, type VentasFudoResumen } from '@/lib/fudoApi';
 import { useAuth } from '@/lib/auth';
 import { CAJAS, TURNOS } from '@/lib/turnosCaja';
@@ -107,19 +109,24 @@ export function CierreCaja() {
   const [fCaja, setFCaja] = useState('');
   const [fHoraInicio, setFHoraInicio] = useState('');
   const [fHoraCierre, setFHoraCierre] = useState('');
-  const [fFudoEfvo, setFFudoEfvo] = useState('');
-  const [fFudoQR, setFFudoQR] = useState('');
-  const [fFudoDebito, setFFudoDebito] = useState('');
-  const [fFudoCredito, setFFudoCredito] = useState('');
-  const [fFudoTransf, setFFudoTransf] = useState('');
-  const [fFudoMpLucas, setFFudoMpLucas] = useState('');
-  const [fContado, setFContado] = useState('');
-  const [fFondoAp, setFFondoAp] = useState('');
+  // Los campos de plata se guardan como NÚMERO, no como texto. El texto que se
+  // ve en pantalla lo maneja MontoInput. Antes eran strings y había que
+  // reparsearlos en cinco lugares distintos; un valor con centavos que volvía
+  // de la base se multiplicaba por 10 al reabrir el cierre. `null` = vacío,
+  // que en un arqueo no es lo mismo que cero.
+  const [fFudoEfvo, setFFudoEfvo] = useState<number | null>(null);
+  const [fFudoQR, setFFudoQR] = useState<number | null>(null);
+  const [fFudoDebito, setFFudoDebito] = useState<number | null>(null);
+  const [fFudoCredito, setFFudoCredito] = useState<number | null>(null);
+  const [fFudoTransf, setFFudoTransf] = useState<number | null>(null);
+  const [fFudoMpLucas, setFFudoMpLucas] = useState<number | null>(null);
+  const [fContado, setFContado] = useState<number | null>(null);
+  const [fFondoAp, setFFondoAp] = useState<number | null>(null);
   // fFondoSig removido — retiros se manejan en un solo campo
   // Retiros separados en dos: lo que vuelve a la caja (cambio) y lo que salió
   // de verdad (pagos). El total = la suma de los dos.
-  const [fRetiroCambio, setFRetiroCambio] = useState('');
-  const [fRetiroPagos, setFRetiroPagos] = useState('');
+  const [fRetiroCambio, setFRetiroCambio] = useState<number | null>(null);
+  const [fRetiroPagos, setFRetiroPagos] = useState<number | null>(null);
   // true cuando se está editando un cierre anterior a la separación
   const [fRetiroLegacy, setFRetiroLegacy] = useState(false);
   const [fOtrosRetNota, setFOtrosRetNota] = useState('');
@@ -159,13 +166,13 @@ export function CierreCaja() {
       // Auto-completar campos del formulario
       // Efectivo NO se auto-completa: el cajero lo carga manualmente del arqueo/ticket
       // porque incluye monto inicial, retiros, y tickets de otros cajeros en la misma caja
-      setFFudoQR(resumen.qr > 0 ? String(Math.round(resumen.qr)) : '');
-      setFFudoDebito(resumen.debito > 0 ? String(Math.round(resumen.debito)) : '');
-      setFFudoCredito(resumen.credito > 0 ? String(Math.round(resumen.credito)) : '');
-      setFFudoTransf(resumen.transferencia > 0 ? String(Math.round(resumen.transferencia)) : '');
+      setFFudoQR(resumen.qr > 0 ? Math.round(resumen.qr) : null);
+      setFFudoDebito(resumen.debito > 0 ? Math.round(resumen.debito) : null);
+      setFFudoCredito(resumen.credito > 0 ? Math.round(resumen.credito) : null);
+      setFFudoTransf(resumen.transferencia > 0 ? Math.round(resumen.transferencia) : null);
       // MP Lucas: PM 7 de Fudo. NO es ingreso del negocio — pasa por el POSnet
       // personal de Lucas, se registra como dividendo automáticamente al guardar.
-      setFFudoMpLucas(resumen.mpLucas > 0 ? String(Math.round(resumen.mpLucas)) : '');
+      setFFudoMpLucas(resumen.mpLucas > 0 ? Math.round(resumen.mpLucas) : null);
       // N° arqueo Fudo (CashCount.id). Si hay varios, se concatenan con coma.
       if (resumen.nrosArqueo?.length) {
         setFNroArqueo(resumen.nrosArqueo.join(', '));
@@ -241,18 +248,19 @@ export function CierreCaja() {
         );
       }
 
-      const parse = (v: string) => parseFloat((v || '0').replace(/\./g, '').replace(',', '.')) || 0;
-      const contado = parse(fContado);
-      const fondoAp = parse(fFondoAp);
-      const retiroCambio = parse(fRetiroCambio);
-      const retiroPagos = parse(fRetiroPagos);
+      // Ya son números: MontoInput los entregó parseados. Un campo vacío vale 0
+      // para las cuentas del cierre.
+      const contado = fContado ?? 0;
+      const fondoAp = fFondoAp ?? 0;
+      const retiroCambio = fRetiroCambio ?? 0;
+      const retiroPagos = fRetiroPagos ?? 0;
       const otrosRet = retiroCambio + retiroPagos;
-      const fudoEfvo = parse(fFudoEfvo);
-      const fudoQR = parse(fFudoQR);
-      const fudoDebito = parse(fFudoDebito);
-      const fudoCredito = parse(fFudoCredito);
-      const fudoTransf = parse(fFudoTransf);
-      const fudoMpLucas = parse(fFudoMpLucas);
+      const fudoEfvo = fFudoEfvo ?? 0;
+      const fudoQR = fFudoQR ?? 0;
+      const fudoDebito = fFudoDebito ?? 0;
+      const fudoCredito = fFudoCredito ?? 0;
+      const fudoTransf = fFudoTransf ?? 0;
+      const fudoMpLucas = fFudoMpLucas ?? 0;
 
       // monto_esperado = solo efectivo que debería estar en la caja físicamente
       // (fondo + efectivo Fudo - retiros). QR/débito/crédito/transferencia/MP Lucas
@@ -406,16 +414,16 @@ export function CierreCaja() {
   // Estado del modal de confirmación al "recibir en caja fuerte"
   const [cajaFuerteModal, setCajaFuerteModal] = useState<{
     cierre: CierreRow;
-    monto: string;
+    monto: number | null;
     nota: string;
   } | null>(null);
 
   function abrirModalCajaFuerte(c: CierreRow) {
     // Sugerido: monto contado - fondo de cambio para el próximo turno
-    const sugerido = Math.max(0, (c.monto_contado ?? 0) - FONDO_CAMBIO_DEFAULT);
+    const sugerido = Math.max(0, (montoDesdeBase(c.monto_contado) ?? 0) - FONDO_CAMBIO_DEFAULT);
     setCajaFuerteModal({
       cierre: c,
-      monto: sugerido > 0 ? String(Math.round(sugerido)) : '0',
+      monto: sugerido > 0 ? Math.round(sugerido) : 0,
       nota: '',
     });
   }
@@ -424,7 +432,7 @@ export function CierreCaja() {
   }
   function confirmarCajaFuerte() {
     if (!cajaFuerteModal) return;
-    const monto = parseFloat(cajaFuerteModal.monto.replace(/\./g, '').replace(',', '.')) || 0;
+    const monto = cajaFuerteModal.monto ?? 0;
     verificarMut.mutate(
       {
         id: cajaFuerteModal.cierre.id,
@@ -481,16 +489,16 @@ export function CierreCaja() {
     setFCaja(CAJAS[local]?.[0] ?? '');
     setFHoraInicio('');
     setFHoraCierre('');
-    setFFudoEfvo('');
-    setFFudoQR('');
-    setFFudoDebito('');
-    setFFudoCredito('');
-    setFFudoTransf('');
-    setFFudoMpLucas('');
-    setFContado('');
-    setFFondoAp('');
-    setFRetiroCambio('');
-    setFRetiroPagos('');
+    setFFudoEfvo(null);
+    setFFudoQR(null);
+    setFFudoDebito(null);
+    setFFudoCredito(null);
+    setFFudoTransf(null);
+    setFFudoMpLucas(null);
+    setFContado(null);
+    setFFondoAp(null);
+    setFRetiroCambio(null);
+    setFRetiroPagos(null);
     setFRetiroLegacy(false);
     setFOtrosRetNota('');
     setFNota('');
@@ -514,25 +522,29 @@ export function CierreCaja() {
     setFCaja(c.caja ?? '');
     setFHoraInicio(c.hora_inicio ?? '');
     setFHoraCierre(c.hora_cierre ?? '');
-    setFFudoEfvo(c.fudo_efectivo ? String(c.fudo_efectivo) : '');
-    setFFudoQR(c.fudo_qr ? String(c.fudo_qr) : '');
-    setFFudoDebito(c.fudo_debito ? String(c.fudo_debito) : '');
-    setFFudoCredito(c.fudo_credito ? String(c.fudo_credito) : '');
-    setFFudoTransf(c.fudo_transferencia ? String(c.fudo_transferencia) : '');
-    setFFudoMpLucas(c.fudo_mp_lucas ? String(c.fudo_mp_lucas) : '');
-    setFContado(c.monto_contado ? String(c.monto_contado) : '');
-    setFFondoAp(c.fondo_apertura ? String(c.fondo_apertura) : '');
+    // 💣 Estos valores YA son números: vienen de la base. Antes se pasaban a
+    // texto con String() y después el formulario los volvía a parsear con el
+    // parser de TIPEO, que borra los puntos — así 152350.5 se guardaba de vuelta
+    // como 1.523.505. Ahora entran como número y no se reparsean nunca.
+    setFFudoEfvo(montoDesdeBase(c.fudo_efectivo));
+    setFFudoQR(montoDesdeBase(c.fudo_qr));
+    setFFudoDebito(montoDesdeBase(c.fudo_debito));
+    setFFudoCredito(montoDesdeBase(c.fudo_credito));
+    setFFudoTransf(montoDesdeBase(c.fudo_transferencia));
+    setFFudoMpLucas(montoDesdeBase(c.fudo_mp_lucas));
+    setFContado(montoDesdeBase(c.monto_contado));
+    setFFondoAp(montoDesdeBase(c.fondo_apertura));
     // Cierres anteriores a la separación (migración 139) no traen el desglose.
     // Se carga el total como "cambio" para NO perder el número del arqueo, y se
     // avisa en pantalla para que se revise si parte de eso fue un pago.
     const tieneDesglose = c.retiro_cambio !== null || c.retiro_pagos !== null;
     setFRetiroLegacy(!tieneDesglose && (c.otros_retiros ?? 0) > 0);
     if (tieneDesglose) {
-      setFRetiroCambio(c.retiro_cambio ? String(c.retiro_cambio) : '');
-      setFRetiroPagos(c.retiro_pagos ? String(c.retiro_pagos) : '');
+      setFRetiroCambio(montoDesdeBase(c.retiro_cambio));
+      setFRetiroPagos(montoDesdeBase(c.retiro_pagos));
     } else {
-      setFRetiroCambio(c.otros_retiros ? String(c.otros_retiros) : '');
-      setFRetiroPagos('');
+      setFRetiroCambio(montoDesdeBase(c.otros_retiros));
+      setFRetiroPagos(null);
     }
     setFOtrosRetNota(c.otros_retiros_nota ?? '');
     setFNota(c.nota ?? '');
@@ -913,10 +925,7 @@ export function CierreCaja() {
                     {fudoResumen.cantidadTickets} tickets del{' '}
                     {new Date(fudoResumen.fecha + 'T12:00:00').toLocaleDateString('es-AR')}
                     {' — '}Total:{' '}
-                    {formatARS(
-                      fudoResumen.totalVentas +
-                        (parseFloat((fFondoAp || '0').replace(/\./g, '').replace(',', '.')) || 0),
-                    )}
+                    {formatARS(fudoResumen.totalVentas + (fFondoAp ?? 0))}
                     {fudoResumen.cajero && ` — Cajero: ${fudoResumen.cajero}`}
                     {fudoResumen.mpLucas > 0 && ` — MP Lucas: ${formatARS(fudoResumen.mpLucas)}`}
                     {fudoResumen.ctaCte > 0 && ` — Cta.Cte: ${formatARS(fudoResumen.ctaCte)}`}
@@ -940,10 +949,9 @@ export function CierreCaja() {
               <label className="mb-1 block text-xs font-medium text-gray-600">
                 Efectivo (Fudo)
               </label>
-              <input
-                type="text"
+              <MontoInput
                 value={fFudoEfvo}
-                onChange={(e) => setFFudoEfvo(e.target.value)}
+                onChange={setFFudoEfvo}
                 placeholder="0"
                 className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500"
               />
@@ -952,30 +960,27 @@ export function CierreCaja() {
               <label className="mb-1 block text-xs font-medium text-gray-600">
                 Código QR (Fudo)
               </label>
-              <input
-                type="text"
+              <MontoInput
                 value={fFudoQR}
-                onChange={(e) => setFFudoQR(e.target.value)}
+                onChange={setFFudoQR}
                 placeholder="0"
                 className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500"
               />
             </div>
             <div>
               <label className="mb-1 block text-xs font-medium text-gray-600">Débito (Fudo)</label>
-              <input
-                type="text"
+              <MontoInput
                 value={fFudoDebito}
-                onChange={(e) => setFFudoDebito(e.target.value)}
+                onChange={setFFudoDebito}
                 placeholder="0"
                 className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500"
               />
             </div>
             <div>
               <label className="mb-1 block text-xs font-medium text-gray-600">Crédito (Fudo)</label>
-              <input
-                type="text"
+              <MontoInput
                 value={fFudoCredito}
-                onChange={(e) => setFFudoCredito(e.target.value)}
+                onChange={setFFudoCredito}
                 placeholder="0"
                 className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500"
               />
@@ -984,10 +989,9 @@ export function CierreCaja() {
               <label className="mb-1 block text-xs font-medium text-gray-600">
                 Transferencia (Fudo)
               </label>
-              <input
-                type="text"
+              <MontoInput
                 value={fFudoTransf}
-                onChange={(e) => setFFudoTransf(e.target.value)}
+                onChange={setFFudoTransf}
                 placeholder="0"
                 className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500"
               />
@@ -996,10 +1000,9 @@ export function CierreCaja() {
               <label className="mb-1 block text-xs font-medium text-gray-600">
                 MP Lucas (Fudo)
               </label>
-              <input
-                type="text"
+              <MontoInput
                 value={fFudoMpLucas}
-                onChange={(e) => setFFudoMpLucas(e.target.value)}
+                onChange={setFFudoMpLucas}
                 placeholder="0"
                 className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500"
               />
@@ -1008,10 +1011,9 @@ export function CierreCaja() {
               <label className="mb-1 block text-xs font-medium text-gray-600">
                 Cambio apertura
               </label>
-              <input
-                type="text"
+              <MontoInput
                 value={fFondoAp}
-                onChange={(e) => setFFondoAp(e.target.value)}
+                onChange={setFFondoAp}
                 placeholder="0"
                 className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500"
               />
@@ -1022,15 +1024,13 @@ export function CierreCaja() {
             <div>
               <label className="mb-1 block text-xs font-medium text-gray-600">Total Fudo</label>
               {(() => {
-                const parse = (v: string) =>
-                  parseFloat((v || '0').replace(/\./g, '').replace(',', '.')) || 0;
                 const total =
-                  parse(fFudoEfvo) +
-                  parse(fFudoQR) +
-                  parse(fFudoDebito) +
-                  parse(fFudoCredito) +
-                  parse(fFudoTransf) +
-                  parse(fFondoAp);
+                  (fFudoEfvo ?? 0) +
+                  (fFudoQR ?? 0) +
+                  (fFudoDebito ?? 0) +
+                  (fFudoCredito ?? 0) +
+                  (fFudoTransf ?? 0) +
+                  (fFondoAp ?? 0);
                 return (
                   <div className="w-full rounded-md bg-gray-100 px-3 py-2 text-sm font-semibold text-gray-800">
                     {total > 0 ? formatARS(total) : '—'}
@@ -1055,10 +1055,9 @@ export function CierreCaja() {
               <label className="mb-1 block text-xs font-medium text-gray-600">
                 Contado real <span className="text-red-500">*</span>
               </label>
-              <input
-                type="text"
+              <MontoInput
                 value={fContado}
-                onChange={(e) => setFContado(e.target.value)}
+                onChange={setFContado}
                 placeholder="0"
                 className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500"
               />
@@ -1072,12 +1071,10 @@ export function CierreCaja() {
                 Diferencia efectivo
               </label>
               {(() => {
-                const parse = (v: string) =>
-                  parseFloat((v || '0').replace(/\./g, '').replace(',', '.')) || 0;
-                const fudoEfvo = parse(fFudoEfvo);
-                const fondoAp = parse(fFondoAp);
-                const cont = parse(fContado);
-                const otrosRet = parse(fRetiroCambio) + parse(fRetiroPagos);
+                const fudoEfvo = fFudoEfvo ?? 0;
+                const fondoAp = fFondoAp ?? 0;
+                const cont = fContado ?? 0;
+                const otrosRet = (fRetiroCambio ?? 0) + (fRetiroPagos ?? 0);
                 const esperado = fudoEfvo + fondoAp;
                 const mostrar = fudoEfvo > 0 && cont > 0;
                 const dif = mostrar ? cont + otrosRet - esperado : 0;
@@ -1110,10 +1107,9 @@ export function CierreCaja() {
               <label className="mb-1 block text-xs font-medium text-gray-600">
                 Retiro — cambio
               </label>
-              <input
-                type="text"
+              <MontoInput
                 value={fRetiroCambio}
-                onChange={(e) => setFRetiroCambio(e.target.value)}
+                onChange={setFRetiroCambio}
                 placeholder="0"
                 className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500"
               />
@@ -1126,10 +1122,9 @@ export function CierreCaja() {
               <label className="mb-1 block text-xs font-medium text-gray-600">
                 Retiro — pagos
               </label>
-              <input
-                type="text"
+              <MontoInput
                 value={fRetiroPagos}
-                onChange={(e) => setFRetiroPagos(e.target.value)}
+                onChange={setFRetiroPagos}
                 placeholder="0"
                 className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500"
               />
@@ -1147,9 +1142,7 @@ export function CierreCaja() {
             )}
 
             {(() => {
-              const parse = (v: string) =>
-                parseFloat((v || '0').replace(/\./g, '').replace(',', '.')) || 0;
-              const total = parse(fRetiroCambio) + parse(fRetiroPagos);
+              const total = (fRetiroCambio ?? 0) + (fRetiroPagos ?? 0);
               if (total <= 0) return null;
               return (
                 <div className="col-span-2 text-[11px] text-gray-500 md:col-span-3">
@@ -1192,9 +1185,12 @@ export function CierreCaja() {
             >
               Cancelar
             </button>
+            {/* `fContado == null` y no `!fContado`: ahora es número, y un arqueo
+                que dio CERO es un cierre válido que hay que poder guardar.
+                Con `!fContado` el cero bloqueaba el botón. */}
             <button
               onClick={() => guardarMut.mutate()}
-              disabled={guardarMut.isPending || !fContado}
+              disabled={guardarMut.isPending || fContado == null}
               className="rounded-md bg-rodziny-800 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-rodziny-700 disabled:opacity-50"
             >
               {guardarMut.isPending ? 'Guardando...' : 'Guardar cierre'}
@@ -1522,12 +1518,9 @@ export function CierreCaja() {
                 <label className="mb-1 block text-xs font-medium text-gray-600">
                   Monto retirado (editable)
                 </label>
-                <input
-                  type="text"
+                <MontoInput
                   value={cajaFuerteModal.monto}
-                  onChange={(e) =>
-                    setCajaFuerteModal({ ...cajaFuerteModal, monto: e.target.value })
-                  }
+                  onChange={(monto) => setCajaFuerteModal({ ...cajaFuerteModal, monto })}
                   className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rodziny-500"
                   autoFocus
                 />
