@@ -13,6 +13,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../../lib/supabase';
+import { MontoInput } from '@/components/ui/MontoInput';
 import {
   comprimirImagen,
   extensionDe,
@@ -122,16 +123,8 @@ function formatNumeroAR(value: number): string {
   }).format(value);
 }
 
-/** Parsea un string en formato AR: "285.453,50" → 285453.5 */
-function parseNumeroAR(text: string): number | null {
-  if (!text || !text.trim()) return null;
-  // Quitar todo lo que no sea digito, coma, punto o signo
-  let limpio = text.trim().replace(/[^\d,.\-]/g, '');
-  // En formato AR: punto = miles, coma = decimal. Sacamos puntos, cambiamos coma por punto.
-  limpio = limpio.replace(/\./g, '').replace(',', '.');
-  const num = parseFloat(limpio);
-  return isFinite(num) ? num : null;
-}
+// parseNumeroAR se fue: era una copia del parser de tipeo. Ahora lo unico que
+// lee lo que teclea una persona es MontoInput, via lib/monto.ts.
 
 // ----- Plan de pagos (varias cuotas sobre una misma factura) -----
 
@@ -139,7 +132,7 @@ function parseNumeroAR(text: string): number | null {
 interface LineaPagoUI {
   key: string; // id local para el render
   medio: MedioPago;
-  montoTexto: string; // monto en formato AR (editable)
+  monto: number | null; // el monto de la cuota, ya como numero
   fecha: string; // YYYY-MM-DD — fecha en que sale/saldrá la plata (débito del echeq)
   numero: string; // N° de operación (transferencia) o N° de echeq
   comprobantePath: string | null; // path en Storage del comprobante ya subido (OCR)
@@ -156,7 +149,7 @@ function nuevaLineaPago(medio: MedioPago = 'transferencia_mp', fecha = ''): Line
   return {
     key: `lp_${_lineaSeq}`,
     medio,
-    montoTexto: '',
+    monto: null,
     fecha,
     numero: '',
     comprobantePath: null,
@@ -250,8 +243,9 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
     { razon_social: string; cuit: string } | null
   >(null);
 
-  // Importe como string formateado (asi se muestra "285.453,50" mientras se edita)
-  const [importeTexto, setImporteTexto] = useState<string>('');
+  // El importe se guarda como NUMERO. El texto que se ve ("285.453,50") lo
+  // maneja MontoInput. Antes era string y habia que reparsearlo en cada uso.
+  const [importe, setImporte] = useState<number | null>(null);
 
   // OCR result
   const [ocrData, setOcrData] = useState<OcrExtraido | null>(null);
@@ -353,7 +347,7 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
       setNuevoProvGuardando(false);
       setNuevoProvError(null);
       setCategoriaId(null);
-      setImporteTexto('');
+      setImporte(null);
       setFecha('');
       setFechaManual(false);
       setNOperacion('');
@@ -403,8 +397,8 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
     enabled: open,
   });
 
-  // Derivado: el importe como numero, parseado del input texto
-  const importeTotal = useMemo(() => parseNumeroAR(importeTexto) ?? 0, [importeTexto]);
+  // Ya es numero: MontoInput lo entrego parseado.
+  const importeTotal = importe ?? 0;
 
   // ¿Esta factura ya está cargada? Corre siempre, también en la carga manual —
   // `duplicados` (arriba) solo se llena cuando el gasto entra por OCR, y la
@@ -420,7 +414,7 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
 
   // Plan de pagos: suma de las cuotas y cuánto falta asignar contra el total.
   const totalPlan = useMemo(
-    () => lineasPago.reduce((s, l) => s + (parseNumeroAR(l.montoTexto) ?? 0), 0),
+    () => lineasPago.reduce((s, l) => s + (l.monto ?? 0), 0),
     [lineasPago],
   );
   const faltaAsignar = useMemo(
@@ -727,7 +721,7 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
 
   function aplicarTotalDesdeItems() {
     if (totalItems > 0) {
-      setImporteTexto(formatNumeroAR(totalItems));
+      setImporte(totalItems);
     }
   }
 
@@ -761,7 +755,7 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
     }
 
     // Pre-llenar form con datos del OCR
-    if (extraido.monto) setImporteTexto(formatNumeroAR(extraido.monto));
+    if (extraido.monto) setImporte(extraido.monto);
     if (extraido.fecha) setFecha(extraido.fecha);
     if (extraido.n_operacion) setNOperacion(extraido.n_operacion);
     if (extraido.medio_pago) setMedioPago(mapOcrMedioPago(extraido.medio_pago));
@@ -870,7 +864,7 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
     setOcrData(null);
     setOcrConfianza(0);
     setDuplicados([]);
-    setImporteTexto('');
+    setImporte(null);
     setFecha('');
     setNOperacion('');
 
@@ -1151,8 +1145,7 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
             ? res.n_operacion.replace(/^0+(?=\d)/, '')
             : res.n_operacion;
         const numero = l.numero.trim() || nOpDetectado || '';
-        const montoTexto =
-          l.montoTexto.trim() || (res.monto_detectado != null ? formatNumeroAR(res.monto_detectado) : '');
+        const monto = l.monto ?? res.monto_detectado ?? null;
         // Fecha de la cuota:
         //  - cheque/ECHEQ → "Fecha de pago" del cheque (débito futuro, lo que mueve
         //    el flujo de caja). NO la de emisión.
@@ -1190,7 +1183,7 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
           ocrEjecutando: false,
           comprobantePath: res.file_path ?? l.comprobantePath,
           numero,
-          montoTexto,
+          monto,
           fecha,
           ocrInfo,
           ocrAlerta,
@@ -1247,9 +1240,8 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
     if (datos.fecha_vencimiento && !fechaVencimiento) {
       setFechaVencimiento(datos.fecha_vencimiento);
     }
-    if (datos.importe_total && !importeTexto) {
-      // Format AR: el helper formatNumeroAR existe, pero lo usamos via input string
-      setImporteTexto(formatNumeroAR(datos.importe_total));
+    if (datos.importe_total && importe == null) {
+      setImporte(datos.importe_total);
     }
     // Discriminación de IVA: si la factura discrimina (neto + iva o alícuota presentes)
     if (datos.alicuota_iva && datos.alicuota_iva > 0) {
@@ -1424,7 +1416,7 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
         return;
       }
       for (const [i, l] of lineasPago.entries()) {
-        const monto = parseNumeroAR(l.montoTexto) ?? 0;
+        const monto = l.monto ?? 0;
         if (monto <= 0) {
           setError(`El pago ${i + 1} necesita un monto mayor a 0`);
           return;
@@ -1504,7 +1496,7 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
       const hoyStr = new Date().toISOString().slice(0, 10);
       const lineasParsed = planPagos
         ? lineasPago.map((l) => ({
-            monto: parseNumeroAR(l.montoTexto) ?? 0,
+            monto: l.monto ?? 0,
             medio: l.medio,
             fecha: l.fecha,
             numero: l.numero.trim() || null,
@@ -2760,16 +2752,9 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
               <Field label="Importe total *">
                 <div className="flex items-center rounded border border-gray-300">
                   <span className="px-3 text-sm text-gray-500">$</span>
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    value={importeTexto}
-                    onChange={(e) => setImporteTexto(e.target.value)}
-                    onBlur={() => {
-                      // Re-formatear al perder foco (acomoda separadores)
-                      const num = parseNumeroAR(importeTexto);
-                      if (num !== null) setImporteTexto(formatNumeroAR(num));
-                    }}
+                  <MontoInput
+                    value={importe}
+                    onChange={setImporte}
                     placeholder="285.453,50"
                     className="w-full rounded-r px-2 py-2 text-sm tabular-nums focus:outline-none"
                   />
@@ -3135,7 +3120,8 @@ function PlanPagosEditor({
 }) {
   const hoy = new Date().toISOString().slice(0, 10);
 
-  const actualizar = (key: string, campo: keyof LineaPagoUI, valor: string) => {
+  // `valor` ya no es siempre string: el monto de la cuota viaja como número.
+  const actualizar = (key: string, campo: keyof LineaPagoUI, valor: string | number | null) => {
     setLineas((prev) => prev.map((l) => (l.key === key ? { ...l, [campo]: valor } : l)));
   };
   const quitar = (key: string) => setLineas((prev) => prev.filter((l) => l.key !== key));
@@ -3151,7 +3137,7 @@ function PlanPagosEditor({
 
       <div className="space-y-2">
         {lineas.map((l, i) => {
-          const montoNum = parseNumeroAR(l.montoTexto) ?? 0;
+          const montoNum = l.monto ?? 0;
           const programado = !!l.fecha && l.fecha > hoy;
           const requiereNumero = medioRequiereComprobante(l.medio);
           return (
@@ -3194,15 +3180,9 @@ function PlanPagosEditor({
                   <span className="mb-0.5 block text-[11px] text-gray-500">Monto</span>
                   <div className="flex items-center rounded border border-gray-300">
                     <span className="px-2 text-xs text-gray-500">$</span>
-                    <input
-                      type="text"
-                      inputMode="decimal"
-                      value={l.montoTexto}
-                      onChange={(e) => actualizar(l.key, 'montoTexto', e.target.value)}
-                      onBlur={() => {
-                        const n = parseNumeroAR(l.montoTexto);
-                        if (n !== null) actualizar(l.key, 'montoTexto', formatNumeroAR(n));
-                      }}
+                    <MontoInput
+                      value={l.monto}
+                      onChange={(n) => actualizar(l.key, 'monto', n)}
                       placeholder="0"
                       className="w-full rounded-r px-1 py-1.5 text-xs tabular-nums focus:outline-none"
                     />

@@ -24,6 +24,7 @@ import { recomputarEstadoGasto } from './recomputarEstadoGasto';
 import { useProveedoresMap, nombreProveedor } from './proveedorDisplay';
 import { useDuplicadosPago } from './useDuplicados';
 import { AvisoDuplicadosPago } from './AvisoDuplicados';
+import { MontoInput } from '@/components/ui/MontoInput';
 
 interface Props {
   open: boolean;
@@ -31,22 +32,9 @@ interface Props {
   onClose: () => void;
 }
 
-function formatNumeroAR(value: number): string {
-  if (!isFinite(value)) return '';
-  const tieneDecimales = Math.round(value * 100) % 100 !== 0;
-  return new Intl.NumberFormat('es-AR', {
-    minimumFractionDigits: tieneDecimales ? 2 : 0,
-    maximumFractionDigits: 2,
-  }).format(value);
-}
-
-function parseNumeroAR(text: string): number | null {
-  if (!text || !text.trim()) return null;
-  let limpio = text.trim().replace(/[^\d,.\-]/g, '');
-  limpio = limpio.replace(/\./g, '').replace(',', '.');
-  const num = parseFloat(limpio);
-  return isFinite(num) ? num : null;
-}
+// Aca vivian formatNumeroAR y parseNumeroAR, copiados byte a byte de
+// NuevoGastoForm. El importe y el descuento ahora son numeros y los muestra
+// MontoInput, asi que las dos quedaron sin uso.
 
 function formatError(e: unknown): string {
   if (e instanceof Error) return e.message;
@@ -81,8 +69,8 @@ export function PagarGastoModal({ open, gasto, onClose }: Props) {
 
   const [fechaPago, setFechaPago] = useState<string>('');
   const [medioPago, setMedioPago] = useState<MedioPago>('transferencia_mp');
-  const [importeTexto, setImporteTexto] = useState<string>('');
-  const [descuentoTexto, setDescuentoTexto] = useState<string>('');
+  const [importe, setImporte] = useState<number | null>(null);
+  const [descuento, setDescuento] = useState<number | null>(null);
   const [nOperacion, setNOperacion] = useState<string>('');
   const [archivoComprobante, setArchivoComprobante] = useState<File | null>(null);
   // Path en Storage del comprobante ya subido por OCR (se reusa al confirmar)
@@ -135,8 +123,8 @@ export function PagarGastoModal({ open, gasto, onClose }: Props) {
     [pagosPrevios],
   );
 
-  const importeNum = useMemo(() => parseNumeroAR(importeTexto) ?? 0, [importeTexto]);
-  const descuentoNum = useMemo(() => parseNumeroAR(descuentoTexto) ?? 0, [descuentoTexto]);
+  const importeNum = importe ?? 0;
+  const descuentoNum = descuento ?? 0;
   const totalDespuesDelPago = yaPagado + importeNum + yaDescuento + descuentoNum;
   const cubierto = totalDespuesDelPago >= importeTotal - 0.01;
 
@@ -145,8 +133,8 @@ export function PagarGastoModal({ open, gasto, onClose }: Props) {
     if (open && gasto) {
       setFechaPago(new Date().toISOString().slice(0, 10));
       setMedioPago('transferencia_mp');
-      setImporteTexto(formatNumeroAR(saldoPendiente));
-      setDescuentoTexto('');
+      setImporte(saldoPendiente);
+      setDescuento(null);
       setNOperacion('');
       setArchivoComprobante(null);
       setComprobantePagoPath(null);
@@ -564,15 +552,9 @@ export function PagarGastoModal({ open, gasto, onClose }: Props) {
             <Field label="Importe a pagar *">
               <div className="flex items-center rounded border border-gray-300">
                 <span className="px-3 text-sm text-gray-500">$</span>
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  value={importeTexto}
-                  onChange={(e) => setImporteTexto(e.target.value)}
-                  onBlur={() => {
-                    const num = parseNumeroAR(importeTexto);
-                    if (num !== null) setImporteTexto(formatNumeroAR(num));
-                  }}
+                <MontoInput
+                  value={importe}
+                  onChange={setImporte}
                   className="w-full rounded-r px-2 py-2 text-sm tabular-nums focus:outline-none"
                 />
               </div>
@@ -580,15 +562,9 @@ export function PagarGastoModal({ open, gasto, onClose }: Props) {
             <Field label="Descuento (opcional)">
               <div className="flex items-center rounded border border-gray-300">
                 <span className="px-3 text-sm text-gray-500">$</span>
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  value={descuentoTexto}
-                  onChange={(e) => setDescuentoTexto(e.target.value)}
-                  onBlur={() => {
-                    const num = parseNumeroAR(descuentoTexto);
-                    if (num !== null && num > 0) setDescuentoTexto(formatNumeroAR(num));
-                  }}
+                <MontoInput
+                  value={descuento}
+                  onChange={setDescuento}
                   placeholder="0"
                   className="w-full rounded-r px-2 py-2 text-sm tabular-nums focus:outline-none"
                 />
@@ -601,7 +577,7 @@ export function PagarGastoModal({ open, gasto, onClose }: Props) {
             <button
               type="button"
               onClick={() => {
-                setImporteTexto(formatNumeroAR(saldoPendiente - descuentoNum));
+                setImporte(saldoPendiente - descuentoNum);
               }}
               className="rounded bg-gray-100 px-2 py-0.5 text-gray-600 hover:bg-gray-200"
             >
@@ -610,7 +586,7 @@ export function PagarGastoModal({ open, gasto, onClose }: Props) {
             <button
               type="button"
               onClick={() =>
-                setImporteTexto(formatNumeroAR(+(saldoPendiente / 2).toFixed(2)))
+                setImporte(+(saldoPendiente / 2).toFixed(2))
               }
               className="rounded bg-gray-100 px-2 py-0.5 text-gray-600 hover:bg-gray-200"
             >
