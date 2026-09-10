@@ -2,7 +2,7 @@
 -- DIAGNÓSTICO DE MONTOS HISTÓRICOS — rodziny-erp
 -- Generado el 10-sep-2026
 --
--- ⛔ ESTE ARCHIVO NO MODIFICA NADA. Son seis consultas de SOLO LECTURA para
+-- ⛔ ESTE ARCHIVO NO MODIFICA NADA. Son siete consultas de SOLO LECTURA para
 --    revisar a mano si algún dato quedó mal guardado por los bugs de entrada
 --    de plata. NINGUNA se ejecutó todavía.
 --
@@ -10,7 +10,7 @@
 --    idea es que vos decidas caso por caso, no que el sistema "arregle" solo.
 --
 -- ----------------------------------------------------------------------------
--- LOS DOS BUGS, EN CRIOLLO
+-- LOS TRES BUGS, EN CRIOLLO
 -- ----------------------------------------------------------------------------
 --
 -- Al escribir plata, el punto puede significar dos cosas, y en el ERP convivían
@@ -29,6 +29,18 @@
 --    CENTAVOS; los redondos nunca se tocaron.
 --    Afecta: el precio de la carta y los campos de Fudo del cierre de caja.
 --    ✅ CORREGIDO el 10-sep-2026 (commits 8f3139b y dbee13b).
+--
+-- 💥 BUG C — "el costo se guarda en CERO" → el más callado y el más caro
+--    En Compras › Stock el campo del costo unitario es `type="number"`. Si
+--    alguien teclea un importe con puntos, el navegador lo rechaza y devuelve
+--    vacío; el código lo convierte en CERO y lo guarda sin avisar nada.
+--    No es un monto raro que alguien vaya a mirar: es un casillero vacío que
+--    parece pendiente. Y el costo del insumo no se queda ahí — entra en el
+--    costeo de cada receta que lo usa, y de ahí al margen y al precio sugerido.
+--    Un insumo en cero hace que la receta parezca MÁS rentable de lo que es.
+--    Afecta: costos de insumos de Compras, de Productos › Insumos, y los
+--    ítems de cada gasto.
+--    ⏳ SIGUE ACTIVO al 10-sep-2026. Es la consulta (g).
 --
 -- ----------------------------------------------------------------------------
 -- CÓMO LEER LOS RESULTADOS
@@ -117,7 +129,7 @@ with todos as (
 ),
 referencia as (
     select concepto,
-           percentile_cont(0.5) within group (order by monto) as mediana
+           percentile_cont(0.5) within group (order by monto)::numeric as mediana
       from todos
      where monto > 0
      group by concepto
@@ -305,7 +317,7 @@ with precios as (
 ),
 mediana as (
     select local, canal,
-           percentile_cont(0.5) within group (order by precio) as precio_tipico
+           percentile_cont(0.5) within group (order by precio)::numeric as precio_tipico
     from precios
     group by local, canal
 )
@@ -365,7 +377,7 @@ with campos as (
 ),
 referencia as (
     select a.id, a.campo,
-           percentile_cont(0.5) within group (order by b.valor) as tipico_alrededor,
+           percentile_cont(0.5) within group (order by b.valor)::numeric as tipico_alrededor,
            count(*)                                             as cierres_comparados
     from campos a
     join campos b
@@ -396,6 +408,237 @@ where r.cierres_comparados >= 3        -- sin al menos 3 cierres cerca no hay co
 order by veces_sobre_lo_tipico desc, c.fecha desc;
 
 
+
+-- ============================================================================
+-- (g) COSTOS UNITARIOS EN CERO O SOSPECHOSAMENTE BAJOS (compras e insumos)
+-- ----------------------------------------------------------------------------
+-- Bug:      C (el costo que se guarda en CERO) + A (mil veces más chico)
+-- Desde:    20-abr-2026 Compras › Stock › alta/edición de producto
+--                       (commit 9a1f009 — "CRUD de productos en tab Stock")
+--           08-may-2026 Gastos › Nuevo gasto › subtotal de cada ítem
+--                       (commit df6813d — "unificar modal de pagos")
+--           18-may-2026 Productos › Insumos › edición en la grilla
+--                       (commit a69d2d7 — "módulo Productos")
+-- Hasta:    los tres siguen activos al 10-sep-2026
+--
+-- ----------------------------------------------------------------------------
+-- POR QUÉ ESTE ES PEOR QUE LOS OTROS DOS
+-- ----------------------------------------------------------------------------
+-- Un monto mil veces más chico se ve raro y alguien lo mira. Un CERO no: en una
+-- grilla de insumos pasa por "todavía no lo cargué". Y el costo del insumo no
+-- se queda quieto donde está: entra en el costeo de cada receta que lo usa, y
+-- de ahí al margen, al precio sugerido y a la Ingeniería de Menú. Un insumo en
+-- cero no rompe nada — hace que la receta parezca MÁS rentable de lo que es.
+--
+-- Cómo se produce, en criollo:
+--
+--   Compras › Stock (el peor de los tres)
+--     El campo es `type="number"`. Si alguien teclea 1.234,56 el navegador no
+--     lo acepta y devuelve VACÍO. El código hace `parseFloat('') || 0` y guarda
+--     CERO, sin un solo aviso en pantalla.
+--     Si teclea 1.234 pensando mil doscientos treinta y cuatro, el navegador
+--     sí lo acepta — como UNO CON DOSCIENTOS TREINTA Y CUATRO.
+--
+--   Productos › Insumos
+--     Mismo campo `type="number"`, pero acá hay media red: si el resultado no
+--     es un número, no guarda nada. O sea que CERO no puede llegar por este
+--     camino; sí puede llegar 1.234 leído como 1,234.
+--
+--   Gastos › Nuevo gasto › subtotal del ítem
+--     Ese sí usa el parser viejo (`replace(',', '.')`), así que 15.000 se lee
+--     como 15. El precio unitario se calcula dividiendo subtotal / cantidad, y
+--     si el encargado tilda "actualizar costo", ese precio pisa el costo real
+--     del insumo. Además, si la cantidad queda en cero, el precio unitario se
+--     fuerza a CERO por definición.
+--
+-- ----------------------------------------------------------------------------
+-- 💣 LO QUE ESTA CONSULTA NO PUEDE DECIRTE
+-- ----------------------------------------------------------------------------
+-- **La tabla `productos` no guarda QUIÉN tocó el costo.** No tiene columna de
+-- usuario. Lo único que hay es `updated_at`, y encima es la fecha de la ÚLTIMA
+-- modificación de la fila entera: si después alguien le cambió el nombre o el
+-- stock mínimo, esa fecha ya no es la del costo.
+--
+-- El único rastro con nombre y apellido está en `productos_costo_historial`,
+-- y esa tabla la escribe SOLO el camino de Gastos. Los dos campos culpables
+-- (Compras › Stock y Productos › Insumos) escriben `productos` derecho, sin
+-- dejar historial. Por eso esto son TRES consultas y no una:
+--
+--   (g)     el daño, sin usuario   → qué insumos están en cero hoy
+--   (g bis) el daño, sin usuario   → qué insumos están mil veces más baratos
+--   (g ter) el rastro CON usuario  → lo poco que quedó registrado
+--
+-- Si (g) trae filas y (g ter) no las explica, la respuesta a "quién fue" no
+-- está en la base. Está en preguntarle al encargado del local.
+-- ============================================================================
+
+-- ----------------------------------------------------------------------------
+-- (g) Insumos con el costo unitario en CERO (o nunca cargado)
+--     Ordenados por cuántas recetas los usan: ése es el tamaño del incendio.
+-- ----------------------------------------------------------------------------
+with insumos as (
+    select p.id, p.nombre, p.marca, p.categoria, p.unidad, p.local,
+           p.costo_unitario, p.updated_at, p.activo
+      from public.productos p
+     where p.updated_at >= timestamptz '2026-04-20 00:00:00-03'
+       and p.updated_at <  timestamptz '2026-09-11 00:00:00-03'
+),
+uso_en_recetas as (
+    select ri.producto_id,
+           count(distinct r.id)                               as recetas_que_lo_usan,
+           string_agg(distinct r.nombre, ' · ' order by r.nombre) as recetas
+      from public.cocina_receta_ingredientes ri
+      join public.cocina_recetas r on r.id = ri.receta_id
+     where ri.producto_id is not null
+       and r.activo
+     group by ri.producto_id
+)
+select
+    i.local,
+    i.categoria,
+    i.nombre,
+    coalesce(i.marca, '')                       as marca,
+    i.unidad,
+    i.costo_unitario,
+    case when i.costo_unitario is null then 'nunca se cargó'
+         else 'se guardó en CERO'
+    end                                         as pinta,
+    i.updated_at::date                          as ultima_modificacion,
+    coalesce(i.activo, true)                    as insumo_activo,
+    coalesce(u.recetas_que_lo_usan, 0)          as recetas_que_lo_usan,
+    u.recetas
+from insumos i
+left join uso_en_recetas u on u.producto_id = i.id
+where coalesce(i.costo_unitario, 0) = 0
+order by coalesce(u.recetas_que_lo_usan, 0) desc,
+         i.updated_at desc;
+
+-- 💡 Al leer el resultado: un insumo en cero que NO lo usa ninguna receta y
+--    está inactivo es ruido. Uno en cero que usan 6 recetas activas es plata
+--    que se está calculando mal todos los días.
+--
+-- ⚠️ Los ingredientes que la receta engancha SOLO POR NOMBRE (sin producto_id)
+--    no aparecen en la columna `recetas_que_lo_usan`. O sea que ese número es
+--    un PISO, no el total.
+
+
+-- ----------------------------------------------------------------------------
+-- (g bis) Insumos con el costo mil veces más chico de lo que debería
+--     Mismo criterio que la consulta (b): en vez de inventar un piso en pesos
+--     —que la inflación deja viejo en dos meses— cada insumo se compara contra
+--     la MEDIANA de su propia categoría y unidad.
+-- ----------------------------------------------------------------------------
+with insumos as (
+    select p.id, p.nombre, p.marca, p.categoria, p.unidad, p.local,
+           p.costo_unitario, p.updated_at
+      from public.productos p
+     where p.costo_unitario is not null
+       and p.costo_unitario > 0
+),
+referencia as (
+    select categoria,
+           unidad,
+           percentile_cont(0.5) within group (order by costo_unitario)::numeric as mediana,
+           count(*)                                                    as insumos_comparados
+      from insumos
+     group by categoria, unidad
+)
+select
+    i.local,
+    i.categoria,
+    i.nombre,
+    coalesce(i.marca, '')                               as marca,
+    i.unidad,
+    i.costo_unitario,
+    round(r.mediana, 2)                                 as mediana_de_su_categoria,
+    r.insumos_comparados,
+    round(r.mediana / nullif(i.costo_unitario, 0), 0)   as cuantas_veces_mas_chico,
+    i.costo_unitario * 1000                             as valor_si_fuera_el_bug,
+    case when i.costo_unitario <> round(i.costo_unitario, 2)
+         then 'tiene más de 2 decimales → pinta a punto leído como coma'
+         else '—'
+    end                                                 as pista_extra,
+    i.updated_at::date                                  as ultima_modificacion
+from insumos i
+join referencia r on r.categoria = i.categoria and r.unidad = i.unidad
+where r.insumos_comparados >= 4          -- sin al menos 4 insumos no hay con qué comparar
+  and i.costo_unitario < r.mediana / 100 -- el bug divide por 1000; 100 deja margen de sobra
+  and i.updated_at >= timestamptz '2026-04-20 00:00:00-03'
+  and i.updated_at <  timestamptz '2026-09-11 00:00:00-03'
+order by cuantas_veces_mas_chico desc,
+         i.updated_at desc;
+
+-- 💡 La columna `pista_extra` es la firma del bug de Compras › Stock: un costo
+--    de 1,234 no lo tipea nadie. Es "1.234" leído por el navegador como uno con
+--    doscientos treinta y cuatro.
+
+
+-- ----------------------------------------------------------------------------
+-- (g ter) El único rastro que SÍ tiene fecha y usuario
+--     Dos fuentes distintas, una abajo de la otra:
+--       1. productos_costo_historial — solo registra el camino de Gastos
+--       2. los ítems guardados dentro de cada gasto (`gastos.items_json`)
+-- ----------------------------------------------------------------------------
+
+-- 1. Cambios de costo registrados: se fue a cero, o se desplomó más de 100 veces
+select
+    'historial de costos'                       as fuente_del_dato,
+    h.fecha::date                               as fecha,
+    h.usuario,
+    p.local,
+    p.categoria,
+    p.nombre                                    as insumo,
+    p.unidad,
+    h.costo_anterior,
+    h.costo_nuevo,
+    round(h.variacion_pct * 100, 1)             as variacion_pct,
+    h.costo_nuevo * 1000                        as valor_si_fuera_el_bug,
+    h.fuente                                    as origen_del_cambio,
+    h.comentario
+from public.productos_costo_historial h
+join public.productos p on p.id = h.producto_id
+where h.fecha >= timestamptz '2026-04-20 00:00:00-03'
+  and h.fecha <  timestamptz '2026-09-11 00:00:00-03'
+  and (
+        h.costo_nuevo = 0
+     or (h.costo_anterior > 0 and h.costo_nuevo < h.costo_anterior / 100)
+      )
+order by h.fecha desc;
+
+-- 2. Ítems de gasto con el precio unitario o el subtotal en cero
+--    (El `case` de adentro es a propósito: si algún gasto viejo guardó un
+--     objeto en vez de una lista, la consulta lo saltea en vez de reventar.)
+select
+    g.fecha,
+    g.local,
+    g.proveedor,
+    g.creado_por                                            as usuario,
+    it->>'producto_nombre'                                  as insumo,
+    (it->>'cantidad')::numeric                              as cantidad,
+    (it->>'precio_unitario')::numeric                       as precio_unitario,
+    (it->>'subtotal')::numeric                              as subtotal,
+    g.importe_total                                         as total_del_gasto,
+    round(coalesce((it->>'subtotal')::numeric, 0) * 1000, 2) as subtotal_si_fuera_el_bug,
+    g.nro_comprobante,
+    g.id                                                    as gasto_id
+from public.gastos g
+cross join lateral jsonb_array_elements(
+    case when jsonb_typeof(g.items_json) = 'array' then g.items_json
+         else '[]'::jsonb end
+) as it
+where g.fecha >= date '2026-04-20'
+  and g.fecha <  date '2026-09-11'
+  and coalesce(g.cancelado, false) = false
+  and (
+        coalesce((it->>'precio_unitario')::numeric, 0) = 0
+     or coalesce((it->>'subtotal')::numeric, 0) = 0
+      )
+order by g.fecha desc;
+
+-- 💡 Un ítem con precio unitario en cero y subtotal en cero puede ser una línea
+--    que alguien empezó a cargar y abandonó. Uno con subtotal cargado y precio
+--    unitario en cero es el otro caso: la cantidad quedó en cero y la división
+--    lo forzó. Ese es el que puede haber pisado el costo del insumo.
 -- ============================================================================
 -- FIN. Ninguna de estas consultas escribe. Si alguna trae filas, el paso
 -- siguiente es mirarlas de a una contra el papel — no correr un UPDATE masivo.
