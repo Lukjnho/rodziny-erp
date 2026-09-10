@@ -55,8 +55,17 @@ caja en cero es un cierre válido).
 
 ## 1. Qué se migró y qué queda
 
-Se relevaron **41 inputs de dinero** en todo el ERP y se agruparon por cómo leen
-lo que se teclea. **La tanda 1 cerró el grupo B. Faltan C, D y E.**
+> ## 📋 La lista completa está en `docs/INVENTARIO-MONTOS.md`
+>
+> **Son 49 campos, no 41.** Ese documento tiene la lista cerrada, campo por campo,
+> con archivo y línea. Se armó barriendo las 444 apariciones de `<input>`,
+> `<textarea>` y `<MontoInput>` de `src/`, con verificación adversarial.
+>
+> **Leelo antes de migrar nada.** Acá abajo está el resumen y el plan; ahí está el
+> detalle y tres advertencias que no se ven en este resumen.
+
+Los 49 campos se agrupan por cómo leen lo que se teclea.
+**La tanda 1 cerró el grupo B. Faltan C, D y E.**
 
 ### ✅ TANDA 1 — HECHO (grupo B: 17 inputs)
 
@@ -115,7 +124,7 @@ chicos**. Es el grupo que más daño hace y el que hay que atacar primero.
 > primera vez que se corrió. Son **11 inputs en el grupo C, no 10**.
 > Todavía no tiene el aviso provisorio en pantalla que sí tienen los otros diez.
 
-### ⛔ PENDIENTE — Grupo D (9 inputs): `type="number"`, lo decide el navegador
+### ⛔ PENDIENTE — Grupo D (14 inputs): `type="number"`, lo decide el navegador
 
 No hay regla nuestra: **la interpretación depende del navegador y del idioma del
 aparato**. La tablet del salón y la computadora de administración pueden leer
@@ -135,6 +144,16 @@ aparato**. La tablet del salón y la computadora de administración pueden leer
 
 Los tres en negrita son los de mayor exposición: son la caja y el cobro.
 
+**Faltan 5 en esa tabla** que aparecieron en el barrido completo —dos costos
+unitarios, un redondeo y los dos saldos iniciales de la proyección—: están en
+`docs/INVENTARIO-MONTOS.md`.
+
+> 💣 **Tres de los 14 no son solo D: tienen un parser del grupo C adentro.**
+> `compras/ComprasPage.tsx:4386`, `productos/InsumosTab.tsx:188` y
+> `productos/ConfiguracionTab.tsx:240`. **Cambiar solo el `type="number"` deja el
+> parser roto.** Hay que cambiar los dos. El de Compras además guarda **cero en
+> silencio** si lo tipeado no es un número válido.
+
 ### ⛔ PENDIENTE — Grupo E (2 inputs): solo dígitos, **no acepta centavos**
 
 `src/modules/rrhh/SueldosTab.tsx` líneas **1706** y **1722** (monto en efectivo y
@@ -149,6 +168,12 @@ produce `"152350.5"`, el campo le borra el punto y queda **1.523.505** — el
 mismo bug de 10x que tenían el precio de la carta y los campos de Fudo. Esto lo
 detectó la regla de ESLint; el relevamiento manual solo había visto la parte de
 "no se pueden tipear centavos".
+
+💥 **Y todavía peor: no hace falta reabrir un pago viejo.** La sugerencia 50/50
+del modal (`SueldosTab.tsx:1223-1224` y `1261-1262`) redondea `mitad` pero deja
+los centavos de la quincena en `otra`. Si el sueldo neto es impar, la quincena
+termina en `,50` y el campo **muestra 1.750.005 la primera vez que se abre**,
+sin que nadie haya tocado nada.
 
 Ojo al migrarlos: los dos campos se autocompletan entre sí (efectivo =
 total − transferencia). Esa lógica hay que conservarla.
@@ -275,12 +300,11 @@ resultados. **Ninguna corrección de datos hasta que esa revisión pase.**
 generando datos malos**. Cuanto más tarde la revisión, más filas hay que revisar
 después. Y saber cuánto daño real hubo cambia la urgencia del resto.
 
-### Paso 2 — Grupo C (10 inputs)
+### Paso 2 — Grupo C (11 inputs)
 
-**Por qué antes que D y E:** es el único grupo que **hoy está escribiendo datos
-mal**, con certeza y sin control. Los cuatro paneles de sueldo llevan cinco
-meses así. D depende del navegador (puede estar funcionando bien) y E solo falla
-con centavos.
+**Por qué primero:** es el grupo que **hoy escribe datos mal con certeza y sin
+control**. Los cuatro paneles de sueldo llevan cinco meses así, y uno de los
+campos es el monto a pagar de ARCA.
 
 ⚠️ **Al migrar el grupo C hay una trampa:** cuatro sitios cargan un valor de la
 base al input con `String(...)` y **hoy funcionan de casualidad**, porque
@@ -294,22 +318,43 @@ decimal. **En cuanto des vuelta la regla, se rompen.** Van en el mismo commit:
 
 Usá `montoDesdeBase()` para esos, nunca el parser de tipeo.
 
-### Paso 3 — Grupo D (9 inputs)
+### Paso 3 — Grupo E (2 inputs) ⬆️ *subió de prioridad*
 
-**Por qué después:** el daño es incierto (depende del navegador), pero incluye la
-caja y el cobro de mesas, así que no puede quedar sin hacer. Al migrarlos el ERP
-deja de depender de cómo esté configurada cada tablet.
+**Estaba último y pasó a tercero.** El motivo: hasta ahora figuraba como "no
+acepta centavos", que suena a incomodidad. Al revisarlo con la regla de ESLint
+apareció lo otro: **también rompe al recargar**, con el mismo bug de 10x que ya
+se corrigió en el precio de la carta y en el cierre de caja
+(`SueldosTab.tsx:1232, 1236, 1270, 1274`).
 
-### Paso 4 — Grupo E (2 inputs) y limpieza final
+Sube por encima del grupo D por tres razones:
 
-Migrar los dos de `SueldosTab` conservando el autocompletado entre efectivo y
-transferencia. Recién ahí:
+1. **Es un bug confirmado**, no una dependencia del navegador como el grupo D.
+2. **Está en la liquidación de sueldos**: el monto en efectivo y el monto por
+   transferencia que se le paga a cada persona.
+3. **Son solo 2 campos.** Mucho menos trabajo que los 9 del grupo D, y con más
+   daño evitado por hora de trabajo.
+
+Migrarlos conservando el autocompletado entre los dos campos (efectivo =
+total − transferencia).
+
+### Paso 4 — Grupo D (14 inputs)
+
+**Por qué queda para el final de la migración:** el daño es **incierto** — puede
+estar funcionando bien según el navegador y el idioma del aparato. Pero incluye
+la caja, el arqueo y el cobro de mesas, así que no puede quedar sin hacer: al
+migrarlos, el ERP deja de depender de cómo esté configurada cada tablet.
+
+### Paso 5 — Limpieza final
+
+Recién cuando C, D y E estén migrados:
 
 - Renombrar `parseDecimal` → algo que diga "cantidad", y documentar la regla en
   `lib/numero.ts`.
 - Evaluar si `EditarLoteModal` usa el compartido.
+- Borrar los avisos provisorios: `grep -rn "MITIGACION-MONTOS" src`.
+- Pasar la regla de ESLint de `warn` a `error`.
 
-### Paso 5 — Corregir los datos históricos, si el dueño lo decide
+### Paso 6 — Corregir los datos históricos, si el dueño lo decide
 
 Uno por uno, contra el papel. **Nunca un `UPDATE` masivo.** Cada consulta trae
 una columna `valor_si_fuera_el_bug` que es una *sugerencia*, no una certeza: un
@@ -321,9 +366,13 @@ adelanto de $500 puede ser un adelanto de $500 de verdad.
 
 ### 1. El aviso provisorio en pantalla
 
-Debajo de los campos del grupo C dice **"Escribí el monto sin puntos. Ejemplo:
-150000"**. Es texto, no toca el parseo. Existe solo para frenar el daño mientras
-la migración está pendiente.
+Debajo de los **11 campos del grupo C** dice **"Escribí el monto sin puntos.
+Ejemplo: 150000"**. Es texto, no toca el parseo. Existe solo para frenar el daño
+mientras la migración está pendiente.
+
+Son 9 avisos para 11 campos: en *Retiros sin clasificar* los dos campos están uno
+al lado del otro y comparten la línea, y en las dos tablas de ítems el subtotal se
+repite por renglón, así que el aviso va una vez arriba de la tabla.
 
 **Se borra cuando cada campo pase a `MontoInput`.** Están todos marcados:
 
@@ -381,6 +430,10 @@ test cuando un bug **costó plata**, para que no vuelva.
 
 ## Para leer más
 
+- **`docs/INVENTARIO-MONTOS.md`** — **la lista cerrada de los 49 campos**, con las
+  tres advertencias que hay que leer antes de migrar. Es el documento que dice
+  QUÉ tocar; éste dice CÓMO y en qué orden.
+- **`docs/CHECKLIST-MONTOS.md`** — las 7 pruebas manuales antes de mergear.
 - **`CLAUDE.md`** — la regla de entrada de plata, ya escrita ahí.
 - **`docs/diagnostico-montos.sql`** — las seis consultas, comentadas.
 - **`docs/AUDITORIA.md`** — la auditoría de arquitectura completa del 10-sep, de
