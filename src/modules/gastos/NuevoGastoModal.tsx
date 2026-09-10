@@ -1187,6 +1187,14 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
                 )}
                 {/* Items cargados */}
                 {form.items.length > 0 && (
+                  <>
+                  {/* MITIGACION-MONTOS — provisorio. El subtotal de cada ítem todavía
+                      lee el punto como coma decimal. Una sola línea para toda la
+                      lista, no una por ítem. Se saca cuando el subtotal pase a
+                      MontoInput (docs/TRASPASO-MONTOS.md, grupo C). */}
+                  <p className="mb-1 text-[11px] text-amber-700">
+                    Escribí el monto sin puntos. Ejemplo: 150000
+                  </p>
                   <div className="divide-y divide-gray-100 rounded border border-gray-200 bg-white">
                     {form.items.map((it, idx) => (
                       <div key={idx} className="space-y-1.5 px-3 py-2 text-xs">
@@ -1284,6 +1292,7 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
                       </div>
                     </div>
                   </div>
+                  </>
                 )}
 
                 {/* Buscar producto para agregar */}

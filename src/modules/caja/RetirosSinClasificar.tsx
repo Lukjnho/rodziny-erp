@@ -312,6 +312,14 @@ function FilaRetiro({
               />
             </div>
 
+            {/* MITIGACION-MONTOS — provisorio. Estos dos campos todavía leen el
+                punto como coma decimal. Va una sola línea para los dos porque
+                están uno al lado del otro y repetirla desalinea la fila.
+                Se saca cuando pasen a MontoInput (docs/TRASPASO-MONTOS.md). */}
+            <p className="w-full text-[11px] text-amber-700">
+              Escribí el monto sin puntos. Ejemplo: 150000
+            </p>
+
             <div className="flex gap-2">
               <button
                 onClick={() => repartir('cambio')}

@@ -1496,10 +1496,16 @@ export function FlujoCaja() {
             <span className="text-amber-800">
               Falta el saldo de MercadoPago (la API no lo expone). Copialo de la app y pegalo acá:
             </span>
+            {/* MITIGACION-MONTOS — provisorio: este campo todavía lee el punto como
+                coma decimal, así que el placeholder "1.234.567,89" miente. Se saca
+                cuando pase a MontoInput (docs/TRASPASO-MONTOS.md, grupo C). */}
+            <span className="w-full text-amber-700">
+              Escribí el monto sin puntos. Ejemplo: 150000
+            </span>
             <input
               value={saldoMPInput}
               onChange={(e) => setSaldoMPInput(e.target.value)}
-              placeholder="1.234.567,89"
+              placeholder="1234567"
               className="w-32 rounded border border-amber-300 px-2 py-1 text-right tabular-nums focus:outline-none focus:ring-1 focus:ring-amber-400"
             />
             <button

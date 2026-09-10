@@ -155,6 +155,12 @@ export function PanelAdelantos({ empleado, periodo, adelantos, onClose }: Props)
               className="rounded border border-gray-300 px-2 py-1.5 text-xs"
             />
           </div>
+          {/* MITIGACION-MONTOS — provisorio. Este campo todavía lee el punto como
+              coma decimal, así que "150.000" se guarda como 150. Se saca cuando el
+              campo pase a MontoInput (ver docs/TRASPASO-MONTOS.md, grupo C). */}
+          <p className="mt-1 text-[11px] text-amber-700">
+            Escribí el monto sin puntos. Ejemplo: 150000
+          </p>
           <input
             type="text"
             placeholder="Motivo (opcional)"

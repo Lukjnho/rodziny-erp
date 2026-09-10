@@ -2376,6 +2376,14 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
                       {/* Items existentes */}
                       {items.length > 0 && (
                         <>
+                          {/* MITIGACION-MONTOS — provisorio. El subtotal de cada ítem
+                              todavía lee el punto como coma decimal. Va una sola línea
+                              arriba de la tabla y no una por renglón, para no repetir
+                              la misma frase en cada ítem. Se saca cuando el subtotal
+                              pase a MontoInput (docs/TRASPASO-MONTOS.md, grupo C). */}
+                          <p className="text-[11px] text-amber-700">
+                            Escribí el monto sin puntos. Ejemplo: 150000
+                          </p>
                           {/* Desktop: tabla */}
                           <div className="hidden md:block overflow-x-auto rounded border border-gray-200 bg-white">
                             <table className="w-full text-xs">
