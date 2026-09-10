@@ -5,6 +5,7 @@ import { PageContainer } from '@/components/layout/PageContainer';
 import { KPICard } from '@/components/ui/KPICard';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { cn, formatARS, formatFecha } from '@/lib/utils';
+import { mensajeErrorAmigable } from '@/lib/erroresSupabase';
 import { CronogramaTab } from './CronogramaTab';
 import { AsistenciaTab } from './AsistenciaTab';
 import { HorasTab } from './HorasTab';
@@ -702,6 +703,7 @@ function LegajosTab() {
       {modalAbierto && (
         <ModalEmpleado
           empleado={empleadoEdit}
+          empleados={empleados}
           onClose={cerrarModal}
           onSaved={() => {
             qc.invalidateQueries({ queryKey: ['empleados'] });
@@ -1004,10 +1006,13 @@ function FilaDesglose({
 
 function ModalEmpleado({
   empleado,
+  empleados,
   onClose,
   onSaved,
 }: {
   empleado: Empleado | null;
+  // La lista completa, para avisar de quién es un PIN repetido antes de guardar.
+  empleados: Empleado[] | undefined;
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -1046,6 +1051,23 @@ function ModalEmpleado({
       setError('Nombre, apellido, DNI y puesto son obligatorios.');
       return;
     }
+    // El PIN identifica a una sola persona (mig 199). Se avisa acá, con nombre y
+    // apellido, antes de que la base tire el candado: el error de Postgres no
+    // sabe de quién es el número repetido y esta pantalla sí.
+    const pin = form.pin_fichaje.trim();
+    if (pin && !/^[0-9]{4}$/.test(pin)) {
+      setError('El PIN tiene que ser exactamente 4 números.');
+      return;
+    }
+    if (pin) {
+      const choca = (empleados ?? []).find((e) => e.pin_fichaje === pin && e.id !== empleado?.id);
+      if (choca) {
+        setError(
+          `El PIN ${pin} ya es de ${choca.nombre} ${choca.apellido}${choca.activo ? '' : ' (de baja)'}. Elegí otros 4 números.`,
+        );
+        return;
+      }
+    }
     setGuardando(true);
     try {
       // Si se cambió a efectivo y no tiene fecha de efectivización, ponerla hoy
@@ -1074,16 +1096,28 @@ function ModalEmpleado({
         cuenta_sueldo: form.cuenta_sueldo,
         updated_at: new Date().toISOString(),
       };
+      // Se cuentan las filas a propósito: un UPDATE que la RLS bloquea devuelve
+      // 0 filas y error nulo. Sin esto la pantalla decía "guardado" sin guardar.
       if (empleado) {
-        const { error } = await supabase.from('empleados').update(payload).eq('id', empleado.id);
+        const { data, error } = await supabase
+          .from('empleados')
+          .update(payload)
+          .eq('id', empleado.id)
+          .select('id');
         if (error) throw error;
+        if (!data || data.length === 0) {
+          throw new Error(
+            'No se guardó ningún cambio. Puede que tu usuario no tenga el permiso de RRHH.',
+          );
+        }
       } else {
-        const { error } = await supabase.from('empleados').insert(payload);
+        const { data, error } = await supabase.from('empleados').insert(payload).select('id');
         if (error) throw error;
+        if (!data || data.length === 0) throw new Error('No se creó el legajo.');
       }
       onSaved();
     } catch (err: any) {
-      setError(err.message || 'Error al guardar.');
+      setError(mensajeErrorAmigable(err, 'No se pudo guardar el legajo'));
     } finally {
       setGuardando(false);
     }
@@ -1261,7 +1295,12 @@ function ModalEmpleado({
             <Field label="PIN fichaje (4 dígitos)">
               <input
                 value={form.pin_fichaje}
-                onChange={(e) => setForm({ ...form, pin_fichaje: e.target.value })}
+                // Solo números: el candado de la base (mig 199) rechaza letras y
+                // espacios, y es mejor no dejar escribirlos que explicar después.
+                onChange={(e) =>
+                  setForm({ ...form, pin_fichaje: e.target.value.replace(/\D/g, '').slice(0, 4) })
+                }
+                inputMode="numeric"
                 maxLength={4}
                 className="input"
               />

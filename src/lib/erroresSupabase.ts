@@ -47,6 +47,12 @@ const TOKENS_TECNICOS = [
 const POR_RESTRICCION: Record<string, string> = {
   cocina_lotes_pasta_codigo_unico_por_local:
     'Ya hay otro lote con ese mismo codigo en este local. El sistema deberia haberle puesto una letra al final solo: avisa, porque algo no funciono.',
+  // Migracion 199. El PIN es la firma de la persona: fichar, sacar del deposito
+  // y cargar lotes. Si dos lo comparten deja de identificar a nadie.
+  empleados_pin_fichaje_unico:
+    'Ese PIN ya lo tiene otra persona, y puede ser alguien que esta de baja. El PIN identifica a una sola persona: elegi otros 4 numeros.',
+  empleados_pin_fichaje_formato:
+    'El PIN tiene que ser exactamente 4 numeros, sin letras ni espacios.',
 };
 
 function pareceTecnico(rawLower: string): boolean {
