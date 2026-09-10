@@ -1402,7 +1402,8 @@ export function CierreCaja() {
                             'inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs font-medium transition-colors',
                             c.verificado
                               ? 'bg-green-100 text-green-800 hover:bg-green-200'
-                              : 'bg-gray-100 text-gray-500 hover:bg-amber-100 hover:text-amber-700',
+                              : // impeccable-disable-next-line gray-on-color -- el detector cruza el color base del texto con el fondo del hover: en hover cambian los DOS (text-amber-700 sobre bg-amber-100), asi que gris-sobre-ambar no se renderiza nunca
+                                'bg-gray-100 text-gray-500 hover:bg-amber-100 hover:text-amber-700',
                           )}
                           title={
                             c.verificado
