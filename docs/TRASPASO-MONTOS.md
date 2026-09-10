@@ -104,9 +104,16 @@ chicos**. Es el grupo que más daño hace y el que hay que atacar primero.
 | `src/modules/caja/RetirosSinClasificar.tsx` | 291, 307 | `parseDecimal` en 196-197 |
 | `src/modules/gastos/NuevoGastoForm.tsx` | 2430, 2566 (subtotal de ítem) | `parseFloat(valor.replace(',', '.'))` en 669 |
 | `src/modules/gastos/NuevoGastoModal.tsx` | 1220 (subtotal de ítem) | 508 |
+| `src/modules/rrhh/sueldos/SeccionImpuestos.tsx` | **156** (monto a pagar ARCA) | `parseFloat(...replace(',', '.'))` en el `onBlur`, 158 |
 
 ⚠️ **Los cuatro paneles de RRHH no tienen ningún control**: guardan lo que sea.
 **`RetirosSinClasificar` sí tiene guardarraíl** (ver punto 3, caso *a*).
+
+> 🔎 **`SeccionImpuestos` apareció después, y vale la pena saber cómo.** El
+> relevamiento manual buscaba `value={...}` y ese campo usa `defaultValue={...}`,
+> así que se escapó. Lo encontró **la regla de ESLint** (ver más abajo) la
+> primera vez que se corrió. Son **11 inputs en el grupo C, no 10**.
+> Todavía no tiene el aviso provisorio en pantalla que sí tienen los otros diez.
 
 ### ⛔ PENDIENTE — Grupo D (9 inputs): `type="number"`, lo decide el navegador
 
@@ -134,6 +141,14 @@ Los tres en negrita son los de mayor exposición: son la caja y el cobro.
 por transferencia). Usan `replace(/\D/g, '')` (funciones en 1656 y 1661), que
 borra todo lo que no sea número: `15.000` funciona bien, pero **`152350,50` se
 convierte en 15.235.050**.
+
+⚠️ **Y es peor que "no acepta centavos": también rompe al recargar.** En las
+líneas **1232, 1236, 1270 y 1274** el valor ya guardado se mete al campo con
+`String(fila.montoEfectivoPagado)`. Si ese monto tiene centavos, `String()`
+produce `"152350.5"`, el campo le borra el punto y queda **1.523.505** — el
+mismo bug de 10x que tenían el precio de la carta y los campos de Fudo. Esto lo
+detectó la regla de ESLint; el relevamiento manual solo había visto la parte de
+"no se pueden tipear centavos".
 
 Ojo al migrarlos: los dos campos se autocompletan entre sí (efectivo =
 total − transferencia). Esa lógica hay que conservarla.
@@ -301,6 +316,40 @@ una columna `valor_si_fuera_el_bug` que es una *sugerencia*, no una certeza: un
 adelanto de $500 puede ser un adelanto de $500 de verdad.
 
 ---
+
+## Dos redes de seguridad que ya están puestas
+
+### 1. El aviso provisorio en pantalla
+
+Debajo de los campos del grupo C dice **"Escribí el monto sin puntos. Ejemplo:
+150000"**. Es texto, no toca el parseo. Existe solo para frenar el daño mientras
+la migración está pendiente.
+
+**Se borra cuando cada campo pase a `MontoInput`.** Están todos marcados:
+
+    grep -rn "MITIGACION-MONTOS" src
+
+### 2. La regla de ESLint
+
+En `eslint.config.js` hay una regla que avisa cuando un campo de plata se
+convierte a texto con `String(...)` o `.toString()` — sea para meterlo en un
+input (`value={...}`) o para guardarlo en el estado (`setAlgo(String(monto))`).
+Esa segunda forma es la que rompió el cierre de caja.
+
+Hoy tira **10 avisos, todos reales**: son exactamente los sitios del grupo C y E
+que faltan migrar. **A medida que la tanda 2 avance, el número tiene que bajar a
+cero.** Cuando llegue a cero, conviene pasarla de `warn` a `error`.
+
+**Lo que la regla NO puede detectar** (para que nadie confíe de más):
+
+- Un monto guardado en una variable con nombre neutro. El bug original de
+  `MenuTab` era `String(valor)` — "valor" no está en el vocabulario de plata y
+  no hay forma de saber que era un precio sin información de tipos, que este
+  proyecto no tiene configurada en ESLint.
+- Un monto que pasa por una función intermedia antes de convertirse a texto.
+
+O sea: **la regla es una red, no una garantía.** La garantía es usar
+`MontoInput` siempre.
 
 ## Cómo verificar que no rompiste nada
 
