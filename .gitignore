@@ -30,3 +30,6 @@ dist-ssr
 
 # Config local de Claude Code (hooks de esta maquina, no del equipo)
 .claude/settings.local.json
+
+# Mapa de graphify: se regenera con /graphify, no se versiona
+graphify-out/

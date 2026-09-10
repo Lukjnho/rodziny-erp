@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "CRG=\"$(command -v code-review-graph 2>/dev/null || echo \"$HOME/.local/bin/code-review-graph.exe\")\"; if [ -x \"$CRG\" ]; then \"$CRG\" status --repo \"${CLAUDE_PROJECT_DIR:-$PWD}\" 2>/dev/null || echo 'MAPA DEL CODIGO: el programa esta pero no se pudo leer el mapa -> usar Grep/Read normalmente.'; else echo 'MAPA DEL CODIGO: NO instalado en esta maquina -> usar Grep/Read normalmente, NO insistir con las tools del grafo.'; fi",
+            "command": "R=\"${CLAUDE_PROJECT_DIR:-$PWD}/graphify-out/GRAPH_REPORT.md\"; if [ -f \"$R\" ]; then echo \"MAPA (graphify): $(grep -m1 'nodes' \"$R\" | sed 's/^- //')\"; echo \"  Armado: $(date -r \"$R\" '+%d-%b %H:%M' 2>/dev/null). El CODIGO se refresca solo en cada commit.\"; echo \"  OJO: documentos, .md e imagenes NO entran en ese refresco -> correr '/graphify . --update' a mano.\"; else echo 'MAPA (graphify): NO armado en esta maquina -> correr /graphify . ; mientras tanto usar Grep/Read normalmente.'; fi",
             "timeout": 15
           }
         ]
