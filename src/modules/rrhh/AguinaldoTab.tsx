@@ -102,6 +102,19 @@ export function AguinaldoTab() {
   const [busqueda, setBusqueda] = useState('');
   const [modalFila, setModalFila] = useState<FilaAguinaldo | null>(null);
 
+  // El aguinaldo del 1° semestre se paga en julio, cuando el 2° ya arrancó, así
+  // que es muy fácil quedar parado en el semestre equivocado sin notarlo. El
+  // 3-jul-2026 pasó: la pestaña abrió sola en 2° semestre y se cargaron 15
+  // aguinaldos repetidos por $7.475.000. El cálculo NO se topa a los días
+  // transcurridos a propósito —el 2° vence el 18/12 y el semestre cierra el
+  // 31/12, topearlo pagaría de menos en diciembre—, así que se avisa.
+  const semestreEnCurso = hoy <= rangoDelSemestre(año, semestre).fin;
+  const hoyTexto = hoy.toLocaleDateString('es-AR', {
+    day: '2-digit',
+    month: 'long',
+    year: 'numeric',
+  });
+
   const { data: empleados } = useQuery({
     // Trae TODOS (incl. bajas: pueden tener aguinaldo pendiente). Key propia para no
     // chocar con los tabs que filtran solo activos.
@@ -216,6 +229,20 @@ export function AguinaldoTab() {
 
   return (
     <div className="space-y-4">
+      {semestreEnCurso && (
+        <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          ⚠ Estás parado en el{' '}
+          <strong>
+            {semestre === 1 ? '1° semestre' : '2° semestre'} de {año}
+          </strong>
+          , que <strong>todavía no terminó</strong> (cierra el{' '}
+          {semestre === 1 ? '30/06' : '31/12'}). El cálculo igual muestra los 180 días completos,
+          así que si cargás ahora estás pagando un semestre entero por adelantado. Hoy es{' '}
+          {hoyTexto}. Si venís a pagar el aguinaldo de mitad de año,{' '}
+          <strong>cambiá el selector al 1° semestre</strong>.
+        </div>
+      )}
+
       {/* KPIs */}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
         <KPICard label="Elegibles" value={String(kpis.elegibles)} color="blue" loading={cargando} />
