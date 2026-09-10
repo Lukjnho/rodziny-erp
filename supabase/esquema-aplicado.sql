@@ -12,8 +12,8 @@
 --
 --  Lo que NO trae: las policies de RLS. Eso lo mide scripts/mapa-erp/.
 --
---  Generado: 2026-09-10 11:22 -0300
---  93 tablas · 13 vistas · 86 funciones · 116 claves foraneas · 289 indices · 0 realtime (publicaciones)
+--  Generado: 2026-09-10 11:33 -0300
+--  93 tablas · 13 vistas · 86 funciones · 116 claves foraneas · 289 indices · 3 realtime (publicaciones)
 -- ============================================================================
 
 -- ── TABLAS ──────────────────────────────────────────────────────
@@ -2516,4 +2516,6 @@ CREATE UNIQUE INDEX veps_pkey ON public.veps USING btree (id);
 
 -- ── REALTIME (publicaciones) ────────────────────────────────────
 
--- (ninguna: no hay ninguna tabla publicada)
+alter publication supabase_realtime add table public.cocina_lotes_pasta;
+alter publication supabase_realtime add table public.cocina_merma;
+alter publication supabase_realtime add table public.cocina_traspasos;
