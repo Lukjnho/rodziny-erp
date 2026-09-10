@@ -31,11 +31,24 @@ se aplicó**.
 Para tablas reales, RLS, permisos, policies y datos, la verdad son **las tools de Supabase
 MCP** y el subagente `rls-auditor`. Nunca el mapa.
 
-> 🔑 Hay un camino para cerrar esto: `graphify --postgres DSN` se conecta a Postgres en
-> transacción `SERIALIZABLE READ ONLY` y reconstruye el esquema **aplicado**. Requiere
-> `uv tool install "graphifyy[sql,postgres]"` y un usuario de solo lectura.
-> **Ojo: NO lee las policies de RLS** ⇒ no reemplaza a `scripts/mapa-erp/`, que es el que
-> mide las tablas que guardan el `local` y cuya regla no lo mira. Se complementan.
+> ✅ **Media resuelto**: `supabase/esquema-aplicado.sql` es una **foto del esquema real**
+> —tablas, vistas, funciones, claves foráneas, índices y publicaciones de Realtime— que el
+> mapa lee como un archivo más. Así conoce las dos cosas: lo escrito y lo aplicado.
+>
+>     "C:/Users/Usuario/AppData/Local/Programs/Python/Python313/python.exe" scripts/graphify/esquema_aplicado.py
+>
+> **Correrlo después de aplicar cada migración**, y commitear el resultado: el `git diff` de
+> ese archivo es el registro de cómo cambió producción.
+>
+> No usa ninguna contraseña de la base: va por el token de la Management API con puros
+> SELECT. (graphify trae un `--postgres DSN` que hace lo mismo pero pide guardar una
+> contraseña; no hace falta.)
+>
+> ⚠️ **Sigue sin traer las policies de RLS** ⇒ **no reemplaza** a `scripts/mapa-erp/`, que es
+> el que mide las tablas que guardan el `local` y cuya regla no lo mira.
+>
+> 💥 Lo que encontró en la primera corrida: **Realtime no tiene ni una tabla publicada**, o
+> sea que la 072 nunca se aplicó — confirmado contra la base, no deducido.
 
 ### Regla 3 — El mapa ENCUENTRA, no DECIDE
 
