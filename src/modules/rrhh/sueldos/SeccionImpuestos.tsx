@@ -161,6 +161,12 @@ export function SeccionImpuestos({ periodoMes }: Props) {
                 placeholder="0"
                 className="mt-1 w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
               />
+              {/* MITIGACION-MONTOS — provisorio. Este campo todavía lee el punto
+                  como coma decimal, así que "150.000" se guarda como 150. Se saca
+                  cuando pase a MontoInput (docs/TRASPASO-MONTOS.md, grupo C). */}
+              <p className="mt-1 text-[11px] text-amber-700">
+                Escribí el monto sin puntos. Ejemplo: 150000
+              </p>
               <p className="mt-1 text-[10px] text-gray-500">
                 {formatARS(Number(impuesto?.monto_total || 0))}
               </p>
