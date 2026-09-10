@@ -21,9 +21,11 @@
 - [ ] Elegir un momento **fuera del servicio**. Varias pruebas tocan cierres de
       caja y precios de la carta reales.
 
-> ⚠️ **Las pruebas 3 y 4 GUARDAN datos de verdad.** Están armadas para dejar
+> ⚠️ **Las pruebas 3, 4 y 8 GUARDAN datos de verdad.** Están armadas para dejar
 > todo como estaba, pero anotá en un papel el número que había **antes** de
 > tocar cada cosa. Si algo sale mal, ese papel es la forma de volver atrás.
+>
+> La prueba 8 además crea un producto inventado que **hay que borrar al final**.
 
 ---
 
@@ -188,13 +190,154 @@ Confirmá que el aviso se ve en:
 - [ ] Finanzas → Flujo de caja → el recuadro amarillo del **saldo de Mercado Pago**
 - [ ] Caja → **Retiros sin clasificar**
 - [ ] Gastos → Nuevo gasto → arriba de la tabla de **ítems**
+- [ ] RRHH → Sueldos → **Impuestos** (el monto a pagar de ARCA)
 
 > ⚠️ **En estos campos la advertencia es en serio:** si escribís `150.000` se
 > guarda **150**. Hasta la tanda 2, escribilos sin puntos.
 >
-> 🔴 **Falta uno.** RRHH → Sueldos → **Impuestos (monto a pagar de ARCA)** tiene
-> el mismo problema y **todavía no tiene el aviso** — se encontró después.
-> Hasta que se arregle, ese campo también va sin puntos.
+> 🔴 **Y hay cinco campos más que tienen el problema y NO tienen el aviso.**
+> Son los que aparecieron después del relevamiento y están en la prueba 8.
+> Hasta que se migren, esos cinco también van sin puntos.
+
+---
+
+## PRUEBA 8 — Los cinco campos que aparecieron después
+
+> **Ojo: el objetivo de esta prueba es distinto al de las anteriores.**
+> Estos cinco campos **no se migraron** — se descubrieron después, cuando la
+> primera tanda ya estaba hecha. Acá no estás probando que anden bien. Estás
+> **confirmando cómo se portan hoy**, por dos motivos: para que la tanda 2 tenga
+> con qué comparar, y porque todo lo que sabemos de ellos es **una deducción
+> leída en el código, no algo que alguien haya visto en pantalla**.
+>
+> 🔴 **Ninguno de estos cinco tiene el aviso amarillo** de la prueba 7. Hasta que
+> se migren, van sin puntos igual que los otros.
+
+### 8.a — Compras → 📦 Stock → Costo unitario ⭐ *el más grave de todos*
+
+Éste es el que puede guardar **CERO sin avisar**, y un cero no llama la atención:
+en una grilla parece "todavía no lo cargué". Y el costo del insumo entra en el
+costeo de todas las recetas que lo usan.
+
+**Hacelo con un producto inventado, nunca con uno de verdad:**
+
+1. [ ] Compras → **📦 Stock** → crear un producto nuevo.
+2. [ ] Nombre: `ZZZ PRUEBA MONTOS - BORRAR`. Categoría y unidad, cualquiera.
+3. [ ] En **Costo unitario ($)** escribí `1.234,56`.
+4. [ ] Mirá el campo **antes de guardar**: ¿te dejó escribir eso, o quedó vacío?
+5. [ ] Guardá igual.
+6. [ ] Buscá el producto en la lista y mirá la columna de costo.
+
+**Qué esperamos que pase (o sea: el bug):** el costo quedó en **$0**, y en ningún
+momento apareció un cartel diciendo que algo estaba mal.
+
+- [ ] Anotá qué pasó de verdad: quedó en `______`.
+- [ ] Editá el mismo producto y ahora escribí `1.234` (sin coma).
+      **Qué esperamos:** queda `$1,23`, no `$1.234`.
+- [ ] Anotá qué pasó de verdad: quedó en `______`.
+- [ ] 🗑️ **Borrá el producto de prueba.**
+
+> 🟢 **Si el costo se guardó bien en los dos casos, avisá.** Sería una buena
+> noticia: significaría que el navegador de la tablet se porta distinto a lo que
+> dedujimos leyendo el código, y cambia el plan de la tanda 2.
+
+### 8.b — Productos → Insumos → el costo de la fila
+
+Este campo **no se ve** hasta que hacés clic encima del número.
+
+1. [ ] Productos → **Insumos**.
+2. [ ] **Anotá en el papel** el costo de un insumo cualquiera.
+3. [ ] Hacé clic sobre ese costo → se convierte en un campo editable.
+4. [ ] **No escribas nada.** Hacé clic afuera.
+5. [ ] ¿El costo quedó igual al del papel?
+6. [ ] Ahora sí: clic, escribí `1.234`, clic afuera. **Qué esperamos:** queda
+       `$1,23`. Anotá qué pasó: `______`.
+7. [ ] **Devolvé el costo al valor del papel.**
+
+> A diferencia del de Compras, éste **no** puede guardar cero: si lo tipeado no
+> es un número, no guarda nada. Lo que sí puede es guardarlo mil veces más chico.
+
+### 8.c — Productos → Configuración → columna "Redondeo $"
+
+1. [ ] Productos → **Configuración**.
+2. [ ] **Anotá** el redondeo de una categoría.
+3. [ ] Escribí `1.000` en ese campo. **Qué esperamos:** queda `1`.
+4. [ ] Anotá qué pasó: `______`.
+5. [ ] **Devolvelo al valor del papel.**
+
+> Parece chiquito y no lo es: si el redondeo queda en 0, quien lo lee cae a $100
+> por su cuenta. Un redondeo mal cargado mueve **todos** los precios sugeridos de
+> esa categoría.
+
+### 8.d y 8.e — Finanzas → Proyección → "⚙️ Saldos y supuestos"
+
+Hay que **desplegar** ese panel: viene cerrado.
+
+1. [ ] Finanzas → **Proyección** → clic en **⚙️ Saldos y supuestos**.
+2. [ ] **Anotá** los dos valores: *Caja operativa hoy* y *Reserva hoy*.
+3. [ ] En **Caja operativa hoy** escribí `5.000.000`. Anotá qué queda: `______`.
+4. [ ] Lo mismo en **Reserva hoy**. Anotá qué queda: `______`.
+5. [ ] **Devolvé los dos a los valores del papel.**
+
+> Estos dos son el punto de partida de toda la proyección. Si arrancan mil veces
+> más chicos, la proyección entera queda mal — y no hay ningún número
+> "obviamente raro" que lo delate, porque todo se achica junto.
+
+---
+
+## PRUEBA 9 — El modal 50/50 de sueldos, con solo abrirlo ⭐
+
+> **Esta prueba no requiere escribir nada.** El campo ya muestra mal apenas se
+> abre el modal. Es la misma familia que la prueba 3 (el precio de la carta), y
+> es el motivo por el que el **grupo E subió de prioridad** por encima del D.
+
+**Dónde:** RRHH → **Sueldos** → en la fila de un empleado, elegir como medio de
+pago **Mixto** (efectivo + transferencia). Eso abre un modal con dos campos:
+*Monto en efectivo* y *Monto por transferencia*, ya sugeridos mitad y mitad.
+
+**Preparación — esto es lo que hace que aparezca:**
+
+- [ ] Elegí un empleado cuyo **total a pagar NO sea un número redondo**: que
+      tenga centavos. Los que cobran presentismo (+10 %) son los candidatos, y
+      también cualquiera con días prorrateados.
+- [ ] **Anotá el total en el papel.**
+
+**La prueba:**
+
+1. [ ] Poné el medio de pago en **Mixto**.
+2. [ ] Cuando se abre el modal, **no toques nada. No escribas nada.**
+3. [ ] Mirá los dos montos sugeridos.
+
+**Qué tiene que pasar:** los dos son números limpios, con separador de miles, y
+suman exactamente el total del papel.
+
+> 🔴 **Lo que esperamos que pase hoy:** el campo de **transferencia** muestra un
+> número con un **punto suelto** en un campo donde todo lo demás son solo
+> dígitos — por ejemplo `175000.5` en vez de `$175.000,50`. Y a veces peor:
+> `50000.299999999997`, con una cola larguísima de decimales.
+>
+> Por qué: la mitad se redondea a múltiplos de 100 y **los centavos se los come
+> entero el otro lado**. Ese número se mete en el campo tal cual, sin formatear.
+
+4. [ ] Anotá los dos números que aparecieron: `______` y `______`.
+
+**La segunda mitad de la prueba — acá es donde se multiplica:**
+
+5. [ ] Hacé clic en el campo de **transferencia** y escribí **un solo dígito**
+       al final.
+
+> 🔴 **Qué esperamos:** el campo borra el punto y el monto salta a **diez o cien
+> veces más grande**. `175000.5` + un `0` se convierte en `17500050`. Y el campo
+> de efectivo, que se recalcula solo como *total − transferencia*, se va a
+> **cero**.
+
+6. [ ] Anotá qué pasó: transferencia `______`, efectivo `______`.
+7. [ ] ⚠️ **Cerrá el modal sin confirmar.** Si lo confirmás, registrás un pago
+       diez veces más grande.
+
+> 🟢 **Si los dos números salieron limpios, avisá igual.** Puede ser que el
+> empleado que elegiste tenga el total redondo. Probá con otro que tenga
+> centavos antes de dar la prueba por pasada.
 
 ---
 
@@ -208,8 +351,12 @@ Confirmá que el aviso se ve en:
 
 ## Si pasó todo
 
-- [ ] Las 7 pruebas en verde.
-- [ ] Ninguna quedó con datos raros guardados.
+- [ ] Las **pruebas 1 a 7** en verde. Ésas son las que deciden si se mergea.
+- [ ] Las **pruebas 8 y 9** hechas y anotadas. Éstas **no bloquean el merge**:
+      son campos que todavía no se migraron, y lo que sacamos de ellas son los
+      números "de antes" para comparar después de la tanda 2.
+- [ ] El producto `ZZZ PRUEBA MONTOS - BORRAR` está borrado.
+- [ ] Todos los valores que se tocaron volvieron a lo que decía el papel.
 
 Ahí sí se puede mergear `fix/entrada-montos`.
 

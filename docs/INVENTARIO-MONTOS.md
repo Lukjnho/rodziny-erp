@@ -134,10 +134,20 @@ El tag dice `type="number"`, pero **el parser que guarda es del grupo C**: hace
 ### 2. El grupo E rompe antes de lo que creíamos
 
 No hace falta reabrir un pago viejo. **La sugerencia 50/50 del modal ya arrastra los
-centavos** (`SueldosTab.tsx:1223-1224` y `1261-1262`): `mitad` se redondea, pero `otra`
-se queda con los centavos de la quincena. Si el sueldo neto es impar, la quincena
-termina en `,50` → `String()` da `"175000.5"` → el campo le borra el punto → **muestra
-1.750.005 la primera vez que se abre**.
+centavos** (`SueldosTab.tsx:1223-1224` y `1261-1262`): `mitad` se redondea a múltiplos
+de 100, así que **todos los centavos del total se los come `otra`**.
+
+Pasa en dos tiempos, y conviene no confundirlos:
+
+1. **Al abrir, sin tocar nada.** `String(otra)` se mete crudo en el campo, que en todo
+   el resto de su vida muestra solo dígitos: aparece `175000.5` en vez de `$175.000,50`.
+   Y como la resta es de punto flotante, a veces sale `50000.299999999997`.
+   Guardar así pierde los centavos (`parseInt` corta en el punto) — molesto, no grave.
+2. **Al escribir un solo dígito**, `replace(/\D/g, '')` borra el punto y **el monto salta
+   ×10 o ×100**: `175000.5` + un `0` queda `17500050`. Y el otro campo, que se recalcula
+   como *total − este*, se va a cero.
+
+Está en `docs/CHECKLIST-MONTOS.md`, prueba 9.
 
 ### 3. Un campo de plata quedó afuera a propósito
 
@@ -149,10 +159,10 @@ trabajo porque no hay nada que migrar. **Se anota para que el próximo barrido n
 ## Lo que este inventario NO cubre
 
 - **La regla de ESLint cubre alrededor de la mitad de los 49.** Su vocabulario excluye
-  `costo`, `valor` y `total` a propósito (en Cocina son kilos), así que **los dos
-  `costo_unitario` son invisibles para ella**: no los encontró y tampoco va a avisar si
-  mañana alguien los rompe. Cuando se migren esos dos, conviene agregar `costo` al
-  vocabulario **solo para Compras y Productos**, nunca para Cocina.
+  `valor`, `cantidad` y `total` a propósito, y eso está medido: agregarlas suma 1, 6 y
+  13 avisos y **ninguno es plata**. `costo` estaba excluido por la misma razón y la
+  razón era falsa — **ya se corrigió**: suma un aviso real y cero ruido. Ver
+  `docs/TRASPASO-MONTOS.md`, sección 2 bis.
 - **Cocina se barrió por vocabulario, no renglón por renglón.** No apareció nada de
   plata (son todos kilos), pero si algún día entra un precio a Cocina, ese es el barrio
   donde se va a esconder: la regla del punto ahí es la contraria y nadie lo va a mirar
