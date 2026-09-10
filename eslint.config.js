@@ -6,10 +6,21 @@ import tseslint from 'typescript-eslint'
 import { defineConfig, globalIgnores } from 'eslint/config'
 
 // Vocabulario de plata. Solo nombres que en este proyecto SIEMPRE son dinero.
-// Deliberadamente NO incluye `total`, `cantidad`, `costo` ni `valor`: en Cocina
-// esos son kilos, y la regla del punto es la contraria.
+//
+// Deliberadamente NO incluye `total`, `cantidad` ni `valor`: en Cocina esos son
+// kilos y la regla del punto es la contraria. Está medido — agregando cada una
+// a esta lista y contando los avisos, sobre una base de 10:
+//   total    → 23 avisos (+13), ninguno es plata
+//   cantidad → 16 avisos  (+6), ninguno es plata
+//   valor    → 11 avisos  (+1), y ese uno es un conteo de stock de Cocina
+//
+// 💣 `costo` SÍ está, y antes no. Estaba excluido por la misma razón, pero la
+//    razón era falsa: en Cocina `costo` también es plata (`costoPorKg`,
+//    `costoPorPorcion`), solo que se calcula y nadie lo tipea. Esa exclusión
+//    equivocada tapó tres campos de dinero en el relevamiento. Incluirlo suma
+//    un aviso real y cero ruido. Ver docs/TRASPASO-MONTOS.md, sección 2 bis.
 const PLATA =
-  'monto|importe|precio|saldo|sueldo|subtotal|fondo|retiro|efectivo|descuento|' +
+  'costo|monto|importe|precio|saldo|sueldo|subtotal|fondo|retiro|efectivo|descuento|' +
   'adelanto|bono|comision|dividendo|contado|arqueo|haber|neto|bruto|abonado|pagado';
 
 const AVISO =

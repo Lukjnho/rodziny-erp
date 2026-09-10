@@ -252,6 +252,89 @@ cero. Hoy se cumple en el **16%** de los casos (medido: 29 de 187).
 
 ---
 
+## 2 bis. 🧭 El problema de fondo es el vocabulario
+
+**Ninguno de estos bugs es un bug de tipeo.** Todos tienen la misma forma: *una
+palabra que significa dos cosas, y ningún lugar del código que diga cuál de las
+dos.* El punto en `15.000` no está mal escrito — está esperando que alguien
+decida si esa pantalla habla el idioma de la plata o el de los kilos. Arreglar
+`MontoInput` no arregla eso; solo le pone un cartel a un campo por vez.
+
+### El caso que nos costó tres campos: `costo`
+
+El barrido manual dio 41 campos y después 49. Los tres que faltaban se llaman
+`costo`. Se escaparon porque yo había sacado esa palabra del vocabulario de
+plata del `eslint.config.js`, con este comentario escrito de mi puño:
+
+> *"Deliberadamente NO incluye `total`, `cantidad`, `costo` ni `valor`: en
+> Cocina esos son kilos, y la regla del punto es la contraria."*
+
+**Esa frase es falsa para `costo`, y lo medí.** En Cocina `costo` es plata
+igual que en Compras: `costoPorKg`, `costoPorPorcion`, `costoBase` — todos
+pesos. Lo que pasa es que en Cocina el costo se **calcula** y nadie lo tipea,
+así que nunca aparece como campo de entrada. De ahí salió la impresión de que
+"en Cocina costo son kilos". No lo es. Me equivoqué yo, escribiendo el
+vocabulario.
+
+Lo medido, agregando cada palabra excluida a la regla de ESLint y contando los
+avisos (base sin ninguna: **10 avisos**):
+
+| Palabra excluida | Avisos | Contra la base | ¿El aviso extra era plata? |
+|---|---:|---:|---|
+| `costo` | 11 | **+1** | ✅ **SÍ** — `InsumosTab.tsx:206`, uno de los tres perdidos |
+| `valor` | 11 | +1 | ❌ no — `cocina/DashboardTab.tsx:1432`, es un conteo de stock |
+| `cantidad` | 16 | +6 | ❌ no |
+| `total` | 23 | +13 | ❌ no |
+
+Tres de las cuatro exclusiones estaban bien. **La única que estaba mal es
+justo la que tapó los tres campos.** Y no costaba nada: sumar `costo` trae un
+hallazgo real y cero ruido. Ya está corregido en `eslint.config.js`.
+
+> 💣 **La lección, que es la parte que importa:** *el filtro que evita ruido en
+> un módulo tapa hallazgos en otro.* Cualquier lista de palabras que separe
+> "plata" de "no plata" va a fallar en los bordes, porque los bordes son
+> exactamente donde las dos reglas se tocan. Un vocabulario compartido no es
+> documentación: es la herramienta de detección.
+
+### No es un caso aislado: es el patrón del ERP
+
+Las mismas palabras significan cosas distintas según el barrio, y en los cuatro
+casos el compilador no dice nada porque los dos significados tienen el mismo
+tipo:
+
+| Palabra | Significado A | Significado B | Qué pasa si los mezclás |
+|---|---|---|---|
+| **el punto** en un número | separador de **miles** (plata) | **coma decimal** (kg, porciones) | ×1000 o ÷1000, en silencio — *es este documento entero* |
+| **`costo`** | plata que alguien **tipea** (Compras, Insumos) | plata que el sistema **calcula** (Cocina) | se excluyó del vocabulario y tapó 3 campos |
+| **`hoy`** | `hoyAR()` = el **día operativo** de cocina: de 00:00 a 04:59 devuelve *ayer* | `hoy()` de Finanzas = el día del calendario | los cierres nocturnos caen en el día equivocado |
+| **`margen`** | fracción (`0,62`) en `MenuTab` y `useMenuEngineering` | escala 0-100 (`62`) en `useCostoPorFudo` | ×100 — y TypeScript no avisa: las dos son `number` |
+
+Y hay un quinto que es el mismo problema sin la palabra: **"margen bueno" está
+definido tres veces con tres umbrales distintos** (`cfg.margen_min` de la base,
+0,50/0,65 en `MenuTab`, 40/60 en `FudoLiveTab`). Un plato al 62 % sale verde en
+una pantalla y ámbar en otra, al mismo tiempo y con el mismo dato. Está en
+`docs/AUDITORIA.md`, hallazgos 5 y 6.
+
+### Qué hacer con esto (no ahora)
+
+**Esto no es tarea de la tanda 2.** La tanda 2 sigue siendo migrar campos. Pero
+cuando se abra el trabajo de vocabulario compartido, **el punto de partida es
+esta tabla**, y el orden que sugiero es:
+
+1. **Escribir el vocabulario antes que el código.** Una lista corta de palabras
+   con UN significado cada una, decidida con Lucas, no deducida del código.
+2. **Que la lista sea ejecutable.** El `eslint.config.js` de este trabajo es la
+   prueba de concepto: un vocabulario que no se puede correr no se cumple.
+   Cubre hoy la mitad de los 49 campos — es una red, no una garantía.
+3. **Renombrar en el código lo que quede ambiguo**, empezando por `parseDecimal`
+   → `parseCantidad` (ver la ZONA ROJA: recién se puede después del grupo C).
+
+⚠️ **Lo que NO hay que hacer es "unificar" para que quede prolijo.** Las dos
+reglas del punto son las dos correctas, cada una en su mundo. El problema no es
+que haya dos: es que nada en el código dice en cuál de los dos estás parado.
+
+---
+
 ## 3. Estado de los seis casos de diagnóstico
 
 Las consultas están en **`docs/diagnostico-montos.sql`**, con el rango de fechas

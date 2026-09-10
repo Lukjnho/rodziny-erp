@@ -108,7 +108,7 @@ Nada que hacer. Solo verificar que sigan así.
 
 | Campo | Por qué se había escapado |
 |---|---|
-| `compras/ComprasPage.tsx:4386` — Costo unitario | Se llama `costo`, palabra que el vocabulario de plata **excluye a propósito** porque en Cocina significa kilos |
+| `compras/ComprasPage.tsx:4386` — Costo unitario | Se llama `costo`, palabra que el vocabulario de plata excluía **por un error mío**: creí que en Cocina significaba kilos y significa plata igual que acá (ver `docs/TRASPASO-MONTOS.md`, sección 2 bis) |
 | `productos/InsumosTab.tsx:188` — Costo unitario | Ídem, y además solo aparece al hacer clic sobre el importe de la fila |
 | `productos/ConfiguracionTab.tsx:240` — Redondeo $ | Columna de una tabla de configuración, sin etiqueta propia |
 | `finanzas/ProyeccionFlujo.tsx:365` — Caja operativa hoy | Saldo inicial de la proyección |
