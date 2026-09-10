@@ -5,7 +5,12 @@ import { cn } from '@/lib/utils';
 interface LotePasta {
   producto_id: string;
   porciones: number | null;
-  producto: { nombre: string; codigo: string; minimo_produccion: number }[] | null;
+  producto: {
+    nombre: string;
+    codigo: string;
+    minimo_produccion: number | null;
+    activo: boolean;
+  }[] | null;
 }
 
 interface Traspaso {
@@ -33,7 +38,7 @@ interface StockItem {
   merma: number;
   entregadoPedidos: number;
   stock: number;
-  minimo: number;
+  minimo: number | null;
 }
 
 export function StockCongeladosTab() {
@@ -44,7 +49,7 @@ export function StockCongeladosTab() {
       const { data, error } = await supabase
         .from('cocina_lotes_pasta')
         .select(
-          'producto_id, porciones, producto:cocina_productos(nombre, codigo, minimo_produccion)',
+          'producto_id, porciones, producto:cocina_productos(nombre, codigo, minimo_produccion, activo)',
         )
         .eq('local', 'saavedra');
       if (error) throw error;
@@ -104,6 +109,9 @@ export function StockCongeladosTab() {
     for (const l of lotes) {
       const prod = Array.isArray(l.producto) ? l.producto[0] : l.producto;
       if (!prod) continue;
+      // Los productos dados de baja seguían apareciendo con stock: el Capellacci
+      // de Pollo está jubilado desde la migración 194 y mostraba 38 porciones.
+      if (!prod.activo) continue;
       if (!mapa.has(l.producto_id)) {
         mapa.set(l.producto_id, {
           productoId: l.producto_id,
@@ -162,11 +170,30 @@ export function StockCongeladosTab() {
   // KPIs
   const totalProductos = stockItems.length;
   const sinStock = stockItems.filter((s) => s.stock <= 0).length;
-  const bajoMinimo = stockItems.filter((s) => s.stock > 0 && s.stock < s.minimo).length;
-  const ok = stockItems.filter((s) => s.stock >= s.minimo).length;
+  // Sin mínimo cargado no se puede decir si está bien o mal. Antes `stock >= null`
+  // daba verdadero (null vale 0) y esos productos se contaban como "OK" siempre.
+  const bajoMinimo = stockItems.filter(
+    (s) => s.stock > 0 && s.minimo != null && s.minimo > 0 && s.stock < s.minimo,
+  ).length;
+  const ok = stockItems.filter(
+    (s) => s.minimo != null && s.minimo > 0 && s.stock >= s.minimo,
+  ).length;
 
   return (
     <div className="space-y-4">
+      {/* Este número no resta lo que se vendió. Suma toda la producción de la
+          historia y le resta traspasos, merma y pedidos — y en Saavedra no hay
+          traspasos, así que nunca baja. Medido el 10-sep-2026: acá decía 2.715
+          porciones y el conteo físico de la cámara daba 272. El número bueno
+          sale de Cocina → Stock, que arranca del último conteo. */}
+      <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
+        ⚠ <strong>Este stock está mal contado y no lo uses para tomar pedidos.</strong> Suma toda
+        la producción desde siempre y nunca resta lo que se vendió, así que solo sube. El 10 de
+        septiembre marcaba <strong>2.715 porciones</strong> cuando en la cámara había{' '}
+        <strong>272</strong>. El número bueno está en <strong>Cocina → Stock</strong>, que parte
+        del último conteo físico.
+      </div>
+
       {/* KPIs */}
       <div className="grid grid-cols-4 gap-3">
         <div className="rounded-lg border border-gray-200 bg-white p-3 text-center">
@@ -255,8 +282,18 @@ export function StockCongeladosTab() {
             </thead>
             <tbody className="divide-y divide-gray-100">
               {stockItems.map((item) => {
+                // Sin mínimo cargado no se puede afirmar que esté OK. Antes caía
+                // en el verde por descarte y Tortelli y Bondiola se pintaban bien
+                // pasara lo que pasara.
+                const sinMinimo = item.minimo == null || item.minimo <= 0;
                 const estado =
-                  item.stock <= 0 ? 'sin-stock' : item.stock < item.minimo ? 'bajo' : 'ok';
+                  item.stock <= 0
+                    ? 'sin-stock'
+                    : sinMinimo
+                      ? 'sin-minimo'
+                      : item.stock < item.minimo!
+                        ? 'bajo'
+                        : 'ok';
                 return (
                   <tr
                     key={item.productoId}
@@ -281,12 +318,16 @@ export function StockCongeladosTab() {
                           ? 'text-red-600'
                           : estado === 'bajo'
                             ? 'text-amber-600'
-                            : 'text-green-600',
+                            : estado === 'sin-minimo'
+                              ? 'text-gray-500'
+                              : 'text-green-600',
                       )}
                     >
                       {item.stock}
                     </td>
-                    <td className="px-3 py-2 text-center text-gray-400">{item.minimo}</td>
+                    <td className="px-3 py-2 text-center text-gray-400">
+                      {sinMinimo ? '—' : item.minimo}
+                    </td>
                     <td className="px-3 py-2 text-center">
                       <span
                         className={cn(
@@ -295,14 +336,18 @@ export function StockCongeladosTab() {
                             ? 'bg-red-100 text-red-700'
                             : estado === 'bajo'
                               ? 'bg-amber-100 text-amber-700'
-                              : 'bg-green-100 text-green-700',
+                              : estado === 'sin-minimo'
+                                ? 'bg-gray-100 text-gray-600'
+                                : 'bg-green-100 text-green-700',
                         )}
                       >
                         {estado === 'sin-stock'
                           ? 'Sin stock'
                           : estado === 'bajo'
                             ? 'Bajo mínimo'
-                            : 'OK'}
+                            : estado === 'sin-minimo'
+                              ? 'Sin mínimo'
+                              : 'OK'}
                       </span>
                     </td>
                   </tr>
