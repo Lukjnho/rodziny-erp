@@ -124,9 +124,48 @@ sueldos que pisaban el comprobante, aviso entre ventanas de Caja).
 Toda escritura debe verificar cuántas filas afectó y avisar si fueron 0.
 No alcanza con que no tire error.
 
+### Todo campo donde se escribe PLATA usa `MontoInput`
+
+Nunca un `<input>` suelto, nunca `type="number"`, nunca un parser propio.
+
+    import { MontoInput } from '@/components/ui/MontoInput';
+    <MontoInput value={monto} onChange={setMonto} />
+
+El estado se guarda como **`number | null`**, no como texto. `null` es "no
+cargó nada", que no es lo mismo que cero (un arqueo de caja en cero es válido).
+
+**El punto es SEPARADOR DE MILES.** En Argentina se tipea `15.000` para quince
+mil pesos. La coma es el decimal. Esto vale **solo para dinero**: las cantidades
+de cocina (kg, porciones) usan la regla contraria y viven en `lib/numero.ts`
+(`parseDecimal`, `normalizarDecimal`). **No mezclar los dos mundos.**
+
+#### 💣 Un valor que viene de la base NUNCA se reparsea
+
+Son **dos caminos distintos** y confundirlos es un bug de plata, no de estilo.
+Las dos funciones viven en `src/lib/monto.ts` y se llaman así a propósito:
+
+| Camino | Función | El punto significa |
+|---|---|---|
+| base → app | `montoDesdeBase()` | **decimal** (así lo manda Postgres) |
+| número → pantalla | `montoADisplay()` | — |
+| **tipeo** → número | `montoDesdeTipeo()` | **miles** (así lo escribe la gente) |
+
+Lo que rompía: se hacía `String(valor)` sobre un número de la base y después se
+lo leía con el parser de tipeo, que le borra el punto. Un precio de `2350.50`
+se guardaba como `23505`, **diez veces más grande** — y en el editor de la carta
+alcanzaba con entrar al campo y salir, sin escribir nada.
+
+Está cubierto por `src/lib/monto.test.ts`. Si alguien vuelve a juntar los dos
+caminos, ese test se pone rojo.
+
 ### Validar el build antes de pushear
 
     npm run build    # tsc -b && vite build
+    npm test         # vitest run
 
 `tsc -b` ya avisa si rompiste algo del lado de TypeScript. Es la red de seguridad
 más barata que hay y es gratis.
+
+Los tests son pocos y puntuales (hoy, solo la entrada de montos). No hay que
+cubrir todo: se agrega un test cuando un bug **costó plata**, para que no
+vuelva.
