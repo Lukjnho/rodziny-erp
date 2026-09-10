@@ -9,8 +9,12 @@ import { useAuth } from '@/lib/auth';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { useProveedoresMap, nombreProveedor } from '@/modules/gastos/proveedorDisplay';
 import { hoyAR } from '@/lib/fechaAR';
+// ⚠️ parseDecimal sigue acá solo para el saldo de Mercado Pago (línea ~636),
+// que es del grupo C y se migra en la tanda siguiente. Para dinero, la puerta
+// es MontoInput: el punto es separador de miles, no coma decimal.
 import { parseDecimal } from '@/lib/numero';
 import { CAJA_PRUEBAS } from '@/lib/turnosCaja';
+import { MontoInput } from '@/components/ui/MontoInput';
 import {
   esPagoEjecutado,
   clasificarDebito,
@@ -284,7 +288,7 @@ export function FlujoCaja() {
   // Form dividendo
   const [divSocio, setDivSocio] = useState<string>('lucas');
   const [divFecha, setDivFecha] = useState(() => new Date().toISOString().split('T')[0]);
-  const [divMonto, setDivMonto] = useState('');
+  const [divMonto, setDivMonto] = useState<number | null>(null);
   const [divMedio, setDivMedio] = useState('efectivo');
   const [divConcepto, setDivConcepto] = useState('');
   const [divLocal, setDivLocal] = useState<string>('');
@@ -575,7 +579,7 @@ export function FlujoCaja() {
 
   const guardarDiv = useMutation({
     mutationFn: async () => {
-      const monto = parseFloat(divMonto.replace(/\./g, '').replace(',', '.'));
+      const monto = divMonto ?? 0;
       if (!monto || monto <= 0) throw new Error('Monto inválido');
       // Validación uniforme: para medios distintos de efectivo, exigimos N° op
       // y archivo del comprobante. Permite conciliar contra el extracto.
@@ -621,7 +625,7 @@ export function FlujoCaja() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['fc_dividendos'] });
       setShowDivForm(false);
-      setDivMonto('');
+      setDivMonto(null);
       setDivConcepto('');
       setDivNumOp('');
       setDivComprobante(null);
@@ -2000,10 +2004,9 @@ export function FlujoCaja() {
                 </div>
                 <div>
                   <label className="mb-1 block text-xs font-medium text-gray-600">Monto *</label>
-                  <input
-                    type="text"
+                  <MontoInput
                     value={divMonto}
-                    onChange={(e) => setDivMonto(e.target.value)}
+                    onChange={setDivMonto}
                     placeholder="500000"
                     className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
                   />
@@ -2104,7 +2107,7 @@ export function FlujoCaja() {
                 </button>
                 <button
                   onClick={() => guardarDiv.mutate()}
-                  disabled={guardarDiv.isPending || divOcrEjecutando || !divMonto}
+                  disabled={guardarDiv.isPending || divOcrEjecutando || divMonto == null}
                   className="rounded bg-rodziny-700 px-4 py-1.5 text-sm font-medium text-white hover:bg-rodziny-800 disabled:bg-gray-300"
                 >
                   {guardarDiv.isPending ? 'Guardando...' : 'Guardar'}
