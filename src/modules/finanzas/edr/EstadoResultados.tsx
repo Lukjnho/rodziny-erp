@@ -246,6 +246,8 @@ const FILAS: FilaEdR[] = [
 interface AutoMes {
   ingBruto: number;
   ivaDebito: number;
+  /** Locales del mes que quedaron sin IVA débito (ni real ni estimado). >0 = avisar. */
+  ivaFaltante: number;
   ticketCount: number;
   cmvAlimentos: number;
   cmvBebidas: number;
@@ -652,7 +654,17 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
   }
 
   // ── helpers para queries multi-local ────────────────────────────────────────
-  type TicketRow = { periodo: string; ing_bruto: number; iva_debito: number; ticket_count: number };
+  // `iva_faltante` no viene de la base: se calcula acá y cuenta cuántos locales
+  // del mes quedaron sin IVA (ni el real por ticket ni el estimado cargado a
+  // mano). Es número y no booleano a propósito, así `mergeByPeriodo` lo suma
+  // entre locales al consolidar igual que el resto.
+  type TicketRow = {
+    periodo: string;
+    ing_bruto: number;
+    iva_debito: number;
+    ticket_count: number;
+    iva_faltante: number;
+  };
   type GastoResRow = {
     periodo: string;
     cmv_alimentos: number;
@@ -724,15 +736,23 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
           const ivaEstMap = new Map(
             (ivaEst ?? []).map((r) => [r.periodo as string, Number(r.monto)]),
           );
-          return ((data ?? []) as TicketRow[]).map((row) => ({
-            ...row,
-            iva_debito:
-              Number(row.iva_debito) > 0 ? Number(row.iva_debito) : ivaEstMap.get(row.periodo) ?? 0,
-          }));
+          return ((data ?? []) as TicketRow[]).map((row) => {
+            const ivaReal = Number(row.iva_debito);
+            const ivaEstimado = ivaEstMap.get(row.periodo) ?? 0;
+            const ivaEfectivo = ivaReal > 0 ? ivaReal : ivaEstimado;
+            return {
+              ...row,
+              iva_debito: ivaEfectivo,
+              // Si hubo ventas y no hay IVA por ningún lado, el neto queda igual
+              // al bruto y el resultado del mes sale inflado. Antes se descontaba
+              // 0 en silencio; ahora se marca el mes para poder avisarlo.
+              iva_faltante: Number(row.ing_bruto) > 0 && ivaEfectivo <= 0 ? 1 : 0,
+            };
+          });
         }),
       );
       return esConsolidado
-        ? mergeByPeriodo(results, ['ing_bruto', 'iva_debito', 'ticket_count'])
+        ? mergeByPeriodo(results, ['ing_bruto', 'iva_debito', 'ticket_count', 'iva_faltante'])
         : results[0];
     },
   });
@@ -1087,6 +1107,7 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
   const EMPTY_AUTO: AutoMes = {
     ingBruto: 0,
     ivaDebito: 0,
+    ivaFaltante: 0,
     ticketCount: 0,
     cmvAlimentos: 0,
     cmvBebidas: 0,
@@ -1135,6 +1156,7 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
         ...EMPTY_AUTO,
         ingBruto: Number(t.ing_bruto),
         ivaDebito: Number(t.iva_debito ?? 0),
+        ivaFaltante: Number(t.iva_faltante ?? 0),
         ticketCount: Number(t.ticket_count),
         cmvAlimentos: Number(g?.cmv_alimentos ?? 0),
         cmvBebidas: Number(g?.cmv_bebidas ?? 0),
@@ -1390,6 +1412,21 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
     return arr;
   }, [meses, valoresPorMes, mesesConDatos]);
 
+  // Meses que vendieron pero no tienen IVA débito por ningún lado. En esos meses
+  // "Ingresos netos" termina igual a los brutos, así que el resultado sale
+  // inflado ~17%. Antes pasaba callado; ahora se avisa.
+  const mesesSinIva = useMemo(() => {
+    const arr: string[] = [];
+    for (const mes of meses) {
+      const a = autoMap.get(mes);
+      if (!a) continue;
+      if (mesesConDatos.has(mes) && a.ingBruto > 0 && a.ivaFaltante > 0) {
+        arr.push(MESES_LABEL[parseInt(mes.substring(5, 7)) - 1]);
+      }
+    }
+    return arr;
+  }, [meses, autoMap, mesesConDatos]);
+
   // ── render ─────────────────────────────────────────────────────────────────
   const inner = (
     <>
@@ -1498,6 +1535,16 @@ export function EstadoResultados({ embedded = false }: { embedded?: boolean } = 
           <em>y que el conteo de apertura sea confiable</em> (si el Δ da consumo negativo, se
           descarta). Sin eso, el CMV se muestra igual a las compras (sin Δ inventario) y el margen
           puede estar distorsionado.
+        </div>
+      )}
+
+      {mesesSinIva.length > 0 && (
+        <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          ⚠ <strong>Sin IVA débito</strong> en {mesesSinIva.join(', ')}: esos meses no tienen el IVA
+          real por ticket <em>ni</em> el estimado cargado a mano, así que se está descontando{' '}
+          <strong>cero</strong> y los <em>Ingresos netos</em> quedan iguales a los brutos. El
+          resultado de esos meses está inflado alrededor de un 17% — cargá el IVA estimado del mes
+          en Partidas para corregirlo.
         </div>
       )}
 
