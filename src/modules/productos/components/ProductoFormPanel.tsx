@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { formatARS } from '@/lib/utils';
-import { useCostosRecetas } from '@/modules/costeo';
+import { etiquetaDeCajon, queEsLaReceta, useCostosRecetas } from '@/modules/costeo';
 import { VinculacionFudoSelector } from './VinculacionFudoSelector';
 import { generarCodigo } from '../lib/codigoProducto';
 
@@ -31,35 +31,18 @@ const RECETA_RECOMENDADAS: Record<string, string[]> = {
   postre: ['postre', 'postre_base'],
   relleno: ['relleno'],
   masa: ['masa'],
-  panificado: ['panificado', 'pasteleria', 'pasteleria_base'],
+  panificado: ['panificado', 'panificado_base', 'pasteleria', 'pasteleria_base'],
   bebida: ['bebida', 'cafeteria', 'bebida_base'],
   milanesa: ['pasta'],
 };
 
-// Categoría efectiva de una receta: para recetas vendibles es `categoria`,
-// para subrecetas (insumos internos) es `rol`. Sirve para agrupar/recomendar.
-function catEfectivaReceta(r: RecetaOpcion): string {
-  return (r.tipo === 'subreceta' ? r.rol : r.categoria) ?? 'otros';
-}
-
-const CAT_RECETA_LABEL: Record<string, string> = {
-  pasta: 'Pastas',
-  salsa: 'Salsas',
-  salsa_base: 'Salsas base',
-  postre: 'Postres',
-  postre_base: 'Postres base',
-  pasteleria: 'Pastelería',
-  pasteleria_base: 'Pastelería base',
-  panificado: 'Panificados',
-  cafeteria: 'Cafetería',
-  bebida: 'Bebidas',
-  bebida_base: 'Bebidas base',
-  relleno: 'Rellenos',
-  masa: 'Masas',
-  adicional: 'Adicionales',
-  packaging: 'Packaging',
-  otros: 'Otras',
-};
+// La función `catEfectivaReceta` y la tabla `CAT_RECETA_LABEL` que estaban acá
+// se fueron a `@/modules/costeo` como `queEsLaReceta` y `etiquetaDeCajon`.
+//
+// ⚠️ Ojo con la diferencia: acá hace falta la versión SIN proyectar, la que
+// deja "Salsa base" separada de "Salsa". En este desplegable se elige qué
+// receta se vincula a un producto, y la base y el plato terminado son cosas
+// distintas — por eso `RECETA_RECOMENDADAS` lista las dos.
 
 interface RecetaOpcion {
   id: string;
@@ -232,8 +215,8 @@ function FormInterno({
   const { recomendadas, otras } = useMemo(() => {
     const reco = RECETA_RECOMENDADAS[tipo] ?? [];
     const delLocal = recetas.filter((r) => r.local === local);
-    const recomendadas = delLocal.filter((r) => reco.includes(catEfectivaReceta(r)));
-    const otras = delLocal.filter((r) => !reco.includes(catEfectivaReceta(r)));
+    const recomendadas = delLocal.filter((r) => reco.includes(queEsLaReceta(r)));
+    const otras = delLocal.filter((r) => !reco.includes(queEsLaReceta(r)));
     return { recomendadas, otras };
   }, [recetas, local, tipo]);
 
@@ -407,7 +390,7 @@ function FormInterno({
               <optgroup label={`Recomendadas para ${TIPO_LABEL[tipo] ?? tipo}`}>
                 {recomendadas.map((r) => (
                   <option key={r.id} value={r.id}>
-                    {r.nombre} · {CAT_RECETA_LABEL[catEfectivaReceta(r)] ?? catEfectivaReceta(r)}
+                    {r.nombre} · {etiquetaDeCajon(queEsLaReceta(r))}
                   </option>
                 ))}
               </optgroup>
@@ -416,7 +399,7 @@ function FormInterno({
               <optgroup label={`Otras recetas de ${local}`}>
                 {otras.map((r) => (
                   <option key={r.id} value={r.id}>
-                    {r.nombre} · {CAT_RECETA_LABEL[catEfectivaReceta(r)] ?? catEfectivaReceta(r)}
+                    {r.nombre} · {etiquetaDeCajon(queEsLaReceta(r))}
                   </option>
                 ))}
               </optgroup>

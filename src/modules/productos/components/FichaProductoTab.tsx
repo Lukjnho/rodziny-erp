@@ -3,7 +3,14 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { cn, formatARS } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
-import { DialogDuplicar, FichaTecnica } from '@/modules/costeo';
+import {
+  cajonComercial,
+  compararCajones,
+  DialogDuplicar,
+  etiquetaDeCajon,
+  FichaTecnica,
+  SIN_CLASIFICAR,
+} from '@/modules/costeo';
 import type { Receta, Ingrediente } from '@/modules/costeo';
 import { useCostosRecetas } from '@/modules/costeo';
 import { RecetaEditorInline } from './RecetaEditorInline';
@@ -14,19 +21,6 @@ import { ProductoFormPanel } from './ProductoFormPanel';
 // canal, packaging, adicionales, ABM) vive en el tab Menú.
 type RecetaFull = Receta & { vendible: boolean };
 
-// Agrupa visualmente subrecetas por rol y recetas por categoría, normalizando
-// salsa_base/postre_base/bebida_base a sus pares "comerciales" para no duplicar
-// secciones en el grid de Costeo.
-function tipoEfectivo(r: Receta): string {
-  if (r.tipo === 'subreceta') {
-    if (r.rol === 'salsa_base') return 'salsa';
-    if (r.rol === 'postre_base') return 'postre';
-    if (r.rol === 'bebida_base') return 'bebida';
-    if (r.rol === 'pasteleria_base') return 'pasteleria';
-    return r.rol ?? 'otros';
-  }
-  return r.categoria ?? 'otros';
-}
 
 // Productos vendibles (cocina_productos) que todavía no tienen ni receta ni
 // insumo de reventa vinculado → no se pueden costear y no figuran en el grid
@@ -46,12 +40,23 @@ type ItemCosteo = { kind: 'receta'; receta: RecetaFull; costoUnit: number | null
 
 type FiltroLocal = 'vedia' | 'saavedra';
 
-const TIPO_COLOR: Record<string, string> = {
+// Solo el COLOR de cada cajón queda acá: es pintura, no vocabulario. Los
+// nombres y el orden salen de `@/modules/costeo`, que es el único lugar donde
+// se define qué categorías y qué roles existen.
+//
+// 💣 Acá vivían tres tablas más —`ORDEN_TIPOS`, `TIPO_LABEL` y la función
+// `tipoEfectivo`— que eran copia de lo que ya estaba en costeo, con los nombres
+// en plural ("Pastas") mientras el resto del ERP decía "Pasta", y sin `pizza`.
+// El `TIPO_LABEL` de acá encima chocaba de nombre con el de costeo, que
+// significa otra cosa (receta / subreceta).
+const COLOR_CAJON: Record<string, string> = {
   relleno: 'bg-green-100 text-green-700',
   masa: 'bg-indigo-100 text-indigo-700',
+  masa_panaderia: 'bg-indigo-50 text-indigo-600',
   salsa: 'bg-orange-100 text-orange-700',
   pasta: 'bg-red-100 text-red-700',
-  milanesa: 'bg-red-50 text-red-600',
+  pizza: 'bg-red-50 text-red-600',
+  milanesa_base: 'bg-red-50 text-red-600',
   postre: 'bg-pink-100 text-pink-700',
   pasteleria: 'bg-rose-100 text-rose-700',
   panificado: 'bg-amber-100 text-amber-700',
@@ -59,40 +64,7 @@ const TIPO_COLOR: Record<string, string> = {
   bebida: 'bg-sky-100 text-sky-700',
   adicional: 'bg-emerald-100 text-emerald-700',
   packaging: 'bg-slate-100 text-slate-700',
-  otros: 'bg-gray-100 text-gray-700',
-};
-
-// Orden y etiqueta de las categorías en el grid de Costeo.
-const ORDEN_TIPOS = [
-  'masa',
-  'relleno',
-  'salsa',
-  'pasta',
-  'milanesa',
-  'postre',
-  'pasteleria',
-  'panificado',
-  'cafeteria',
-  'bebida',
-  'adicional',
-  'packaging',
-  'otros',
-];
-
-const TIPO_LABEL: Record<string, string> = {
-  masa: 'Masas',
-  relleno: 'Rellenos',
-  salsa: 'Salsas',
-  pasta: 'Pastas',
-  milanesa: 'Milanesas',
-  postre: 'Postres',
-  pasteleria: 'Pastelería',
-  panificado: 'Panificados',
-  cafeteria: 'Cafetería',
-  bebida: 'Bebidas',
-  adicional: 'Adicionales',
-  packaging: 'Packaging',
-  otros: 'Otros',
+  [SIN_CLASIFICAR]: 'bg-gray-100 text-gray-700',
 };
 
 export function FichaProductoTab() {
@@ -184,22 +156,15 @@ export function FichaProductoTab() {
 
   const { costos, ctx } = useCostosRecetas();
 
-  // Vocabulario unificado para el filtro: usa tipoEfectivo(r) — mismo valor que
+  // Vocabulario unificado para el filtro: usa cajonComercial(r) — mismo valor que
   // luego compara `items` al filtrar. Si usáramos r.tipo crudo, el dropdown
   // ofrecería 'receta'/'subreceta' pero el filter compara contra 'masa','salsa',
   // etc. → nunca matchea (bug pre-fix).
   const tipos = useMemo(() => {
     const set = new Set<string>();
-    for (const r of recetas ?? []) set.add(tipoEfectivo(r));
-    // Ordenar según ORDEN_TIPOS, dejando los desconocidos al final.
-    return Array.from(set).sort((a, b) => {
-      const ia = ORDEN_TIPOS.indexOf(a);
-      const ib = ORDEN_TIPOS.indexOf(b);
-      if (ia !== -1 && ib !== -1) return ia - ib;
-      if (ia !== -1) return -1;
-      if (ib !== -1) return 1;
-      return a.localeCompare(b);
-    });
+    for (const r of recetas ?? []) set.add(cajonComercial(r));
+    // El orden lo decide el vocabulario único, no esta pantalla.
+    return Array.from(set).sort(compararCajones);
   }, [recetas]);
 
   // Items del grid: recetas (las bebidas de reventa ya son recetas de 1 insumo).
@@ -209,7 +174,7 @@ export function FichaProductoTab() {
     for (const r of recetas ?? []) {
       if (r.local !== filtroLocal) continue;
       if (!mostrarInactivas && !r.activo) continue;
-      if (filtroTipo !== 'todos' && tipoEfectivo(r) !== filtroTipo) continue;
+      if (filtroTipo !== 'todos' && cajonComercial(r) !== filtroTipo) continue;
       if (soloSub && r.tipo !== 'subreceta') continue;
       // Filtro de auditoría (heredado de Cocina > Recetas): sin_match = tiene
       // ingredientes pero costoBase=0; con_adv = el motor reportó alguna advertencia.
@@ -273,20 +238,15 @@ export function FichaProductoTab() {
     });
   }, [huerfanos, filtroLocal, filtroTipo, soloSub, busqueda]);
 
-  // Agrupado por categoría (tipo), respetando ORDEN_TIPOS y luego alfabético.
+  // Agrupado por cajón, con el orden del vocabulario único y después alfabético.
   const grupos = useMemo(() => {
     const map = new Map<string, ItemCosteo[]>();
     for (const it of items) {
-      const k = tipoEfectivo(it.receta);
+      const k = cajonComercial(it.receta);
       (map.get(k) ?? map.set(k, []).get(k)!).push(it);
     }
     return Array.from(map.entries()).sort(([a], [b]) => {
-      const ia = ORDEN_TIPOS.indexOf(a);
-      const ib = ORDEN_TIPOS.indexOf(b);
-      if (ia !== -1 && ib !== -1) return ia - ib;
-      if (ia !== -1) return -1;
-      if (ib !== -1) return 1;
-      return a.localeCompare(b);
+      return compararCajones(a, b);
     });
   }, [items]);
 
@@ -531,7 +491,7 @@ export function FichaProductoTab() {
             <option value="todos">Todos los tipos</option>
             {tipos.map((t) => (
               <option key={t} value={t} className="capitalize">
-                {TIPO_LABEL[t] ?? t}
+                {etiquetaDeCajon(t)}
               </option>
             ))}
           </select>
@@ -646,10 +606,10 @@ export function FichaProductoTab() {
                     <span
                       className={cn(
                         'rounded px-1.5 py-0.5 text-[9px] font-medium capitalize',
-                        TIPO_COLOR[p.tipo] ?? 'bg-gray-100 text-gray-600',
+                        COLOR_CAJON[p.tipo] ?? 'bg-gray-100 text-gray-600',
                       )}
                     >
-                      {TIPO_LABEL[p.tipo] ?? p.tipo}
+                      {etiquetaDeCajon(p.tipo)}
                     </span>
                     <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[9px] capitalize text-gray-600">
                       {p.local ?? '—'}
@@ -676,10 +636,10 @@ export function FichaProductoTab() {
               <span
                 className={cn(
                   'rounded px-2 py-0.5 text-xs font-semibold',
-                  TIPO_COLOR[tipo] ?? 'bg-gray-100 text-gray-600',
+                  COLOR_CAJON[tipo] ?? 'bg-gray-100 text-gray-600',
                 )}
               >
-                {TIPO_LABEL[tipo] ?? tipo}
+                {etiquetaDeCajon(tipo)}
               </span>
               <span className="text-xs text-gray-400">{grupoItems.length}</span>
               <div className="h-px flex-1 bg-gray-200" />
@@ -703,10 +663,10 @@ export function FichaProductoTab() {
                       <span
                         className={cn(
                           'rounded px-1.5 py-0.5 text-[9px] font-medium capitalize',
-                          TIPO_COLOR[tipoEfectivo(r)] ?? 'bg-gray-100 text-gray-600',
+                          COLOR_CAJON[cajonComercial(r)] ?? 'bg-gray-100 text-gray-600',
                         )}
                       >
-                        {TIPO_LABEL[tipoEfectivo(r)] ?? tipoEfectivo(r)}
+                        {etiquetaDeCajon(cajonComercial(r))}
                       </span>
                       <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[9px] capitalize text-gray-600">
                         {r.local ?? '—'}
@@ -779,10 +739,10 @@ export function FichaProductoTab() {
               <span
                 className={cn(
                   'rounded px-1.5 py-0.5 text-[10px] font-medium capitalize',
-                  TIPO_COLOR[tipoEfectivo(receta)] ?? 'bg-gray-100 text-gray-600',
+                  COLOR_CAJON[cajonComercial(receta)] ?? 'bg-gray-100 text-gray-600',
                 )}
               >
-                {TIPO_LABEL[tipoEfectivo(receta)] ?? tipoEfectivo(receta)}
+                {etiquetaDeCajon(cajonComercial(receta))}
               </span>
               {receta.tipo === 'subreceta' && (
                 <span className="rounded bg-purple-100 px-1.5 py-0.5 text-[10px] text-purple-700">

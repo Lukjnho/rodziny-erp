@@ -43,7 +43,7 @@ describe('clasificar por el catálogo y no por el texto', () => {
   });
 
   it('sin catálogo no inventa: contesta que no', () => {
-    for (const vacio of [null, undefined, []] as const) {
+    for (const vacio of [null, undefined, []]) {
       expect(esEfectivo(vacio)).toBe(false);
       expect(esTransferencia(vacio)).toBe(false);
     }

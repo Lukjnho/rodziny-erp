@@ -6,7 +6,10 @@ import { MontoInput } from '@/components/ui/MontoInput';
 import { useAuth } from '@/lib/auth';
 import {
   COLCHON_POR_DEFECTO,
+  ORDEN_CAJONES,
   SUBCATEGORIA_LABEL,
+  cajonComercial,
+  etiquetaDeCajon,
   condicionesDeCobro,
   desgloseDeCobro,
   margenSobreRecibido,
@@ -34,30 +37,11 @@ const COLOR_BADGE: Record<SemaforoMargen, string> = {
 // (sin receta). Acá solo se fija el precio por canal y se ve el margen. El
 // armado de recetas/ingredientes y el toggle "vendible" viven en Costeo.
 
-// Orden y etiqueta de las categorías del Menú. El grupo es el `tipo` de la
-// receta (o 'bebida' para reventa). Tipos no listados van al final, alfabético.
-// Vocabulario espejo del modelo nuevo (cocina_recetas.categoria) más el alias
-// 'bebida' para reventa. Tipos no listados van al final, alfabético.
-const CATEGORIA_ORDEN = [
-  'pasta',
-  'salsa',
-  'postre',
-  'pasteleria',
-  'panificado',
-  'cafeteria',
-  'bebida',
-  'otros',
-];
-const CATEGORIA_LABEL: Record<string, string> = {
-  pasta: 'Pastas',
-  salsa: 'Salsas',
-  postre: 'Postres',
-  pasteleria: 'Pastelería',
-  panificado: 'Panificados',
-  cafeteria: 'Cafetería',
-  bebida: 'Bebidas',
-  otros: 'Otros',
-};
+// El orden y el nombre de cada grupo salen de `@/modules/costeo`.
+//
+// 💣 La copia que había acá no tenía `pizza`, así que las tres recetas de pizza
+// de Saavedra caían al fondo como grupo desconocido. Y decía "Pastas" donde el
+// resto del ERP dice "Pasta".
 
 // Subcategorías de Bebidas inferidas por nombre, reproduciendo el esquema que
 // usa Fudo (no hay link confiable cocina↔Fudo para bebidas: codigo no matchea,
@@ -169,25 +153,13 @@ interface RecetaVendible {
   local: FiltroLocal;
 }
 
-// Mapea rol operativo → categoría comercial equivalente. Subrecetas vendibles
-// (ej. salsas base que también se venden por separado) caían en "Otros" porque
-// tenían categoria=null; ahora se proyectan al grupo comercial correcto.
-function rolToCategoria(rol: string | null): string {
-  switch (rol) {
-    case 'salsa_base':
-      return 'salsa';
-    case 'postre_base':
-      return 'postre';
-    case 'bebida_base':
-      return 'bebida';
-    case 'pasteleria_base':
-      return 'pasteleria';
-    case 'panificado':
-      return 'panificado';
-    default:
-      return 'otros';
-  }
-}
+// `rolToCategoria` se fue a `@/modules/costeo` como `cajonComercial`, que
+// recibe la receta entera en vez del rol suelto.
+//
+// 💣 Tenía DOS problemas: mandaba a "Otros" todo lo que no proyecta (un relleno
+// vendible aparecía en "Rellenos" en Costeo y en "Otros" acá), y matcheaba
+// `'panificado'`, que la migración 208 renombró a `panificado_base` — desde esa
+// migración habría dejado de funcionar en silencio.
 
 export function MenuTab() {
   const qc = useQueryClient();
@@ -380,10 +352,7 @@ export function MenuTab() {
       const c = costos.get(r.id);
       // Receta vendible: usa su categoria. Subreceta vendible: deriva del rol
       // operativo (ej. salsa_base → "Salsas") para no caer en "Otros".
-      const tipoCat =
-        r.tipo === 'subreceta'
-          ? rolToCategoria(r.rol)
-          : (r.categoria ?? 'otros');
+      const tipoCat = cajonComercial(r);
       out.push({
         key: `receta:${r.id}`,
         refId: r.id,
@@ -407,7 +376,7 @@ export function MenuTab() {
     return lista;
   }, [items, filtroLocal, busqueda]);
 
-  // Grupos ordenados por CATEGORIA_ORDEN, el resto alfabético al final.
+  // Grupos en el orden del vocabulario único, el resto alfabético al final.
   const grupos = useMemo(() => {
     const m = new Map<string, ItemMenu[]>();
     for (const p of filtrados) (m.get(p.tipo) ?? m.set(p.tipo, []).get(p.tipo)!).push(p);
@@ -417,8 +386,8 @@ export function MenuTab() {
         items: lista.sort((a, b) => a.nombre.localeCompare(b.nombre)),
       }))
       .sort((a, b) => {
-        const ia = CATEGORIA_ORDEN.indexOf(a.tipo);
-        const ib = CATEGORIA_ORDEN.indexOf(b.tipo);
+        const ia = ORDEN_CAJONES.indexOf(a.tipo);
+        const ib = ORDEN_CAJONES.indexOf(b.tipo);
         if (ia !== -1 && ib !== -1) return ia - ib;
         if (ia !== -1) return -1;
         if (ib !== -1) return 1;
@@ -642,7 +611,7 @@ export function MenuTab() {
               className="flex w-full items-center justify-between bg-gray-50 px-4 py-2 text-left hover:bg-gray-100"
             >
               <span className="text-sm font-semibold text-gray-800">
-                {CATEGORIA_LABEL[tipo] ?? tipo}{' '}
+                {etiquetaDeCajon(tipo)}{' '}
                 <span className="ml-1 rounded bg-gray-200 px-1.5 py-0.5 text-[10px] text-gray-600">
                   {gItems.length}
                 </span>

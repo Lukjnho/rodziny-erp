@@ -10,6 +10,7 @@ import {
   ROL_LABEL,
   SUBCATEGORIAS_POR_CATEGORIA,
   SUBCATEGORIA_LABEL,
+  TIPO_LABEL,
   mapearUnidad,
   UNIDADES,
   UNIDAD_LABEL,
@@ -57,11 +58,11 @@ interface ProductoVinculado {
   activo: boolean;
 }
 
+// `TIPO_LABEL` (receta / subreceta) sale de `@/modules/costeo`. Acá estaba
+// copiado como `TIPO_LABEL_INLINE` solo para esquivar el choque de nombre con
+// el OTRO `TIPO_LABEL`, el de FichaProductoTab, que significaba otra cosa
+// (Masas / Rellenos / Salsas). Ese ya no existe, así que el alias sobra.
 const TIPOS_RECETA: RecetaTipo[] = ['receta', 'subreceta'];
-const TIPO_LABEL_INLINE: Record<RecetaTipo, string> = {
-  receta: 'Receta',
-  subreceta: 'Subreceta',
-};
 
 // Cuando se crea la receta de un producto huérfano (Costeo > "Faltan enlazar"),
 // pre-seleccionamos la categoría según el tipo del producto. 'milanesa' no tiene
@@ -126,7 +127,7 @@ const ROL_A_TIPO_PRODUCTO: Partial<Record<SubrecetaRol, TipoProducto>> = {
   salsa_base: 'salsa',
   postre_base: 'postre',
   pasteleria_base: 'postre',
-  panificado: 'panificado',
+  panificado_base: 'panificado',
   bebida_base: 'bebida',
 };
 
@@ -772,7 +773,7 @@ export function RecetaEditorInline({
             >
               {TIPOS_RECETA.map((t) => (
                 <option key={t} value={t}>
-                  {TIPO_LABEL_INLINE[t]}
+                  {TIPO_LABEL[t]}
                 </option>
               ))}
             </select>
@@ -927,7 +928,7 @@ export function RecetaEditorInline({
               >
                 {TIPOS_RECETA.map((t) => (
                   <option key={t} value={t}>
-                    {TIPO_LABEL_INLINE[t]}
+                    {TIPO_LABEL[t]}
                   </option>
                 ))}
               </select>

@@ -61,7 +61,7 @@ function recetasDelTipoPlan(recetas: Receta[], tipoPlan: TipoItem): Receta[] {
       // producto Prepizza (fudo_nombres = las pizzas), no de un Fudo propio.
       return recetas.filter(
         (r) =>
-          r.rol === 'panificado' ||
+          r.rol === 'panificado_base' ||
           r.rol === 'masa_panaderia' ||
           r.categoria === 'panificado',
       );

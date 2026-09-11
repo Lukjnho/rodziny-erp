@@ -33,18 +33,32 @@
 // Desde adentro: solo se puede importar de `@/lib` y `@/components` (nivel 1).
 // Nada de `@/modules/*`. Lo verifica `npm run arq`.
 
-// ── El modelo de la receta ──────────────────────────────────────────────────
+// ── El modelo de la receta: el vocabulario, una sola vez ────────────────────
+//
+// Las tres listas (categoría de producto vendible, subcategoría, rol de
+// subreceta) y las dos preguntas que se le hacen a una receta viven acá y en
+// ningún otro lado. Antes estaban copiadas en cuatro pantallas con cuatro
+// resultados distintos.
 export {
   CATEGORIAS,
   CATEGORIA_LABEL,
   ROLES,
   ROL_LABEL,
+  SIN_CLASIFICAR,
+  SUBCATEGORIAS_BEBIDA,
+  SUBCATEGORIAS_CAFETERIA,
   SUBCATEGORIAS_POR_CATEGORIA,
   SUBCATEGORIA_LABEL,
   TIPO_LABEL,
   UNIDAD_LABEL,
   UNIDADES,
+  GRUPO_COMERCIAL_DEL_ROL,
+  ORDEN_CAJONES,
+  cajonComercial,
+  compararCajones,
+  etiquetaDeCajon,
   mapearUnidad,
+  queEsLaReceta,
 } from './modelo';
 export type {
   Ingrediente,

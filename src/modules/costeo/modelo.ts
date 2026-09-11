@@ -23,28 +23,67 @@ export interface Ingrediente {
 export type RendUnidad = 'kg' | 'l' | 'unidad';
 
 export type RecetaTipo = 'receta' | 'subreceta';
-export type RecetaCategoria =
-  | 'pasta'
-  | 'pizza'
-  | 'salsa'
-  | 'postre'
-  | 'pasteleria'
-  | 'panificado'
-  | 'cafeteria'
-  | 'bebida'
-  | 'otros';
-export type SubrecetaRol =
-  | 'relleno'
-  | 'masa'
-  | 'masa_panaderia'
-  | 'salsa_base'
-  | 'postre_base'
-  | 'panificado'
-  | 'pasteleria_base'
-  | 'bebida_base'
-  | 'adicional'
-  | 'packaging'
-  | 'otros';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EL VOCABULARIO DE CATEGORÍAS, UNA SOLA VEZ
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Cerrado por Lucas el 11-sep-2026 contra los datos, no contra una idea. Antes
+// estaba escrito CUATRO veces con cuatro resultados distintos: FichaProductoTab
+// (13 valores), MenuTab (8), ProductoFormPanel y RecetaEditorInline. Se
+// diferenciaban en cosas que se veían: uno decía "Pastas" y otro "Pasta", y
+// `pizza` no existía en ninguna copia, así que la receta de pizza caía al fondo
+// como tipo desconocido.
+//
+// Son TRES listas y están en tres niveles distintos. Mezclarlas es justo lo que
+// generó las cuatro copias:
+//
+//   1. CATEGORÍA   — qué es un producto que se vende.        8 valores
+//   2. SUBCATEGORÍA — solo dentro de bebida y de cafetería.
+//   3. ROL          — qué es una subreceta adentro de la cocina.
+//
+// Los nombres van en SINGULAR: la etiqueta describe UNA cosa ("Pasta"), y el
+// plural lo pone la pantalla cuando arma un grupo.
+
+/** Las ocho categorías de un producto vendible. */
+export const CATEGORIAS = [
+  'pasta',
+  'pizza',
+  'salsa',
+  'postre',
+  'pasteleria',
+  'panificado',
+  'cafeteria',
+  'bebida',
+] as const;
+export type RecetaCategoria = (typeof CATEGORIAS)[number];
+
+/**
+ * El cajón de lo que no cae en ninguna parte.
+ *
+ * 💣 NO es una categoría: es el cartel de "falta clasificar". Por eso no está
+ * en `CATEGORIAS` y no se puede elegir en ningún formulario. Hasta la migración
+ * 208 había UNA receta acá (la Focaccia) y 28 subrecetas; hoy quedan 7
+ * subrecetas y ninguna receta.
+ */
+export const SIN_CLASIFICAR = 'otros';
+
+/** Qué es una subreceta adentro de la cocina. */
+export const ROLES = [
+  'relleno',
+  'masa',
+  'masa_panaderia',
+  'salsa_base',
+  'postre_base',
+  'panificado_base',
+  'pasteleria_base',
+  'bebida_base',
+  'milanesa_base',
+  'adicional',
+  'packaging',
+  'otros',
+] as const;
+export type SubrecetaRol = (typeof ROLES)[number];
 
 export interface Receta {
   id: string;
@@ -76,17 +115,6 @@ export const TIPO_LABEL: Record<RecetaTipo, string> = {
   subreceta: 'Subreceta',
 };
 
-export const CATEGORIAS: RecetaCategoria[] = [
-  'pasta',
-  'pizza',
-  'salsa',
-  'postre',
-  'pasteleria',
-  'panificado',
-  'cafeteria',
-  'bebida',
-  'otros',
-];
 export const CATEGORIA_LABEL: Record<RecetaCategoria, string> = {
   pasta: 'Pasta',
   pizza: 'Pizza',
@@ -96,20 +124,48 @@ export const CATEGORIA_LABEL: Record<RecetaCategoria, string> = {
   panificado: 'Panificado',
   cafeteria: 'Cafetería',
   bebida: 'Bebida',
-  otros: 'Otros',
 };
-// Mapping categoría → subcategorías permitidas. Solo cafeteria y bebida tienen
-// jerarquía hoy. Si el array está vacío, el editor no muestra select de sub.
-export const SUBCATEGORIAS_POR_CATEGORIA: Record<RecetaCategoria, string[]> = {
+
+export const ROL_LABEL: Record<SubrecetaRol, string> = {
+  relleno: 'Relleno',
+  masa: 'Masa de pasta',
+  masa_panaderia: 'Masa de panadería',
+  salsa_base: 'Salsa base',
+  postre_base: 'Postre base',
+  panificado_base: 'Panificado base',
+  pasteleria_base: 'Pastelería base',
+  bebida_base: 'Bebida base',
+  milanesa_base: 'Milanesa base',
+  adicional: 'Adicional de servicio',
+  packaging: 'Packaging',
+  otros: 'Sin clasificar',
+};
+
+// ── Subcategorías: solo bebida y cafetería tienen un nivel más ──────────────
+// Si el arreglo está vacío, el editor no muestra el desplegable de subcategoría.
+
+/** Las cuatro subcategorías de bebida. */
+export const SUBCATEGORIAS_BEBIDA = ['aperitivo', 'gaseosa', 'agua', 'jugo'] as const;
+
+/** Las seis de cafetería. */
+export const SUBCATEGORIAS_CAFETERIA = [
+  'cafe_caliente',
+  'cafe_frio',
+  'sin_cafe',
+  'salado',
+  'dulce',
+  'combo',
+] as const;
+
+export const SUBCATEGORIAS_POR_CATEGORIA: Record<RecetaCategoria, readonly string[]> = {
   pasta: [],
   pizza: [],
   salsa: [],
   postre: [],
   pasteleria: [],
   panificado: [],
-  cafeteria: ['cafe_caliente', 'cafe_frio', 'sin_cafe', 'salado', 'dulce', 'combo'],
-  bebida: ['gaseosa', 'agua', 'jugo', 'vino', 'aperitivo'],
-  otros: [],
+  cafeteria: SUBCATEGORIAS_CAFETERIA,
+  bebida: SUBCATEGORIAS_BEBIDA,
 };
 
 export const SUBCATEGORIA_LABEL: Record<string, string> = {
@@ -119,39 +175,118 @@ export const SUBCATEGORIA_LABEL: Record<string, string> = {
   salado: 'Salado',
   dulce: 'Dulce',
   combo: 'Combo',
+  aperitivo: 'Aperitivo',
   gaseosa: 'Gaseosa',
   agua: 'Agua',
   jugo: 'Jugo',
-  vino: 'Vino',
-  aperitivo: 'Aperitivo',
 };
 
-export const ROLES: SubrecetaRol[] = [
-  'relleno',
+// ─────────────────────────────────────────────────────────────────────────────
+// LOS `*_base` SON UN MECANISMO, NO SEIS VALORES SUELTOS
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Un rol que termina en `_base` significa: "esta subreceta, cuando se vende
+// sola, va en el grupo comercial X". Una salsa base es un componente de un
+// plato, pero también se vende en frasco, y en el menú tiene que aparecer entre
+// las salsas — no en un cajón aparte que diga "salsa_base".
+//
+// 💣 `milanesa_base` NO está en este mapa a propósito: no hay categoría
+// "milanesa" y Lucas decidió el 11-sep-2026 que milanesa es un ROL, no una
+// categoría. Es un componente, como el relleno o la masa: no se proyecta.
+
+/** A qué grupo del menú se proyecta cada rol que se vende solo. */
+export const GRUPO_COMERCIAL_DEL_ROL: Partial<Record<SubrecetaRol, RecetaCategoria>> = {
+  salsa_base: 'salsa',
+  postre_base: 'postre',
+  bebida_base: 'bebida',
+  pasteleria_base: 'pasteleria',
+  panificado_base: 'panificado',
+};
+
+/**
+ * EN QUÉ CAJÓN DEL MENÚ VA. Proyecta los `*_base` a su grupo comercial.
+ *
+ * 💣 Esto estaba escrito dos veces con dos resultados distintos: `tipoEfectivo`
+ * (FichaProductoTab) devolvía el rol crudo para lo que no proyectaba, y
+ * `rolToCategoria` (MenuTab) mandaba TODO lo desconocido a "otros" —así que un
+ * relleno vendible aparecía en "Rellenos" en una pantalla y en "Otros" en la de
+ * al lado. Gana el criterio de FichaProductoTab: el rol dice más que "otros".
+ */
+export function cajonComercial(r: {
+  tipo: string;
+  categoria?: string | null;
+  rol?: string | null;
+}): string {
+  if (r.tipo === 'subreceta') {
+    const grupo = GRUPO_COMERCIAL_DEL_ROL[r.rol as SubrecetaRol];
+    return grupo ?? r.rol ?? SIN_CLASIFICAR;
+  }
+  return r.categoria ?? SIN_CLASIFICAR;
+}
+
+/**
+ * QUÉ ES, sin proyectar: la categoría si es receta, el rol si es subreceta.
+ *
+ * ⚠️ Parece lo mismo que `cajonComercial` y NO lo es. Acá "Salsa base" tiene
+ * que quedar separada de "Salsa": la usa el selector que vincula una receta a
+ * un producto, donde elegir la base o el plato terminado son cosas distintas.
+ * Antes era `catEfectivaReceta`, en ProductoFormPanel.
+ */
+export function queEsLaReceta(r: {
+  tipo?: string | null;
+  categoria?: string | null;
+  rol?: string | null;
+}): string {
+  return (r.tipo === 'subreceta' ? r.rol : r.categoria) ?? SIN_CLASIFICAR;
+}
+
+/**
+ * El nombre visible de un cajón, venga de una categoría o de un rol.
+ *
+ * Antes cada pantalla tenía su tabla: "Pastas" en una, "Pasta" en otra,
+ * "Pastelería" y "Pastelería base" mezcladas. Si no lo conoce devuelve la
+ * llave cruda, que es información — no un cartel vacío.
+ */
+export function etiquetaDeCajon(cajon: string): string {
+  return (
+    CATEGORIA_LABEL[cajon as RecetaCategoria] ??
+    ROL_LABEL[cajon as SubrecetaRol] ??
+    cajon
+  );
+}
+
+/**
+ * El orden en que se muestran los cajones. Primero los componentes de cocina,
+ * después lo que se vende, y al final lo auxiliar. Lo que no esté acá va al
+ * fondo, alfabético.
+ */
+export const ORDEN_CAJONES: readonly string[] = [
   'masa',
   'masa_panaderia',
-  'salsa_base',
-  'postre_base',
+  'relleno',
+  'salsa',
+  'pasta',
+  'pizza',
+  'milanesa_base',
+  'postre',
+  'pasteleria',
   'panificado',
-  'pasteleria_base',
-  'bebida_base',
+  'cafeteria',
+  'bebida',
   'adicional',
   'packaging',
-  'otros',
+  SIN_CLASIFICAR,
 ];
-export const ROL_LABEL: Record<SubrecetaRol, string> = {
-  relleno: 'Relleno',
-  masa: 'Masa (pasta)',
-  masa_panaderia: 'Masa de panadería',
-  salsa_base: 'Salsa (base)',
-  postre_base: 'Postre (base)',
-  panificado: 'Panificado',
-  pasteleria_base: 'Pastelería',
-  bebida_base: 'Bebida (base)',
-  adicional: 'Adicional servicio',
-  packaging: 'Packaging',
-  otros: 'Otros',
-};
+
+/** Ordena por `ORDEN_CAJONES` y manda lo desconocido al final, alfabético. */
+export function compararCajones(a: string, b: string): number {
+  const ia = ORDEN_CAJONES.indexOf(a);
+  const ib = ORDEN_CAJONES.indexOf(b);
+  if (ia === -1 && ib === -1) return a.localeCompare(b);
+  if (ia === -1) return 1;
+  if (ib === -1) return -1;
+  return ia - ib;
+}
 
 /**
  * Unidades que ofrece el renglón de receta. Vienen del vocabulario único.
