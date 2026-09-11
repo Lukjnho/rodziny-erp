@@ -138,10 +138,14 @@ as $$
     sum(t.total_bruto) as ing_bruto,
     sum(coalesce(t.iva, 0)) as iva_debito,
     count(*) as ticket_count
-  -- Calificada con el esquema a propósito: escrita sin `public.` el mapa la toma
-  -- como una vista distinta de la que define la mig 188 y queda una conexión
-  -- colgando en el aire. Es el mismo bicho de siempre: una cosa, dos nombres.
-  from public.v_ventas_tickets_oficial t
+  -- Escrita SIN `public.`, igual que en la mig 198 y por una razón medida:
+  -- probé calificarla y el mapa, en vez de unirla con la vista que define la
+  -- 188, creó un nodo colgado NUEVO — y dejó el viejo, porque la 198 la sigue
+  -- nombrando sin calificar. Las conexiones en el aire pasaron de 265 a 266.
+  -- graphify guarda un nodo por cada forma de escribir el nombre; la salida no
+  -- es renombrar acá, es que las dos migraciones la escriban igual. Mientras
+  -- tanto, se escribe como la mayoría. (`search_path` ya está en 'public'.)
+  from v_ventas_tickets_oficial t
   left join public.medios_pago mp on mp.id = t.medio_pago_id
   where t.local = p_local
     and t.periodo >= p_anio || '-01'
