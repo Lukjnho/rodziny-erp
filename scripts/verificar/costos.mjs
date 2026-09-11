@@ -122,9 +122,14 @@ export function clasificar(f) {
     return { cajon: 'error_carga', ult, razonUlt, med, evidencia: comoSubtotal };
   }
 
-  // 🟠 toda la serie cobra un múltiplo parejo del costo → se compra por paquete
+  // 🟠 toda la serie cobra un múltiplo parejo del costo → se compra por paquete.
+  //
+  // 💣 Hacen falta 3 facturas o más. Con una sola, "viene en paquete" y "subió
+  // el precio un 60 %" son el mismo número y no hay forma de distinguirlos: el
+  // Escobillón con una factura a 1,54× no es un paquete de dos escobillones.
+  // Con menos de 3 el insumo cae en "desfasado", que es lo que se puede afirmar.
   const razones = serie.map((l) => l.pu / f.costo);
-  if (Math.min(...razones) >= 1.5) {
+  if (serie.length >= 3 && Math.min(...razones) >= 1.5) {
     return { cajon: 'bulto', ult, razonUlt, med, rmin: Math.min(...razones), rmax: Math.max(...razones) };
   }
 
