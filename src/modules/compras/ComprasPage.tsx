@@ -2,6 +2,7 @@ import { useState, useRef, useMemo, useCallback, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { guardarContando } from '@/lib/escribir';
 import { comprimirImagen } from '@/lib/comprimirImagen';
 import { useAuth } from '@/lib/auth';
 import { procesarComprobantePago, extraerNroOperacion } from '@/lib/ocrComprobantePago';
@@ -645,16 +646,21 @@ export function ComprasPage() {
   async function descartarRecepcion(id: string) {
     if (!window.confirm('¿Descartar esta recepción? El stock NO se revierte automáticamente.'))
       return;
-    const { error } = await supabase
-      .from('recepciones_pendientes')
-      .update({
-        estado: 'descartada',
-        validada_en: new Date().toISOString(),
-        validada_por: 'Martín',
-      })
-      .eq('id', id);
-    if (error) {
-      window.alert(`Error: ${error.message}`);
+    try {
+      await guardarContando(
+        supabase
+          .from('recepciones_pendientes')
+          .update({
+            estado: 'descartada',
+            validada_en: new Date().toISOString(),
+            validada_por: 'Martín',
+          })
+          .eq('id', id),
+        'No se pudo descartar la recepción',
+        { filasEsperadas: 1 },
+      );
+    } catch (e) {
+      window.alert((e as Error).message);
       return;
     }
     qc.invalidateQueries({ queryKey: ['recepciones_pendientes'] });
@@ -1259,27 +1265,95 @@ export function ComprasPage() {
         notas: bulkNotas.trim() || null,
         comprobante_pago_path: pathComprobantePago,
       }));
-      const { error: errIns } = await supabase.from('pagos_gastos').insert(filasPago);
+      // Pedimos los id de vuelta: si el paso que sigue no marca los gastos como
+      // pagados, hay que poder borrar estos pagos (ver el catch de más abajo).
+      const { data: pagosInsertados, error: errIns } = await supabase
+        .from('pagos_gastos')
+        .insert(filasPago)
+        .select('id');
       if (errIns) throw errIns;
+      const idsPagosCreados = (pagosInsertados ?? []).map((p) => p.id as string);
 
       // Marcar todos los gastos como Pagado y, si subimos factura, asignarla a los que no la tenían
       const idsTodos = seleccionInfo.gastos.map((g) => g.id);
-      const { error: errUpd1 } = await supabase
-        .from('gastos')
-        .update({ estado_pago: 'Pagado', fecha_vencimiento: bulkFecha })
-        .in('id', idsTodos);
-      if (errUpd1) throw errUpd1;
+      // 💣 El paso que cierra el pago bulk. Si no toca ninguna fila, la plata ya
+      // salió y los gastos siguen figurando impagos: el próximo pago bulk los
+      // vuelve a pagar. Por eso, si falla, se deshacen los pagos recién creados.
+      try {
+        await guardarContando(
+          supabase
+            .from('gastos')
+            .update({ estado_pago: 'Pagado', fecha_vencimiento: bulkFecha })
+            .in('id', idsTodos),
+          'No se pudieron marcar como pagados todos los gastos seleccionados',
+          { filasEsperadas: idsTodos.length },
+        );
+      } catch (e) {
+        // El deshacer también puede quedar a medias. Si no se pudo borrar lo
+        // recién creado hay que decirlo: avisar "se deshizo" sin haberlo
+        // deshecho es peor que el error original.
+        //
+        // Y se compara contra `filasPago.length`, que es lo que se MANDO a
+        // insertar, no contra los ids que volvieron: si volvieron menos,
+        // borrar "todos los que conozco" deja pagos vivos y estariamos
+        // diciendo "se deshizo" con la mitad del pago todavia cargado.
+        let deshecho = !filasPago.length;
+        if (idsPagosCreados.length) {
+          const { data: borrados } = await supabase
+            .from('pagos_gastos')
+            .delete()
+            .in('id', idsPagosCreados)
+            .select('id');
+          deshecho = (borrados?.length ?? 0) === filasPago.length;
+        }
+        throw new Error(
+          (e as Error).message +
+            (!filasPago.length
+              ? ''
+              : deshecho
+                ? ' Se deshizo el pago para que no quede duplicado.'
+                : ' ⚠️ Y tampoco se pudieron borrar los pagos recién cargados: revisalos antes de volver a pagar o se paga dos veces.'),
+        );
+      }
+
+      // ══════════════════════════════════════════════════════════════════════
+      // DE ACA PARA ABAJO LA PLATA YA SE MOVIO
+      // ══════════════════════════════════════════════════════════════════════
+      //
+      // 💣 Lo que falta -adjuntar la factura, el comprobante y el medio de
+      // pago- es presentacion, no plata. Si alguno de esos pasos CORTARA, la
+      // funcion saltaria al catch sin cerrar el modal, sin limpiar la seleccion
+      // y sin refrescar las listas: el boton "Confirmar pago" vuelve a quedar
+      // habilitado y el reintento -la reaccion obvia ante un cartel rojo-
+      // inserta OTRA VEZ todas las filas de pago. El gasto queda pagado dos
+      // veces, que es justo lo que el deshacer de arriba evita.
+      //
+      // Por eso estos tres avisan y siguen. El unico paso que corta es el que
+      // movio la plata.
+      const avisos: string[] = [];
+      const alCostado = async (fn: () => Promise<unknown>) => {
+        try {
+          await fn();
+        } catch (e) {
+          avisos.push((e as Error).message);
+        }
+      };
 
       if (pathFactura) {
         const idsSinFactura = seleccionInfo.gastos
           .filter((g) => !g.factura_path)
           .map((g) => g.id);
         if (idsSinFactura.length > 0) {
-          const { error: errUpd2 } = await supabase
-            .from('gastos')
-            .update({ factura_path: pathFactura })
-            .in('id', idsSinFactura);
-          if (errUpd2) throw errUpd2;
+          await alCostado(() =>
+            guardarContando(
+              supabase
+                .from('gastos')
+                .update({ factura_path: pathFactura })
+                .in('id', idsSinFactura),
+              'No se pudo adjuntar la factura a los gastos pagados',
+              { filasEsperadas: idsSinFactura.length },
+            ),
+          );
         }
       }
 
@@ -1292,11 +1366,16 @@ export function ComprasPage() {
           .filter((g) => !g.comprobante_path)
           .map((g) => g.id);
         if (idsSinComprob.length > 0) {
-          const { error: errUpd3 } = await supabase
-            .from('gastos')
-            .update({ comprobante_path: pathComprobantePago })
-            .in('id', idsSinComprob);
-          if (errUpd3) throw errUpd3;
+          await alCostado(() =>
+            guardarContando(
+              supabase
+                .from('gastos')
+                .update({ comprobante_path: pathComprobantePago })
+                .in('id', idsSinComprob),
+              'No se pudo adjuntar el comprobante de pago a los gastos',
+              { filasEsperadas: idsSinComprob.length },
+            ),
+          );
         }
       }
 
@@ -1306,15 +1385,27 @@ export function ComprasPage() {
         .filter((g) => !g.medio_pago)
         .map((g) => g.id);
       if (idsSinMedio.length > 0) {
-        const { error: errUpd4 } = await supabase
-          .from('gastos')
-          .update({ medio_pago: bulkMedio })
-          .in('id', idsSinMedio);
-        if (errUpd4) throw errUpd4;
+        await alCostado(() =>
+          guardarContando(
+            supabase.from('gastos').update({ medio_pago: bulkMedio }).in('id', idsSinMedio),
+            'No se pudo anotar el medio de pago en los gastos',
+            { filasEsperadas: idsSinMedio.length },
+          ),
+        );
       }
 
+      // Se limpia y se cierra SIEMPRE, con avisos o sin ellos: dejar la
+      // seleccion puesta despues de haber pagado es la puerta al pago doble.
       setSeleccionados(new Set());
       cerrarBulkPago();
+      if (avisos.length) {
+        window.alert(
+          'El pago quedó registrado, pero algo no se pudo completar:\n\n' +
+            avisos.join('\n') +
+            '\n\nRevisá esos gastos en el listado: les falta la factura, el ' +
+            'comprobante o el medio de pago. La plata ya está anotada, NO vuelvas a pagar.',
+        );
+      }
       qc.invalidateQueries({ queryKey: ['gastos_pagos'] });
       qc.invalidateQueries({ queryKey: ['pagos_gastos_compras'] });
       qc.invalidateQueries({ queryKey: ['pagos_gastos'] });
@@ -1541,7 +1632,13 @@ export function ComprasPage() {
         .filter((g) => g.fecha && !g.cancelado)
         .map((g) => ({ local, periodo, ...g }));
       if (gastosRows.length) {
-        await supabase.from('gastos').upsert(gastosRows, { onConflict: 'local,fudo_id' });
+        // Si entran menos gastos de los que trae el archivo, la lista de Pagos
+        // queda incompleta sin que nada lo avise: por eso se exige el total.
+        await guardarContando(
+          supabase.from('gastos').upsert(gastosRows, { onConflict: 'local,fudo_id' }),
+          'No se pudieron importar los gastos del archivo de Fudo',
+          { filasEsperadas: gastosRows.length },
+        );
         qc.invalidateQueries({ queryKey: ['gastos_pagos'] });
       }
 
@@ -1606,6 +1703,10 @@ export function ComprasPage() {
 
     setRecConfirmando(true);
     setRecResultado(null);
+    // Los que YA entraron. Va afuera del try porque el catch lo necesita: si
+    // algo corta a mitad de camino hay que sacarlos de la lista, o el proximo
+    // "Confirmar" les suma el stock otra vez y les mete un segundo movimiento.
+    const listos = new Set<string>();
     try {
       // Agrupar cantidades por producto (puede haber varios items del mismo producto)
       const porProducto = new Map<
@@ -1625,8 +1726,10 @@ export function ComprasPage() {
 
       // Crear movimientos de entrada y actualizar stock
       for (const [, { prod, totalCantidad, items }] of porProducto) {
-        // Movimiento de entrada
-        await supabase.from('movimientos_stock').insert({
+        // Movimiento de entrada. El insert sí avisa cuando lo frena un permiso,
+        // pero nadie estaba mirando el error: sin esto el stock subía y el
+        // movimiento no quedaba en ningún lado.
+        const { error: errMovEntrada } = await supabase.from('movimientos_stock').insert({
           local,
           producto_id: prod.id,
           producto_nombre: prod.nombre,
@@ -1636,15 +1739,23 @@ export function ComprasPage() {
           motivo: 'Recepción mercadería',
           observacion: `Proveedor: ${items[0].proveedor} | ${items.length} item(s) del export Fudo (${recPeriodo})`,
         });
+        if (errMovEntrada) throw errMovEntrada;
 
-        // Actualizar stock
-        await supabase
-          .from('productos')
-          .update({
-            stock_actual: prod.stock_actual + totalCantidad,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', prod.id);
+        // Actualizar stock. El movimiento de entrada ya quedó anotado arriba: si
+        // esto no toca la fila, el movimiento figura y el stock no subió, así que
+        // cortamos para que se vea el error en vez de seguir con los otros.
+        await guardarContando(
+          supabase
+            .from('productos')
+            .update({
+              stock_actual: prod.stock_actual + totalCantidad,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', prod.id),
+          `No se pudo sumar al stock de ${prod.nombre}`,
+          { filasEsperadas: 1 },
+        );
+        listos.add(prod.id);
       }
 
       setRecResultado(
@@ -1655,7 +1766,23 @@ export function ComprasPage() {
       qc.invalidateQueries({ queryKey: ['productos_activos'] });
       qc.invalidateQueries({ queryKey: ['movimientos_stock'] });
     } catch (e) {
-      setRecResultado(`Error: ${(e as Error).message}`);
+      // 💣 La recepcion es producto por producto: cuando corta en el tercero,
+      // los dos primeros YA sumaron stock. Sacarlos de la lista es lo unico
+      // que impide que el proximo "Confirmar" se los sume de nuevo.
+      if (listos.size) {
+        setRecItems((prev) =>
+          prev.filter((it) => !(it.productoMatch && listos.has(it.productoMatch.id))),
+        );
+        qc.invalidateQueries({ queryKey: ['productos_stock'] });
+        qc.invalidateQueries({ queryKey: ['productos_activos'] });
+        qc.invalidateQueries({ queryKey: ['movimientos_stock'] });
+      }
+      setRecResultado(
+        `Error: ${(e as Error).message}` +
+          (listos.size
+            ? ` · ${listos.size} producto(s) SI entraron y ya salieron de la lista. El resto quedo sin recepcionar: volvé a confirmar solo esos.`
+            : ''),
+      );
     } finally {
       setRecConfirmando(false);
     }
@@ -2303,6 +2430,26 @@ export function ComprasPage() {
                             try {
                               const nuevoStock = parseDecimal(conteos[p.id]);
                               const diferencia = nuevoStock - p.stock_actual;
+                              // 🔑 El stock va PRIMERO y el movimiento despues,
+                              // al reves de como estaba. El conteo escribe un
+                              // valor ABSOLUTO, asi que repetirlo no hace daño;
+                              // el movimiento, en cambio, se acumula. Con el
+                              // orden viejo, un ajuste que la RLS frenaba dejaba
+                              // el movimiento anotado y el stock sin cambiar, y
+                              // el cartel invita a "volvé a confirmar": cada
+                              // reintento agregaba OTRO movimiento al mismo
+                              // producto.
+                              await guardarContando(
+                                supabase
+                                  .from('productos')
+                                  .update({
+                                    stock_actual: nuevoStock,
+                                    updated_at: new Date().toISOString(),
+                                  })
+                                  .eq('id', p.id),
+                                `No se pudo ajustar el stock de ${p.nombre}`,
+                                { filasEsperadas: 1 },
+                              );
                               const { error: errMov } = await supabase
                                 .from('movimientos_stock')
                                 .insert({
@@ -2317,17 +2464,14 @@ export function ComprasPage() {
                                   registrado_por: conteoResponsable.trim(),
                                 });
                               if (errMov) throw errMov;
-                              const { error: errProd } = await supabase
-                                .from('productos')
-                                .update({
-                                  stock_actual: nuevoStock,
-                                  updated_at: new Date().toISOString(),
-                                })
-                                .eq('id', p.id);
-                              if (errProd) throw errProd;
                               okCount++;
-                            } catch {
-                              fallidos.push(p.nombre);
+                            } catch (e) {
+                              // Con el nombre solo no se sabe QUE paso. El helper
+                              // fabrica el mensaje util ("no se guardo ninguna
+                              // fila: casi siempre es un permiso que falta") y
+                              // tirarlo a la basura aca es perder justo lo que
+                              // fuimos a buscar.
+                              fallidos.push(`${p.nombre}: ${(e as Error).message}`);
                             }
                           }
                           qc.invalidateQueries({ queryKey: ['productos_stock'] });
@@ -2469,10 +2613,18 @@ export function ComprasPage() {
                                   onKeyDown={async (e) => {
                                     if (e.key === 'Enter') {
                                       const val = parseFloat(valorMin.replace(',', '.')) || 0;
-                                      await supabase
-                                        .from('productos')
-                                        .update({ stock_minimo: val })
-                                        .eq('id', p.id);
+                                      try {
+                                        await guardarContando(
+                                          supabase
+                                            .from('productos')
+                                            .update({ stock_minimo: val })
+                                            .eq('id', p.id),
+                                          `No se pudo guardar el stock mínimo de ${p.nombre}`,
+                                          { filasEsperadas: 1 },
+                                        );
+                                      } catch (err) {
+                                        window.alert((err as Error).message);
+                                      }
                                       qc.invalidateQueries({ queryKey: ['productos_stock'] });
                                       setEditandoMin(null);
                                     }
@@ -2480,10 +2632,18 @@ export function ComprasPage() {
                                   }}
                                   onBlur={async () => {
                                     const val = parseFloat(valorMin.replace(',', '.')) || 0;
-                                    await supabase
-                                      .from('productos')
-                                      .update({ stock_minimo: val })
-                                      .eq('id', p.id);
+                                    try {
+                                      await guardarContando(
+                                        supabase
+                                          .from('productos')
+                                          .update({ stock_minimo: val })
+                                          .eq('id', p.id),
+                                        `No se pudo guardar el stock mínimo de ${p.nombre}`,
+                                        { filasEsperadas: 1 },
+                                      );
+                                    } catch (err) {
+                                      window.alert((err as Error).message);
+                                    }
                                     qc.invalidateQueries({ queryKey: ['productos_stock'] });
                                     setEditandoMin(null);
                                   }}
@@ -2532,10 +2692,18 @@ export function ComprasPage() {
                             <td className="px-4 py-2 text-center">
                               <button
                                 onClick={async () => {
-                                  await supabase
-                                    .from('productos')
-                                    .update({ activo: !p.activo })
-                                    .eq('id', p.id);
+                                  try {
+                                    await guardarContando(
+                                      supabase
+                                        .from('productos')
+                                        .update({ activo: !p.activo })
+                                        .eq('id', p.id),
+                                      `No se pudo ${p.activo ? 'desactivar' : 'activar'} ${p.nombre}`,
+                                      { filasEsperadas: 1 },
+                                    );
+                                  } catch (err) {
+                                    window.alert((err as Error).message);
+                                  }
                                   qc.invalidateQueries({ queryKey: ['productos_stock'] });
                                   qc.invalidateQueries({ queryKey: ['productos_activos'] });
                                 }}
@@ -2814,24 +2982,46 @@ export function ComprasPage() {
                               )
                                 return;
                               // Revertir stock: si fue salida sumamos, si fue entrada restamos
-                              if (m.producto_id) {
-                                const { data: prod } = await supabase
-                                  .from('productos')
-                                  .select('stock_actual')
-                                  .eq('id', m.producto_id)
-                                  .single();
-                                if (prod) {
-                                  const nuevoStock =
-                                    m.tipo === 'salida'
-                                      ? prod.stock_actual + m.cantidad
-                                      : Math.max(0, prod.stock_actual - m.cantidad);
-                                  await supabase
+                              let stockRevertido = false;
+                              try {
+                                if (m.producto_id) {
+                                  const { data: prod } = await supabase
                                     .from('productos')
-                                    .update({ stock_actual: nuevoStock })
-                                    .eq('id', m.producto_id);
+                                    .select('stock_actual')
+                                    .eq('id', m.producto_id)
+                                    .single();
+                                  if (prod) {
+                                    const nuevoStock =
+                                      m.tipo === 'salida'
+                                        ? prod.stock_actual + m.cantidad
+                                        : Math.max(0, prod.stock_actual - m.cantidad);
+                                    // Va primero a propósito: si el stock no se puede
+                                    // revertir, el movimiento tiene que seguir vivo para
+                                    // poder reintentar.
+                                    await guardarContando(
+                                      supabase
+                                        .from('productos')
+                                        .update({ stock_actual: nuevoStock })
+                                        .eq('id', m.producto_id),
+                                      `No se pudo revertir el stock de ${m.producto_nombre}, así que el movimiento no se borró`,
+                                      { filasEsperadas: 1 },
+                                    );
+                                    stockRevertido = true;
+                                  }
                                 }
+                                // Cero filas acá NO es normal: el movimiento está en
+                                // pantalla. Y si el stock ya se revirtió, borrarlo de
+                                // nuevo lo revertiría dos veces, así que hay que avisar.
+                                await guardarContando(
+                                  supabase.from('movimientos_stock').delete().eq('id', m.id),
+                                  stockRevertido
+                                    ? 'No se pudo borrar el movimiento y el stock YA se revirtió: revisá el stock antes de volver a intentar'
+                                    : 'No se pudo borrar el movimiento',
+                                  { filasEsperadas: 1 },
+                                );
+                              } catch (err) {
+                                window.alert((err as Error).message);
                               }
-                              await supabase.from('movimientos_stock').delete().eq('id', m.id);
                               qc.invalidateQueries({ queryKey: ['movimientos_stock'] });
                               qc.invalidateQueries({ queryKey: ['productos_stock'] });
                               qc.invalidateQueries({ queryKey: ['productos_activos'] });
@@ -3468,18 +3658,69 @@ export function ComprasPage() {
                                   // original (si la tenía). Resetearla a null hacía que el gasto
                                   // cayera al final del query (ordenado por venc ASC, limit 500)
                                   // y "desapareciera" del listado.
-                                  await supabase
-                                    .from('gastos')
-                                    .update({ estado_pago: 'Pendiente' })
-                                    .eq('id', g.id);
-                                  // Liberar el movimiento bancario que se haya auto-conciliado
-                                  // con este pago para que pueda matchearse contra el pago
-                                  // correcto cuando se vuelva a registrar.
-                                  await supabase
-                                    .from('movimientos_bancarios')
-                                    .update({ gasto_id: null })
-                                    .eq('gasto_id', g.id);
-                                  await supabase.from('pagos_gastos').delete().eq('gasto_id', g.id);
+                                  try {
+                                    await guardarContando(
+                                      supabase
+                                        .from('gastos')
+                                        .update({ estado_pago: 'Pendiente' })
+                                        .eq('id', g.id),
+                                      'No se pudo revertir el pago del gasto',
+                                      { filasEsperadas: 1 },
+                                    );
+                                  } catch (err) {
+                                    window.alert((err as Error).message);
+                                    return;
+                                  }
+                                  // 💣 De acá en adelante el gasto YA figura impago. Si los
+                                  // dos pasos que siguen no limpian lo viejo, queda un gasto
+                                  // a pagar con su pago todavía cargado: se paga dos veces.
+                                  // Por eso, si alguno falla, el gasto vuelve como estaba.
+                                  // Cuantos movimientos del banco se soltaron ANTES de que
+                                  // algo fallara: el deshacer de abajo devuelve el estado del
+                                  // gasto pero NO los vuelve a enganchar, asi que si no se
+                                  // cuentan el aviso dice "quedo como estaba" y no es cierto.
+                                  let bancoSoltado = 0;
+                                  try {
+                                    // Liberar el movimiento bancario que se haya auto-conciliado
+                                    // con este pago para que pueda matchearse contra el pago
+                                    // correcto cuando se vuelva a registrar. La mayoría de los
+                                    // pagos no tienen ninguno enganchado: cero filas es normal.
+                                    bancoSoltado = await guardarContando(
+                                      supabase
+                                        .from('movimientos_bancarios')
+                                        .update({ gasto_id: null })
+                                        .eq('gasto_id', g.id),
+                                      'No se pudo soltar el movimiento del banco enganchado a este gasto',
+                                      { permitirCero: true },
+                                    );
+                                    // Un gasto puede figurar pagado sin tener ninguna fila de
+                                    // pago (los que vienen del import de Fudo): cero también
+                                    // es un resultado válido acá.
+                                    await guardarContando(
+                                      supabase.from('pagos_gastos').delete().eq('gasto_id', g.id),
+                                      'No se pudieron borrar los pagos registrados de este gasto',
+                                      { permitirCero: true },
+                                    );
+                                  } catch (err) {
+                                    // Contamos también el deshacer: decir "quedó como
+                                    // estaba" sin que haya quedado sería el peor de los
+                                    // dos mundos.
+                                    const { data: vuelto } = await supabase
+                                      .from('gastos')
+                                      .update({ estado_pago: g.estado_pago })
+                                      .eq('id', g.id)
+                                      .select('id');
+                                    window.alert(
+                                      (err as Error).message +
+                                        (vuelto?.length
+                                          ? ' Se dejó el gasto como estaba para que no se pague dos veces.'
+                                          : ' ⚠️ Y el gasto quedó marcado como Pendiente con su pago todavía cargado: NO lo vuelvas a pagar hasta revisarlo.') +
+                                        (bancoSoltado
+                                          ? ` ⚠️ Ojo que ${bancoSoltado} movimiento(s) del banco quedaron sueltos: hay que volver a conciliarlos a mano.`
+                                          : ''),
+                                    );
+                                    return;
+                                  }
                                   qc.invalidateQueries({ queryKey: ['gastos_pagos'] });
                                   qc.invalidateQueries({ queryKey: ['pagos_gastos_compras'] });
                                   qc.invalidateQueries({ queryKey: ['pagos_gastos'] });
@@ -4267,11 +4508,11 @@ function ModalProducto({
 
     try {
       if (producto) {
-        const { error: err } = await supabase
-          .from('productos')
-          .update(payload)
-          .eq('id', producto.id);
-        if (err) throw err;
+        await guardarContando(
+          supabase.from('productos').update(payload).eq('id', producto.id),
+          'No se pudo guardar el producto',
+          { filasEsperadas: 1 },
+        );
       } else {
         const { error: err } = await supabase
           .from('productos')
@@ -4495,13 +4736,19 @@ function ModalAjusteInventario({
       return;
     }
 
-    // Actualizar stock del producto
-    const { error: errProd } = await supabase
-      .from('productos')
-      .update({ stock_actual: nuevoStock, updated_at: new Date().toISOString() })
-      .eq('id', prodSel.id);
-    if (errProd) {
-      setError(errProd.message);
+    // Actualizar stock del producto. El movimiento de ajuste ya quedó anotado
+    // arriba: si esto no toca la fila, el movimiento miente sobre el stock real.
+    try {
+      await guardarContando(
+        supabase
+          .from('productos')
+          .update({ stock_actual: nuevoStock, updated_at: new Date().toISOString() })
+          .eq('id', prodSel.id),
+        `No se pudo ajustar el stock de ${prodSel.nombre}`,
+        { filasEsperadas: 1 },
+      );
+    } catch (e) {
+      setError((e as Error).message);
       setGuardando(false);
       return;
     }
