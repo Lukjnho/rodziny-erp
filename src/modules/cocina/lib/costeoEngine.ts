@@ -319,6 +319,19 @@ export function costearReceta(
       // ml/lt/oz: asumimos densidad = 1 g/ml. 1 ml = 1 g = 0.001 kg. Es válido
       // para todo lo a base de agua. Para sólidos densos (miel pura, aceite)
       // el costo queda levemente desviado pero usable.
+      // 💣 DEUDA: esta conversión es la TERCERA copia de la misma regla. Las otras
+      // dos son `fraccionDeSubreceta` en @/lib/unidades y la función
+      // `_cocina_fraccion_subreceta` en la base (migración 174). Las tres tienen
+      // que dar el mismo número y nada las obliga.
+      //
+      // No la unifiqué acá porque esta versión hace algo más que convertir: elige
+      // entre costoPorKg y costoPorPorcion y arma el detalle del costeo. Sacarla
+      // de una toca el motor de costeo entero, que es lo más delicado del módulo.
+      // Cuando se haga, el reemplazo es `fraccionDeSubreceta` — ya tiene tests
+      // (src/lib/unidades.test.ts) y ya cubre los mismos casos, incluido el de
+      // las subrecetas que rinden porciones.
+      //
+      // ⚠️ Mientras tanto: si tocás esta conversión, tocá las otras dos.
       if (u === 'kg' || u === 'g' || u === 'ml' || u === 'lt' || u === 'oz') {
         if (sub.costoPorKg != null) {
           let cantKg: number;

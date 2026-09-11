@@ -160,6 +160,35 @@ costeo de platos — pero subestiman el gasto de esas categorías. ¿Vale la pen
 
 ---
 
+---
+
+## Deuda anotada
+
+### D1 · La tercera copia de la cuenta de subrecetas
+
+**Corrección a lo que informé antes:** dije que el arreglo de la Calculadora había bajado
+de **tres copias a dos**. No es así. Lo que hice fue reemplazar la copia de la Calculadora
+por una función compartida nueva — **pero `costeoEngine.ts` sigue teniendo la suya**, inline
+en las líneas 322-330. Importa `aBase` pero no usa la función nueva.
+
+**Siguen siendo tres implementaciones de la misma regla:**
+
+| Dónde | Qué es |
+|---|---|
+| `_cocina_fraccion_subreceta` (migración 174) | La de la base |
+| `fraccionDeSubreceta` en `src/lib/unidades.ts` | La nueva, con 14 tests. La usa la Calculadora |
+| `costeoEngine.ts:322-330` | **La tercera.** Inline, sin tests propios |
+
+**Por qué no la unifiqué:** esa versión hace algo más que convertir unidades — elige entre
+costo por kilo y costo por porción, y arma el detalle del costeo. Sacarla de ahí toca el
+motor de costeo entero, que es lo más delicado del módulo, y no estaba en el encargo.
+
+**Está anotada en el propio archivo**, arriba de la conversión, para que el próximo que la
+toque sepa que hay otras dos y no agregue una cuarta. El reemplazo ya existe y ya tiene
+tests: es cambiar la cuenta por la llamada y verificar que el costeo no se mueva.
+
+---
+
 ## Resumen para decidir rápido
 
 | | Pregunta | Quién | Bloquea |

@@ -143,6 +143,83 @@ tiene que decidir Lucas mirando qué hacen de verdad en la fábrica.**
 
 ---
 
+## 3 bis. Fudo: por qué no hay forma de esquivarlo, y por qué no hace falta
+
+La preocupación es correcta: **el importador de Fudo borra el período y lo repone entero
+cada 15 minutos.** Si el ledger escribiera igual, duplicaría o borraría stock en cada
+corrida. La pregunta era si conviene arrancar por un canal que no pase por Fudo.
+
+### Primero, el dato que cambia la pregunta
+
+**Ese canal todavía no existe.**
+
+| Canal | Tickets (1-ago al 10-sep) |
+|---|---:|
+| Saavedra por **Fudo** | **2.025** |
+| Vedia por **Fudo** | **5.281** |
+| Vedia por **POS propio** | **2** *(los dos el 31-ago — son pruebas)* |
+| Saavedra por POS propio | **0** |
+
+Y el salón —que es de donde saldría la comanda a la cocina— **tiene cero filas**:
+`caja_mesa_sesiones` y `caja_mesa_envios` están vacías. En total, **45.530 de 45.532
+tickets vienen de Fudo**.
+
+O sea: "arrancar por Saavedra por Caja propia" significa **esperar a que Saavedra se pase
+al POS propio**, que es un proyecto entero y bastante más grande que el ledger. El mínimo
+viable quedaría bloqueado detrás de él.
+
+### Las dos opciones, comparadas
+
+| | **A — esperar un canal sin Fudo** | **B — arreglar el importador primero** |
+|---|---|---|
+| Qué hay que hacer antes | Migrar un local entero al POS propio | Rehacer el borrá-y-repone de la integración más cargada del sistema |
+| Cuándo arranca el MVP | Cuando termine la migración del POS | Cuando el importador esté rehecho y probado |
+| Riesgo | Bajo para el ledger, **pero el ledger no existe hasta entonces** | **Alto**: ese importador alimenta el EdR, Ingeniería de Menú y la estimación de stock. Romperlo se nota en todos lados |
+| Qué se aprende mientras tanto | Nada | Nada |
+
+**Las dos comparten el mismo defecto: postergan el ledger detrás de otro proyecto.**
+
+### La opción C, que es la que recomiendo
+
+**No tocar el importador. Hacer que el ledger sea idempotente por construcción.**
+
+La clave está en un detalle del código: `ventas_items.linea` es **la posición del ítem
+dentro del ticket tal como la manda Fudo** (`fudo-importar-ventas/index.ts:596`), y se
+incrementa incluso en los ítems salteados justamente para no alterar ese orden. Sumado a
+`ventas_tickets.fudo_id` —que tienen 45.530 de 45.532 tickets—, hay una **identidad estable
+del evento**, independiente de cuántas veces se reimporte.
+
+Con eso, el ledger no necesita que el importador cambie:
+
+1. El ledger **nunca borra**. Es un libro contable: si algo cambió, se anota un renglón que
+   lo corrige, no se tacha el anterior.
+2. Las filas de venta se concilian **por ticket**, identificado por su `fudo_id`. Si el
+   ticket ya está en el ledger con el mismo contenido, no se escribe nada. Si cambió, se
+   anota **la diferencia**.
+3. El importador puede seguir borrando y reponiendo `ventas_items` todas las veces que
+   quiera: el ledger no lo copia, lo **concilia contra él**.
+
+**Por qué esto es mejor que arreglar el importador:** el problema no es solo que borre y
+reponga. Es que **los tickets de verdad cambian** — el cron diario existe justamente porque
+*"Fudo no avisa cuando alguien modifica una venta vieja"*. Un importador "arreglado" seguiría
+teniendo que resolver qué hacer cuando un ticket de ayer cambia hoy. La conciliación por
+ticket resuelve las dos cosas de una, y es el mecanismo que un ledger necesita igual.
+
+> ⚠️ **El agujero honesto de la opción C:** `linea` es una **posición**, no un identificador
+> propio de Fudo. Si alguien edita un ticket y agrega o saca un renglón del medio, las
+> posiciones de abajo se corren. Por eso la conciliación tiene que ser **por ticket entero**
+> —comparar el conjunto de renglones y anotar la diferencia neta— y no renglón por renglón.
+> Si se hace por renglón, un ticket editado genera correcciones fantasma.
+
+### Cómo se prueba antes de confiar
+
+El paso 1 se puede correr **en sombra**: el ledger escribe, nadie lo lee, y durante una
+semana se compara contra lo que calcula la pantalla vieja. Si las reimportaciones del cron
+—que pasan cada 15 minutos, o sea unas 600 veces en la semana— no mueven el número, la
+conciliación funciona. **Recién ahí se avanza al paso 2.**
+
+---
+
 ## 4. Orden de construcción
 
 **El principio:** en cada paso el ledger se vuelve dueño de **un pedazo más** del stock, y el
@@ -231,10 +308,21 @@ El botón "Se perdió" y la anulación de mesa escriben `merma`.
 Y acá se cierra un agujero que hoy está abierto: la merma del mostrador **se calcula y no se
 registra** (38 filas en la tabla, **cero** imputaciones a lote, 584 porciones sin rastro).
 
-⚠️ **Pero ojo, y esto es una decisión pendiente:** el faltante del mostrador **no es
-necesariamente merma**. La propia pantalla lo admite: *"puede ser merma, o una venta que
-todavía no entró al sistema"*. Escribirlo automáticamente como merma sería **inventar un
-dato**. Hasta que eso se decida, el faltante tiene que quedar visible como faltante, sin tipo.
+✅ **DECIDIDO: el faltante del mostrador se escribe como `merma`, con motivo opcional.**
+
+El criterio es *"lo importante es que quede escrito, no clasificarlo perfecto"*, y es el
+correcto: hoy esas porciones **desaparecen sin dejar rastro**, que es infinitamente peor que
+quedar clasificadas de más. Un dato imperfecto se puede reclasificar después; uno que nunca
+se escribió no se recupera.
+
+Dos cosas que van con esa decisión, para que el dato imperfecto no se disfrace de exacto:
+
+- **El motivo es opcional, pero el origen no.** La fila tiene que decir que salió de un
+  cierre de mostrador y no de alguien apretando "Se perdió". Son cosas distintas y el día
+  que se quiera separar, la diferencia tiene que estar en el dato.
+- **La pantalla sigue diciendo la verdad.** El cartel actual —*"puede ser merma, o una venta
+  que todavía no entró"*— no se toca. Que se registre como merma no quiere decir que
+  sepamos que lo es.
 
 ---
 
@@ -272,17 +360,38 @@ Recién acá se reescriben las 12 pantallas y vistas que hoy leen stock, y se ap
 
 ---
 
-## 5. Lo que sigue sin decidirse
+## 5. Estado de las decisiones
 
-1. **El faltante del mostrador: ¿es merma?** (paso 4) — Hoy nadie lo sabe y la pantalla lo
-   dice.
-2. **El sobrante de masa: ¿merma, transferencia o consumo?** — 203 lotes esperando.
-3. **¿"Sin gluten" pasa a ser un dato del producto?** — Hoy es una propiedad del **lugar**
-   ("todo lo de Saavedra es sin gluten") y **cero columnas** en las 93 tablas mencionan
-   gluten. El ledger mueve mercadería entre lugares por diseño.
-4. **¿El campo "quién" pasa a ser un usuario de verdad?** — Hoy `registrado_por` es texto
+### ✅ Cerradas
+
+| Decisión | Dónde está |
+|---|---|
+| La venta descuenta al salir a la cocina; la anulación es merma; la plata va aparte | §1 |
+| Una transformación agrupa N consumos + N producciones, atómica, una sola RPC | §2.1 |
+| El conteo declara un absoluto y el sistema calcula la diferencia | §2.2 |
+| Los tipos pasan de 7 a 8 (entra `conteo`) más la entidad que agrupa | §3 |
+| Fudo no se toca: el ledger se concilia por ticket y nunca borra | §3 bis |
+| El faltante del mostrador se escribe como `merma`, con motivo opcional | paso 4 |
+| **"Sin gluten" pasa a ser un dato del producto, y va ANTES del ledger** | `docs/PLAN-SIN-GLUTEN.md` |
+
+### ⏸️ Pospuesta a propósito
+
+**Los 203 lotes de masa con sobrante.** Quedan pendientes **hasta el conteo físico**: ahí se
+ve qué hay de verdad en la cámara y los viejos se cierran como un ajuste histórico. **No se
+tocan hasta entonces.**
+
+Encaja bien con el plan: el conteo de apertura del paso 2 es exactamente ese momento. Y
+tiene una ventaja que conviene aprovechar — **el ajuste histórico va a quedar medido**: la
+diferencia entre lo que el sistema creía y lo que hay va a ser una fila del ledger, no un
+número que se pierde.
+
+### 🕐 Todavía abiertas
+
+1. **¿El campo "quién" pasa a ser un usuario de verdad?** — Hoy `registrado_por` es texto
    libre: **152 valores distintos** para unas 20 personas, 356 vacíos y 311 UUID crudos.
-5. **¿Se unifica `camara` / `camara_congelado`?** (paso 5)
+   Se cruza con que las tablets entran sin login.
+2. **¿Se unifica `camara` / `camara_congelado`?** (paso 5)
+3. **¿Existe un tipo "Otro"?** — Mi recomendación es que no. §3.
 
 ---
 
