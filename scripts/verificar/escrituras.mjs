@@ -54,7 +54,7 @@ import { C, titulo, universo, testigos, pad, padN } from './_comun.mjs';
 
 // La línea de base: medida el 11-sep-2026 sobre el repo entero.
 // Baja cuando alguien arregla una. NUNCA sube sin discutirlo.
-const BASE_A_CIEGAS = 160;
+const BASE_A_CIEGAS = 153;
 
 const RAIZ = 'src';
 const CHAIN = /\.from\(\s*['"]([a-z0-9_]+)['"]\s*\)/g;
@@ -69,6 +69,49 @@ function archivos(dir) {
   return out;
 }
 
+/**
+ * Tapa los comentarios con espacios, dejando las posiciones intactas para que
+ * los números de línea sigan siendo los de verdad.
+ *
+ * 💣 Hace falta: el ejemplo de uso que está en el comentario de cabecera de
+ * `src/lib/escribir.ts` se contaba como una escritura más. Un comando que
+ * cuenta comentarios miente con la misma seguridad que si contara código.
+ */
+const BARRA_INVERTIDA = String.fromCharCode(92);
+const SALTO = String.fromCharCode(10);
+
+function taparComentarios(txt) {
+  const out = txt.split('');
+  let i = 0;
+  let comilla = null; // ' " o `  mientras estamos adentro de un texto
+  while (i < txt.length) {
+    const c = txt[i];
+    if (comilla) {
+      if (c === BARRA_INVERTIDA) { i += 2; continue; } // escape: se salta el par
+      if (c === comilla) comilla = null;
+      i++;
+      continue;
+    }
+    if (c === "'" || c === '"' || c === '`') { comilla = c; i++; continue; }
+    if (c === '/' && txt[i + 1] === '/') {
+      while (i < txt.length && txt[i] !== SALTO) { out[i] = ' '; i++; }
+      continue;
+    }
+    if (c === '/' && txt[i + 1] === '*') {
+      while (i < txt.length && !(txt[i] === '*' && txt[i + 1] === '/')) {
+        if (txt[i] !== SALTO) out[i] = ' ';
+        i++;
+      }
+      out[i] = ' ';
+      out[i + 1] = ' ';
+      i += 2;
+      continue;
+    }
+    i++;
+  }
+  return out.join('');
+}
+
 /** Desde el `.from(` hasta el `;` que cierra la sentencia (tope: 900 caracteres). */
 function cadenaDesde(txt, i) {
   const fin = txt.indexOf(';', i);
@@ -79,7 +122,7 @@ const hallazgos = [];
 const lista = archivos(RAIZ);
 
 for (const ruta of lista) {
-  const txt = readFileSync(ruta, 'utf8');
+  const txt = taparComentarios(readFileSync(ruta, 'utf8'));
   const nl = [];
   for (let k = 0; k < txt.length; k++) if (txt[k] === '\n') nl.push(k);
   const lineaDe = (i) => nl.findIndex((p) => p > i) + 1 || nl.length + 1;
@@ -97,6 +140,12 @@ for (const ruta of lista) {
           : null;
     if (!op) continue;
 
+    // ¿Está envuelta en el helper? El `.select()` lo pone `guardarContando`, así
+    // que la cadena no lo tiene: hay que mirar lo que viene ANTES del .from(.
+    const antes = txt.slice(Math.max(0, m.index - 140), m.index);
+    const usaHelper = /guardarContando\s*\(\s*$/.test(antes.replace(/\s+$/, ' ').replace(/supabase\s*$/, ''))
+      || /guardarContando\s*\([^;]*$/.test(antes);
+
     const pideFilas = /\.select\(/.test(cadena) || /count:\s*['"]exact['"]/.test(cadena);
     // ¿alguien mira cuántas volvieron? Se busca en la cadena y en lo que sigue.
     const fin = m.index + cadena.length;
@@ -108,7 +157,7 @@ for (const ruta of lista) {
       linea: lineaDe(m.index),
       tabla: m[1],
       op,
-      estado: !pideFilas ? 'ciegas' : lasMira ? 'cuenta' : 'pide_no_mira',
+      estado: usaHelper ? 'helper' : !pideFilas ? 'ciegas' : lasMira ? 'cuenta' : 'pide_no_mira',
     });
   }
 }
@@ -128,6 +177,7 @@ universo(
 const enArchivo = (frag, linea) =>
   hallazgos.find((h) => h.ruta.endsWith(frag) && Math.abs(h.linea - linea) <= 3);
 
+const conHelper = enArchivo('finanzas/components/CierreCaja.tsx', 400);
 const bueno = enArchivo('cocina/StockTab.tsx', 253);
 const malo = enArchivo('rrhh/AguinaldoTab.tsx', 159);
 testigos([
@@ -141,12 +191,28 @@ testigos([
     espera: 'ciegas',
     obtuvo: malo?.estado ?? 'NO LO ENCONTRÓ',
   },
+  {
+    que: 'CierreCaja: el update envuelto en guardarContando NO cuenta como a ciegas',
+    espera: 'helper',
+    obtuvo: conHelper?.estado ?? 'NO LO ENCONTRÓ',
+  },
+  {
+    que: 'El ejemplo del comentario de escribir.ts NO se cuenta como escritura',
+    espera: 0,
+    obtuvo: hallazgos.filter((h) => h.ruta.endsWith('lib/escribir.ts')).length,
+  },
+  {
+    que: 'Tapar comentarios no mueve los números de línea',
+    espera: 'https://ok',
+    obtuvo: taparComentarios("const u = 'https://ok'; // un comentario").match(/'([^']+)'/)?.[1],
+  },
 ]);
 
 // ── El reporte ───────────────────────────────────────────────────────────────
 const ciegas = hallazgos.filter((h) => h.estado === 'ciegas');
 const tibias = hallazgos.filter((h) => h.estado === 'pide_no_mira');
 const bien = hallazgos.filter((h) => h.estado === 'cuenta');
+const conElHelper = hallazgos.filter((h) => h.estado === 'helper');
 
 const porTabla = new Map();
 for (const h of ciegas) porTabla.set(h.tabla, (porTabla.get(h.tabla) ?? 0) + 1);
@@ -155,9 +221,16 @@ const ranking = [...porTabla].sort((a, b) => b[1] - a[1]);
 console.log('');
 console.log(C.neg('RESUMEN'));
 console.log(`  ${padN(hallazgos.length, 4)}  escrituras en total`);
-console.log(`  ${C.verde(padN(bien.length, 4))}  cuentan las filas`);
+console.log(`  ${C.verde(padN(conElHelper.length, 4))}  usan guardarContando() ${C.gris('— la forma nueva: el .select() no se puede olvidar')}`);
+console.log(`  ${C.verde(padN(bien.length, 4))}  cuentan las filas a mano ${C.gris('— andan bien; migrar cuando se toque el archivo')}`);
 console.log(`  ${C.amar(padN(tibias.length, 4))}  piden las filas pero nadie las mira`);
 console.log(`  ${C.rojo(padN(ciegas.length, 4))}  ${C.rojo('a ciegas')}`);
+
+console.log('');
+const sinHelper = hallazgos.length - conElHelper.length;
+console.log(
+  `  ${C.gris('→')} ${C.neg(sinHelper)} escrituras todavía NO usan el helper (${((conElHelper.length / hallazgos.length) * 100).toFixed(0)} % migrado)`,
+);
 
 console.log('');
 console.log(C.neg('LAS 12 TABLAS CON MÁS ESCRITURAS A CIEGAS'));

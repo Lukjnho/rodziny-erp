@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { guardarContando } from '@/lib/escribir';
 import { formatARS } from '@/lib/utils';
 import { cn } from '@/lib/utils';
 import { LocalSelector } from '@/components/ui/LocalSelector';
@@ -279,18 +280,21 @@ export function CierreCaja() {
         const turnoLabel = TURNOS[local]?.find((t) => t.key === fTurno)?.label ?? fTurno;
         const concepto = `MP Lucas (Fudo) — ${fCaja || 'cierre'} · ${turnoLabel}`;
         if (dividendoPrevId) {
-          const { error: errDiv } = await supabase
-            .from('dividendos')
-            .update({
-              fecha: fFecha,
-              monto: fudoMpLucas,
-              medio_pago: 'mp',
-              concepto,
-              local,
-              periodo: periodoCierre,
-            })
-            .eq('id', dividendoPrevId);
-          if (errDiv) throw errDiv;
+          await guardarContando(
+            supabase
+              .from('dividendos')
+              .update({
+                fecha: fFecha,
+                monto: fudoMpLucas,
+                medio_pago: 'mp',
+                concepto,
+                local,
+                periodo: periodoCierre,
+              })
+              .eq('id', dividendoPrevId),
+            'No se pudo actualizar el dividendo de MP Lucas',
+            { filasEsperadas: 1 },
+          );
         } else {
           const { data: divData, error: errDiv } = await supabase
             .from('dividendos')
@@ -310,12 +314,24 @@ export function CierreCaja() {
           dividendoId = divData?.id ?? null;
         }
       } else if (dividendoPrevId) {
-        // Tenía dividendo y ahora MP Lucas quedó en 0 → eliminamos el dividendo huérfano
-        await supabase.from('dividendos').delete().eq('id', dividendoPrevId);
+        // Tenía dividendo y ahora MP Lucas quedó en 0 → eliminamos el dividendo huérfano.
+        // Si este borrado no toca nada, el dividendo sigue sumando en el flujo de
+        // caja y el cierre va a decir que no hay. Por eso se cuenta.
+        await guardarContando(
+          supabase.from('dividendos').delete().eq('id', dividendoPrevId),
+          'No se pudo borrar el dividendo de MP Lucas que quedó en cero',
+          { filasEsperadas: 1 },
+        );
         dividendoId = null;
       }
 
-      const { error } = await supabase.from('cierres_caja').upsert(
+      // 💣 `cierres_caja` tiene la policy más traicionera del sistema:
+      //     using (tiene_permiso('caja') AND origen = 'pos' AND hora_cierre IS NULL AND …)
+      // Puede devolver CERO FILAS aunque tengas el permiso, porque además exige
+      // que el turno siga abierto. Es la única policy del ERP con condiciones
+      // más allá del permiso, y es justo la de la plata del día.
+      await guardarContando(
+        supabase.from('cierres_caja').upsert(
         {
           local,
           fecha: fFecha,
@@ -346,9 +362,11 @@ export function CierreCaja() {
           cajero_nombre: fudoResumen?.cajero || null,
           nro_arqueo_fudo: fNroArqueo.trim() || null,
         },
-        { onConflict: 'local,fecha,turno,caja' },
+          { onConflict: 'local,fecha,turno,caja' },
+        ),
+        'No se pudo guardar el arqueo',
+        { filasEsperadas: 1 },
       );
-      if (error) throw error;
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['cierres_mes'] });
@@ -368,13 +386,22 @@ export function CierreCaja() {
       // Si el cierre tenía un dividendo auto-generado, lo borramos también.
       const cierre = cierres?.find((c) => c.id === id);
       if (cierre?.dividendo_id) {
-        await supabase.from('dividendos').delete().eq('id', cierre.dividendo_id);
+        // Primero el dividendo: si el arqueo se borra y el dividendo queda vivo,
+        // sigue sumando en el flujo de caja sin que nadie lo pueda encontrar.
+        await guardarContando(
+          supabase.from('dividendos').delete().eq('id', cierre.dividendo_id),
+          'No se pudo borrar el dividendo del arqueo, así que el arqueo no se borró',
+          { filasEsperadas: 1 },
+        );
       }
       // El error se propaga: la base rechaza borrar un arqueo del POS que tenga
       // ventas enganchadas (migración 148) y ese mensaje tiene que llegar a la
       // pantalla. Antes se descartaba y el borrado fallaba sin decir nada.
-      const { error } = await supabase.from('cierres_caja').delete().eq('id', id);
-      if (error) throw error;
+      await guardarContando(
+        supabase.from('cierres_caja').delete().eq('id', id),
+        'No se pudo borrar el arqueo',
+        { filasEsperadas: 1 },
+      );
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['cierres_mes'] });
@@ -396,17 +423,22 @@ export function CierreCaja() {
       monto?: number | null;
       nota?: string | null;
     }) => {
-      const { error } = await supabase
-        .from('cierres_caja')
-        .update({
-          verificado,
-          verificado_por: verificado ? 'Admin' : null,
-          verificado_at: verificado ? new Date().toISOString() : null,
-          monto_llevado_caja_fuerte: verificado ? (monto ?? null) : null,
-          nota_caja_fuerte: verificado ? (nota ?? null) : null,
-        })
-        .eq('id', id);
-      if (error) throw error;
+      await guardarContando(
+        supabase
+          .from('cierres_caja')
+          .update({
+            verificado,
+            verificado_por: verificado ? 'Admin' : null,
+            verificado_at: verificado ? new Date().toISOString() : null,
+            monto_llevado_caja_fuerte: verificado ? (monto ?? null) : null,
+            nota_caja_fuerte: verificado ? (nota ?? null) : null,
+          })
+          .eq('id', id),
+        verificado
+          ? 'No se pudo marcar la plata como recibida en la caja fuerte'
+          : 'No se pudo desmarcar la verificación',
+        { filasEsperadas: 1 },
+      );
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['cierres_mes'] }),
   });
@@ -453,17 +485,22 @@ export function CierreCaja() {
       const nowIso = new Date().toISOString();
       for (const c of pendientes) {
         const monto = Math.max(0, (c.monto_contado ?? 0) - FONDO_CAMBIO_DEFAULT);
-        const { error } = await supabase
-          .from('cierres_caja')
-          .update({
-            verificado: true,
-            verificado_por: 'Admin',
-            verificado_at: nowIso,
-            monto_llevado_caja_fuerte: monto,
-            nota_caja_fuerte: nota,
-          })
-          .eq('id', c.id);
-        if (error) throw error;
+        // Se frena en el primero que no toque ninguna fila: es preferible
+        // verificar 3 de 10 y que se vea, a decir "10 verificados" y que sean 3.
+        await guardarContando(
+          supabase
+            .from('cierres_caja')
+            .update({
+              verificado: true,
+              verificado_por: 'Admin',
+              verificado_at: nowIso,
+              monto_llevado_caja_fuerte: monto,
+              nota_caja_fuerte: nota,
+            })
+            .eq('id', c.id),
+          `No se pudo verificar el arqueo del ${c.fecha}`,
+          { filasEsperadas: 1 },
+        );
       }
       return pendientes.length;
     },
