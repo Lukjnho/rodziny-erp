@@ -4062,10 +4062,10 @@ export function ComprasPage() {
             <div>
               <label className="mb-1 block text-xs font-medium text-gray-600">
                 N° de operación{' '}
-                {bulkMedio === 'efectivo' ? (
-                  <span className="text-gray-400">(opcional)</span>
-                ) : (
+                {medioRequiereComprobante(bulkMedio) ? (
                   <span className="text-red-600">*</span>
+                ) : (
+                  <span className="text-gray-400">(opcional)</span>
                 )}
               </label>
               <input
@@ -4075,7 +4075,7 @@ export function ComprasPage() {
                 placeholder="Nº transferencia, cheque, etc."
                 className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm font-mono"
               />
-              {bulkMedio !== 'efectivo' && (
+              {medioRequiereComprobante(bulkMedio) && (
                 <p className="mt-1 text-[11px] text-gray-500">
                   Una sola operación cubre todo el bulk. Copiala del comprobante.
                 </p>
@@ -4085,10 +4085,10 @@ export function ComprasPage() {
             <div>
               <label className="mb-1 block text-xs font-medium text-gray-600">
                 Comprobante de pago{' '}
-                {bulkMedio === 'efectivo' ? (
-                  <span className="text-gray-400">(opcional)</span>
-                ) : (
+                {medioRequiereComprobante(bulkMedio) ? (
                   <span className="text-red-600">* (voucher único)</span>
+                ) : (
+                  <span className="text-gray-400">(opcional)</span>
                 )}
                 <span className="ml-1 font-normal text-rodziny-600">
                   — la IA lo lee y completa fecha, medio y N° de operación

@@ -12,24 +12,21 @@ import {
   remuneracionConPresentismo,
   trabajoEnElPeriodo,
 } from './utils';
-import { medioRequiereComprobante } from '@/lib/mediosPago';
+import { medioRequiereComprobante, MEDIO_PAGO_LABEL, type MedioPago } from '@/lib/mediosPago';
 
 // ── Tipos ────────────────────────────────────────────────────────────────────
-// Los mismos 4 valores que ofrece MEDIO_PAGO_OPCIONES. Antes el tipo incluía
-// también debito_mp / debito_galicia / debito_icbc, que nunca se podían elegir
-// desde la pantalla ni existían en la base: se sacaron para que el tipo diga
-// la verdad.
-type MedioPagoGasto =
-  | 'transferencia_mp'
-  | 'transferencia_galicia'
-  | 'transferencia_icbc'
-  | 'efectivo';
-
-const MEDIO_PAGO_OPCIONES: { value: MedioPagoGasto; label: string }[] = [
-  { value: 'transferencia_mp', label: 'Transferencia MP' },
-  { value: 'transferencia_galicia', label: 'Transferencia Galicia' },
-  { value: 'transferencia_icbc', label: 'Transferencia ICBC' },
-  { value: 'efectivo', label: 'Efectivo' },
+// Con qué se paga un aguinaldo. Los valores y los nombres salen del vocabulario
+// único de egresos (`@/lib/mediosPago`); acá solo se elige el subconjunto que
+// aplica: un aguinaldo se transfiere o se paga en mano, no con cheque.
+//
+// 💣 Antes esto era una lista propia con sus propias etiquetas
+// ("Transferencia MP" contra "Transferencia (MercadoPago)"), o sea el mismo
+// medio con dos nombres según la pantalla que lo mostrara.
+const MEDIO_PAGO_OPCIONES: readonly MedioPago[] = [
+  'transferencia_mp',
+  'transferencia_galicia',
+  'transferencia_icbc',
+  'efectivo',
 ];
 
 interface Aguinaldo {
@@ -43,7 +40,7 @@ interface Aguinaldo {
   monto_pagado: number | null;
   pagado: boolean;
   fecha_pago: string | null;
-  medio_pago: MedioPagoGasto | null;
+  medio_pago: MedioPago | null;
   gasto_id: string | null;
   notas: string | null;
 }
@@ -480,8 +477,8 @@ function ModalAguinaldo({
   const [montoPagado, setMontoPagado] = useState(r?.monto_pagado ?? fila.montoCalculado);
   const [pagado, setPagado] = useState(r?.pagado ?? true); // default true: abrir el modal ya implica querer marcar
   const [fechaPago, setFechaPago] = useState(r?.fecha_pago ?? ymd(new Date()));
-  const [medioPago, setMedioPago] = useState<MedioPagoGasto>(
-    (r?.medio_pago as MedioPagoGasto) ?? 'transferencia_mp',
+  const [medioPago, setMedioPago] = useState<MedioPago>(
+    (r?.medio_pago as MedioPago) ?? 'transferencia_mp',
   );
   const [notas, setNotas] = useState(r?.notas ?? '');
   const [numeroOperacion, setNumeroOperacion] = useState('');
@@ -734,12 +731,12 @@ function ModalAguinaldo({
                 </label>
                 <select
                   value={medioPago}
-                  onChange={(e) => setMedioPago(e.target.value as MedioPagoGasto)}
+                  onChange={(e) => setMedioPago(e.target.value as MedioPago)}
                   className="w-full rounded border border-gray-300 px-3 py-1.5 text-sm"
                 >
                   {MEDIO_PAGO_OPCIONES.map((o) => (
-                    <option key={o.value} value={o.value}>
-                      {o.label}
+                    <option key={o} value={o}>
+                      {MEDIO_PAGO_LABEL[o]}
                     </option>
                   ))}
                 </select>

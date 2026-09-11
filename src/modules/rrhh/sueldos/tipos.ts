@@ -26,9 +26,12 @@ export interface Adelanto {
   fecha: string;
   monto: number;
   motivo: string | null;
-  // Pago por transferencia → exige comprobante + N° op para conciliar contra el
-  // extracto (igual que sueldos/dividendos). 'efectivo' o null no se concilia.
-  // Para transferencia se guarda 'transferencia mercadopago' | 'transferencia galicia'.
+  // Una de las opciones de `MedioPago` (@/lib/mediosPago), el vocabulario unico
+  // de egresos: 'efectivo' | 'transferencia_mp' | 'transferencia_galicia' | …
+  // Lo bancarizado exige comprobante + N° op para conciliar contra el extracto;
+  // lo decide `medioRequiereComprobante`, no una comparacion suelta.
+  // Queda `string` y no `MedioPago` porque en la base hay filas viejas con el
+  // formato con espacio ('transferencia mercadopago') que no se reescriben.
   medio_pago: string | null;
   numero_operacion: string | null;
   comprobante_path: string | null;

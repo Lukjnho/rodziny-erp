@@ -1,6 +1,12 @@
 import { useState, useMemo, useEffect, useRef, Fragment } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import {
+  esEfectivo,
+  esTransferencia,
+  SELECT_MEDIO,
+  type MedioEmbebido,
+} from '@/lib/mediosPago';
 import { useAuth } from '@/lib/auth';
 import { cn, formatARS } from '@/lib/utils';
 import { mensajeErrorAmigable } from '@/lib/erroresSupabase';
@@ -281,7 +287,7 @@ export function SueldosTab() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('pagos_sueldos')
-        .select('id, empleado_id, periodo, monto, medio_pago')
+        .select(`id, empleado_id, periodo, monto, medio_pago, ${SELECT_MEDIO}`)
         .in('periodo', [periodoQ1, periodoQ2]);
       if (error) throw error;
       return (data ?? []) as {
@@ -290,6 +296,8 @@ export function SueldosTab() {
         periodo: string;
         monto: number;
         medio_pago: 'efectivo' | 'transferencia';
+  /** El catálogo, traído por la clave foránea. Lo pide `SELECT_MEDIO`. */
+  medios_pago: MedioEmbebido;
       }[];
     },
   });
@@ -798,11 +806,14 @@ export function SueldosTab() {
       const pagosEmp = (pagosSueldosPeriodo ?? []).filter(
         (p) => p.empleado_id === emp.id && p.periodo === periodoActual,
       );
+      // Clasificado por el catálogo, no por el texto: es la misma pregunta que
+      // se hace el Flujo de Caja y el cierre de mes, y ahora la contesta el
+      // mismo par de funciones.
       const montoEfectivoPagado = pagosEmp
-        .filter((p) => p.medio_pago === 'efectivo')
+        .filter((p) => esEfectivo(p.medios_pago))
         .reduce((s, p) => s + Number(p.monto), 0);
       const montoTransferenciaPagado = pagosEmp
-        .filter((p) => p.medio_pago === 'transferencia')
+        .filter((p) => esTransferencia(p.medios_pago))
         .reduce((s, p) => s + Number(p.monto), 0);
 
       return {

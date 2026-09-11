@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { esEfectivo, SELECT_MEDIO } from '@/lib/mediosPago';
 import { VISTA_TICKETS_OFICIAL } from '@/lib/origenVentas';
 import { useAuth } from '@/lib/auth';
 import { formatARS, formatFecha, cn } from '@/lib/utils';
@@ -169,7 +170,7 @@ export function CierreMesPanel({ onNavigateToTab }: Props) {
       const { data } = await supabase
         .from('pagos_gastos')
         .select(
-          'id, gasto_id, fecha_pago, monto, medio_pago, conciliado_movimiento_id, gasto:gastos!inner(cancelado)',
+          `id, gasto_id, fecha_pago, monto, medio_pago, conciliado_movimiento_id, ${SELECT_MEDIO}, gasto:gastos!inner(cancelado)`,
         )
         .gte('fecha_pago', `${periodo}-01`)
         .lte('fecha_pago', `${periodo}-${String(last).padStart(2, '0')}`)
@@ -442,7 +443,10 @@ export function CierreMesPanel({ onNavigateToTab }: Props) {
 
     // Pagos no-efectivo conciliados
     {
-      const noEfectivo = (pagos ?? []).filter((p) => p.medio_pago !== 'efectivo');
+      // 💣 Antes decía `p.medio_pago !== 'efectivo'` contra el TEXTO. En
+      // `pagos_gastos` ese texto es 'transferencia_mp', 'cheque_galicia',
+      // 'tarjeta_icbc'… — funcionaba de casualidad. Ahora pregunta al catálogo.
+      const noEfectivo = (pagos ?? []).filter((p) => !esEfectivo(p.medios_pago));
       const total = noEfectivo.length;
       const conc = noEfectivo.filter((p) => p.conciliado_movimiento_id).length;
       const pct = total > 0 ? Math.round((conc / total) * 100) : 0;

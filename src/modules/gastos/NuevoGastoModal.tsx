@@ -1472,7 +1472,7 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
                     </select>
                   </div>
                 </div>
-                {form.medio_pago !== 'efectivo' && !gastoEditando && (
+                {medioRequiereComprobante(form.medio_pago) && !gastoEditando && (
                   <div>
                     <label className="mb-1 block text-xs text-gray-600">
                       N° de operación <span className="text-red-600">*</span>

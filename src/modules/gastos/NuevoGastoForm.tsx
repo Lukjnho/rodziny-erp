@@ -2894,7 +2894,7 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
                     </select>
                   </Field>
 
-                  <Field label={`N° de operacion${medioPago !== 'efectivo' ? ' *' : ''}`}>
+                  <Field label={`N° de operacion${medioRequiereComprobante(medioPago) ? ' *' : ''}`}>
                     <input
                       type="text"
                       value={nOperacion}

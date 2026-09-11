@@ -98,6 +98,82 @@ export function esCobroDeDividendo(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// QUÉ CLASE DE MEDIO ES UNA FILA DE PLATA
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Casi todas las tablas de plata guardan DOS cosas: `medio_pago`, que es el
+// texto tal como quedó cargado, y `medio_pago_id`, la clave foránea al
+// catálogo que completa el disparador de la migración 138.
+//
+// 💣 LO QUE VENÍA FALLANDO: comparar el TEXTO contra un literal. Medido el
+// 11-sep-2026, esto es lo que hay realmente escrito en cada tabla:
+//
+//     pagos_sueldos   efectivo · transferencia
+//     pagos_gastos    transferencia_mp · efectivo · cheque_galicia ·
+//                     transferencia_galicia · otro · tarjeta_icbc
+//     dividendos      Mercadopago Lucas · efectivo · mp · transferencia_mp ·
+//                     cheque_galicia
+//
+// O sea que `medio_pago === 'transferencia'` es verdadero en sueldos y FALSO
+// SIEMPRE en dividendos y en gastos, donde ninguna fila dice esa palabra sola.
+// La misma línea de código significa una cosa en una pantalla y otra en la de
+// al lado, según qué tabla le toque.
+//
+// La clave foránea no tiene ese problema: apunta a UNA fila del catálogo, y
+// está puesta en el 100% de las filas de las cuatro tablas (verificado, no
+// supuesto). Por eso la pregunta se le hace al catálogo.
+
+/** Lo mínimo del catálogo para clasificar una fila. Es lo que trae SELECT_MEDIO. */
+export interface MedioDelCatalogo {
+  codigo: string;
+  es_efectivo?: boolean | null;
+}
+
+/**
+ * Lo que hay que sumarle al `.select()` para traer el catálogo por la clave
+ * foránea `medio_pago_id`. Se escribe una vez acá para que ninguna pantalla
+ * se olvide una columna y después clasifique mal en silencio.
+ */
+export const SELECT_MEDIO = 'medios_pago(codigo, es_efectivo)';
+
+/** Lo que devuelve el embebido: una fila, o —si PostgREST no pudo probar que la
+ *  relación es a uno— un arreglo de una. */
+export type MedioEmbebido = MedioDelCatalogo | MedioDelCatalogo[] | null | undefined;
+
+// 💣 Por qué esto existe: PostgREST devuelve el embebido como OBJETO cuando ve
+// que la clave foránea apunta a una sola fila, y como ARREGLO cuando no lo puede
+// probar (una vista, por ejemplo). Si llega el arreglo, `m.es_efectivo` es
+// `undefined` y todo se clasifica como "no es efectivo" sin un solo error. Es
+// exactamente la clase de falla silenciosa que este repo ya pagó cara.
+function unaFila(m: MedioEmbebido): MedioDelCatalogo | null {
+  if (!m) return null;
+  return Array.isArray(m) ? (m[0] ?? null) : m;
+}
+
+/**
+ * ¿Esta plata se movió en billetes?
+ *
+ * Sale de `medios_pago.es_efectivo`, que es una columna del catálogo desde la
+ * migración 136. Hoy es `true` en una sola fila (`efectivo`), pero el día que
+ * se agregue otra —una caja chica, un vale— las pantallas se enteran solas.
+ */
+export function esEfectivo(m: MedioEmbebido): boolean {
+  return unaFila(m)?.es_efectivo === true;
+}
+
+/**
+ * ¿Esta plata se movió por transferencia bancaria?
+ *
+ * Va por el CÓDIGO del catálogo, que es uno solo (`transferencia`) sin importar
+ * el banco: `transferencia_mp`, `transferencia_galicia` y `transferencia_icbc`
+ * son tres alias de la misma fila. Ese es justo el caso que rompía comparando
+ * texto, porque ninguno de los tres es igual a la palabra "transferencia".
+ */
+export function esTransferencia(m: MedioEmbebido): boolean {
+  return unaFila(m)?.codigo === 'transferencia';
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // EL MEDIO DE PAGO DE UN EGRESO
 // ─────────────────────────────────────────────────────────────────────────────
 //

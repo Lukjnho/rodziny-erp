@@ -4,6 +4,7 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth';
 import { formatARS, cn } from '@/lib/utils';
 import { procesarComprobantePago } from '@/lib/ocrComprobantePago';
+import { MEDIO_PAGO_LABEL, medioRequiereComprobante, type MedioPago } from '@/lib/mediosPago';
 import { ymd } from '../utils';
 import type { Adelanto } from './tipos';
 import type { Empleado } from '../RRHHPage';
@@ -15,7 +16,19 @@ interface Props {
   onClose: () => void;
 }
 
-type MedioAdelanto = 'efectivo' | 'mercadopago' | 'galicia';
+// El medio de pago sale del vocabulario unico de egresos (`@/lib/mediosPago`).
+//
+// 💣 Lo que habia antes era una NOVENA lista: `'efectivo' | 'mercadopago' |
+// 'galicia'`, y al grabar armaba el texto con `transferencia_${medio}`. Eso
+// producia **`transferencia_mercadopago`, que NO es un alias del catalogo** —
+// los que existen son `transferencia_mp` y `transferencia mercadopago`, con
+// espacio. Un adelanto por MercadoPago entraba con un medio que el disparador
+// de la base no sabe traducir. Nunca llego a pasar (los 42 adelantos cargados
+// son efectivo o nulo), asi que no hay datos que reparar.
+//
+// Estas tres son un subconjunto de `MedioPago`: un adelanto se paga en mano o
+// se transfiere, no se paga con cheque.
+const OPCIONES: readonly MedioPago[] = ['efectivo', 'transferencia_mp', 'transferencia_galicia'];
 
 export function PanelAdelantos({ empleado, periodo, adelantos, onClose }: Props) {
   const qc = useQueryClient();
@@ -23,7 +36,7 @@ export function PanelAdelantos({ empleado, periodo, adelantos, onClose }: Props)
   const [fecha, setFecha] = useState(ymd(new Date()));
   const [monto, setMonto] = useState('');
   const [motivo, setMotivo] = useState('');
-  const [medio, setMedio] = useState<MedioAdelanto>('efectivo');
+  const [medio, setMedio] = useState<MedioPago>('efectivo');
 
   // Datos bancarios (solo si medio = transferencia). El comprobante + N° op son
   // obligatorios para que el adelanto se concilie después contra el extracto.
@@ -33,7 +46,10 @@ export function PanelAdelantos({ empleado, periodo, adelantos, onClose }: Props)
   const [ocrInfo, setOcrInfo] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const esTransferencia = medio === 'mercadopago' || medio === 'galicia';
+  // La regla de "esto se concilia contra el extracto, asi que exige comprobante
+  // y N° de operacion" es UNA sola en todo el ERP: `medioRequiereComprobante`.
+  // Acá estaba escrita por décima vez, como `medio === 'mercadopago' || ...`.
+  const esTransferencia = medioRequiereComprobante(medio);
 
   function resetForm() {
     setMonto('');
@@ -85,10 +101,10 @@ export function PanelAdelantos({ empleado, periodo, adelantos, onClose }: Props)
         fecha,
         monto: n,
         motivo: motivo.trim() || null,
-        // Valor canónico con guion bajo, igual que el resto del ERP
-        // (transferencia_mercadopago / transferencia_galicia). El diccionario
-        // medios_pago_alias reconoce las dos formas, con y sin espacio.
-        medio_pago: esTransferencia ? `transferencia_${medio}` : 'efectivo',
+        // El valor se graba tal cual, sin armarlo con pedazos: `medio` YA es
+        // una de las siete opciones canonicas y las siete son filas de
+        // `medios_pago_alias`, asi que el disparador de la base lo resuelve.
+        medio_pago: medio,
         numero_operacion: esTransferencia ? nOperacion.trim() : null,
         comprobante_path: esTransferencia ? comprobantePath : null,
       });
@@ -172,24 +188,20 @@ export function PanelAdelantos({ empleado, periodo, adelantos, onClose }: Props)
           {/* Medio de pago — efectivo no se concilia; transferencia exige comprobante */}
           <div className="mt-2">
             <label className="mb-1 block text-[11px] font-medium text-gray-600">Medio de pago</label>
-            <div className="flex gap-1.5">
-              {([
-                { v: 'efectivo', label: 'Efectivo' },
-                { v: 'mercadopago', label: 'Transf. MP' },
-                { v: 'galicia', label: 'Transf. Galicia' },
-              ] as const).map((m) => (
+            <div className="flex items-stretch gap-1.5">
+              {OPCIONES.map((m) => (
                 <button
-                  key={m.v}
+                  key={m}
                   type="button"
-                  onClick={() => setMedio(m.v)}
+                  onClick={() => setMedio(m)}
                   className={cn(
-                    'flex-1 rounded border px-2 py-1 text-[11px] font-medium',
-                    medio === m.v
+                    'flex-1 rounded border px-2 py-1 text-[11px] font-medium leading-tight',
+                    medio === m
                       ? 'border-blue-400 bg-blue-50 text-blue-800'
                       : 'border-gray-300 bg-white text-gray-600 hover:bg-gray-50',
                   )}
                 >
-                  {m.label}
+                  {MEDIO_PAGO_LABEL[m]}
                 </button>
               ))}
             </div>
@@ -250,7 +262,10 @@ export function PanelAdelantos({ empleado, periodo, adelantos, onClose }: Props)
               {[...adelantos]
                 .sort((a, b) => b.fecha.localeCompare(a.fecha))
                 .map((a) => {
-                  const esTransf = (a.medio_pago ?? '').toLowerCase().startsWith('transferencia');
+                  // Misma regla que arriba: se concilia lo bancarizado. Antes
+                  // esto adivinaba con `.startsWith('transferencia')`, que deja
+                  // afuera el cheque y la tarjeta.
+                  const esTransf = medioRequiereComprobante(a.medio_pago);
                   return (
                     <li key={a.id} className="flex items-start justify-between gap-3 px-5 py-3">
                       <div className="min-w-0 flex-1">
@@ -273,8 +288,11 @@ export function PanelAdelantos({ empleado, periodo, adelantos, onClose }: Props)
                                   : 'Transferencia pendiente de conciliar'
                               }
                             >
-                              {/* acepta el formato viejo (con espacio) y el nuevo (con guion bajo) */}
-                              {a.medio_pago?.replace(/^transferencia[ _]/, '🏦 ')}
+                              {/* El nombre sale del vocabulario unico. El `??`
+                                  cubre los formatos viejos con espacio, que
+                                  siguen en la base y no se reescriben. */}
+                              🏦{' '}
+                              {MEDIO_PAGO_LABEL[a.medio_pago as MedioPago] ?? a.medio_pago}
                               {a.conciliado_movimiento_id ? ' · conciliado' : ' · pendiente'}
                             </span>
                           ) : (

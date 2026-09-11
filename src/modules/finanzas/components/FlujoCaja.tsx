@@ -9,7 +9,17 @@ import { useAuth } from '@/lib/auth';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { useProveedoresMap, nombreProveedor } from '@/modules/gastos/proveedorDisplay';
 import { hoyAR } from '@/lib/fechaAR';
-import { aliasDeDividendo, esCobroDeDividendo } from '@/lib/mediosPago';
+import {
+  aliasDeDividendo,
+  esCobroDeDividendo,
+  esEfectivo,
+  esTransferencia,
+  medioRequiereComprobante,
+  MEDIO_PAGO_LABEL,
+  SELECT_MEDIO,
+  type MedioEmbebido,
+  type MedioPago,
+} from '@/lib/mediosPago';
 // ⚠️ parseDecimal sigue acá solo para el saldo de Mercado Pago (línea ~636),
 // que es del grupo C y se migra en la tanda siguiente. Para dinero, la puerta
 // es MontoInput: el punto es separador de miles, no coma decimal.
@@ -158,6 +168,8 @@ interface PagoSueldo {
   fecha_pago: string;
   monto: number;
   medio_pago: string;
+  /** El catálogo, traído por la clave foránea. Lo pide `SELECT_MEDIO`. */
+  medios_pago: MedioEmbebido;
   local: string;
   empleado_nombre: string | null;
 }
@@ -179,11 +191,16 @@ const SOCIO_LABEL: Record<string, string> = {
   francisco: 'Francisco',
 };
 
-const MEDIOS_PAGO_DIV = [
-  { value: 'efectivo', label: 'Efectivo' },
-  { value: 'transferencia_mp', label: 'Transferencia (MP)' },
-  { value: 'cheque_galicia', label: 'Cheque (Galicia)' },
-  { value: 'tarjeta_icbc', label: 'Tarjeta (ICBC)' },
+// Con qué se puede pagar un dividendo. Los valores y los nombres salen del
+// vocabulario único de egresos (`@/lib/mediosPago`); acá solo se elige el
+// subconjunto que aplica. Antes esta lista tenía sus propias etiquetas
+// ("Transferencia (MP)" contra "Transferencia (MercadoPago)"), que es la misma
+// cosa escrita dos veces y mostrada distinta según la pantalla.
+const MEDIOS_PAGO_DIV: readonly MedioPago[] = [
+  'efectivo',
+  'transferencia_mp',
+  'cheque_galicia',
+  'tarjeta_icbc',
 ];
 
 const GRUPO_EGRESO_LABEL: Record<string, string> = {
@@ -522,7 +539,9 @@ export function FlujoCaja() {
       const lastDay = new Date(y, m, 0).getDate();
       const { data } = await supabase
         .from('pagos_sueldos')
-        .select('id, empleado_id, periodo, fecha_pago, monto, medio_pago, local, empleado_nombre')
+        .select(
+          `id, empleado_id, periodo, fecha_pago, monto, medio_pago, local, empleado_nombre, ${SELECT_MEDIO}`,
+        )
         .gte('fecha_pago', `${periodo}-01`)
         .lte('fecha_pago', `${periodo}-${lastDay}`);
       return (data ?? []) as PagoSueldo[];
@@ -594,7 +613,9 @@ export function FlujoCaja() {
       if (!monto || monto <= 0) throw new Error('Monto inválido');
       // Validación uniforme: para medios distintos de efectivo, exigimos N° op
       // y archivo del comprobante. Permite conciliar contra el extracto.
-      if (divMedio !== 'efectivo') {
+      // La regla "esto se concilia, así que exige comprobante" es UNA sola en
+      // todo el ERP y vive en `medioRequiereComprobante`.
+      if (medioRequiereComprobante(divMedio)) {
         if (!divNumOp.trim()) {
           throw new Error('N° de operación obligatorio para transferencias y cheques.');
         }
@@ -997,10 +1018,10 @@ export function FlujoCaja() {
       const entry = grupos.get('rrhh')!;
       // Agrupar por medio de pago para el resumen
       const sueldoEfectivo = sueldosFiltrados
-        .filter((p) => p.medio_pago === 'efectivo')
+        .filter((p) => esEfectivo(p.medios_pago))
         .reduce((s, p) => s + Number(p.monto), 0);
       const sueldoTransf = sueldosFiltrados
-        .filter((p) => p.medio_pago === 'transferencia')
+        .filter((p) => esTransferencia(p.medios_pago))
         .reduce((s, p) => s + Number(p.monto), 0);
       if (sueldoEfectivo > 0)
         entry.items.push({ nombre: 'Sueldos en efectivo', monto: sueldoEfectivo });
@@ -2042,8 +2063,8 @@ export function FlujoCaja() {
                     className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm"
                   >
                     {MEDIOS_PAGO_DIV.map((m) => (
-                      <option key={m.value} value={m.value}>
-                        {m.label}
+                      <option key={m} value={m}>
+                        {MEDIO_PAGO_LABEL[m]}
                       </option>
                     ))}
                   </select>
@@ -2073,7 +2094,7 @@ export function FlujoCaja() {
                   />
                 </div>
               </div>
-              {divMedio !== 'efectivo' && (
+              {medioRequiereComprobante(divMedio) && (
                 <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
                   <div>
                     <label className="mb-1 block text-xs font-medium text-gray-600">
@@ -2182,7 +2203,9 @@ export function FlujoCaja() {
                       </button>
                     </td>
                     <td className="px-3 py-2 text-gray-600">
-                      {MEDIOS_PAGO_DIV.find((m) => m.value === d.medio_pago)?.label ?? d.medio_pago}
+                      {/* El `??` deja pasar los valores viejos de la base
+                          ('Mercadopago Lucas', 'mp'), que no se reescriben. */}
+                      {MEDIO_PAGO_LABEL[d.medio_pago as MedioPago] ?? d.medio_pago}
                     </td>
                     <td className="px-3 py-2 text-gray-500">
                       {d._agg ? (

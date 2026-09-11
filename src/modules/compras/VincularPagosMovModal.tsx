@@ -14,6 +14,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { esTransferencia, SELECT_MEDIO, type MedioEmbebido } from '@/lib/mediosPago';
 import { useAuth } from '@/lib/auth';
 import { formatARS, cn } from '@/lib/utils';
 import {
@@ -63,6 +64,8 @@ interface SueldoPendiente {
   monto: number;
   fecha_pago: string;
   medio_pago: string | null;
+  /** El catálogo, traído por la clave foránea. Lo pide `SELECT_MEDIO`. */
+  medios_pago: MedioEmbebido;
   periodo: string | null;
   local: string | null;
 }
@@ -73,6 +76,8 @@ interface DividendoPendiente {
   monto: number;
   fecha: string;
   medio_pago: string | null;
+  /** El catálogo, traído por la clave foránea. Lo pide `SELECT_MEDIO`. */
+  medios_pago: MedioEmbebido;
   concepto: string | null;
 }
 
@@ -263,7 +268,7 @@ export function VincularPagosMovModal({ mov, open, onClose, onSuccess }: Props) 
       const [d1, d2] = ventanaFechas(mov.fecha);
       const { data, error } = await supabase
         .from('pagos_sueldos')
-        .select('id, empleado_nombre, monto, fecha_pago, medio_pago, periodo, local')
+        .select(`id, empleado_nombre, monto, fecha_pago, medio_pago, periodo, local, ${SELECT_MEDIO}`)
         .is('conciliado_movimiento_id', null)
         .gte('fecha_pago', d1)
         .lte('fecha_pago', d2)
@@ -282,7 +287,7 @@ export function VincularPagosMovModal({ mov, open, onClose, onSuccess }: Props) 
       const [d1, d2] = ventanaFechas(mov.fecha);
       const { data, error } = await supabase
         .from('dividendos')
-        .select('id, socio, monto, fecha, medio_pago, concepto')
+        .select(`id, socio, monto, fecha, medio_pago, concepto, ${SELECT_MEDIO}`)
         .is('conciliado_movimiento_id', null)
         .gte('fecha', d1)
         .lte('fecha', d2)
@@ -945,7 +950,7 @@ export function VincularPagosMovModal({ mov, open, onClose, onSuccess }: Props) 
                                       <strong className="text-gray-900">
                                         {s.empleado_nombre ?? '(sin nombre)'}
                                       </strong>
-                                      {s.medio_pago && s.medio_pago !== 'transferencia' && (
+                                      {s.medio_pago && !esTransferencia(s.medios_pago) && (
                                         <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[9px] text-amber-800">
                                           {s.medio_pago} → transf.
                                         </span>
@@ -1002,7 +1007,7 @@ export function VincularPagosMovModal({ mov, open, onClose, onSuccess }: Props) 
                               {d.socio ?? '(sin socio)'}
                             </strong>
                             <span className="text-[10px] text-gray-500">{d.fecha}</span>
-                            {d.medio_pago && d.medio_pago !== 'transferencia' && (
+                            {d.medio_pago && !esTransferencia(d.medios_pago) && (
                               <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[9px] text-amber-800">
                                 {d.medio_pago} → transf.
                               </span>

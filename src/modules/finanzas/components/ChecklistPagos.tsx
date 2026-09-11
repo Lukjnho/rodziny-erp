@@ -101,15 +101,10 @@ function iconoGrupo(cat: string): string {
   return '📂';
 }
 
-const MEDIOS: MedioPago[] = [
-  'efectivo',
-  'transferencia_mp',
-  'transferencia_galicia',
-  'transferencia_icbc',
-  'cheque_galicia',
-  'tarjeta_icbc',
-  'otro',
-];
+// Los siete medios, en el orden en que los declara el vocabulario único. Antes
+// estaban copiados a mano: agregar uno a `MedioPago` no rompía nada y la
+// pantalla simplemente no lo ofrecía, sin avisar.
+const MEDIOS = Object.keys(MEDIO_PAGO_LABEL) as MedioPago[];
 
 function periodoAnterior(p: string): string {
   const [y, m] = p.split('-').map(Number);
@@ -1965,7 +1960,7 @@ function ModalMedioPago({
 
   // Para transferencias/cheque/tarjeta: N° op + archivo son obligatorios — son
   // las dos piezas que necesitamos para conciliar contra el extracto bancario.
-  const requiereComprobante = !!medio && medio !== 'efectivo';
+  const requiereComprobante = !!medio && medioRequiereComprobante(medio);
 
   async function onArchivoSeleccionado(file: File | null) {
     setErrorLocal(null);
