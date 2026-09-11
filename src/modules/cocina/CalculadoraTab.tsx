@@ -5,7 +5,7 @@ import { cn } from '@/lib/utils';
 import { LocalSelector } from '@/components/ui/LocalSelector';
 import { formatNum, parseDecimal, normalizarDecimal } from '@/lib/numero';
 import { fraccionDeSubreceta } from '@/lib/unidades';
-import type { Receta, Ingrediente } from './recetas/modelo';
+import type { Receta, Ingrediente } from '@/modules/costeo';
 
 // ── Calculadora / planificador de recetas ────────────────────────────────────
 // Herramienta de REFERENCIA (read-only, no toca stock ni guarda nada).

@@ -2,8 +2,7 @@ import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { VISTA_ITEMS_OFICIAL } from '@/lib/origenVentas';
-import { useCostosRecetas } from '@/modules/cocina/hooks/useCostosRecetas';
-import { useConfigCosteo } from '@/modules/cocina/hooks/useConfigCosteo';
+import { useConfigCosteo, useCostosRecetas } from '@/modules/costeo';
 import { useComisionMpConfig } from './useComisionMpConfig';
 import { useProductosCosteoConfig } from './useProductosCosteoConfig';
 

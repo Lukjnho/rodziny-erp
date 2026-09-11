@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useConfigCosteo, type ConfigCosteo } from '@/modules/cocina/hooks/useConfigCosteo';
+import { useConfigCosteo, type ConfigCosteo } from '@/modules/costeo';
 import {
   useProductosCosteoConfig,
   type ProductoCosteoConfig,

@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { formatARS } from '@/lib/utils';
-import { useCostosRecetas } from '@/modules/cocina/hooks/useCostosRecetas';
+import { useCostosRecetas } from '@/modules/costeo';
 import { VinculacionFudoSelector } from './VinculacionFudoSelector';
 import { generarCodigo } from '../lib/codigoProducto';
 

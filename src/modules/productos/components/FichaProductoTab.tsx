@@ -3,9 +3,9 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { cn, formatARS } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
-import { DialogDuplicar, FichaTecnica } from '@/modules/cocina/recetas/componentes';
-import type { Receta, Ingrediente } from '@/modules/cocina/recetas/modelo';
-import { useCostosRecetas } from '@/modules/cocina/hooks/useCostosRecetas';
+import { DialogDuplicar, FichaTecnica } from '@/modules/costeo';
+import type { Receta, Ingrediente } from '@/modules/costeo';
+import { useCostosRecetas } from '@/modules/costeo';
 import { RecetaEditorInline } from './RecetaEditorInline';
 import { ProductoFormPanel } from './ProductoFormPanel';
 

@@ -9,10 +9,10 @@ import {
   type IngredienteRow,
   type ProductoRow,
   type RecetaRow,
-} from '../lib/costeoEngine';
+} from './costeoEngine';
 
 // Re-export para no romper imports existentes (RecetasTab importa el tipo desde acá).
-export type { CostoReceta, CosteoContext, DetalleIngrediente } from '../lib/costeoEngine';
+export type { CostoReceta, CosteoContext, DetalleIngrediente } from './costeoEngine';
 
 // Hook: trae los datos de la base y delega TODO el cálculo en el motor puro
 // (lib/costeoEngine). Así el costeo guardado y el costeo de un borrador en edición

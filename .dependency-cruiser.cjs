@@ -31,10 +31,15 @@ const NIVELES = {
   },
   2: {
     nombre: 'núcleo',
-    // productos, stock, costeo, convenios. Hoy `stock` y `costeo` no son
-    // carpetas propias: viven adentro de cocina (nivel 3). Cuando se separen,
-    // van acá.
-    rutas: ['^src/modules/productos/', '^src/modules/convenios/'],
+    // productos, stock, costeo, convenios. `costeo` bajó de cocina (nivel 3)
+    // el 11-sep-2026: el motor, el modelo de la receta, sus dos hooks y la
+    // pantalla compartida. Hoy `stock` sigue adentro de cocina; cuando se
+    // separe, va acá.
+    rutas: [
+      '^src/modules/productos/',
+      '^src/modules/costeo/',
+      '^src/modules/convenios/',
+    ],
   },
   3: {
     nombre: 'operación',

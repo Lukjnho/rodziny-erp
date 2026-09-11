@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabaseAnon as supabase } from '@/lib/supabaseAnon';
 import { normalizarDecimal, parseDecimal } from '@/lib/numero';
-import { useCostosRecetas } from '../hooks/useCostosRecetas';
+import { useCostosRecetas } from '@/modules/costeo';
 
 export interface IngredienteReal {
   ing_id: string;

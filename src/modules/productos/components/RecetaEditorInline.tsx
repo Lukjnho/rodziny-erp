@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { cn, formatARS } from '@/lib/utils';
-import { AutocompleteIngrediente } from '@/modules/cocina/recetas/componentes';
+import { AutocompleteIngrediente } from '@/modules/costeo';
 import {
   CATEGORIAS,
   CATEGORIA_LABEL,
@@ -20,13 +20,13 @@ import {
   type SubrecetaRol,
   type Ingrediente,
   type RendUnidad,
-} from '@/modules/cocina/recetas/modelo';
+} from '@/modules/costeo';
 import {
   costearBorrador,
   type CosteoContext,
   type IngredienteRow,
   type RecetaRow,
-} from '@/modules/cocina/lib/costeoEngine';
+} from '@/modules/costeo';
 import { VinculacionFudoSelector } from './VinculacionFudoSelector';
 import { generarCodigo } from '../lib/codigoProducto';
 

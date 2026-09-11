@@ -4,11 +4,11 @@ import { supabase } from '@/lib/supabase';
 import { formatARS, cn } from '@/lib/utils';
 import { MontoInput } from '@/components/ui/MontoInput';
 import { useAuth } from '@/lib/auth';
-import { useCostosRecetas } from '@/modules/cocina/hooks/useCostosRecetas';
-import { useConfigCosteo } from '@/modules/cocina/hooks/useConfigCosteo';
+import { useCostosRecetas } from '@/modules/costeo';
+import { useConfigCosteo } from '@/modules/costeo';
 import { useComisionMpConfig } from '../hooks/useComisionMpConfig';
 import { type CanalPrecio } from '../hooks/usePreciosCanal';
-import { SUBCATEGORIA_LABEL } from '@/modules/cocina/recetas/modelo';
+import { SUBCATEGORIA_LABEL } from '@/modules/costeo';
 import { useFudoHuerfanos } from '@/modules/productos/hooks/useFudoHuerfanos';
 import { usePrecioCobrado } from '@/modules/productos/hooks/usePrecioCobrado';
 

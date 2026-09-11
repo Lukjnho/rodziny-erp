@@ -9,7 +9,7 @@
  */
 import { useState, useMemo, useRef, useEffect, Fragment } from 'react';
 import { cn, formatARS } from '@/lib/utils';
-import type { CostoReceta } from '../hooks/useCostosRecetas';
+import type { CostoReceta } from './useCostosRecetas';
 import {
   CATEGORIA_LABEL,
   ROL_LABEL,

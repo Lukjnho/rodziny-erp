@@ -1,8 +1,7 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
-import { useCostosRecetas } from '@/modules/cocina/hooks/useCostosRecetas';
-import { useConfigCosteo } from '@/modules/cocina/hooks/useConfigCosteo';
+import { useConfigCosteo, useCostosRecetas } from '@/modules/costeo';
 import { useComisionMpConfig } from './useComisionMpConfig';
 
 // Normalización idéntica a la de useMenuEngineering para matchear nombres Fudo
