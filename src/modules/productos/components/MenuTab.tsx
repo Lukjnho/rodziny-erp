@@ -5,6 +5,7 @@ import { formatARS, cn } from '@/lib/utils';
 import { MontoInput } from '@/components/ui/MontoInput';
 import { useAuth } from '@/lib/auth';
 import {
+  COLCHON_POR_DEFECTO,
   SUBCATEGORIA_LABEL,
   desgloseDeCobro,
   margenSobreRecibido,
@@ -255,12 +256,14 @@ export function MenuTab() {
   const descEfectivo = configGen?.descuento_efectivo_pct ?? 0.25;
   const descConvenio = configGen?.descuento_convenio_pct ?? 0.15;
 
-  // El piso de margen de cada categoría, desde `productos_costeo_config`. El
-  // 0,5 de respaldo es el de la categoría `default`: solo se usa si la tabla
-  // todavía no cargó.
+  // El piso y el colchón del semáforo, los dos desde `productos_costeo_config`
+  // (mig 206). Los valores de respaldo son los de la categoría `default` y solo
+  // se usan mientras la tabla todavía no cargó.
   const { getConfig: getCfgCategoria } = useProductosCosteoConfig();
-  const minimoDe = (tipo: string | null | undefined): number =>
-    getCfgCategoria(tipo)?.margen_min ?? 0.5;
+  const umbralesDe = (tipo: string | null | undefined): [number, number] => {
+    const c = getCfgCategoria(tipo);
+    return [c?.margen_min ?? 0.5, c?.margen_colchon ?? COLCHON_POR_DEFECTO];
+  };
 
   // Escenario Lista: precio de carta, sin descuento, con la comisión más alta.
   const condicionesLista: CondicionesDeCobro = { ivaPct, comisionPct: comisionMax };
@@ -508,7 +511,7 @@ export function MenuTab() {
         precios={precios}
         margenPctDe={margenLista}
         desglose={desgloseLista}
-        margenMinimo={minimoDe('pasta')}
+        umbrales={umbralesDe("pasta")}
       />
 
       {recetasVendiblesLocal === 0 && (
@@ -575,7 +578,7 @@ export function MenuTab() {
                 <td className="px-3 py-1.5 text-right">
                   <MargenBadge
                     pct={margenLista(precio, p.costo)}
-                    margenMinimo={minimoDe(p.tipo)}
+                    umbrales={umbralesDe(p.tipo)}
                     title={desgloseLista(precio, p.costo)}
                   />
                 </td>
@@ -607,21 +610,21 @@ export function MenuTab() {
               <td className="px-3 py-1.5 text-right">
                 <MargenBadge
                   pct={margenLista(pp.plato, p.costo)}
-                  margenMinimo={minimoDe(p.tipo)}
+                  umbrales={umbralesDe(p.tipo)}
                   title={desgloseLista(pp.plato, p.costo)}
                 />
               </td>
               <td className="px-3 py-1.5 text-right">
                 <MargenBadge
                   pct={margenEfectivo(pp.plato, p.costo)}
-                  margenMinimo={minimoDe(p.tipo)}
+                  umbrales={umbralesDe(p.tipo)}
                   title={desgloseEfectivo(pp.plato, p.costo)}
                 />
               </td>
               <td className="px-3 py-1.5 text-right">
                 <MargenBadge
                   pct={margenConvenio(pp.plato, p.costo)}
-                  margenMinimo={minimoDe(p.tipo)}
+                  umbrales={umbralesDe(p.tipo)}
                   title={desgloseConvenio(pp.plato, p.costo)}
                 />
               </td>
@@ -866,15 +869,15 @@ function ArmarPlato({
   precios,
   margenPctDe,
   desglose,
-  margenMinimo,
+  umbrales,
 }: {
   items: ItemMenu[];
   filtroLocal: FiltroLocal;
   precios: Map<string, Partial<Record<CanalPrecio, number>>>;
   margenPctDe: (precio: number | null | undefined, costo: number | null) => number | null;
   desglose: (precio: number | null | undefined, costo: number | null) => string;
-  /** El plato armado es pasta + salsa: se mide contra el piso de las pastas. */
-  margenMinimo: number;
+  /** El plato armado es pasta + salsa: se mide contra los umbrales de pastas. */
+  umbrales: [number, number];
 }) {
   const [pastaKey, setPastaKey] = useState('');
   const [salsaKey, setSalsaKey] = useState('');
@@ -946,7 +949,7 @@ function ArmarPlato({
             margen plato{' '}
             <MargenBadge
               pct={margenPlato}
-              margenMinimo={margenMinimo}
+              umbrales={umbrales}
               title={desglose(total, costoPlato)}
             />
           </div>
@@ -1004,18 +1007,18 @@ function PrecioInput({
 
 // ─── Badge de margen con semáforo ────────────────────────────────────────────
 // `title` = desglose paso a paso (tooltip nativo al pasar el mouse).
-// `margenMinimo` sale de `productos_costeo_config`, la configuración por
-// categoría. Acá estaban clavados un 0,50 y un 0,65 que no miraban esa
-// configuración: una pasta con mínimo 0,55 y margen 0,60 se pintaba de verde
-// aunque la categoría pida más, y un vino con mínimo 0,45 y margen 0,60 salía
-// amarillo estando holgado.
+// `umbrales` = [piso, colchón] de la categoría, los dos desde
+// `productos_costeo_config` (mig 206). Acá estaban clavados un 0,50 y un 0,65
+// que no miraban ninguna configuración: una pasta con piso 0,55 y margen 0,60
+// se pintaba de verde aunque la categoría pida más, y un vino con piso 0,45 y
+// margen 0,60 salía amarillo estando holgado.
 function MargenBadge({
   pct,
-  margenMinimo,
+  umbrales,
   title,
 }: {
   pct: number | null;
-  margenMinimo: number;
+  umbrales: [number, number];
   title?: string;
 }) {
   if (pct == null)
@@ -1024,7 +1027,7 @@ function MargenBadge({
         —
       </span>
     );
-  const color = COLOR_BADGE[semaforoDeMargen(pct, margenMinimo)];
+  const color = COLOR_BADGE[semaforoDeMargen(pct, umbrales[0], umbrales[1])];
   return (
     <span
       title={title}

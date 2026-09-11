@@ -12,7 +12,7 @@
 --
 --  Lo que NO trae: las policies de RLS. Eso lo mide scripts/mapa-erp/.
 --
---  Generado: 2026-09-11 10:54 -0300
+--  Generado: 2026-09-11 11:50 -0300
 --  93 tablas · 13 vistas · 87 funciones · 116 claves foraneas · 289 indices · 3 realtime (publicaciones)
 -- ============================================================================
 
@@ -1159,7 +1159,8 @@ create table public.productos_costeo_config (
   redondeo numeric not null,
   descripcion text,
   created_at timestamp with time zone not null,
-  updated_at timestamp with time zone not null
+  updated_at timestamp with time zone not null,
+  margen_colchon numeric not null
 );
 
 create table public.productos_costo_historial (

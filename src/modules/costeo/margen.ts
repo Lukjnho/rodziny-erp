@@ -145,30 +145,36 @@ export function precioParaMargen(
 }
 
 /**
- * Cuántos puntos por encima del mínimo empieza el verde.
+ * El colchón de respaldo, y SOLO de respaldo.
  *
- * 💣 No es un número inventado: sale de los umbrales que tenía clavados el badge
- * de MenuTab, 0,50 y 0,65. El 0,50 era exactamente el `margen_min` de la
- * categoría `default`, así que los 15 puntos de diferencia son el colchón que
- * ya se estaba usando — ahora aplicado sobre el mínimo de CADA categoría en vez
- * de sobre uno fijo.
+ * El colchón de verdad vive en `productos_costeo_config.margen_colchon`
+ * (migración 206), una columna por categoría. Este 0,15 se usa nada más que
+ * mientras la configuración todavía no cargó en el navegador.
  *
- * ⏳ PREGUNTA PARA LUCAS: ¿15 puntos sirve para todas? Una pasta con mínimo 0,55
- * recién se pone verde en 0,70; un vino con mínimo 0,45, en 0,60. Si el colchón
- * tiene que ser distinto por categoría, va como columna en
- * `productos_costeo_config` y esta constante desaparece.
+ * 💣 El número no es inventado: es la diferencia que tenía clavado el badge
+ * viejo de MenuTab (0,65 − 0,50), y ese 0,50 era justo el `margen_min` de la
+ * categoría `default`.
  */
-export const UMBRAL_AMARILLO_SOBRE_MINIMO = 0.15;
+export const COLCHON_POR_DEFECTO = 0.15;
 
 /**
- * El semáforo del margen, contra el mínimo de SU categoría.
+ * El semáforo del margen, contra los dos números de SU categoría.
  *
- * `margenMinimo` sale de `productos_costeo_config` (0,45 a 0,55 según la
- * categoría). Si no hay config para esa categoría, el que llama tiene que pasar
- * el de `default` — acá no se inventa un piso.
+ * Los dos salen de `productos_costeo_config`: `margen_min` (0,45 a 0,55 según
+ * la categoría) y `margen_colchon` (cuántos puntos más arriba arranca el
+ * verde). Acá no se inventa ninguno de los dos — si no hay config para esa
+ * categoría, el que llama pasa la de `default`.
+ *
+ *     margen < mínimo                      → rojo
+ *     mínimo ≤ margen < mínimo + colchón   → amarillo
+ *     mínimo + colchón ≤ margen            → verde
  */
-export function semaforoDeMargen(margen: number, margenMinimo: number): SemaforoMargen {
+export function semaforoDeMargen(
+  margen: number,
+  margenMinimo: number,
+  colchon: number = COLCHON_POR_DEFECTO,
+): SemaforoMargen {
   if (margen < margenMinimo) return 'rojo';
-  if (margen < margenMinimo + UMBRAL_AMARILLO_SOBRE_MINIMO) return 'amarillo';
+  if (margen < margenMinimo + colchon) return 'amarillo';
   return 'verde';
 }

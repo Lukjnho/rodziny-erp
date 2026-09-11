@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  UMBRAL_AMARILLO_SOBRE_MINIMO,
+  COLCHON_POR_DEFECTO,
   desgloseDeCobro,
   loQueRecibimos,
   margenSobreRecibido,
@@ -145,6 +145,23 @@ describe('semaforoDeMargen', () => {
   });
 
   it('el colchon es el que estaba: 15 puntos', () => {
-    expect(UMBRAL_AMARILLO_SOBRE_MINIMO).toBeCloseTo(0.15, 10);
+    expect(COLCHON_POR_DEFECTO).toBeCloseTo(0.15, 10);
+  });
+});
+
+describe('el colchon por categoria (mig 206)', () => {
+  it('con colchon 0,20 el verde arranca mas arriba', () => {
+    // Piso 0,55 y colchon 0,20 → verde recien en 0,75.
+    expect(semaforoDeMargen(0.7, 0.55, 0.2)).toBe('amarillo');
+    expect(semaforoDeMargen(0.75, 0.55, 0.2)).toBe('verde');
+  });
+
+  it('con colchon 0 no hay amarillo: o llega o no llega', () => {
+    expect(semaforoDeMargen(0.549, 0.55, 0)).toBe('rojo');
+    expect(semaforoDeMargen(0.55, 0.55, 0)).toBe('verde');
+  });
+
+  it('sin pasar colchon usa el de respaldo, que es el de siempre', () => {
+    expect(semaforoDeMargen(0.6, 0.5)).toBe(semaforoDeMargen(0.6, 0.5, COLCHON_POR_DEFECTO));
   });
 });

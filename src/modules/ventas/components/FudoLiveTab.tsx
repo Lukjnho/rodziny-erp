@@ -6,7 +6,7 @@ import { KPICard } from '@/components/ui/KPICard';
 import { formatARS, cn } from '@/lib/utils';
 import { useCostoPorFudo } from '@/modules/productos/hooks/useCostoPorFudo';
 import { useProductosCosteoConfig } from '@/modules/productos/hooks/useProductosCosteoConfig';
-import { semaforoDeMargen, type SemaforoMargen } from '@/modules/costeo';
+import { COLCHON_POR_DEFECTO, semaforoDeMargen, type SemaforoMargen } from '@/modules/costeo';
 
 // El semáforo del margen, con los mismos tres colores que usa la carta.
 const COLOR_SEMAFORO: Record<SemaforoMargen, string> = {
@@ -591,6 +591,8 @@ export function FudoLiveTab() {
                                       semaforoDeMargen(
                                         margen,
                                         getCfgCategoria(p.categoria)?.margen_min ?? 0.5,
+                                        getCfgCategoria(p.categoria)?.margen_colchon ??
+                                          COLCHON_POR_DEFECTO,
                                       )
                                     ],
                                   )}

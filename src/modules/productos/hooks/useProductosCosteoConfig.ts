@@ -12,6 +12,12 @@ export interface ProductoCosteoConfig {
   categoria: string;
   /** Piso de margen sobre lo recibido (neto de IVA y comisión). 0,55 = 55 %. */
   margen_min: number;
+  /**
+   * Cuántos puntos por encima del piso arranca el verde del semáforo.
+   * 0,15 = quince puntos. Era una constante en el código; bajó al dato en la
+   * migración 206 por el mismo motivo que `margen_min`: depende de la categoría.
+   */
+  margen_colchon: number;
   /** A cuánto redondea el precio sugerido: 50 en panificados, 100 en el resto. */
   redondeo: number;
   descripcion: string | null;

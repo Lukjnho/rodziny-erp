@@ -75,7 +75,7 @@ export type { ConfigCosteo } from './useConfigCosteo';
 
 // ── La regla del margen ─────────────────────────────────────────────────────
 export {
-  UMBRAL_AMARILLO_SOBRE_MINIMO,
+  COLCHON_POR_DEFECTO,
   desgloseDeCobro,
   loQueRecibimos,
   margenSobreRecibido,
