@@ -312,7 +312,12 @@ function TablaProductosME({ productos }: { productos: ProductoME[] }) {
             <th className="px-3 py-2 text-right">Margen %</th>
             <th className="px-3 py-2 text-right">Contribución $</th>
             <th className="px-3 py-2 text-center">Clase</th>
-            <th className="px-3 py-2 text-center">Ancla</th>
+            <th
+              className="px-3 py-2 text-center"
+              title="Plato ancla: el Plan de Acción no le sugiere ni subirle el precio ni sacarlo de la carta."
+            >
+              ⚓ Ancla
+            </th>
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-100">
@@ -379,7 +384,7 @@ function TablaProductosME({ productos }: { productos: ProductoME[] }) {
                     onChange={(e) =>
                       toggleAncla.mutate({ id: p.cocinaProductoId!, valor: e.target.checked })
                     }
-                    title="Marcar como producto ancla (excluido de sugerencias automáticas)"
+                    title="Plato ancla: el Plan de Acción deja de sugerirle subir el precio y de proponerlo para sacar de la carta."
                     className="h-4 w-4"
                   />
                 ) : (
@@ -390,6 +395,22 @@ function TablaProductosME({ productos }: { productos: ProductoME[] }) {
           ))}
         </tbody>
       </table>
+
+      {/* La casilla "Ancla" existía desde hace meses con un solo tooltip que
+          decía "excluido de sugerencias automáticas" — sin decir qué es un
+          ancla ni dónde se nota. Nadie la tildó nunca: 0 de 71 productos.
+          El tooltip además no existe en tablet, que es donde se revisa. */}
+      <div className="border-t border-gray-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-900">
+        <strong>⚓ ¿Qué es un plato ancla?</strong> Uno que tenés en la carta
+        aunque no sea el que más deja: porque la gente viene por él, porque marca
+        el precio de referencia, o porque sin él no se entiende el menú.
+        <br />
+        Al tildarlo, <strong>el Plan de Acción deja de meterse con él</strong>:
+        no sugiere subirle el precio (ni el ajuste leve ni el de llegar al piso
+        de margen) y no lo propone para sacar de la carta aunque venda poco.
+        Todo lo demás sigue igual: se costea, se mide y aparece acá con su
+        margen real.
+      </div>
     </div>
   );
 }
