@@ -1,10 +1,12 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { VISTA_TICKETS_OFICIAL } from '@/lib/origenVentas';
+import { ticketPromedio } from '../lib/ticketPromedio';
 
 export type LocalVentas = 'vedia' | 'saavedra' | 'consolidado';
 
 interface TicketRow {
+  id: string;
   local: string;
   fecha: string;
   hora: string | null;
@@ -73,7 +75,7 @@ async function traerTickets(local: LocalVentas, periodo: string): Promise<Ticket
     let q = supabase
       // la lista ya trae solo la venta oficial de cada local (mig 188)
       .from(VISTA_TICKETS_OFICIAL)
-      .select('local, fecha, hora, total_bruto, medio_pago')
+      .select('id, local, fecha, hora, total_bruto, medio_pago')
       .eq('periodo', periodo)
       .neq('estado', 'Cancelada')
       .neq('estado', 'Eliminada')
@@ -90,7 +92,39 @@ async function traerTickets(local: LocalVentas, periodo: string): Promise<Ticket
   return filas;
 }
 
-function agregar(periodo: string, filas: TicketRow[]): ResumenVentas {
+/**
+ * Los ids de los tickets del período que tienen al menos un renglón cargado.
+ *
+ * Se pide aparte porque la vista de tickets no sabe nada de los renglones.
+ * Devuelve un set vacío cuando el período no tiene ni un renglón atado a su
+ * ticket (todo lo anterior a julio-2026), y `ticketPromedio` lo interpreta como
+ * "no se puede saber" y no excluye a nadie.
+ */
+async function traerTicketsConRenglones(periodo: string): Promise<Set<string>> {
+  const PAGE = 1000;
+  const ids = new Set<string>();
+  let from = 0;
+  while (true) {
+    const { data, error } = await supabase
+      .from('ventas_items')
+      .select('ticket_id')
+      .eq('periodo', periodo)
+      .not('ticket_id', 'is', null)
+      .range(from, from + PAGE - 1);
+    if (error) throw new Error(error.message);
+    if (!data || data.length === 0) break;
+    for (const r of data) ids.add(r.ticket_id as string);
+    if (data.length < PAGE) break;
+    from += PAGE;
+  }
+  return ids;
+}
+
+function agregar(
+  periodo: string,
+  filas: TicketRow[],
+  conRenglones: Set<string>,
+): ResumenVentas {
   let ventaTotal = 0;
   const porLocal = {
     vedia: { venta: 0, tickets: 0 },
@@ -158,7 +192,9 @@ function agregar(periodo: string, filas: TicketRow[]): ResumenVentas {
     periodo,
     ventaTotal,
     tickets,
-    ticketPromedio: tickets > 0 ? ventaTotal / tickets : 0,
+    // El promedio NO es ventaTotal/tickets: las mesas que se abrieron y cerraron
+    // sin una sola línea no son ventas. La regla vive en ../lib/ticketPromedio.
+    ticketPromedio: ticketPromedio(filas, conRenglones).promedio,
     diasConVenta,
     ventaDiaria: diasConVenta > 0 ? ventaTotal / diasConVenta : 0,
     ultimaFecha,
@@ -174,7 +210,13 @@ function agregar(periodo: string, filas: TicketRow[]): ResumenVentas {
 export function useVentasResumen(local: LocalVentas, periodo: string) {
   return useQuery({
     queryKey: ['ventas-resumen', local, periodo],
-    queryFn: async () => agregar(periodo, await traerTickets(local, periodo)),
+    queryFn: async () => {
+      const [filas, conRenglones] = await Promise.all([
+        traerTickets(local, periodo),
+        traerTicketsConRenglones(periodo),
+      ]);
+      return agregar(periodo, filas, conRenglones);
+    },
     staleTime: 10 * 60 * 1000,
   });
 }

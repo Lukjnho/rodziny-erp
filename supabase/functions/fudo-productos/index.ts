@@ -333,6 +333,10 @@ Deno.serve(async (req) => {
       dias,
       totalVentas,
       cantidadTickets,
+      // ⚠️ Igual que en fudo-mensuales: este promedio es el de Fudo, sin la regla
+      // de src/modules/ventas/lib/ticketPromedio. Esta pantalla existe para
+      // contrastar contra los reportes de Fudo, y aplicarle nuestra regla la haría
+      // dar distinto que el sistema con el que se la compara.
       ticketPromedio: cantidadTickets > 0 ? Math.round(totalVentas / cantidadTickets) : 0,
       totalItems,
       productosUnicos: porProducto.size,

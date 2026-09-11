@@ -146,6 +146,12 @@ Deno.serve(async (req) => {
         mes,
         totalVentas: data.totalVentas,
         cantidadTickets: data.cantidadTickets,
+        // ⚠️ Este promedio NO usa la regla de src/modules/ventas/lib/ticketPromedio
+        // (que descarta las mesas sin un solo renglón), y es a propósito: esta
+        // pantalla es "lo que dice Fudo", tal cual, para poder compararla contra
+        // los reportes de Fudo. Además acá no hay con qué: se leen las ventas de
+        // la API, no los renglones. El promedio de nuestra base —el que sí aplica
+        // la regla— es el del módulo Ventas.
         ticketPromedio: data.cantidadTickets > 0 ? Math.round(data.totalVentas / data.cantidadTickets) : 0,
       })
     }
