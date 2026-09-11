@@ -78,7 +78,6 @@ interface CocinaProductoRow {
   ml_por_venta: number | null;
   es_ancla: boolean;
   fudo_nombres: string[];
-  costo_empaque: number | null;
 }
 
 // Recetas vendibles del tab Menú. Modelo actual del ERP: los productos
@@ -154,7 +153,7 @@ export function useMenuEngineering(opts: MenuEngineeringOptions) {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cocina_productos')
-        .select('id, codigo, nombre, tipo, local, receta_id, insumo_reventa_id, ml_por_venta, es_ancla, fudo_nombres, costo_empaque')
+        .select('id, codigo, nombre, tipo, local, receta_id, insumo_reventa_id, ml_por_venta, es_ancla, fudo_nombres')
         .eq('activo', true);
       if (error) throw error;
       return data as CocinaProductoRow[];
@@ -319,13 +318,20 @@ export function useMenuEngineering(opts: MenuEngineeringOptions) {
       // medianas se calculan sólo sobre productos comparables.
       if (opts.categoria && opts.categoria !== 'todas' && categoriaFudo !== opts.categoria) continue;
 
-      // Costo estimado: costoPorPorcion de la receta + costo_empaque del cocina_producto.
+      // Costo estimado: costoPorPorcion de la receta, y nada más.
+      //
+      // El empaque entra por la subreceta "Packaging Vianda"/"Packaging Congelado"
+      // que vive DENTRO de la receta, así que ya viene sumado en costoPorPorcion
+      // (mig 204). Antes acá se le sumaba además `cocina_producto.costo_empaque`:
+      // un segundo mecanismo que estaba en cero en las 100 filas y que, encima,
+      // solo entraba si el match había venido por el camino legacy — cuando la
+      // receta matcheaba directo, `prod` es null y el campo ni se miraba.
       let costoUnitario: number | null = null;
       if (recetaIdMatch) {
         const c = costosRecetas.get(recetaIdMatch);
         if (c) {
           const baseCosto = c.costoPorPorcion ?? c.costoPorKg ?? null;
-          if (baseCosto != null) costoUnitario = baseCosto + (prod?.costo_empaque ?? 0);
+          if (baseCosto != null) costoUnitario = baseCosto;
         }
       }
 

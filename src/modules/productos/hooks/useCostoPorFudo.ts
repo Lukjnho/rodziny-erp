@@ -44,7 +44,7 @@ export function useCostoPorFudo(local: 'vedia' | 'saavedra' | null) {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cocina_productos')
-        .select('id, receta_id, costo_empaque, fudo_nombres')
+        .select('id, receta_id, fudo_nombres')
         .eq('local', local!)
         .eq('activo', true)
         .not('fudo_nombres', 'is', null);
@@ -52,7 +52,6 @@ export function useCostoPorFudo(local: 'vedia' | 'saavedra' | null) {
       return data as {
         id: string;
         receta_id: string | null;
-        costo_empaque: number | null;
         fudo_nombres: string[] | null;
       }[];
     },
@@ -82,13 +81,21 @@ export function useCostoPorFudo(local: 'vedia' | 'saavedra' | null) {
     }
 
     // 2) cocina_producto por fudo_nombres[] (bebidas reventa / legacy), solo si su
-    //    receta_id es una receta vendible costeada. Suma costo_empaque.
+    //    receta_id es una receta vendible costeada.
+    //
+    //    El empaque NO se suma acá. Se cobra una sola vez, con la subreceta
+    //    "Packaging Vianda"/"Packaging Congelado" adentro de la receta, que pasa
+    //    por el motor de costeo como cualquier otro ingrediente (mig 204). Antes
+    //    había un segundo mecanismo —`cocina_productos.costo_empaque` sumado acá y
+    //    en Menu Engineering— que estaba en cero en las 100 filas, que ninguna
+    //    pantalla escribía, y que ni siquiera se aplicaba parejo: solo entraba por
+    //    este camino legacy, nunca cuando la receta matcheaba directo.
     for (const p of productosQ.data) {
       if (!p.receta_id || !vendibleIds.has(p.receta_id)) continue;
       const c = costos.get(p.receta_id);
       const base = c?.costoPorPorcion ?? c?.costoPorKg ?? null;
       if (base == null) continue;
-      const costo = base + (p.costo_empaque ?? 0);
+      const costo = base;
       for (const fn of p.fudo_nombres ?? []) {
         const k = normalizar(fn);
         if (k && !m.has(k)) m.set(k, costo);
