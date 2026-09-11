@@ -42,6 +42,11 @@
 export {
   CATEGORIAS,
   CATEGORIA_LABEL,
+  FAMILIAS_STOCK,
+  FAMILIA_STOCK_LABEL,
+  etiquetaDeFamilia,
+  categoriaDeLote,
+  CATEGORIA_DE_LOTE_POR_FAMILIA,
   ROLES,
   ROL_LABEL,
   SIN_CLASIFICAR,
@@ -61,6 +66,7 @@ export {
   queEsLaReceta,
 } from './modelo';
 export type {
+  FamiliaStock,
   Ingrediente,
   ProductoCompras,
   Receta,

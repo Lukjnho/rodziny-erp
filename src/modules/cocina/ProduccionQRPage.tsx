@@ -23,7 +23,8 @@ interface Producto {
   id: string;
   nombre: string;
   codigo: string;
-  tipo: string;
+  /** `cocina_productos.familia_stock` (mig 209). */
+  familia_stock: string;
   local: string;
   es_mixto: boolean;
   /**
@@ -678,7 +679,7 @@ export function ProduccionQRPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cocina_productos')
-        .select('id, nombre, codigo, tipo, local, es_mixto, lleva_relleno')
+        .select('id, nombre, codigo, familia_stock, local, es_mixto, lleva_relleno')
         .eq('activo', true)
         .order('nombre');
       if (error) throw error;
@@ -1131,14 +1132,14 @@ export function ProduccionQRPage() {
   }, [planHoy, recetasLocal]);
 
   const productosPasta = useMemo(
-    () => (productos ?? []).filter((p) => p.tipo === 'pasta' && p.local === local),
+    () => (productos ?? []).filter((p) => p.familia_stock === 'pasta' && p.local === local),
     [productos, local],
   );
   // Saavedra: catálogo para carga overwrite recipe-independent (pasta/milanesa).
   const pastaLibres = useMemo(
     () =>
       (productos ?? [])
-        .filter((p) => p.tipo === 'pasta' && p.local === local)
+        .filter((p) => p.familia_stock === 'pasta' && p.local === local)
         .map((p) => ({ id: p.id, nombre: p.nombre })),
     [productos, local],
   );
@@ -3958,7 +3959,7 @@ function FormPanaderia({
         .from('cocina_productos')
         .select('id, nombre, codigo, receta_id, masa_id, unidad')
         .eq('local', local)
-        .eq('tipo', 'panificado')
+        .eq('familia_stock', 'panificado')
         .eq('activo', true)
         .not('masa_id', 'is', null);
       if (error) throw error;
@@ -5925,21 +5926,22 @@ function FormMerma({
         kind: 'producto',
         id: p.id,
         nombre: p.nombre,
-        tipo: p.tipo,
+        tipo: p.familia_stock,
       });
     }
     for (const r of recetas) {
       if (r.local !== local) continue;
       // Subrecetas y recetas categorizadas como 'otros' no son items vendibles/consumibles
       if (r.tipo === 'subreceta' || r.categoria === 'otros') continue;
-      // r.categoria comparte vocabulario con cocina_productos.tipo (pasta/salsa/postre/etc),
-      // así que sirve para detectar duplicación con el catálogo de productos.
+      // La categoria de la receta y la familia de stock del producto comparten
+      // varios nombres (pasta/salsa/postre) aunque NO son la misma lista: alcanza
+      // para detectar que el mismo nombre este cargado de los dos lados.
       const tipoEquiv = r.categoria ?? '';
       if (
         productos.some(
           (p) =>
             p.local === local &&
-            p.tipo === tipoEquiv &&
+            p.familia_stock === tipoEquiv &&
             p.nombre.toLowerCase().trim() === r.nombre.toLowerCase().trim(),
         )
       ) {

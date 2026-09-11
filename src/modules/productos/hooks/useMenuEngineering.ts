@@ -77,7 +77,8 @@ interface CocinaProductoRow {
   id: string;
   codigo: string;
   nombre: string;
-  tipo: string;
+  /** `cocina_productos.familia_stock` (mig 209). */
+  familia_stock: string;
   local: string;
   receta_id: string | null;
   insumo_reventa_id: string | null;
@@ -159,7 +160,7 @@ export function useMenuEngineering(opts: MenuEngineeringOptions) {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cocina_productos')
-        .select('id, codigo, nombre, tipo, local, receta_id, insumo_reventa_id, ml_por_venta, es_ancla, fudo_nombres')
+        .select('id, codigo, nombre, familia_stock, local, receta_id, insumo_reventa_id, ml_por_venta, es_ancla, fudo_nombres')
         .eq('activo', true);
       if (error) throw error;
       return data as CocinaProductoRow[];
@@ -318,7 +319,7 @@ export function useMenuEngineering(opts: MenuEngineeringOptions) {
         receta?.id ??
         (prod?.receta_id && vendibleIds.has(prod.receta_id) ? prod.receta_id : null);
       const tipo =
-        receta?.categoria ?? prod?.tipo ?? (a.categoria ?? '').toLowerCase();
+        receta?.categoria ?? prod?.familia_stock ?? (a.categoria ?? '').toLowerCase();
       const categoriaFudo = a.categoria ?? null;
       const esAncla = prod?.es_ancla ?? false;
 

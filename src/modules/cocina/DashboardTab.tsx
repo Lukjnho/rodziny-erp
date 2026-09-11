@@ -719,7 +719,8 @@ interface ProductoDB {
   id: string;
   nombre: string;
   local: string;
-  tipo: string;
+  /** La familia de stock del producto (`cocina_productos.familia_stock`, mig 209). */
+  familia_stock: string;
   receta_id: string | null;
   minimo_produccion: number | null;
   receta_nombre: string | null;
@@ -760,7 +761,8 @@ type ProductoDBRow = {
   id: string;
   nombre: string;
   local: string;
-  tipo: string;
+  /** `cocina_productos.familia_stock` (mig 209). */
+  familia_stock: string;
   receta_id: string | null;
   minimo_produccion: number | null;
   receta: {
@@ -866,7 +868,7 @@ export function DashboardTab() {
       const { data, error } = await supabase
         .from('cocina_productos')
         .select(
-          'id, nombre, local, tipo, receta_id, minimo_produccion, receta:cocina_recetas(nombre, rendimiento_porciones, rendimiento_kg)',
+          'id, nombre, local, familia_stock, receta_id, minimo_produccion, receta:cocina_recetas(nombre, rendimiento_porciones, rendimiento_kg)',
         )
         .eq('local', local)
         .eq('activo', true);
@@ -875,7 +877,7 @@ export function DashboardTab() {
         id: r.id,
         nombre: r.nombre,
         local: r.local,
-        tipo: r.tipo,
+        familia_stock: r.familia_stock,
         receta_id: r.receta_id,
         minimo_produccion: r.minimo_produccion,
         receta_nombre: r.receta?.nombre ?? null,

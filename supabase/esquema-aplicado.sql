@@ -12,7 +12,7 @@
 --
 --  Lo que NO trae: las policies de RLS. Eso lo mide scripts/mapa-erp/.
 --
---  Generado: 2026-09-11 13:58 -0300
+--  Generado: 2026-09-11 14:53 -0300
 --  93 tablas · 13 vistas · 87 funciones · 116 claves foraneas · 289 indices · 3 realtime (publicaciones)
 -- ============================================================================
 
@@ -493,7 +493,7 @@ create table public.cocina_productos (
   id uuid not null,
   nombre text not null,
   codigo text not null,
-  tipo text not null,
+  familia_stock text not null,
   unidad text not null,
   minimo_produccion numeric,
   local text not null,
@@ -511,7 +511,8 @@ create table public.cocina_productos (
   ml_por_venta numeric,
   es_mixto boolean not null,
   masa_id uuid,
-  lleva_relleno boolean
+  lleva_relleno boolean,
+  tipo text
 );
 
 create table public.cocina_productos_precio_historial (
@@ -1510,7 +1511,7 @@ create view public.v_cocina_stock_mostrador as WITH cierre AS (
             COALESCE((c.created_at AT TIME ZONE 'America/Argentina/Buenos_Aires'::text), (((now() AT TIME ZONE 'America/Argentina/Buenos_Aires'::text))::date)::timestamp without time zone) AS corte
            FROM (cocina_productos p
              LEFT JOIN cierre c ON (((c.producto_id = p.id) AND (c.local = p.local))))
-          WHERE ((p.tipo = 'pasta'::text) AND (p.activo = true))
+          WHERE ((p.familia_stock = 'pasta'::text) AND (p.activo = true))
         )
  SELECT b.producto_id,
     b.nombre,
@@ -1577,7 +1578,7 @@ create view public.v_cocina_stock_pastas as WITH base AS (
                           WHERE ((cd.producto_id = p.id) AND (cd.local = p.local) AND (cd.tipo = 'pasta'::text) AND (p.local = 'saavedra'::text))) bx
                   ORDER BY bx.created_at DESC
                  LIMIT 1) b ON (true))
-          WHERE ((p.tipo = 'pasta'::text) AND (p.activo = true))
+          WHERE ((p.familia_stock = 'pasta'::text) AND (p.activo = true))
         ), ratio AS (
          SELECT lp.producto_id,
             lp.local,
@@ -1622,7 +1623,7 @@ create view public.v_cocina_stock_pastas as WITH base AS (
                           WHERE ((cd.producto_id = p.id) AND (cd.local = p.local) AND (cd.tipo = 'pasta'::text) AND (p.local = 'saavedra'::text))) bx
                   ORDER BY bx.created_at DESC
                  LIMIT 1) c ON (true))
-          WHERE ((p.tipo = 'pasta'::text) AND (p.activo = true))
+          WHERE ((p.familia_stock = 'pasta'::text) AND (p.activo = true))
         )
  SELECT base.producto_id,
     base.nombre,

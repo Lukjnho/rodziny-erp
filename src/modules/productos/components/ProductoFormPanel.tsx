@@ -2,7 +2,14 @@ import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { formatARS } from '@/lib/utils';
-import { etiquetaDeCajon, queEsLaReceta, useCostosRecetas } from '@/modules/costeo';
+import {
+  etiquetaDeCajon,
+  etiquetaDeFamilia,
+  FAMILIAS_STOCK,
+  FAMILIA_STOCK_LABEL,
+  queEsLaReceta,
+  useCostosRecetas,
+} from '@/modules/costeo';
 import { VinculacionFudoSelector } from './VinculacionFudoSelector';
 import { generarCodigo } from '../lib/codigoProducto';
 
@@ -10,17 +17,9 @@ import { generarCodigo } from '../lib/codigoProducto';
 // de la definición del producto + vincular receta existente + activo + eliminar.
 // Self-contained: trae el producto (si edita) y las recetas por su cuenta.
 
-const TIPOS = ['pasta', 'salsa', 'postre', 'relleno', 'masa', 'panificado', 'milanesa', 'bebida'] as const;
-const TIPO_LABEL: Record<string, string> = {
-  pasta: 'Pasta',
-  salsa: 'Salsa',
-  postre: 'Postre',
-  relleno: 'Relleno',
-  masa: 'Masa',
-  panificado: 'Panificado',
-  milanesa: 'Milanesa',
-  bebida: 'Bebida',
-};
+// La familia de stock y sus nombres salen del vocabulario único. Acá había una
+// copia de 8 valores que todavía ofrecía 'relleno': la migración 209 lo sacó de
+// la lista permitida de la base, así que elegirlo fallaba al guardar.
 // producto.tipo → categorías/roles de receta RECOMENDADAS bajo el modelo nuevo
 // (cocina_recetas.tipo es 'receta'/'subreceta'; la categoría real está en
 // `categoria` para recetas y en `rol` para subrecetas). Las no recomendadas
@@ -98,7 +97,7 @@ export function ProductoFormPanel({
     queryFn: async (): Promise<ProductoRow | null> => {
       const { data, error } = await supabase
         .from('cocina_productos')
-        .select('id, nombre, codigo, tipo, unidad, minimo_produccion, controla_stock, disponible_almacen, local, activo, receta_id, insumo_reventa_id, ml_por_venta, fudo_nombres, lleva_relleno')
+        .select('id, nombre, codigo, familia_stock, unidad, minimo_produccion, controla_stock, disponible_almacen, local, activo, receta_id, insumo_reventa_id, ml_por_venta, fudo_nombres, lleva_relleno')
         .eq('id', productoId)
         .maybeSingle();
       if (error) throw error;
@@ -256,7 +255,7 @@ function FormInterno({
     // se editan desde el form (antes minimo quedaba fijo en el default 100).
     const row = {
       nombre: nombre.trim(),
-      tipo,
+      familia_stock: tipo,
       unidad,
       local,
       activo,
@@ -345,9 +344,9 @@ function FormInterno({
               onChange={(e) => setTipo(e.target.value)}
               className={inputCls}
             >
-              {TIPOS.map((t) => (
+              {FAMILIAS_STOCK.map((t) => (
                 <option key={t} value={t}>
-                  {TIPO_LABEL[t]}
+                  {FAMILIA_STOCK_LABEL[t]}
                 </option>
               ))}
             </select>
@@ -387,7 +386,7 @@ function FormInterno({
           >
             <option value="">— Sin receta —</option>
             {recomendadas.length > 0 && (
-              <optgroup label={`Recomendadas para ${TIPO_LABEL[tipo] ?? tipo}`}>
+              <optgroup label={`Recomendadas para ${etiquetaDeFamilia(tipo)}`}>
                 {recomendadas.map((r) => (
                   <option key={r.id} value={r.id}>
                     {r.nombre} · {etiquetaDeCajon(queEsLaReceta(r))}

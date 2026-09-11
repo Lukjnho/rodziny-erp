@@ -89,7 +89,8 @@ interface Producto {
   id: string;
   nombre: string;
   codigo: string;
-  tipo: string;
+  /** `cocina_productos.familia_stock` (mig 209). */
+  familia_stock: string;
   local: string;
 }
 interface Receta {
@@ -394,7 +395,7 @@ export function ProduccionTab() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cocina_productos')
-        .select('id, nombre, codigo, tipo, local')
+        .select('id, nombre, codigo, familia_stock, local')
         .eq('activo', true)
         .order('nombre');
       if (error) throw error;

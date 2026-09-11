@@ -18,7 +18,8 @@ export type EstadoCobertura = 'cubre' | 'ajustado' | 'corto' | 'sobra' | 'sin_de
 export interface ProductoCob {
   id: string;
   nombre: string;
-  tipo: string;
+  /** `cocina_productos.familia_stock` (mig 209): donde vive el producto. */
+  familia_stock: string;
   receta_id: string | null;
 }
 
@@ -123,13 +124,13 @@ export function calcularCobertura(args: ArgsCobertura): ResultadoCob[] {
   }
 
   function stockDe(prod: ProductoCob): number {
-    if (prod.tipo === 'pasta') return stockPorProducto.get(prod.id) ?? 0;
+    if (prod.familia_stock === 'pasta') return stockPorProducto.get(prod.id) ?? 0;
     if (!prod.receta_id) return 0;
     return stockPorReceta.get(prod.receta_id) ?? 0;
   }
 
   const items = productos
-    .filter((p) => tiposIncluidos.includes(p.tipo))
+    .filter((p) => tiposIncluidos.includes(p.familia_stock))
     .map<ResultadoCob>((p) => {
       const demandaSemanal = demandaSemanalDe(p);
       const planificado = planificadoDe(p);
@@ -150,7 +151,7 @@ export function calcularCobertura(args: ArgsCobertura): ResultadoCob[] {
       return {
         id: p.id,
         nombre: p.nombre,
-        tipo: p.tipo,
+        tipo: p.familia_stock,
         planificado,
         stock: stockLibre,
         pedidos,

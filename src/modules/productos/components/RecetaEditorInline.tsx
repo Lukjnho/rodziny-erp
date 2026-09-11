@@ -11,6 +11,9 @@ import {
   SUBCATEGORIAS_POR_CATEGORIA,
   SUBCATEGORIA_LABEL,
   TIPO_LABEL,
+  FAMILIAS_STOCK,
+  FAMILIA_STOCK_LABEL,
+  type FamiliaStock,
   mapearUnidad,
   UNIDADES,
   UNIDAD_LABEL,
@@ -47,7 +50,8 @@ interface IngredienteForm {
 interface ProductoVinculado {
   id: string;
   nombre: string;
-  tipo: string;
+  /** `cocina_productos.familia_stock` (mig 209). */
+  familia_stock: string;
   local: string;
   controla_stock: boolean | null;
   minimo_produccion: number | null;
@@ -84,28 +88,14 @@ const TIPO_PRODUCTO_A_CATEGORIA: Record<string, RecetaCategoria | ''> = {
 // desde acá. Estos mapeos derivan los defaults del producto desde la receta
 // abierta para no reescribir a mano lo que ya está cargado.
 
-const TIPOS_PRODUCTO = [
-  'pasta',
-  'salsa',
-  'postre',
-  'panificado',
-  'milanesa',
-  'relleno',
-  'masa',
-  'bebida',
-] as const;
-type TipoProducto = (typeof TIPOS_PRODUCTO)[number];
-
-const TIPO_PRODUCTO_LABEL: Record<TipoProducto, string> = {
-  pasta: 'Pasta',
-  salsa: 'Salsa',
-  postre: 'Postre',
-  panificado: 'Pan',
-  milanesa: 'Milanesa',
-  relleno: 'Relleno',
-  masa: 'Masa',
-  bebida: 'Bebida',
-};
+// La lista y los nombres salen del vocabulario único (`FAMILIAS_STOCK` en
+// `@/modules/costeo`). Acá había una copia con 8 valores, uno de los cuales
+// —'relleno'— no existe más: la migración 209 borró el único producto que lo
+// tenía y lo sacó de la lista permitida de la base. Ofrecerlo hacía que elegirlo
+// fallara al guardar, contra el `check` de la tabla.
+type TipoProducto = FamiliaStock;
+const TIPOS_PRODUCTO = FAMILIAS_STOCK;
+const TIPO_PRODUCTO_LABEL = FAMILIA_STOCK_LABEL;
 
 // Categoría de la receta → tipo del producto.
 const CATEGORIA_A_TIPO_PRODUCTO: Partial<Record<RecetaCategoria, TipoProducto>> = {
@@ -118,10 +108,17 @@ const CATEGORIA_A_TIPO_PRODUCTO: Partial<Record<RecetaCategoria, TipoProducto>> 
   cafeteria: 'bebida',
 };
 
-// Rol de la subreceta → tipo. Manda sobre la categoría: una subreceta no es el
-// producto vendible sino su componente (un relleno de pasta es 'relleno', no 'pasta').
+// Rol de la subreceta → familia de stock. Manda sobre la categoría: una
+// subreceta no es el producto vendible sino su componente.
+//
+// 💣 Acá decía `relleno: 'relleno'`, y esa familia NO EXISTE en los datos: los
+// 8 productos cuya receta tiene rol 'relleno' están todos en familia 'pasta'
+// (Cappelletti Capresse, Ñoquis rellenos, Sorrentinos…). El único producto que
+// alguna vez tuvo familia 'relleno' era "Mezzelune Cuadril (perro)", apagado y
+// sin receta, que la migración 209 borró. Elegirlo desde acá habría fallado
+// contra el `check` de la tabla.
 const ROL_A_TIPO_PRODUCTO: Partial<Record<SubrecetaRol, TipoProducto>> = {
-  relleno: 'relleno',
+  relleno: 'pasta',
   masa: 'masa',
   masa_panaderia: 'masa',
   salsa_base: 'salsa',
@@ -136,7 +133,6 @@ const ROL_A_TIPO_PRODUCTO: Partial<Record<SubrecetaRol, TipoProducto>> = {
 const UNIDAD_POR_TIPO_PRODUCTO: Record<TipoProducto, string> = {
   pasta: 'porciones',
   salsa: 'kg',
-  relleno: 'kg',
   masa: 'kg',
   postre: 'unidades',
   panificado: 'unidades',
@@ -178,7 +174,7 @@ export function RecetaEditorInline({
   // Si se pasa, se está creando la receta de un producto vendible existente
   // (Costeo > "Faltan enlazar"): la receta nueva queda enganchada a ese producto
   // y pre-rellenamos nombre/tipo/categoría/local desde él.
-  vincularProducto?: { id: string; nombre: string; tipo: string; local: string };
+  vincularProducto?: { id: string; nombre: string; familia_stock: string; local: string };
 }) {
   const qc = useQueryClient();
   const creando = !receta;
@@ -190,7 +186,8 @@ export function RecetaEditorInline({
     receta?.tipo ?? (vincularProducto ? 'receta' : 'subreceta'),
   );
   const [categoria, setCategoria] = useState<RecetaCategoria | ''>(
-    receta?.categoria ?? (vincularProducto ? TIPO_PRODUCTO_A_CATEGORIA[vincularProducto.tipo] ?? '' : ''),
+    receta?.categoria ??
+      (vincularProducto ? (TIPO_PRODUCTO_A_CATEGORIA[vincularProducto.familia_stock] ?? '') : ''),
   );
   const [subcategoria, setSubcategoria] = useState<string>(receta?.subcategoria ?? '');
   const [rol, setRol] = useState<SubrecetaRol | ''>(receta?.rol ?? '');
@@ -245,7 +242,7 @@ export function RecetaEditorInline({
     queryFn: async (): Promise<ProductoVinculado[]> => {
       const { data, error } = await supabase
         .from('cocina_productos')
-        .select('id, nombre, tipo, local, controla_stock, minimo_produccion, activo')
+        .select('id, nombre, familia_stock, local, controla_stock, minimo_produccion, activo')
         .eq('receta_id', receta!.id)
         .order('nombre');
       if (error) throw error;
@@ -352,7 +349,7 @@ export function RecetaEditorInline({
         const { error: errIns } = await supabase.from('cocina_productos').insert({
           nombre: receta.nombre,
           codigo: generarCodigo(receta.nombre, usados),
-          tipo: tipoAlta,
+          familia_stock: tipoAlta,
           unidad: unidadAlta,
           local: localAlta,
           activo: true,

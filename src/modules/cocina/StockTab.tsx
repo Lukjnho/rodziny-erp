@@ -9,6 +9,7 @@ import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
 import { hoyAR } from '@/lib/fechaAR';
 import { normNombre } from './DashboardTab';
+import { categoriaDeLote, etiquetaDeFamilia } from '@/modules/costeo';
 import {
   SELECT_STOCK_PASTAS,
   vendibleHoy,
@@ -20,7 +21,8 @@ interface Producto {
   id: string;
   nombre: string;
   codigo: string;
-  tipo: string;
+  /** `cocina_productos.familia_stock` (mig 209): en qué seccion de la cocina vive. */
+  familia_stock: string;
   unidad: string;
   minimo_produccion: number | null;
   local: string;
@@ -520,7 +522,7 @@ export function StockTab() {
       // Esta tabla es SOLO de pastas (flujo cámara/mostrador/porcionado).
       // Postres, panificados y salsas llevan su stock por conteo aparte —
       // no se duplican acá.
-      if (prod.tipo !== 'pasta') continue;
+      if (prod.familia_stock !== 'pasta') continue;
       for (const loc of locales) {
         if (prod.local !== loc) continue;
 
@@ -1178,16 +1180,16 @@ interface LoteProdCatalogo {
   responsable: string | null;
 }
 
-const CATALOGO_TIPOS_SAAVEDRA: { tipo: string; titulo: string }[] = [
+const CATALOGO_TIPOS_SAAVEDRA: { familia: string; titulo: string }[] = [
   // Pasta NO va acá: Saavedra usa el flujo cámara (tabla 🍝 Pastas abajo), espejo de Vedia.
-  { tipo: 'milanesa', titulo: '🍖 Milanesas' },
-  { tipo: 'postre', titulo: '🍰 Postres' },
-  { tipo: 'panificado', titulo: '🥖 Panes' },
-  { tipo: 'salsa', titulo: '🥫 Salsas' },
+  { familia: 'milanesa', titulo: '🍖 Milanesas' },
+  { familia: 'postre', titulo: '🍰 Postres' },
+  { familia: 'panificado', titulo: '🥖 Panes' },
+  { familia: 'salsa', titulo: '🥫 Salsas' },
 ];
-const CATALOGO_TIPOS_VEDIA: { tipo: string; titulo: string }[] = [
-  { tipo: 'salsa', titulo: '🥫 Salsas' },
-  { tipo: 'postre', titulo: '🍰 Postres' },
+const CATALOGO_TIPOS_VEDIA: { familia: string; titulo: string }[] = [
+  { familia: 'salsa', titulo: '🥫 Salsas' },
+  { familia: 'postre', titulo: '🍰 Postres' },
 ];
 
 // Sumar floats acumula residuos binarios (0.205 + 0.5 = 0.7050000000000001).
@@ -1236,7 +1238,7 @@ function CatalogoStock({
 }: {
   productos: Producto[];
   local: FiltroLocal;
-  tipos: { tipo: string; titulo: string }[];
+  tipos: { familia: string; titulo: string }[];
   esAdmin: boolean;
   responsable: string | null;
   onQuitarControl: (id: string) => void;
@@ -1366,7 +1368,7 @@ function CatalogoStock({
       Array.from(
         new Set(
           productos
-            .filter((p) => p.local === local && p.activo && p.tipo === 'salsa' && p.receta_id)
+            .filter((p) => p.local === local && p.activo && p.familia_stock === 'salsa' && p.receta_id)
             .map((p) => p.receta_id as string),
         ),
       ).sort(),
@@ -1468,18 +1470,24 @@ function CatalogoStock({
     [productos, local],
   );
 
-  // Última carga por tipo (MAX created_at de lotes en stock cuya `categoria`
-  // matchea el tipo del catálogo). Si no hay lotes para ese tipo → null.
+  // Última carga por familia (el created_at más nuevo entre los lotes en stock
+  // de esa familia). Si no hay lotes → null.
+  //
+  // 💣 La categoría del LOTE y la familia del PRODUCTO son dos listas distintas:
+  // el lote dice 'panaderia' donde el producto dice 'panificado'. Acá se
+  // comparaba crudo, así que la sección "🥖 Panes" no mostró una fecha nunca,
+  // desde el 16-jun-2026, con 1.019 lotes cargados. No fallaba: quedaba vacío.
   const ultimaCargaPorTipo = useMemo(() => {
     const m = new Map<string, UltimaCargaInfo | null>();
-    for (const { tipo } of tipos) {
+    for (const { familia } of tipos) {
+      const catLote = categoriaDeLote(familia);
       let best: LoteProdCatalogo | null = null;
       for (const l of lotes ?? []) {
-        if (l.categoria !== tipo) continue;
+        if (l.categoria !== catLote) continue;
         if (!best || l.created_at > best.created_at) best = l;
       }
       m.set(
-        tipo,
+        familia,
         best ? { fecha: best.created_at, responsable: best.responsable } : null,
       );
     }
@@ -1488,19 +1496,19 @@ function CatalogoStock({
 
   return (
     <div className="space-y-6">
-      {tipos.map(({ tipo, titulo }) => {
+      {tipos.map(({ familia, titulo }) => {
         const filas = productosCatalogo
-          .filter((p) => p.tipo === tipo)
+          .filter((p) => p.familia_stock === familia)
           .sort((a, b) => a.nombre.localeCompare(b.nombre));
         if (filas.length === 0) return null;
         return (
-          <div key={tipo} className="space-y-2">
+          <div key={familia} className="space-y-2">
             <h3 className="text-base font-semibold text-gray-800">
               {titulo}{' '}
               <span className="text-sm font-normal capitalize text-gray-500">
                 · {local}
               </span>
-              <UltimaCarga info={ultimaCargaPorTipo.get(tipo) ?? null} />
+              <UltimaCarga info={ultimaCargaPorTipo.get(familia) ?? null} />
             </h3>
             <div className="overflow-x-auto rounded-lg border border-surface-border bg-white">
               <table className="w-full text-sm">
@@ -1551,7 +1559,7 @@ function CatalogoStock({
                             onClick={() =>
                               setEditar({
                                 producto: p,
-                                tipo,
+                                tipo: familia,
                                 valor: stock > 0 ? String(stock) : '',
                                 guardando: false,
                               })
@@ -1737,17 +1745,8 @@ function ControlToggle({
 // Lista los productos del local activo que el admin sacó del control de stock,
 // con su toggle para volver a controlarlos. El cocinero no ve esta sección.
 
-const TIPO_LABEL_SIN_CONTROL: Record<string, string> = {
-  pasta: 'Pasta',
-  milanesa: 'Milanesa',
-  postre: 'Postre',
-  panificado: 'Pan',
-  salsa: 'Salsa',
-  relleno: 'Relleno',
-  masa: 'Masa',
-  bebida: 'Bebida',
-};
-
+// Los nombres de las familias salen de `@/modules/costeo`. Acá había una copia
+// que todavía listaba 'relleno', que ya no existe como familia.
 function SinControlSection({
   productos,
   filtroLocal,
@@ -1767,7 +1766,8 @@ function SinControlSection({
           (p) => p.local === filtroLocal && p.activo && p.controla_stock === false,
         )
         .sort(
-          (a, b) => a.tipo.localeCompare(b.tipo) || a.nombre.localeCompare(b.nombre),
+          (a, b) =>
+            a.familia_stock.localeCompare(b.familia_stock) || a.nombre.localeCompare(b.nombre),
         ),
     [productos, filtroLocal],
   );
@@ -1809,7 +1809,7 @@ function SinControlSection({
                     <tr key={p.id} className="border-b border-surface-border">
                       <td className="px-4 py-2 font-medium text-gray-600">{p.nombre}</td>
                       <td className="px-4 py-2 text-gray-500">
-                        {TIPO_LABEL_SIN_CONTROL[p.tipo] ?? p.tipo}
+                        {etiquetaDeFamilia(p.familia_stock)}
                       </td>
                       <td className="px-4 py-2 font-mono text-xs text-gray-500">
                         {p.codigo}
@@ -1859,7 +1859,10 @@ function ApagadosSection({
     () =>
       productos
         .filter((p) => p.local === filtroLocal)
-        .sort((a, b) => a.tipo.localeCompare(b.tipo) || a.nombre.localeCompare(b.nombre)),
+        .sort(
+          (a, b) =>
+            a.familia_stock.localeCompare(b.familia_stock) || a.nombre.localeCompare(b.nombre),
+        ),
     [productos, filtroLocal],
   );
 
@@ -1913,7 +1916,7 @@ function ApagadosSection({
                     <tr key={p.id} className="border-b border-surface-border">
                       <td className="px-4 py-2 font-medium text-gray-600">{p.nombre}</td>
                       <td className="px-4 py-2 text-gray-500">
-                        {TIPO_LABEL_SIN_CONTROL[p.tipo] ?? p.tipo}
+                        {etiquetaDeFamilia(p.familia_stock)}
                       </td>
                       <td className="px-4 py-2 font-mono text-xs text-gray-500">{p.codigo}</td>
                       <td className="px-4 py-2 text-center">

@@ -26,7 +26,8 @@ type LocalCocina = 'vedia' | 'saavedra';
 interface ProductoCat {
   id: string;
   nombre: string;
-  tipo: string;
+  /** `cocina_productos.familia_stock` (mig 209). NO es el `tipo` del ítem del plan. */
+  familia_stock: string;
   receta_id: string | null;
 }
 
@@ -107,7 +108,7 @@ export function ResumenSemanalCard({
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cocina_productos')
-        .select('id, nombre, tipo, receta_id')
+        .select('id, nombre, familia_stock, receta_id')
         .eq('local', local)
         .eq('activo', true)
         .eq('controla_stock', true);

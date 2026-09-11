@@ -45,7 +45,8 @@ interface ProductoMin {
   id: string;
   nombre: string;
   codigo: string;
-  tipo: Tipo;
+  /** `cocina_productos.familia_stock` (mig 209). NO es el `tipo` del cierre. */
+  familia_stock: Tipo;
 }
 
 interface RecetaMin {
@@ -262,7 +263,7 @@ function DetalleDia({ local, fecha }: { local: Local; fecha: string }) {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cocina_productos')
-        .select('id, nombre, codigo, tipo')
+        .select('id, nombre, codigo, familia_stock')
         .in('id', productoIds);
       if (error) throw error;
       return (data ?? []) as ProductoMin[];

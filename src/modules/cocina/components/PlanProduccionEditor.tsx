@@ -359,7 +359,7 @@ export function PlanProduccionEditor({
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cocina_productos')
-        .select('id, nombre, tipo, receta_id')
+        .select('id, nombre, familia_stock, receta_id')
         .eq('local', local)
         .eq('activo', true)
         .eq('controla_stock', true);

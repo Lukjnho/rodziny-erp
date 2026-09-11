@@ -8,6 +8,7 @@ import {
   compararCajones,
   DialogDuplicar,
   etiquetaDeCajon,
+  etiquetaDeFamilia,
   FichaTecnica,
   SIN_CLASIFICAR,
 } from '@/modules/costeo';
@@ -29,7 +30,8 @@ type RecetaFull = Receta & { vendible: boolean };
 interface HuerfanoProducto {
   id: string;
   nombre: string;
-  tipo: string;
+  /** `cocina_productos.familia_stock` (mig 209): dónde vive, no qué categoría es. */
+  familia_stock: string;
   local: string | null;
 }
 
@@ -123,7 +125,7 @@ export function FichaProductoTab() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cocina_productos')
-        .select('id, nombre, tipo, local')
+        .select('id, nombre, familia_stock, local')
         .eq('activo', true)
         .is('receta_id', null)
         .is('insumo_reventa_id', null)
@@ -232,7 +234,7 @@ export function FichaProductoTab() {
     const q = busqueda.trim().toLowerCase();
     return (huerfanos ?? []).filter((p) => {
       if (p.local !== filtroLocal) return false;
-      if (filtroTipo !== 'todos' && p.tipo !== filtroTipo) return false;
+      if (filtroTipo !== 'todos' && p.familia_stock !== filtroTipo) return false;
       if (q && !p.nombre.toLowerCase().includes(q)) return false;
       return true;
     });
@@ -384,7 +386,7 @@ export function FichaProductoTab() {
             vincularProducto={{
               id: h.id,
               nombre: h.nombre,
-              tipo: h.tipo,
+              familia_stock: h.familia_stock,
               local: h.local ?? filtroLocal,
             }}
             onCancel={() => setCosteandoHuerfano(null)}
@@ -606,10 +608,10 @@ export function FichaProductoTab() {
                     <span
                       className={cn(
                         'rounded px-1.5 py-0.5 text-[9px] font-medium capitalize',
-                        COLOR_CAJON[p.tipo] ?? 'bg-gray-100 text-gray-600',
+                        COLOR_CAJON[p.familia_stock] ?? 'bg-gray-100 text-gray-600',
                       )}
                     >
-                      {etiquetaDeCajon(p.tipo)}
+                      {etiquetaDeFamilia(p.familia_stock)}
                     </span>
                     <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[9px] capitalize text-gray-600">
                       {p.local ?? '—'}

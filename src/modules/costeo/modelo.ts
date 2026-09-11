@@ -182,6 +182,77 @@ export const SUBCATEGORIA_LABEL: Record<string, string> = {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// LA CUARTA LISTA: DÓNDE VIVE EL PRODUCTO (familia de stock)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// `cocina_productos.familia_stock` —que hasta la migración 209 se llamaba
+// `tipo`— NO es la categoría ni el rol: es en qué sección del pizarrón, del QR
+// de producción y de la cámara vive el producto.
+//
+// Medido sobre los 99 productos: tres clasificaciones distintas de receta caen
+// en 'pasta' (cat:pasta, rol:masa, rol:relleno) y `masa_panaderia` aparece
+// tanto en 'masa' como en 'panificado'. Si fuera la categoría o el rol, eso no
+// podría pasar.
+//
+// ⚠️ Vive acá porque es vocabulario de producto y las pantallas lo usan al lado
+// de las otras tres listas. No es un concepto de costeo: si algún día
+// `productos` abre su propia puerta, se muda ahí.
+
+/** Las siete familias de stock. */
+export const FAMILIAS_STOCK = [
+  'pasta',
+  'salsa',
+  'postre',
+  'masa',
+  'panificado',
+  'milanesa',
+  'bebida',
+] as const;
+export type FamiliaStock = (typeof FAMILIAS_STOCK)[number];
+
+export const FAMILIA_STOCK_LABEL: Record<FamiliaStock, string> = {
+  pasta: 'Pasta',
+  salsa: 'Salsa',
+  postre: 'Postre',
+  masa: 'Masa',
+  panificado: 'Panificado',
+  milanesa: 'Milanesa',
+  bebida: 'Bebida',
+};
+
+/** El nombre visible de una familia. Si no la conoce devuelve la llave cruda. */
+export function etiquetaDeFamilia(familia: string | null | undefined): string {
+  if (!familia) return SIN_CLASIFICAR;
+  return FAMILIA_STOCK_LABEL[familia as FamiliaStock] ?? familia;
+}
+
+/**
+ * El puente entre la familia del producto y la categoría con la que se graba un
+ * LOTE de producción (`cocina_lotes_produccion.categoria`).
+ *
+ * 💣 Son dos listas distintas y no coinciden: el lote dice `panaderia` donde el
+ * producto dice `panificado`. Medido el 11-sep-2026: 1.019 lotes en
+ * `panaderia`, cero en `panificado`.
+ *
+ * Esto ya costó un bug silencioso. En Cocina › Stock, la sección "🥖 Panes"
+ * buscaba la última carga comparando la familia del producto contra la
+ * categoría del lote, y por eso **nunca mostró una fecha desde el 16-jun-2026**.
+ * No fallaba: mostraba vacío, que se lee como "todavía no cargaron nada".
+ *
+ * Esto NO unifica las dos listas —eso es una decisión del negocio y está
+ * planteada—. Solo escribe la traducción una vez, en vez de que cada pantalla
+ * la adivine.
+ */
+export const CATEGORIA_DE_LOTE_POR_FAMILIA: Partial<Record<FamiliaStock, string>> = {
+  panificado: 'panaderia',
+};
+
+/** La categoría con la que se graba el lote de producción de esta familia. */
+export function categoriaDeLote(familia: string): string {
+  return CATEGORIA_DE_LOTE_POR_FAMILIA[familia as FamiliaStock] ?? familia;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // LOS `*_base` SON UN MECANISMO, NO SEIS VALORES SUELTOS
 // ─────────────────────────────────────────────────────────────────────────────
 //
