@@ -14,6 +14,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { guardarContando } from '@/lib/escribir';
 import { esTransferencia, SELECT_MEDIO, type MedioEmbebido } from '@/lib/mediosPago';
 import { useAuth } from '@/lib/auth';
 import { formatARS, cn } from '@/lib/utils';
@@ -489,12 +490,14 @@ export function VincularPagosMovModal({ mov, open, onClose, onSuccess }: Props) 
       });
       if (errPago) throw errPago;
 
-      // Vincular el mov al gasto nuevo
-      const { error: errMov } = await supabase
-        .from('movimientos_bancarios')
-        .update({ gasto_id: gastoId })
-        .eq('id', mov.id);
-      if (errMov) throw errMov;
+      // Vincular el mov al gasto nuevo. Si esto no toca nada, el gasto y el
+      // pago quedan creados y el movimiento sigue figurando SIN conciliar:
+      // el próximo intento crea un segundo gasto por el mismo movimiento.
+      await guardarContando(
+        supabase.from('movimientos_bancarios').update({ gasto_id: gastoId }).eq('id', mov.id),
+        'No se pudo enganchar el movimiento al gasto nuevo',
+        { filasEsperadas: 1 },
+      );
 
       qc.invalidateQueries({ queryKey: ['conciliacion'] });
       qc.invalidateQueries({ queryKey: ['gastos_listado'] });
@@ -544,46 +547,54 @@ export function VincularPagosMovModal({ mov, open, onClose, onSuccess }: Props) 
         const { error: errPagos } = await supabase.from('pagos_gastos').insert(pagos);
         if (errPagos) throw errPagos;
 
-        const { error: errGastos } = await supabase
-          .from('gastos')
-          .update({ estado_pago: 'Pagado' })
-          .in('id', idsArr);
-        if (errGastos) throw errGastos;
+        // Uno por gasto seleccionado: si vuelven menos, alguno quedó impago
+        // con su pago ya creado y va a volver a aparecer como conciliable.
+        await guardarContando(
+          supabase.from('gastos').update({ estado_pago: 'Pagado' }).in('id', idsArr),
+          'No se pudieron marcar los gastos como pagados',
+          { filasEsperadas: idsArr.length },
+        );
 
         // Vincular el movimiento al primer gasto (para el panel Conciliados)
-        const { error: errMov } = await supabase
-          .from('movimientos_bancarios')
-          .update({ gasto_id: idsArr[0] })
-          .eq('id', mov.id);
-        if (errMov) throw errMov;
+        await guardarContando(
+          supabase.from('movimientos_bancarios').update({ gasto_id: idsArr[0] }).eq('id', mov.id),
+          'No se pudo enganchar el movimiento a los gastos',
+          { filasEsperadas: 1 },
+        );
       }
 
       // 2) SUELDOS: conciliar y CORREGIR el medio a transferencia (venían como efectivo).
       //    Guarda el N° de op y la cuenta del banco para que el flujo cuadre.
       if (selSueldos.size > 0) {
-        const { error: errSueldos } = await supabase
-          .from('pagos_sueldos')
-          .update({
-            conciliado_movimiento_id: mov.id,
-            medio_pago: 'transferencia',
-            numero_operacion: mov.referencia ?? null,
-            cuenta: mov.cuenta,
-          })
-          .in('id', Array.from(selSueldos));
-        if (errSueldos) throw errSueldos;
+        await guardarContando(
+          supabase
+            .from('pagos_sueldos')
+            .update({
+              conciliado_movimiento_id: mov.id,
+              medio_pago: 'transferencia',
+              numero_operacion: mov.referencia ?? null,
+              cuenta: mov.cuenta,
+            })
+            .in('id', Array.from(selSueldos)),
+          'No se pudieron conciliar los sueldos',
+          { filasEsperadas: selSueldos.size },
+        );
       }
 
       // 3) DIVIDENDOS: idem — conciliar y corregir el medio a transferencia.
       if (selDividendos.size > 0) {
-        const { error: errDiv } = await supabase
-          .from('dividendos')
-          .update({
-            conciliado_movimiento_id: mov.id,
-            medio_pago: 'transferencia',
-            numero_operacion: mov.referencia ?? null,
-          })
-          .in('id', Array.from(selDividendos));
-        if (errDiv) throw errDiv;
+        await guardarContando(
+          supabase
+            .from('dividendos')
+            .update({
+              conciliado_movimiento_id: mov.id,
+              medio_pago: 'transferencia',
+              numero_operacion: mov.referencia ?? null,
+            })
+            .in('id', Array.from(selDividendos)),
+          'No se pudieron conciliar los dividendos',
+          { filasEsperadas: selDividendos.size },
+        );
       }
 
       // 4) Refresh
