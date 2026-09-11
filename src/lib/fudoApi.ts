@@ -7,27 +7,15 @@
 
 import { supabase } from './supabase';
 
-// ── IDs de medios de pago Fudo ──────────────────────────────────────────────
-export const PAYMENT_METHOD_IDS: Record<string, string> = {
-  '1': 'Efectivo',
-  '2': 'Cta. Cte.',
-  '7': 'Mercadopago Lucas',
-  '8': 'Transferencia',
-  '11': 'Cheque',
-  '14': 'Codigo QR',
-  '15': 'Tarjeta de débito',
-  '16': 'Tarjeta de crédito',
-};
-
-export const PM = {
-  efectivo: '1',
-  qr: '14',
-  debito: '15',
-  credito: '16',
-  transferencia: '8',
-  mpLucas: '7',
-  ctaCte: '2',
-} as const;
+// 🗑️ Acá vivían PAYMENT_METHOD_IDS y PM: un segundo catálogo de medios de pago,
+// con los ids de Fudo y sus nombres escritos a mano ('Mercadopago Lucas' entre
+// ellos). Estaban exportados y NADIE los importaba — el único que usa este
+// archivo se lleva obtenerVentasFudo y CAJA_FUDO_ID.
+//
+// No se reemplazan por nada: el catálogo de verdad es la tabla `medios_pago`
+// con sus alias, y el disparador de la base traduce el texto que manda Fudo
+// (mig 138, mig 205). Un segundo catálogo dormido es la forma en que después
+// aparece un tercero.
 
 // ── Mapeo de cajas ERP → CashRegister IDs de Fudo ──────────────────────────
 export const CAJA_FUDO_ID: Record<string, Record<string, string>> = {

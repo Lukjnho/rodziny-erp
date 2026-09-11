@@ -1,7 +1,7 @@
 import { useState, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
-import { aliasDeDividendo, esCobroDeDividendo } from '@/lib/mediosPago';
+import { mediosDeDividendo, esCobroDeDividendo } from '@/lib/mediosPago';
 import { parseFudoVentas } from '../parsers/parseFudoVentas';
 import { parseFudoGastos } from '../parsers/parseFudoGastos';
 import { cn } from '@/lib/utils';
@@ -104,7 +104,8 @@ export function UploadFudo({ onSuccess }: { onSuccess?: () => void }) {
 
     // Qué medios de pago son plata del socio: lo dice el catálogo, no una cadena
     // escrita acá (mig 205). Ver src/lib/mediosPago.ts.
-    const aliasDiv = await aliasDeDividendo();
+    const mediosDiv = await mediosDeDividendo();
+    const aliasDiv = new Set(mediosDiv.flatMap((m) => m.alias));
 
     // Precalcular por ticket: total de pagos y porción cobrada con el POSnet
     // personal. Solo se usa para restarla del total_bruto en los tickets MIXTOS:
@@ -272,7 +273,12 @@ export function UploadFudo({ onSuccess }: { onSuccess?: () => void }) {
         socio: 'lucas',
         fecha: p.fecha,
         monto: p.monto,
-        medio_pago: 'Mercadopago Lucas',
+        // El nombre sale del catálogo, no escrito acá: si se graba un texto que
+        // el catálogo no reconoce, el disparador de la base lo manda a
+        // "Sin especificar" y el dividendo pierde su medio de pago.
+        // `mediosDiv[0]` existe sí o sí: si estuviera vacío, `aliasDiv` también
+        // lo estaría y este filtro no habría dejado pasar ninguna fila.
+        medio_pago: mediosDiv[0].nombre,
         concepto: 'Cobro de venta con posnet personal — autoasignado',
         local: loc,
         periodo: data.periodo,

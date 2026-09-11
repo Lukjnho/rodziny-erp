@@ -725,7 +725,10 @@ export function FlujoCaja() {
         socio: 'lucas',
         fecha: maxFecha,
         monto: total,
-        medio_pago: 'Mercadopago Lucas',
+        // El nombre del medio sale del catálogo, no escrito acá. Es un renglón
+        // de pantalla, pero si el catálogo se renombra, éste quedaría mostrando
+        // un nombre que ya no existe en ningún lado.
+        medio_pago: autos[0].medio_pago ?? '',
         concepto: `${autos.length} cobros POSnet (autoasignado)`,
         local: null,
         periodo,

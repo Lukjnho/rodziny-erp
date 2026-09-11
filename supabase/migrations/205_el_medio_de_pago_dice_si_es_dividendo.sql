@@ -138,7 +138,10 @@ as $$
     sum(t.total_bruto) as ing_bruto,
     sum(coalesce(t.iva, 0)) as iva_debito,
     count(*) as ticket_count
-  from v_ventas_tickets_oficial t
+  -- Calificada con el esquema a propósito: escrita sin `public.` el mapa la toma
+  -- como una vista distinta de la que define la mig 188 y queda una conexión
+  -- colgando en el aire. Es el mismo bicho de siempre: una cosa, dos nombres.
+  from public.v_ventas_tickets_oficial t
   left join public.medios_pago mp on mp.id = t.medio_pago_id
   where t.local = p_local
     and t.periodo >= p_anio || '-01'
