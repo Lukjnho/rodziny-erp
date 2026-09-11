@@ -14,7 +14,10 @@
     "format": "prettier --write \"src/**/*.{ts,tsx,js,jsx,json,css,md}\"",
     "format:check": "prettier --check \"src/**/*.{ts,tsx,js,jsx,json,css,md}\"",
     "preview": "vite preview",
-    "foto-grafo": "node scripts/verificar/foto-grafo.mjs"
+    "foto-grafo": "node scripts/verificar/foto-grafo.mjs",
+    "escrituras": "node scripts/verificar/escrituras.mjs",
+    "costos": "node scripts/verificar/costos.mjs",
+    "huerfanas": "node scripts/verificar/huerfanas.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
