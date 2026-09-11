@@ -12,7 +12,7 @@ import {
   remuneracionConPresentismo,
   trabajoEnElPeriodo,
 } from './utils';
-import { medioRequiereComprobante } from '../gastos/types';
+import { medioRequiereComprobante } from '@/lib/mediosPago';
 
 // ── Tipos ────────────────────────────────────────────────────────────────────
 // Los mismos 4 valores que ofrece MEDIO_PAGO_OPCIONES. Antes el tipo incluía

@@ -32,12 +32,13 @@ import { PastasTerminadasPanel } from './components/PastasTerminadasPanel';
 import { CalendarioPagosCtaCte } from './components/CalendarioPagosCtaCte';
 import { esCategoriaCtaCte } from './ctaCteExclusiones';
 import { etiquetaParte, tituloParte } from './comprobantePartes';
-import type { MedioPago, Gasto } from '@/modules/gastos/types';
+import type { Gasto } from '@/modules/gastos/types';
 import {
   MEDIO_PAGO_LABEL,
-  medioRequiereComprobante,
   mapearMedioPagoOcr,
-} from '@/modules/gastos/types';
+  medioRequiereComprobante,
+  type MedioPago,
+} from '@/lib/mediosPago';
 import { PagarGastoModal } from '@/modules/gastos/PagarGastoModal';
 import { esPagoEjecutado } from '@/lib/flujoCaja';
 

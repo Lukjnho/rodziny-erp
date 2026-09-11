@@ -27,16 +27,8 @@ import { sha256File } from '../../lib/hashFile';
 import { procesarFactura } from '../../lib/ocrFactura';
 import { procesarComprobantePago } from '../../lib/ocrComprobantePago';
 import { formatARS, cn } from '../../lib/utils';
-import {
-  MEDIO_PAGO_LABEL,
-  TIPO_COMPROBANTE_LABEL,
-  medioRequiereComprobante,
-  type MedioPago,
-  type Proveedor,
-  type CategoriaGasto,
-  type ItemGastoStock,
-  type CondicionIVA,
-} from './types';
+import { TIPO_COMPROBANTE_LABEL, type Proveedor, type CategoriaGasto, type ItemGastoStock, type CondicionIVA } from './types';
+import { MEDIO_PAGO_LABEL, medioRequiereComprobante, type MedioPago } from '@/lib/mediosPago';
 import type { PrefillGasto } from './NuevoGastoModal';
 import { displayProveedor } from './proveedorDisplay';
 import { useDuplicadosGasto } from './useDuplicados';

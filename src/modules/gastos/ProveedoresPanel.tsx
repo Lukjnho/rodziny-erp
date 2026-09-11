@@ -5,8 +5,8 @@ import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
 import { esCuitValido, formatearCuit, normalizarCuit } from '@/lib/cuit';
 import { procesarFactura } from '@/lib/ocrFactura';
-import type { Proveedor, CategoriaGasto, CondicionIVA, MedioPago } from './types';
-import { MEDIO_PAGO_LABEL } from './types';
+import type { Proveedor, CategoriaGasto, CondicionIVA } from './types';
+import { MEDIO_PAGO_LABEL, type MedioPago } from '@/lib/mediosPago';
 import { displayProveedor, ProveedorLabel } from './proveedorDisplay';
 
 // Mapea la condición IVA que devuelve el OCR (texto libre) a nuestro enum.

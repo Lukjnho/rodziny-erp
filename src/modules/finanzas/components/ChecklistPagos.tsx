@@ -6,7 +6,7 @@ import { formatARS, cn } from '@/lib/utils';
 import { hoyAR } from '@/lib/fechaAR';
 import { esPagoEjecutado } from '@/lib/flujoCaja';
 import { MontoInput } from '@/components/ui/MontoInput';
-import { type MedioPago, MEDIO_PAGO_LABEL, medioRequiereComprobante } from '@/modules/gastos/types';
+import { type MedioPago, MEDIO_PAGO_LABEL, medioRequiereComprobante } from '@/lib/mediosPago';
 import {
   urgenciaPago,
   diasHastaVto,

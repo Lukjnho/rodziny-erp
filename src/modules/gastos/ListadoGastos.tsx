@@ -3,7 +3,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { formatARS, formatFecha, cn } from '@/lib/utils';
 import type { Gasto } from './types';
-import { TIPO_COMPROBANTE_LABEL, MEDIO_PAGO_LABEL } from './types';
+import { TIPO_COMPROBANTE_LABEL } from './types';
+import { MEDIO_PAGO_LABEL } from '@/lib/mediosPago';
 import { NuevoGastoModal } from './NuevoGastoModal';
 import {
   useProveedoresMap,

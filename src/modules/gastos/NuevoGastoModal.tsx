@@ -13,11 +13,11 @@ import type {
   Gasto,
   ItemGastoStock,
   TipoComprobante,
-  MedioPago,
   EstadoPago,
   PagoGasto,
 } from './types';
-import { TIPO_COMPROBANTE_LABEL, MEDIO_PAGO_LABEL, medioRequiereComprobante } from './types';
+import { TIPO_COMPROBANTE_LABEL } from './types';
+import { MEDIO_PAGO_LABEL, medioRequiereComprobante, type MedioPago } from '@/lib/mediosPago';
 import { PagarGastoModal } from './PagarGastoModal';
 import { displayProveedor } from './proveedorDisplay';
 import { useDuplicadosGasto } from './useDuplicados';
