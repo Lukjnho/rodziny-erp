@@ -147,15 +147,18 @@ export const ROL_LABEL: Record<SubrecetaRol, string> = {
 /** Las cuatro subcategorías de bebida. */
 export const SUBCATEGORIAS_BEBIDA = ['aperitivo', 'gaseosa', 'agua', 'jugo'] as const;
 
-/** Las seis de cafetería. */
-export const SUBCATEGORIAS_CAFETERIA = [
-  'cafe_caliente',
-  'cafe_frio',
-  'sin_cafe',
-  'salado',
-  'dulce',
-  'combo',
-] as const;
+/**
+ * Las cuatro de cafetería.
+ *
+ * 💣 Eran seis. `salado` y `dulce` se sacaron el 11-sep-2026 porque el
+ * desplegable las ofrecía y **ninguna receta las usaba, en ningún local**: dos
+ * opciones muertas que solo servían para que alguien eligiera mal. Lo midió
+ * `npm run vocabularios`, que cruza cada lista fija contra los datos reales.
+ *
+ * Si algún día vuelven a hacer falta, se agregan acá y el desplegable las
+ * muestra solo. Lo que no va es dejarlas "por las dudas".
+ */
+export const SUBCATEGORIAS_CAFETERIA = ['cafe_caliente', 'cafe_frio', 'sin_cafe', 'combo'] as const;
 
 export const SUBCATEGORIAS_POR_CATEGORIA: Record<RecetaCategoria, readonly string[]> = {
   pasta: [],
@@ -172,8 +175,6 @@ export const SUBCATEGORIA_LABEL: Record<string, string> = {
   cafe_caliente: 'Café caliente',
   cafe_frio: 'Café frío',
   sin_cafe: 'Sin café',
-  salado: 'Salado',
-  dulce: 'Dulce',
   combo: 'Combo',
   aperitivo: 'Aperitivo',
   gaseosa: 'Gaseosa',

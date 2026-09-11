@@ -83,6 +83,26 @@ const [{ total_recetas, total_insumos }] = await consultar(
           (select count(*) from productos)::int as total_insumos`,
 );
 
+// ─── Los testigos: del MÉTODO, no de los datos ───────────────────────────────
+//
+// 💣 El primer testigo de este comando nombraba un par concreto ("Torta
+// matilda" / "Torta Matilda") y se puso rojo apenas se arregló ese par. Un
+// testigo que se rompe cuando el problema se resuelve no sirve: hay que
+// cambiarlo cada vez, y el día que haya que cambiarlo de verdad nadie lo mira.
+//
+// Estos dos no dependen de qué recetas existan hoy:
+//   · el normalizador hace lo que dice (casos escritos a mano);
+//   · una segunda consulta, escrita distinto, cuenta los mismos pares.
+const [{ norm_pruebas, pares_contraste }] = await consultar(`
+  select
+    (select json_agg(${NORM}) from (values
+        ('Torta Matilda'), ('  torta   matilda '), ('Subreceta Torta Matilda'),
+        ('TORTA MATILDA')) as t(nombre)) as norm_pruebas,
+    (select count(*)::int from (
+       select ${NORM} as k, local from cocina_recetas
+        except all
+       select distinct ${NORM}, local from cocina_recetas) x) as pares_contraste`);
+
 // ─── El universo ─────────────────────────────────────────────────────────────
 titulo('nombres', 'Dos recetas que el motor ve como una sola.');
 universo(
@@ -94,21 +114,18 @@ universo(
 
 // ─── Los testigos ────────────────────────────────────────────────────────────
 const busca = (norm, local) => recetas.find((r) => r.norm === norm && r.local === local);
+// Cuántas recetas de más hay respecto de los nombres normalizados distintos.
+const sobrantes = recetas.reduce((a, r) => a + r.cuales.length - 1, 0);
 testigos([
   {
-    que: '"Avocado toast" y "Avocado Toast" (Saavedra) salen como un par',
-    espera: 2,
-    obtuvo: busca('avocado toast', 'saavedra')?.cuales.length ?? 0,
+    que: 'El normalizador colapsa mayúsculas, espacios de más y el prefijo "Subreceta "',
+    espera: 'torta matilda ×4',
+    obtuvo: `${norm_pruebas[0]} ×${new Set(norm_pruebas).size === 1 ? norm_pruebas.length : '✗'}`,
   },
   {
-    que: 'Y las dos están activas',
-    espera: 2,
-    obtuvo: busca('avocado toast', 'saavedra')?.activas ?? 0,
-  },
-  {
-    que: '"Torta matilda" / "Torta Matilda" es activa + apagada, no dos activas',
-    espera: 1,
-    obtuvo: busca('torta matilda', 'saavedra')?.activas ?? -1,
+    que: 'Una segunda consulta, escrita distinto, cuenta los mismos choques',
+    espera: pares_contraste,
+    obtuvo: sobrantes,
   },
   {
     que: 'Una receta sin gemela NO aparece en la lista',

@@ -50,6 +50,46 @@
 
 import { C, titulo, universo, testigos, consultar, plata, pad, padN } from './_comun.mjs';
 
+// ─── Renglones de factura ya revisados ───────────────────────────────────────
+//
+// Esta lista existe para que nadie los vuelva a "arreglar". Son renglones de
+// `gastos.items_json`, no insumos: el costo del insumo está bien y el que está
+// mal es el renglón. Ensucian la serie que mira este comando y nada más —
+// ningún total de compras ni de gastos los suma (`items_json` se lee en 3
+// archivos y solo para volver a editar el gasto).
+const RENGLONES_REVISADOS = [
+  {
+    estado: 'mal',
+    insumo: 'Bolsa zipper 15*20 x 100ud.',
+    fecha: '2026-09-08',
+    dice: '200 unid. × $29,3428',
+    porque:
+      'mismo subtotal que los renglones de 100 ($5.868,56) con el doble de cantidad. ' +
+      'En esa MISMA factura los otros 5 renglones coinciden exacto con su costo guardado: ' +
+      'el proveedor no cambió de criterio, se cargó mal la cantidad. El precio real es $58,69.',
+  },
+  {
+    estado: 'mal',
+    insumo: 'Ricota',
+    fecha: '2026-07-24',
+    dice: '0,29 kg × $13.294,59',
+    porque:
+      '0,29 kg de ricota por $3.855 no existe. $3.855,43 ÷ $2.198,44 = 1,754 kg: el precio ' +
+      'guardado parece el bueno y la cantidad la equivocada. Es la ÚNICA factura del insumo, ' +
+      'así que no hay serie contra la cual medir. Ninguna receta usa ricota: impacto cero.',
+  },
+  {
+    estado: 'bien',
+    insumo: 'Caja Carton 18*18 x100ud · Caja Carton Pizza 25*25 x100ud',
+    fecha: '2026-06-12 y 2026-06-16',
+    dice: '1 y 2 unid. × $16.112 y $23.883',
+    porque:
+      'los reporté como error y NO lo son. RESIPACK vende por caja de 100: $16.112 ÷ 100 = ' +
+      '$161,12 por cartón contra $169,17 guardados, un 5 % de precio viejo. Lo que daba ×95 ' +
+      'era el detector, no la carga.',
+  },
+];
+
 const SQL = `
 with lineas as (
   select g.fecha, g.proveedor,
@@ -239,6 +279,16 @@ const desf = de('desfasado');
 if (desf.length > 25) {
   console.log('');
   console.log(C.gris(`  … y ${desf.length - 25} desfasados más, ordenados de mayor a menor desvío.`));
+}
+
+console.log('');
+console.log(C.neg('RENGLONES DE FACTURA YA REVISADOS') + C.gris('  (no los toques de nuevo)'));
+for (const r of RENGLONES_REVISADOS) {
+  const marca = r.estado === 'mal' ? C.rojo('✗ mal cargado') : C.verde('✓ está bien');
+  console.log('');
+  console.log(`  ${marca}  ${C.neg(r.insumo)}`);
+  console.log(C.gris(`     ${r.fecha} · ${r.dice}`));
+  console.log(C.gris(`     ${r.porque}`));
 }
 
 console.log('');
