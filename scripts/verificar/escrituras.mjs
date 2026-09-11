@@ -54,7 +54,7 @@ import { C, titulo, universo, testigos, pad, padN } from './_comun.mjs';
 
 // La línea de base: medida el 11-sep-2026 sobre el repo entero.
 // Baja cuando alguien arregla una. NUNCA sube sin discutirlo.
-const BASE_A_CIEGAS = 153;
+const BASE_A_CIEGAS = 148;
 
 const RAIZ = 'src';
 const CHAIN = /\.from\(\s*['"]([a-z0-9_]+)['"]\s*\)/g;
@@ -118,11 +118,13 @@ function cadenaDesde(txt, i) {
   return txt.slice(i, fin === -1 || fin - i > 900 ? i + 900 : fin + 1);
 }
 
-const hallazgos = [];
-const lista = archivos(RAIZ);
-
-for (const ruta of lista) {
-  const txt = taparComentarios(readFileSync(ruta, 'utf8'));
+/**
+ * Clasifica las escrituras de UN texto. Es una función y no un bucle suelto
+ * para que los testigos le puedan dar código escrito a mano.
+ */
+function escanear(fuente, ruta = 'testigo') {
+  const hallazgos = [];
+  const txt = taparComentarios(fuente);
   const nl = [];
   for (let k = 0; k < txt.length; k++) if (txt[k] === '\n') nl.push(k);
   const lineaDe = (i) => nl.findIndex((p) => p > i) + 1 || nl.length + 1;
@@ -160,7 +162,11 @@ for (const ruta of lista) {
       estado: usaHelper ? 'helper' : !pideFilas ? 'ciegas' : lasMira ? 'cuenta' : 'pide_no_mira',
     });
   }
+  return hallazgos;
 }
+
+const lista = archivos(RAIZ);
+const hallazgos = lista.flatMap((ruta) => escanear(readFileSync(ruta, 'utf8'), ruta));
 
 // ── El universo, antes que cualquier número ─────────────────────────────────
 titulo(
@@ -174,35 +180,56 @@ universo(
 );
 
 // ── Los testigos ────────────────────────────────────────────────────────────
-const enArchivo = (frag, linea) =>
-  hallazgos.find((h) => h.ruta.endsWith(frag) && Math.abs(h.linea - linea) <= 3);
+//
+// 💣 Todos SINTÉTICOS, a propósito. Los primeros nombraban un archivo y una
+// línea ("AguinaldoTab:159 está a ciegas") y se pusieron rojos apenas se
+// arregló esa línea. Un testigo que se rompe cuando el problema se resuelve
+// obliga a editarlo cada vez, y el día que se rompa de verdad nadie lo mira.
+//
+// Estos prueban el CLASIFICADOR con código escrito a mano: valen igual el día
+// que las 153 estén migradas.
+const EJEMPLOS = {
+  ciegas: "await supabase.from('gastos').update({ cancelado: true }).eq('id', x);",
+  cuenta:
+    "const { data } = await supabase.from('gastos').update(v).eq('id', x).select('id'); if (!data || data.length === 0) throw new Error('no');",
+  pide_no_mira: "await supabase.from('gastos').delete().eq('id', x).select('id');",
+  helper: "await guardarContando(supabase.from('gastos').update(v).eq('id', x), 'mensaje');",
+};
+const clasifica = (fuente) => escanear(fuente)[0]?.estado ?? 'NO ENCONTRÓ NINGUNA';
 
-const conHelper = enArchivo('finanzas/components/CierreCaja.tsx', 400);
-const bueno = enArchivo('cocina/StockTab.tsx', 253);
-const malo = enArchivo('rrhh/AguinaldoTab.tsx', 159);
 testigos([
   {
-    que: 'StockTab: el update de cocina_productos pide .select(\'id\') y mira data.length',
-    espera: 'cuenta',
-    obtuvo: bueno?.estado ?? 'NO LO ENCONTRÓ',
-  },
-  {
-    que: 'AguinaldoTab:159: el update de gastos no pide nada de vuelta',
+    que: 'Un update pelado, sin pedir nada de vuelta, es "a ciegas"',
     espera: 'ciegas',
-    obtuvo: malo?.estado ?? 'NO LO ENCONTRÓ',
+    obtuvo: clasifica(EJEMPLOS.ciegas),
   },
   {
-    que: 'CierreCaja: el update envuelto en guardarContando NO cuenta como a ciegas',
+    que: 'El patrón viejo de la casa (.select + data.length) es "cuenta"',
+    espera: 'cuenta',
+    obtuvo: clasifica(EJEMPLOS.cuenta),
+  },
+  {
+    que: 'Pedir las filas y no mirarlas NO cuenta como contar',
+    espera: 'pide_no_mira',
+    obtuvo: clasifica(EJEMPLOS.pide_no_mira),
+  },
+  {
+    que: 'Envuelta en guardarContando() es "helper", aunque no tenga .select()',
     espera: 'helper',
-    obtuvo: conHelper?.estado ?? 'NO LO ENCONTRÓ',
+    obtuvo: clasifica(EJEMPLOS.helper),
   },
   {
-    que: 'El ejemplo del comentario de escribir.ts NO se cuenta como escritura',
+    que: 'Un SELECT no es una escritura',
     espera: 0,
-    obtuvo: hallazgos.filter((h) => h.ruta.endsWith('lib/escribir.ts')).length,
+    obtuvo: escanear("const { data } = await supabase.from('gastos').select('id');").length,
   },
   {
-    que: 'Tapar comentarios no mueve los números de línea',
+    que: 'Una escritura comentada no cuenta',
+    espera: 0,
+    obtuvo: escanear('// ' + EJEMPLOS.ciegas).length,
+  },
+  {
+    que: 'Tapar comentarios no se come una URL adentro de un texto',
     espera: 'https://ok',
     obtuvo: taparComentarios("const u = 'https://ok'; // un comentario").match(/'([^']+)'/)?.[1],
   },

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { guardarContando } from '@/lib/escribir';
 import { comprimirImagen } from '@/lib/comprimirImagen';
 import { formatARS, cn } from '@/lib/utils';
 import { KPICard } from '@/components/ui/KPICard';
@@ -154,12 +155,21 @@ export function AguinaldoTab() {
 
   const eliminar = useMutation({
     mutationFn: async (registro: Aguinaldo) => {
-      // Si tenía gasto vinculado, lo cancelamos también
+      // Si tenía gasto vinculado, lo cancelamos también. Va PRIMERO: si el
+      // aguinaldo se borra y el gasto queda vivo, sigue sumando en el EdR y
+      // ya no hay desde dónde encontrarlo.
       if (registro.gasto_id) {
-        await supabase.from('gastos').update({ cancelado: true }).eq('id', registro.gasto_id);
+        await guardarContando(
+          supabase.from('gastos').update({ cancelado: true }).eq('id', registro.gasto_id),
+          'No se pudo cancelar el gasto del aguinaldo, así que el aguinaldo no se borró',
+          { filasEsperadas: 1 },
+        );
       }
-      const { error } = await supabase.from('aguinaldos').delete().eq('id', registro.id);
-      if (error) throw error;
+      await guardarContando(
+        supabase.from('aguinaldos').delete().eq('id', registro.id),
+        'No se pudo borrar el aguinaldo',
+        { filasEsperadas: 1 },
+      );
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['aguinaldos'] });
@@ -540,6 +550,13 @@ function ModalAguinaldo({
     setGuardando(true);
     try {
       let gastoIdFinal: string | null = r?.gasto_id ?? null;
+      // 💣 Esta función escribe TRES cosas en cadena: gasto → pago → aguinaldo.
+      // Si la última no toca ninguna fila, el gasto y el pago quedan creados
+      // pero el aguinaldo no guarda su `gasto_id`: el próximo clic crea un
+      // SEGUNDO gasto y un segundo pago. Gasto duplicado, real, en el EdR.
+      // Mismo criterio que `deshacerGastoDePagoFijo` en ChecklistPagos: si el
+      // último paso falla y el gasto lo creamos nosotros, se deshace.
+      let gastoRecienCreado: string | null = null;
 
       // Subir el comprobante nuevo si hay uno (mismo bucket que el resto de gastos).
       let pathComprobante = comprobantePath;
@@ -587,11 +604,11 @@ function ModalAguinaldo({
 
         if (gastoIdFinal) {
           // Actualizar gasto existente
-          const { error: errUpd } = await supabase
-            .from('gastos')
-            .update(payloadGasto)
-            .eq('id', gastoIdFinal);
-          if (errUpd) throw errUpd;
+          await guardarContando(
+            supabase.from('gastos').update(payloadGasto).eq('id', gastoIdFinal),
+            'No se pudo actualizar el gasto del aguinaldo',
+            { filasEsperadas: 1 },
+          );
         } else {
           // Crear gasto nuevo
           const { data: nuevo, error: errIns } = await supabase
@@ -601,6 +618,7 @@ function ModalAguinaldo({
             .single();
           if (errIns) throw errIns;
           gastoIdFinal = (nuevo as { id: string }).id;
+          gastoRecienCreado = gastoIdFinal;
         }
 
         // ── Pago en pagos_gastos ───────────────────────────────────────────
@@ -615,11 +633,11 @@ function ModalAguinaldo({
         };
         const pagoIdExist = pagoExistente?.pago?.id ?? null;
         if (pagoIdExist) {
-          const { error: errPago } = await supabase
-            .from('pagos_gastos')
-            .update(pagoRow)
-            .eq('id', pagoIdExist);
-          if (errPago) throw errPago;
+          await guardarContando(
+            supabase.from('pagos_gastos').update(pagoRow).eq('id', pagoIdExist),
+            'No se pudo actualizar el pago del aguinaldo',
+            { filasEsperadas: 1 },
+          );
         } else {
           const { error: errPago } = await supabase.from('pagos_gastos').insert(pagoRow);
           if (errPago) throw errPago;
@@ -627,17 +645,25 @@ function ModalAguinaldo({
       } else if (gastoIdFinal) {
         // Se desmarca pagado → cancelar gasto vinculado (no lo borramos para mantener
         // historial) y quitar su pago para que no aparezca como conciliable.
-        const { error: errCancel } = await supabase
-          .from('gastos')
-          .update({ cancelado: true })
-          .eq('id', gastoIdFinal);
-        if (errCancel) throw errCancel;
-        await supabase.from('pagos_gastos').delete().eq('gasto_id', gastoIdFinal);
+        await guardarContando(
+          supabase.from('gastos').update({ cancelado: true }).eq('id', gastoIdFinal),
+          'No se pudo cancelar el gasto al desmarcar el pago',
+          { filasEsperadas: 1 },
+        );
+        // Puede no haber pago cargado: cero filas acá es un resultado válido.
+        await guardarContando(
+          supabase.from('pagos_gastos').delete().eq('gasto_id', gastoIdFinal),
+          'No se pudo quitar el pago del aguinaldo',
+          { permitirCero: true },
+        );
         gastoIdFinal = null;
       }
 
       // ── Upsert del aguinaldo ─────────────────────────────────────────────
-      const { error: errAg } = await supabase.from('aguinaldos').upsert(
+      // El paso que no se puede saltear en silencio: ver `gastoRecienCreado`.
+      try {
+        await guardarContando(
+          supabase.from('aguinaldos').upsert(
         {
           empleado_id: fila.empleado.id,
           anio: año,
@@ -653,9 +679,24 @@ function ModalAguinaldo({
           notas: notas || null,
           updated_at: new Date().toISOString(),
         },
-        { onConflict: 'empleado_id,anio,semestre' },
-      );
-      if (errAg) throw errAg;
+            { onConflict: 'empleado_id,anio,semestre' },
+          ),
+          'No se pudo guardar el aguinaldo',
+          { filasEsperadas: 1 },
+        );
+      } catch (e) {
+        // El aguinaldo no quedó guardado. Si el gasto lo creamos recién, se
+        // deshace: si queda vivo sin que el aguinaldo lo conozca, el próximo
+        // clic crea otro y el EdR termina con el aguinaldo cobrado dos veces.
+        if (gastoRecienCreado) {
+          await supabase.from('pagos_gastos').delete().eq('gasto_id', gastoRecienCreado);
+          await supabase.from('gastos').delete().eq('id', gastoRecienCreado);
+        }
+        throw new Error(
+          (e as Error).message +
+            (gastoRecienCreado ? ' Se deshizo el gasto para que no quede duplicado.' : ''),
+        );
+      }
 
       onSaved();
     } catch (e: any) {
