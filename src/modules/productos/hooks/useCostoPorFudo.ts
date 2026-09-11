@@ -1,12 +1,7 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
-import {
-  margenSobreRecibido,
-  useConfigCosteo,
-  useCostosRecetas,
-  type CondicionesDeCobro,
-} from '@/modules/costeo';
+import { condicionesDeCobro, margenSobreRecibido, useConfigCosteo, useCostosRecetas } from '@/modules/costeo';
 import { useComisionMpConfig } from './useComisionMpConfig';
 
 // Normalización idéntica a la de useMenuEngineering para matchear nombres Fudo
@@ -61,9 +56,11 @@ export function useCostoPorFudo(local: 'vedia' | 'saavedra' | null) {
     },
   });
 
-  const ivaPct = configGen?.iva_pct ?? 0.21;
-  // Comisión bancaria más alta (criterio conservador, igual que Menú/Ingeniería).
-  const comisionMax = Math.max(0, ...(comisiones ?? []).map((c) => Number(c.pct)));
+  // Las arma @/modules/costeo, no este archivo: el `?? 0.21` y el "la comisión
+  // más alta" estaban escritos igual acá, en MenuTab y en useMenuEngineering.
+  const condiciones = condicionesDeCobro({ ivaPct: configGen?.iva_pct, comisiones });
+  const ivaPct = condiciones.ivaPct;
+  const comisionMax = condiciones.comisionPct;
 
   const costoPorFudo = useMemo(() => {
     const m = new Map<string, number>();
@@ -113,11 +110,6 @@ export function useCostoPorFudo(local: 'vedia' | 'saavedra' | null) {
   function getCosto(nombreFudo: string): number | null {
     return costoPorFudo.get(normalizar(nombreFudo)) ?? null;
   }
-
-  // Las condiciones de cobro de esta pantalla: precio de lista (sin descuento),
-  // IVA y la comisión más alta. Se exponen para que quien las necesite use la
-  // misma cadena y no arme la suya.
-  const condiciones: CondicionesDeCobro = { ivaPct, comisionPct: comisionMax };
 
   /**
    * Margen del producto a ese precio, como FRACCIÓN (0,62 = 62 %).

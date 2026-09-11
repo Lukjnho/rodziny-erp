@@ -3,12 +3,12 @@ import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { VISTA_ITEMS_OFICIAL } from '@/lib/origenVentas';
 import {
+  condicionesDeCobro,
   loQueRecibimos,
   margenSobreRecibido,
   precioParaMargen,
   useConfigCosteo,
   useCostosRecetas,
-  type CondicionesDeCobro,
 } from '@/modules/costeo';
 import { useComisionMpConfig } from './useComisionMpConfig';
 import { useProductosCosteoConfig } from './useProductosCosteoConfig';
@@ -265,16 +265,15 @@ export function useMenuEngineering(opts: MenuEngineeringOptions) {
     const vendibleIds = new Set(recetasVendibles.map((r) => r.id));
 
     // ─── Construir productos ME ─────────────────────────────────────────────
-    const ivaPct = configGen?.iva_pct ?? 0.21;
-    // Comisión bancaria MÁS ALTA (criterio conservador, igual que el tab Menú).
-    // Acá NO aplicamos descuentos comerciales (efectivo/convenio): el precio
+    // Las condiciones de cobro las arma @/modules/costeo: el `?? 0.21` y el
+    // criterio de "la comisión más alta" estaban escritos igual acá, en MenuTab
+    // y en useCostoPorFudo.
+    //
+    // Acá NO se aplican descuentos comerciales (efectivo/convenio): el precio
     // promedio sale de las ventas reales de Fudo, que ya incluyen los descuentos
-    // que efectivamente se dieron. Sí restamos comisión para que el margen sea
+    // que efectivamente se dieron. Sí se resta comisión, para que el margen sea
     // consistente con el tab Menú.
-    const comisionMax = Math.max(0, ...(comisiones ?? []).map((c) => Number(c.pct)));
-    // Las condiciones de cobro de esta pantalla, en un solo objeto: sin
-    // descuento comercial, con IVA y con la comisión más alta.
-    const condiciones: CondicionesDeCobro = { ivaPct, comisionPct: comisionMax };
+    const condiciones = condicionesDeCobro({ ivaPct: configGen?.iva_pct, comisiones });
     // Acumulador de consolidación: distintas líneas de Fudo del mismo producto
     // vendible (ej. "Flan" + "Flan M.E", o "Ñoquis de papa" + "M.E. Ñoquis")
     // matchean la misma receta y se fusionan en UNA fila. Las líneas M.E suman

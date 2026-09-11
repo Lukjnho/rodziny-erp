@@ -62,6 +62,27 @@ export async function aliasDeDividendo(): Promise<Set<string>> {
 }
 
 /**
+ * Cómo se llama cada medio de pago, por su código del catálogo.
+ *
+ * 💣 OJO, no confundir con `MEDIO_PAGO_LABEL` de más abajo: **son dos
+ * vocabularios distintos**. Éste va por el CÓDIGO de `medios_pago`
+ * (`efectivo`, `qr`, `debito`, `credito`, `transferencia`, `mp_lucas`) y es el
+ * que usan las tablas de configuración —`comision_mp_config`, por ejemplo—.
+ * `MEDIO_PAGO_LABEL` va por la opción de EGRESO, que junta medio y banco en una
+ * palabra (`transferencia_galicia`). Mismo tema, dos llaves; usar la que
+ * corresponde a la tabla que se está mostrando.
+ *
+ * Sale del catálogo y no de una tabla escrita a mano, que es lo que había en
+ * `ConfiguracionTab`: si mañana se agrega o se renombra un medio, la pantalla
+ * se entera sola.
+ */
+export async function nombrePorCodigo(): Promise<Map<string, string>> {
+  const { data, error } = await supabase.from('medios_pago').select('codigo, nombre');
+  if (error) throw new Error(`No se pudo leer el catálogo de medios de pago: ${error.message}`);
+  return new Map((data ?? []).map((m) => [m.codigo as string, m.nombre as string]));
+}
+
+/**
  * ¿Este cobro es plata del socio y no del negocio?
  *
  * Se compara contra el alias EXACTO (normalizado a minúsculas y sin espacios en

@@ -51,6 +51,51 @@ export interface CondicionesDeCobro {
   descuentoPct?: number;
 }
 
+/**
+ * El IVA de respaldo, para mientras la configuración no cargó.
+ *
+ * ⚠️ Es respaldo y nada más: el IVA de verdad sale de
+ * `configuracion_costeo.iva_pct`. Estaba escrito como `?? 0.21` en tres
+ * pantallas distintas.
+ */
+export const IVA_POR_DEFECTO = 0.21;
+
+/**
+ * Arma las condiciones de cobro a partir de lo que trae cada pantalla.
+ *
+ * 💣 Por qué existe. Estas dos líneas estaban IDÉNTICAS en tres archivos —
+ * MenuTab, useCostoPorFudo y useMenuEngineering:
+ *
+ *     configGen?.iva_pct ?? 0.21
+ *     Math.max(0, ...(comisiones ?? []).map((c) => Number(c.pct)))
+ *
+ * El módulo exportaba el TIPO `CondicionesDeCobro` pero no quién lo arma, así
+ * que cada pantalla lo armaba sola. Y es plata: si una de las tres se desfasaba,
+ * el Menú, la Ingeniería de Menú y "En vivo Fudo" mostraban márgenes distintos
+ * para el mismo plato y no había forma de saber cuál creer.
+ *
+ * 🔑 **La comisión que se toma es la MÁS ALTA de las configuradas**, no un
+ * promedio. Es un criterio conservador que pidió Lucas: si el plato cierra con
+ * la comisión peor, cierra con cualquiera.
+ *
+ * Es una función pura: cada pantalla sigue trayendo sus datos como quiera y acá
+ * solo se arma el objeto. No lee la base.
+ */
+export function condicionesDeCobro(opts: {
+  /** De `configuracion_costeo.iva_pct`. Si falta, se usa IVA_POR_DEFECTO. */
+  ivaPct?: number | null;
+  /** Las filas de `comision_mp_config`. Se toma la más alta. */
+  comisiones?: readonly { pct: number | string }[] | null;
+  /** Descuento del escenario. Sin esto, precio de lista. */
+  descuentoPct?: number;
+}): CondicionesDeCobro {
+  return {
+    ivaPct: opts.ivaPct ?? IVA_POR_DEFECTO,
+    comisionPct: Math.max(0, ...(opts.comisiones ?? []).map((c) => Number(c.pct) || 0)),
+    descuentoPct: opts.descuentoPct ?? 0,
+  };
+}
+
 export type SemaforoMargen = 'rojo' | 'amarillo' | 'verde';
 
 /**

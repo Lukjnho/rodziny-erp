@@ -44,7 +44,6 @@ export {
   TIPO_LABEL,
   UNIDAD_LABEL,
   UNIDADES,
-  formatCantidad,
   mapearUnidad,
 } from './modelo';
 export type {
@@ -58,15 +57,14 @@ export type {
 } from './modelo';
 
 // ── El motor ────────────────────────────────────────────────────────────────
-export { buildCosteoContext, costearBorrador, costearReceta } from './costeoEngine';
-export type {
-  CosteoContext,
-  CostoReceta,
-  DetalleIngrediente,
-  IngredienteRow,
-  ProductoRow,
-  RecetaRow,
-} from './costeoEngine';
+//
+// Solo lo que se usa desde afuera. `buildCosteoContext`, `costearReceta`, los
+// tipos `CostoReceta` y `DetalleIngrediente`, y `formatCantidad` se sacaron de
+// acá el 11-sep-2026: estaban publicados y ningún archivo de fuera del módulo
+// los importaba. Siguen existiendo y se usan puertas adentro; lo que dejaron de
+// ser es API pública. Una puerta que publica de más deja de decir nada.
+export { costearBorrador } from './costeoEngine';
+export type { CosteoContext, IngredienteRow, ProductoRow, RecetaRow } from './costeoEngine';
 
 // ── Los datos ───────────────────────────────────────────────────────────────
 export { useCostosRecetas } from './useCostosRecetas';
@@ -76,13 +74,15 @@ export type { ConfigCosteo } from './useConfigCosteo';
 // ── La regla del margen ─────────────────────────────────────────────────────
 export {
   COLCHON_POR_DEFECTO,
+  IVA_POR_DEFECTO,
+  condicionesDeCobro,
   desgloseDeCobro,
   loQueRecibimos,
   margenSobreRecibido,
   precioParaMargen,
   semaforoDeMargen,
 } from './margen';
-export type { CondicionesDeCobro, DesgloseDeCobro, SemaforoMargen } from './margen';
+export type { CondicionesDeCobro, SemaforoMargen } from './margen';
 
 // ── Pantalla compartida ─────────────────────────────────────────────────────
 export { AutocompleteIngrediente, DialogDuplicar, FichaTecnica } from './componentes';

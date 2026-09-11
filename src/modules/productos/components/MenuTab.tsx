@@ -7,12 +7,12 @@ import { useAuth } from '@/lib/auth';
 import {
   COLCHON_POR_DEFECTO,
   SUBCATEGORIA_LABEL,
+  condicionesDeCobro,
   desgloseDeCobro,
   margenSobreRecibido,
   semaforoDeMargen,
   useConfigCosteo,
   useCostosRecetas,
-  type CondicionesDeCobro,
   type SemaforoMargen,
 } from '@/modules/costeo';
 import { useComisionMpConfig } from '../hooks/useComisionMpConfig';
@@ -247,11 +247,14 @@ export function MenuTab() {
     return m;
   }, [preciosReceta]);
 
-  const ivaPct = configGen?.iva_pct ?? 0.21;
-  // Comisión más alta configurada (criterio conservador, pedido de Lucas): se
-  // usa para los escenarios Lista y Convenio (que se pagan con tarjeta). El
-  // escenario Efectivo usa la comisión de 'efectivo' (0%).
-  const comisionMax = Math.max(0, ...(comisiones ?? []).map((c) => Number(c.pct)));
+  // Las condiciones de cobro las arma `condicionesDeCobro` de @/modules/costeo,
+  // no esta pantalla: el `?? 0.21` del IVA y el "la comisión más alta" estaban
+  // escritos igual acá, en useCostoPorFudo y en useMenuEngineering.
+  const condicionesLista = condicionesDeCobro({ ivaPct: configGen?.iva_pct, comisiones });
+  const ivaPct = condicionesLista.ivaPct;
+  // La comisión más alta se usa para Lista y Convenio (que se pagan con
+  // tarjeta). El escenario Efectivo usa la comisión de 'efectivo' (0 %).
+  const comisionMax = condicionesLista.comisionPct;
   const comisionEfectivo = getComision('efectivo');
   const descEfectivo = configGen?.descuento_efectivo_pct ?? 0.25;
   const descConvenio = configGen?.descuento_convenio_pct ?? 0.15;
@@ -265,8 +268,6 @@ export function MenuTab() {
     return [c?.margen_min ?? 0.5, c?.margen_colchon ?? COLCHON_POR_DEFECTO];
   };
 
-  // Escenario Lista: precio de carta, sin descuento, con la comisión más alta.
-  const condicionesLista: CondicionesDeCobro = { ivaPct, comisionPct: comisionMax };
 
   // Margen real sobre el precio cobrado, contemplando: descuento del escenario,
   // IVA y comisión bancaria.

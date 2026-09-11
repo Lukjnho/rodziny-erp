@@ -1,4 +1,6 @@
 import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { nombrePorCodigo } from '@/lib/mediosPago';
 import { useConfigCosteo, type ConfigCosteo } from '@/modules/costeo';
 import {
   useProductosCosteoConfig,
@@ -8,14 +10,16 @@ import { useComisionMpConfig, type ComisionMpConfig } from '../hooks/useComision
 import { useManoObra } from '../hooks/useManoObra';
 import { formatARS } from '@/lib/utils';
 
-const MEDIO_LABEL: Record<string, string> = {
-  efectivo: 'Efectivo',
-  qr: 'QR / Mercado Pago',
-  debito: 'Débito',
-  credito: 'Crédito',
-  transferencia: 'Transferencia',
-  mp_lucas: 'MP Lucas (POSnet personal)',
-};
+// 🗑️ Acá había una tabla con los seis medios de pago escritos a mano. Era la
+// octava copia del mismo concepto en el repo. Ahora el nombre sale del catálogo
+// (`medios_pago.nombre`) vía `nombrePorCodigo`, así que agregar o renombrar un
+// medio no necesita tocar esta pantalla.
+//
+// 💣 NO se reemplazó por `MEDIO_PAGO_LABEL`, que también vive en
+// `@/lib/mediosPago`: ése va por la opción de EGRESO (`transferencia_galicia`)
+// y esta tabla va por el CÓDIGO del catálogo (`transferencia`). Dos llaves
+// distintas para el mismo tema; usar la del otro deja todos los renglones sin
+// nombre.
 
 export function ConfiguracionTab() {
   return (
@@ -295,6 +299,12 @@ function FilaCategoria({
 // ─── Sección Comisión MP ────────────────────────────────────────────────────
 function SeccionComisionMp() {
   const { data: comisiones, actualizar } = useComisionMpConfig();
+  // Los nombres salen del catálogo. Casi nunca cambian: se cachean por sesión.
+  const { data: nombres } = useQuery({
+    queryKey: ['medios_pago_nombre_por_codigo'],
+    queryFn: nombrePorCodigo,
+    staleTime: Infinity,
+  });
 
   return (
     <section className="rounded-lg border border-gray-200 bg-white p-4">
@@ -315,9 +325,14 @@ function SeccionComisionMp() {
           </thead>
           <tbody className="divide-y divide-gray-100">
             {(comisiones ?? []).map((c) => (
-              <FilaComision key={c.medio_pago} c={c} onSave={(pct, desc) =>
-                actualizar.mutate({ medio_pago: c.medio_pago, pct, descripcion: desc })
-              } />
+              <FilaComision
+                key={c.medio_pago}
+                c={c}
+                nombre={nombres?.get(c.medio_pago) ?? c.medio_pago}
+                onSave={(pct, desc) =>
+                  actualizar.mutate({ medio_pago: c.medio_pago, pct, descripcion: desc })
+                }
+              />
             ))}
           </tbody>
         </table>
@@ -328,9 +343,12 @@ function SeccionComisionMp() {
 
 function FilaComision({
   c,
+  nombre,
   onSave,
 }: {
   c: ComisionMpConfig;
+  /** Del catálogo (`medios_pago.nombre`). Si no está, se muestra el código. */
+  nombre: string;
   onSave: (pct: number, descripcion: string) => void;
 }) {
   const [pctEdit, setPctEdit] = useState<string | null>(null);
@@ -339,7 +357,7 @@ function FilaComision({
 
   return (
     <tr className="hover:bg-gray-50">
-      <td className="px-3 py-2 font-medium">{MEDIO_LABEL[c.medio_pago] ?? c.medio_pago}</td>
+      <td className="px-3 py-2 font-medium">{nombre}</td>
       <td className="px-3 py-2 text-right tabular-nums">
         <input
           type="number"

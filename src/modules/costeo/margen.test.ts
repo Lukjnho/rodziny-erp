@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   COLCHON_POR_DEFECTO,
+  IVA_POR_DEFECTO,
+  condicionesDeCobro,
   desgloseDeCobro,
   loQueRecibimos,
   margenSobreRecibido,
@@ -163,5 +165,48 @@ describe('el colchon por categoria (mig 206)', () => {
 
   it('sin pasar colchon usa el de respaldo, que es el de siempre', () => {
     expect(semaforoDeMargen(0.6, 0.5)).toBe(semaforoDeMargen(0.6, 0.5, COLCHON_POR_DEFECTO));
+  });
+});
+
+describe('condicionesDeCobro', () => {
+  const COMIS = [{ pct: 0 }, { pct: 0.015 }, { pct: 0.03 }, { pct: 0.02 }];
+
+  it('toma la comision MAS ALTA, no el promedio', () => {
+    // Criterio conservador de Lucas: si el plato cierra con la peor, cierra.
+    expect(condicionesDeCobro({ ivaPct: 0.21, comisiones: COMIS }).comisionPct).toBeCloseTo(0.03, 10);
+  });
+
+  it('sin IVA cargado usa el de respaldo', () => {
+    expect(condicionesDeCobro({ comisiones: COMIS }).ivaPct).toBeCloseTo(IVA_POR_DEFECTO, 10);
+    expect(condicionesDeCobro({ ivaPct: null, comisiones: COMIS }).ivaPct).toBeCloseTo(0.21, 10);
+  });
+
+  it('un IVA en CERO cargado a proposito no se pisa con el respaldo', () => {
+    // 💣 `?? ` y no `||`: con `||` un IVA 0 cargado a mano volveria a 0,21.
+    expect(condicionesDeCobro({ ivaPct: 0, comisiones: COMIS }).ivaPct).toBe(0);
+  });
+
+  it('sin comisiones cargadas da 0, no NaN ni -Infinity', () => {
+    expect(condicionesDeCobro({ ivaPct: 0.21 }).comisionPct).toBe(0);
+    expect(condicionesDeCobro({ ivaPct: 0.21, comisiones: [] }).comisionPct).toBe(0);
+  });
+
+  it('una comision que viene como texto se lee igual', () => {
+    // Postgres devuelve numeric como string.
+    expect(condicionesDeCobro({ ivaPct: 0.21, comisiones: [{ pct: '0.03' }] }).comisionPct).toBeCloseTo(0.03, 10);
+  });
+
+  it('💣 da lo mismo que las tres copias viejas', () => {
+    // Las dos lineas tal cual estaban escritas en MenuTab, useCostoPorFudo y
+    // useMenuEngineering, con la config sin cargar (que es cuando pegaba el
+    // `?? 0.21`).
+    const sinCargar: number | undefined = [undefined][0];
+    const viejo = {
+      ivaPct: sinCargar ?? 0.21,
+      comisionPct: Math.max(0, ...COMIS.map((c) => Number(c.pct))),
+    };
+    const nuevo = condicionesDeCobro({ ivaPct: sinCargar, comisiones: COMIS });
+    expect(nuevo.ivaPct).toBeCloseTo(viejo.ivaPct, 12);
+    expect(nuevo.comisionPct).toBeCloseTo(viejo.comisionPct, 12);
   });
 });
