@@ -20,7 +20,8 @@
     "huerfanas": "node scripts/verificar/huerfanas.mjs",
     "vocabularios": "node scripts/verificar/vocabularios.mjs",
     "nombres": "node scripts/verificar/nombres.mjs",
-    "verificar-deploy": "node scripts/verificar/deploy.mjs"
+    "verificar-deploy": "node scripts/verificar/deploy.mjs",
+    "formas": "node scripts/verificar/formas.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

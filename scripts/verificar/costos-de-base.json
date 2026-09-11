@@ -1,0 +1,1372 @@
+{
+ "2cc09464-954f-4c9a-a553-3ea29bfe5c05": {
+  "nombre": "Abducido Cabernet Franc",
+  "local": "vedia",
+  "costo": 7500
+ },
+ "70cf991b-a021-48bc-9619-4f8392950c66": {
+  "nombre": "Abducido Cabernet Franc (COPA)",
+  "local": "vedia",
+  "costo": 2000
+ },
+ "ccace6e6-7e5a-44c4-8628-b3055acdb1bf": {
+  "nombre": "Abducido Malbec",
+  "local": "vedia",
+  "costo": 7500
+ },
+ "8bb6d2f6-c678-4ec6-bcd7-05fef03e5197": {
+  "nombre": "Abducido Malbec Copa",
+  "local": "vedia",
+  "costo": 2000
+ },
+ "4de47a22-1338-4125-961a-995b1b35fdab": {
+  "nombre": "Agua con Gas",
+  "local": "saavedra",
+  "costo": 775
+ },
+ "258ad1e2-30fc-4b4b-bc8b-717071511582": {
+  "nombre": "Agua Con Gas",
+  "local": "vedia",
+  "costo": 791.66
+ },
+ "27413625-a648-4bdc-a9f9-248ff83cd98c": {
+  "nombre": "Agua sin Gas",
+  "local": "saavedra",
+  "costo": 687.5
+ },
+ "c12c9a4e-1efc-4852-803c-36ef5057873c": {
+  "nombre": "Agua Sin Gas",
+  "local": "vedia",
+  "costo": 745.83
+ },
+ "a3bb4f6f-90b8-4ab9-ae24-bb69b4274a03": {
+  "nombre": "Almibar",
+  "local": "saavedra",
+  "costo": 13000
+ },
+ "60825958-7f18-4960-9530-97cde301889a": {
+  "nombre": "Almibar Base",
+  "local": "vedia",
+  "costo": 13000
+ },
+ "9702a183-fee6-442e-a410-c84f0830aca2": {
+  "nombre": "Amber (EL PERRO)",
+  "local": "vedia",
+  "costo": 1380
+ },
+ "4d7e6297-dca4-44e2-902e-d72cb224d62c": {
+  "nombre": "Aperol Con Pomelo",
+  "local": "saavedra",
+  "costo": 1625.1206
+ },
+ "98a796a3-7510-40e0-b38e-e95bf6737373": {
+  "nombre": "Aperol Con Tonica",
+  "local": "vedia",
+  "costo": 2340.0203
+ },
+ "655cc01a-900b-4d42-970a-1fcf8b13e0be": {
+  "nombre": "Avocado toast",
+  "local": "saavedra",
+  "costo": 1699.5555
+ },
+ "6e89646d-b4cd-4c88-896c-f5f3176ef5bf": {
+  "nombre": "Avocado Toast",
+  "local": "saavedra",
+  "costo": 1699.5555
+ },
+ "b23d991d-e264-4878-99b5-ef4d1af3f018": {
+  "nombre": "Bizcochuelo de Chocolate",
+  "local": "saavedra",
+  "costo": 2684.3948
+ },
+ "edb64c5c-01fd-444e-b130-5020e5ee8998": {
+  "nombre": "Bolognesa",
+  "local": "saavedra",
+  "costo": 2772.1682
+ },
+ "5eaec8a7-1506-4bf1-b03f-247a640f503c": {
+  "nombre": "Bolognesa",
+  "local": "vedia",
+  "costo": 2607.5174
+ },
+ "67ee0a4f-5914-4003-a1ed-7b326043bbe9": {
+  "nombre": "Bolognesa base",
+  "local": "saavedra",
+  "costo": 93560.6764
+ },
+ "296c1a19-87d2-4c9a-ab1c-9dbd6ab547d2": {
+  "nombre": "Bolognesa base",
+  "local": "vedia",
+  "costo": 88003.7125
+ },
+ "6cb02115-d689-40ab-957b-75b57922ed29": {
+  "nombre": "Brownie con Nueces (PORCIÓN)",
+  "local": "saavedra",
+  "costo": 1498.3545
+ },
+ "44faf5f9-1188-441a-8d2c-c42dae96249e": {
+  "nombre": "Brownies con Nueces (PORCIÓN)",
+  "local": "saavedra",
+  "costo": 11933.0645
+ },
+ "1f8bfb26-010d-4a5d-95be-e63d12bc598c": {
+  "nombre": "Budin de Pan",
+  "local": "vedia",
+  "costo": 826.9299
+ },
+ "e8fc49d8-e4d9-4434-ba4a-3ab68422dde8": {
+  "nombre": "Budin de Pan Base",
+  "local": "vedia",
+  "costo": 3111.903
+ },
+ "4255d0c5-9a0c-482c-9705-86f83a48278e": {
+  "nombre": "Cafe Capuccino",
+  "local": "saavedra",
+  "costo": 659.9685
+ },
+ "30c07501-2e98-4208-a997-55caf554e2ac": {
+  "nombre": "Cafe Con Leche",
+  "local": "saavedra",
+  "costo": 496.0395
+ },
+ "875bc0a7-73a6-406e-9809-f5553fb85653": {
+  "nombre": "Café Cortado",
+  "local": "saavedra",
+  "costo": 416.9937
+ },
+ "98f720b2-ef75-413d-a289-a593b5c56a27": {
+  "nombre": "Cafe Expresso Tonic",
+  "local": "saavedra",
+  "costo": 871.222
+ },
+ "bdde5ef4-0263-4f4a-abf6-950dcd68a931": {
+  "nombre": "Cafe Flat White",
+  "local": "saavedra",
+  "costo": 995.9706
+ },
+ "882deda8-c15e-4b92-8497-b92765174942": {
+  "nombre": "Cafe Iced Latte",
+  "local": "saavedra",
+  "costo": 803.9769
+ },
+ "61168104-215e-4e1f-b9b5-1f827a8a976e": {
+  "nombre": "Cafe Latte",
+  "local": "saavedra",
+  "costo": 680.2164
+ },
+ "2e51270a-bb6c-4faf-9f5c-965548222837": {
+  "nombre": "Cafe Long Black",
+  "local": "saavedra",
+  "costo": 712.5
+ },
+ "8a24a540-1997-4a74-87af-9c4484bbfb00": {
+  "nombre": "Campari",
+  "local": "vedia",
+  "costo": 1297.8404
+ },
+ "c5a7738a-2ca9-41dd-a675-b4eefd5b86ee": {
+  "nombre": "Cappeletti de Capresse (PACK)",
+  "local": "saavedra",
+  "costo": 1430.1636
+ },
+ "fcf9601f-a9d1-484a-bb67-355136f58545": {
+  "nombre": "Cappelletti Capresse SG",
+  "local": "saavedra",
+  "costo": 1642.4853
+ },
+ "5c96f2d2-8568-4603-b415-cb4bff11b4e1": {
+  "nombre": "Cappelletti Capresse SG (CONGELADO)",
+  "local": "saavedra",
+  "costo": 1430.1636
+ },
+ "f5bcbcef-4e9a-4f44-a6c1-7d7a1967620d": {
+  "nombre": "Cappelletti Capresse SG (VIANDA)",
+  "local": "saavedra",
+  "costo": 1776.1736
+ },
+ "d2aaf40f-8bdd-4a09-91fb-2c9497982206": {
+  "nombre": "Caramelo Base",
+  "local": "saavedra",
+  "costo": 327.025
+ },
+ "0d37fd2d-ef7b-4480-adb0-a22ad3f3b0a1": {
+  "nombre": "Carbonara",
+  "local": "vedia",
+  "costo": 2746.2243
+ },
+ "9702ed0d-4ff5-4b21-a699-abf43d4fa565": {
+  "nombre": "Carbonara Base",
+  "local": "vedia",
+  "costo": 1647.7346
+ },
+ "17964c04-137e-40d4-8ab9-1f9e1b9dfbd3": {
+  "nombre": "Carrot Cake",
+  "local": "saavedra",
+  "costo": 7726.7412
+ },
+ "991d5cab-fce0-4bec-a2f6-247af6862354": {
+  "nombre": "Carrot Cake (ALMACEN)",
+  "local": "saavedra",
+  "costo": 7726.7412
+ },
+ "ae9e8234-3008-459f-90df-e766118ae3be": {
+  "nombre": "Carrot Cake (PORCION)",
+  "local": "saavedra",
+  "costo": 772.6741
+ },
+ "69b92e91-4d7a-48e7-9c1c-cee61b31eaf2": {
+  "nombre": "Cebolla Salteada (PIZZA)",
+  "local": "saavedra",
+  "costo": 1137.9161
+ },
+ "697aecb0-43b7-4a78-937b-61c0ac81f8af": {
+  "nombre": "Cheesecake De Frutos Rojos (PORCION)",
+  "local": "saavedra",
+  "costo": 1552.7042
+ },
+ "2f6668db-f890-4807-ae2b-0c8a2deba45d": {
+  "nombre": "Cheesecake Frutos rojos",
+  "local": "saavedra",
+  "costo": 15527.0417
+ },
+ "50360829-9539-4c1e-b309-0f7230bdc92f": {
+  "nombre": "Cheesecake Frutos Rojos (ALMACEN)",
+  "local": "saavedra",
+  "costo": 15527.0417
+ },
+ "e470b630-3ac6-4fd0-a6d7-a9d7e2311a70": {
+  "nombre": "Cherrys Confitados",
+  "local": "saavedra",
+  "costo": 1575.2495
+ },
+ "eb8b41ae-7c7b-4975-a344-55313479ef3d": {
+  "nombre": "Chipa",
+  "local": "saavedra",
+  "costo": 1166.5477
+ },
+ "1f3bd54a-d3ee-4d24-94cc-209e01fe967e": {
+  "nombre": "Chocolatada",
+  "local": "saavedra",
+  "costo": 832.5534
+ },
+ "69e5d19c-2ee3-42ff-b2cb-eefdcd90a098": {
+  "nombre": "Coca Cola",
+  "local": "saavedra",
+  "costo": 687.5
+ },
+ "e48c4322-83ba-4f71-959e-b613d35e700f": {
+  "nombre": "Coca Cola",
+  "local": "vedia",
+  "costo": 833.34
+ },
+ "b7f7c091-b7fa-41c5-ab88-147585d54f2f": {
+  "nombre": "Coca Cola Zero",
+  "local": "saavedra",
+  "costo": 804.16
+ },
+ "dbfa4012-d450-4149-94eb-633052326c63": {
+  "nombre": "Coca Zero",
+  "local": "vedia",
+  "costo": 804.16
+ },
+ "ffcfcbef-fd8a-48ec-b013-1483cbc3d4b9": {
+  "nombre": "Combo Proteico",
+  "local": "saavedra",
+  "costo": 5789.1141
+ },
+ "77e9d74c-dc96-4a42-bd6b-7c2ed63e19d8": {
+  "nombre": "Concentrado De Jugo De Limon",
+  "local": "vedia",
+  "costo": 5740.88
+ },
+ "adaa0190-07ea-4f3e-8eb0-5c689eab3300": {
+  "nombre": "Concentrado de jugo de limón",
+  "local": "saavedra",
+  "costo": 6838.684
+ },
+ "ab8b3da7-293d-4a7e-8355-be5c158ef081": {
+  "nombre": "Concentrado de Jugo Naranja",
+  "local": "vedia",
+  "costo": 3283.7117
+ },
+ "05197b2f-c4ec-42a4-8b9d-ec710fac7061": {
+  "nombre": "Concentrado Jugo De Naranja",
+  "local": "saavedra",
+  "costo": 3890.0492
+ },
+ "e7622c99-2cbd-40f3-99cc-23aea78cb7b4": {
+  "nombre": "Cookie de Vainilla",
+  "local": "saavedra",
+  "costo": 5251.2281
+ },
+ "f53ab618-8fe9-485c-ac06-12be60ff8843": {
+  "nombre": "Coulis de Frutos Rojos",
+  "local": "saavedra",
+  "costo": 11320.9642
+ },
+ "d3ac920d-dcc3-4de3-a1f8-ae11e6e4c7ab": {
+  "nombre": "Coulis de Frutos Rojos Base",
+  "local": "vedia",
+  "costo": 11314.199
+ },
+ "ceac7faa-4083-4077-9f33-eebf4f8cd0d0": {
+  "nombre": "Crema Blanca",
+  "local": "saavedra",
+  "costo": 573.6834
+ },
+ "f47bc75c-d658-47a7-ac8a-f76da79a0156": {
+  "nombre": "Crema Blanca",
+  "local": "vedia",
+  "costo": 316.455
+ },
+ "c431b972-16b8-41cd-8fac-390a7c720daf": {
+  "nombre": "Crema Blanca base",
+  "local": "vedia",
+  "costo": 34335.3668
+ },
+ "2a66835d-41ff-4e15-ab9d-0d604228da88": {
+  "nombre": "Crema Blanca Base",
+  "local": "saavedra",
+  "costo": 28684.1716
+ },
+ "10367db2-e709-4baf-8d65-1e7fbe21b726": {
+  "nombre": "Crema chantilli",
+  "local": "vedia",
+  "costo": 2754.42
+ },
+ "abbd0cce-2ec0-46e1-bafc-1e01450842b4": {
+  "nombre": "Crema de Hongos",
+  "local": "vedia",
+  "costo": 41061.2465
+ },
+ "11649c9c-0102-4fc7-996a-244eb044be74": {
+  "nombre": "Crema De Hongos",
+  "local": "vedia",
+  "costo": 1368.7082
+ },
+ "4df5ff93-8f5c-423b-b7c8-d3913d4a20c6": {
+  "nombre": "Crema de Hongos Base",
+  "local": "saavedra",
+  "costo": 44512.1593
+ },
+ "de7e448c-9d78-4b83-8727-93cc754bec0e": {
+  "nombre": "Crema Hongos",
+  "local": "saavedra",
+  "costo": 1483.7386
+ },
+ "d6daae4c-b013-4f17-ad36-042b3e906442": {
+  "nombre": "Crema Pastelera",
+  "local": "saavedra",
+  "costo": 2303.6428
+ },
+ "85d3d55c-b99f-485f-84c1-2dbc978dbc56": {
+  "nombre": "Crema Tiramisú",
+  "local": "saavedra",
+  "costo": 10104.029
+ },
+ "f54a81f3-2317-47a9-887f-fdcd4c58c5ff": {
+  "nombre": "Cresta di Gallo",
+  "local": "saavedra",
+  "costo": 278.7292
+ },
+ "ddbe6f52-4c16-4f65-826d-475e5d08d1e2": {
+  "nombre": "Cresta Di Gallo (CONGELADA)",
+  "local": "saavedra",
+  "costo": 419.9192
+ },
+ "4b7e4012-736c-4dad-8184-9dd67e11f0c5": {
+  "nombre": "Cresta di Gallo (VIANDA)",
+  "local": "saavedra",
+  "costo": 765.9292
+ },
+ "67db1f3f-77dd-4425-a195-8b6c3b75d19d": {
+  "nombre": "Cynar Con Julep Pomelo",
+  "local": "vedia",
+  "costo": 2285.9004
+ },
+ "1a949a16-8275-4e37-b9cd-3afcb5294d05": {
+  "nombre": "Cynar Con Tonica",
+  "local": "saavedra",
+  "costo": 1711.7523
+ },
+ "2635d2ef-6fc9-489e-a56a-abf20e1cb6d8": {
+  "nombre": "Dorada (EL PERRO)",
+  "local": "vedia",
+  "costo": 1160
+ },
+ "94b73453-33ff-48a9-b308-8120a5b0999a": {
+  "nombre": "Dulce de Leche",
+  "local": "vedia",
+  "costo": 1748.924
+ },
+ "38c075bf-38b2-4605-ba7e-7543c1203fa9": {
+  "nombre": "Dulce Encuentro",
+  "local": "saavedra",
+  "costo": 4910.1569
+ },
+ "c3923cbe-6bd6-4bc3-b1a8-0b1afb392622": {
+  "nombre": "Empanado Para Milanesa",
+  "local": "saavedra",
+  "costo": 659.0867
+ },
+ "473afcd5-c735-4cdf-8643-971986edb5d6": {
+  "nombre": "Expreso Café",
+  "local": "saavedra",
+  "costo": 356.25
+ },
+ "27fb7eeb-b762-4b45-8af3-0a9780864969": {
+  "nombre": "Facturas",
+  "local": "saavedra",
+  "costo": 1013.5375
+ },
+ "25162b7a-a60d-4e08-b792-e53375ad1034": {
+  "nombre": "Facturas Pastelera",
+  "local": "saavedra",
+  "costo": 604.0736
+ },
+ "f3c69325-527c-49ee-8cf7-f799ca9ba05e": {
+  "nombre": "Fanta",
+  "local": "saavedra",
+  "costo": 687.5
+ },
+ "f2930026-2a9d-4f22-98df-85c92ef39fde": {
+  "nombre": "Fanta",
+  "local": "vedia",
+  "costo": 833.34
+ },
+ "106734f4-2c97-46e5-91d2-47b90cde5cd5": {
+  "nombre": "Fernet Branca",
+  "local": "vedia",
+  "costo": 2103.516
+ },
+ "aa3f3e08-9704-4283-9993-0a660a631319": {
+  "nombre": "Flan",
+  "local": "saavedra",
+  "costo": 815.4245
+ },
+ "b2cfced8-5c85-4748-bb49-e1f4ab8e48fa": {
+  "nombre": "Flan",
+  "local": "vedia",
+  "costo": 732.5463
+ },
+ "2e88fcec-c538-467b-a828-b5b7833534e1": {
+  "nombre": "Flan Base",
+  "local": "saavedra",
+  "costo": 5278.4004
+ },
+ "604c8864-2734-40c0-ba9f-877c90e5748f": {
+  "nombre": "Flan Base",
+  "local": "vedia",
+  "costo": 3696.581
+ },
+ "5fd6b17c-ce95-4d5a-9928-4768f6805735": {
+  "nombre": "Focaccia (ENTRADA)",
+  "local": "saavedra",
+  "costo": 329.5433
+ },
+ "e5733ed8-83d3-4f2c-ab2e-f877e6278d68": {
+  "nombre": "Frosting",
+  "local": "saavedra",
+  "costo": 8950.191
+ },
+ "bef945dd-08b2-45b8-9a4b-70b2623b1e6b": {
+  "nombre": "Fusilli",
+  "local": "saavedra",
+  "costo": 278.7292
+ },
+ "6f868fe6-d6b6-433a-b702-ebab5a4ad402": {
+  "nombre": "Fusilli (CONGELADA)",
+  "local": "saavedra",
+  "costo": 419.9192
+ },
+ "a61ae9c8-30c2-4eb9-b02f-838c20b90bc1": {
+  "nombre": "Fusilli (VIANDAS)",
+  "local": "saavedra",
+  "costo": 765.9292
+ },
+ "859f5324-d069-4220-a6d9-f501561bb5ff": {
+  "nombre": "Ganache",
+  "local": "saavedra",
+  "costo": 5541.75
+ },
+ "4c4f20ae-b151-47b1-b2db-ae14f93df0ff": {
+  "nombre": "Huelga De Amores Amores Malbec Reserva (bot)",
+  "local": "vedia",
+  "costo": 7500
+ },
+ "f464446f-0842-46a0-90ff-dfd04b5565ac": {
+  "nombre": "Huelga de Amores Chardonnay Copa",
+  "local": "vedia",
+  "costo": 1960
+ },
+ "6778f385-1f10-4391-b817-ea38a8359f69": {
+  "nombre": "Huelga de Amores Chardonnay Dulce (bot)",
+  "local": "vedia",
+  "costo": 7350
+ },
+ "c2cda432-86d1-456d-9340-edf875c5eabd": {
+  "nombre": "Huelga de Amores Malbec Copa",
+  "local": "vedia",
+  "costo": 1960
+ },
+ "97c45723-0c63-43bb-aa1a-39c1b2ab78fc": {
+  "nombre": "Huelga de Amores Malbec Reserva (COPA)",
+  "local": "saavedra",
+  "costo": 2000
+ },
+ "0511868d-827a-4706-9a56-25a31c6e6e3b": {
+  "nombre": "Hummus De Palta",
+  "local": "saavedra",
+  "costo": 4421.2891
+ },
+ "517b5802-66ed-4d67-899e-df6836a687ad": {
+  "nombre": "Ipa Argenta (EL PERRO)",
+  "local": "vedia",
+  "costo": 1480
+ },
+ "68d4d0da-82f1-4c97-bbaf-c5d307d763ff": {
+  "nombre": "Jarra de Cynar",
+  "local": "vedia",
+  "costo": 3069.3316
+ },
+ "ccf86eab-5ca0-44ce-8840-e7e96de59874": {
+  "nombre": "Jarra De Detox",
+  "local": "vedia",
+  "costo": 963.946
+ },
+ "5591753b-9213-4fe4-82e2-f7689bad9fc5": {
+  "nombre": "Jarra De Limon",
+  "local": "saavedra",
+  "costo": 1704.5511
+ },
+ "cee01671-f762-4b6d-9693-6ff4bb250b5a": {
+  "nombre": "Jarra De Limón",
+  "local": "vedia",
+  "costo": 1800.3976
+ },
+ "ae28e855-dfbf-45f9-8b36-2bea000eddee": {
+  "nombre": "Jarra de Naranja",
+  "local": "vedia",
+  "costo": 2238.5337
+ },
+ "2d764be5-4646-4107-b02a-952d71c39c4d": {
+  "nombre": "Jarra De Naranja",
+  "local": "saavedra",
+  "costo": 1815.3057
+ },
+ "e21faf4e-0cdb-47d9-a6fa-236e370d792d": {
+  "nombre": "Jugo de Limon",
+  "local": "vedia",
+  "costo": 5411.38
+ },
+ "3f9b54db-a489-47b9-9374-e125741697d3": {
+  "nombre": "Jugo De Limon",
+  "local": "saavedra",
+  "costo": 5546.684
+ },
+ "14256281-93cf-494e-ba7a-9831d969ab9c": {
+  "nombre": "Jugo De naranja",
+  "local": "saavedra",
+  "costo": 3000
+ },
+ "34ab75e9-d948-4b71-b563-37ae3a059426": {
+  "nombre": "Jugo De naranja",
+  "local": "vedia",
+  "costo": 2342.34
+ },
+ "48baf58c-f8da-4b10-9db6-dbeb93fee877": {
+  "nombre": "Jugo De Naranja",
+  "local": "saavedra",
+  "costo": 1350
+ },
+ "7dd7ff96-1b11-476d-8cef-0b4ae499787e": {
+  "nombre": "La Iride Chardonay",
+  "local": "vedia",
+  "costo": 7350
+ },
+ "2dbdabf0-9077-4470-adb5-1e3c0153dcd9": {
+  "nombre": "La Iride Chardonnay Copa",
+  "local": "vedia",
+  "costo": 1960
+ },
+ "29c431f9-bd30-4f62-97b9-b4c88959d3e9": {
+  "nombre": "La Iride Chardonnay Dulce (COPA)",
+  "local": "saavedra",
+  "costo": 2058
+ },
+ "8f9c3643-7f54-4cb8-a0df-97734a50b868": {
+  "nombre": "La Iride Malbec Rose Copa",
+  "local": "vedia",
+  "costo": 1960
+ },
+ "9dabced9-f3c5-4e7a-a40b-e76dbb330574": {
+  "nombre": "La Iride Malbec Rose Dulce (bot)",
+  "local": "vedia",
+  "costo": 7350
+ },
+ "8bb3a241-f2b5-4db7-a802-0f329a5eec7e": {
+  "nombre": "Lasagna",
+  "local": "vedia",
+  "costo": 181375.6688
+ },
+ "9b19a5bc-3648-4c23-8211-33c0fb69ef1e": {
+  "nombre": "Lasagna Bolognesa",
+  "local": "vedia",
+  "costo": 2005.9008
+ },
+ "076fe269-48d7-4852-8775-4e6ad395cab0": {
+  "nombre": "Leche Caliente",
+  "local": "saavedra",
+  "costo": 309.5246
+ },
+ "079b44b8-cea8-49b3-b3ca-acab960deb86": {
+  "nombre": "Masa Espinaca",
+  "local": "vedia",
+  "costo": 6862.282
+ },
+ "3709d5c2-d13e-4add-a8b1-8e3229935dfb": {
+  "nombre": "Masa Extrusion",
+  "local": "saavedra",
+  "costo": 5277.2724
+ },
+ "78375f51-df9f-40d0-ba84-0ac2155a7280": {
+  "nombre": "Masa Extrusion Pastas",
+  "local": "vedia",
+  "costo": 6041.4
+ },
+ "cebee35e-41bc-4a84-9232-08992b8c567b": {
+  "nombre": "Masa Huevo Pastas",
+  "local": "saavedra",
+  "costo": 24383.078
+ },
+ "746a51a2-fd8d-4b01-813a-ba00deda1d7e": {
+  "nombre": "Masa Huevo Pastas Rellenas",
+  "local": "vedia",
+  "costo": 10895.8785
+ },
+ "53cddb69-6254-4083-89a9-945a15eb8b64": {
+  "nombre": "Masa Huevo Pastas Simples",
+  "local": "vedia",
+  "costo": 15673.3351
+ },
+ "8f9040f3-d15a-4743-acd8-2c28bef23252": {
+  "nombre": "Masa Mbeyú",
+  "local": "saavedra",
+  "costo": 13884.9466
+ },
+ "9812bb2e-bb83-4ee6-b2b4-50145adf15a1": {
+  "nombre": "Masa Negra Carbon",
+  "local": "vedia",
+  "costo": 14795.2935
+ },
+ "cdd21061-70c1-4f30-bb65-91fc40419b66": {
+  "nombre": "Masa para Chipá SIN GLUTEN",
+  "local": "saavedra",
+  "costo": 36182.718
+ },
+ "38a94465-3997-4f43-b07c-a17bfeede67d": {
+  "nombre": "Masa para factura/medialuna SIN GLUTEN",
+  "local": "saavedra",
+  "costo": 12750.1603
+ },
+ "2048334a-ce59-41d8-b474-5c316e0b3a1c": {
+  "nombre": "Masa para Focaccia SIN GLUTEN",
+  "local": "saavedra",
+  "costo": 7513.588
+ },
+ "e8512473-a9ae-4313-a733-69246222c985": {
+  "nombre": "Masa para Pan Brioche SIN GLUTEN",
+  "local": "saavedra",
+  "costo": 10163.607
+ },
+ "ff5c2cda-fce1-4487-a0fc-4c8dc149f620": {
+  "nombre": "Masa para Pan de Campo SIN GLUTEN",
+  "local": "saavedra",
+  "costo": 7866.8934
+ },
+ "eb2c870c-c48f-430d-b726-a54f2f10bfc7": {
+  "nombre": "Masa para Pan de Molde SIN GLUTEN",
+  "local": "saavedra",
+  "costo": 4903.905
+ },
+ "358bf6e7-4293-4eb5-8fc8-e7f93251d0d7": {
+  "nombre": "Masa para pan de servicio SIN GLUTEN",
+  "local": "saavedra",
+  "costo": 13450.2501
+ },
+ "5831fc80-22c4-475c-bf3f-0eac450b4068": {
+  "nombre": "Masa para Pan Lactal SIN GLUTEN",
+  "local": "saavedra",
+  "costo": 6652.3515
+ },
+ "2b3e536f-1bff-4bea-baf3-f3ad9ed1bd0d": {
+  "nombre": "Masa Pimenton",
+  "local": "vedia",
+  "costo": 17849.56
+ },
+ "6299d3bd-a979-424b-a989-68aae077f091": {
+  "nombre": "Masa sable",
+  "local": "saavedra",
+  "costo": 2866.5164
+ },
+ "b289dbce-5e13-4ae5-9240-c0ca3dc3d564": {
+  "nombre": "Mbeyú Clasico",
+  "local": "saavedra",
+  "costo": 1131.366
+ },
+ "3ee74547-86d5-460d-ace0-16f19eaa736f": {
+  "nombre": "Mbeyu Relleno",
+  "local": "saavedra",
+  "costo": 1646.9769
+ },
+ "9c0f80ab-f4b0-49d1-a85d-7d5085ed6915": {
+  "nombre": "Medialuna Rellena",
+  "local": "saavedra",
+  "costo": 1840.5303
+ },
+ "02084629-55db-4bf3-9dc7-dc98c7d0f25c": {
+  "nombre": "Medialuna Rellenas Pastelera",
+  "local": "saavedra",
+  "costo": 815.6088
+ },
+ "40fd6cfe-b8ae-433d-87ea-ba93c6fe6927": {
+  "nombre": "Medialunas",
+  "local": "saavedra",
+  "costo": 621.959
+ },
+ "a55e9145-8af1-4100-9479-b637f660a1ef": {
+  "nombre": "Medialunas Rellenas jyq",
+  "local": "saavedra",
+  "costo": 1840.5303
+ },
+ "e97f0a12-a267-4c8b-8e70-b6b1414547b4": {
+  "nombre": "Mermelada de Frutos Rojos",
+  "local": "saavedra",
+  "costo": 19566.335
+ },
+ "97176bd7-540f-46ae-9409-09aae5233dda": {
+  "nombre": "Mezzelune de Bondiola (VIANDA)",
+  "local": "saavedra",
+  "costo": 4320.8695
+ },
+ "eb171b9b-2145-476b-ad45-ba92ad072e61": {
+  "nombre": "Mezzelune de Bondiola Braseada",
+  "local": "vedia",
+  "costo": 1707.1213
+ },
+ "4002e53d-2e33-4d2f-8cad-b18ef270f685": {
+  "nombre": "Mezzelune De Bondiola Braseada",
+  "local": "saavedra",
+  "costo": 3833.6695
+ },
+ "13427a2d-738e-4153-af0f-f24bcf2944ab": {
+  "nombre": "Mezzelune de Bondiola Braseada (CONGELADA)",
+  "local": "vedia",
+  "costo": 1491.8625
+ },
+ "0edbfdd9-2d64-4996-8f35-4a4ab902e858": {
+  "nombre": "Mezzelune De Bondiola Braseada (CONGELADO)",
+  "local": "saavedra",
+  "costo": 3621.3479
+ },
+ "96145e9e-bfb7-45e8-b39f-a51376b04f04": {
+  "nombre": "Mezzelune de Bondiola Braseada (PACK)",
+  "local": "saavedra",
+  "costo": 3616.2681
+ },
+ "309ab3bb-5f40-4d18-be97-cd12c91b24e6": {
+  "nombre": "Mezzelune de Bondiola Braseada (VIANDA)",
+  "local": "vedia",
+  "costo": 2186.2713
+ },
+ "e22c4bcc-8dfe-4da0-8f6f-4d35f7596220": {
+  "nombre": "Miel De Rio (EL PERRO)",
+  "local": "vedia",
+  "costo": 1200
+ },
+ "601923dd-4de3-42e0-8671-91b268bc2510": {
+  "nombre": "Milanesa + Ñoqui de Papa SG",
+  "local": "saavedra",
+  "costo": 5865.0193
+ },
+ "0ec532af-f126-4925-aebf-24eb9174a212": {
+  "nombre": "Milanesa Con Cresta di Gallo",
+  "local": "saavedra",
+  "costo": 5721.167
+ },
+ "4d071770-0c22-43f9-ab07-d3a7315ce2dc": {
+  "nombre": "Milanesa de carne",
+  "local": "saavedra",
+  "costo": 19728.6617
+ },
+ "7ed5d182-05bf-4c5c-87f0-7938ddbb7c7b": {
+  "nombre": "MIlanesa De Pollo",
+  "local": "vedia",
+  "costo": 8133.492
+ },
+ "965de3a7-eac4-4a70-b453-b68f3f23febc": {
+  "nombre": "Milanesas de pollo + Ñoqui De Papa",
+  "local": "vedia",
+  "costo": 3391.4404
+ },
+ "d4b877f2-2b61-4e99-b0c1-a308dfe81f84": {
+  "nombre": "Mix De Quesos (PIZZA/MILA)",
+  "local": "saavedra",
+  "costo": 11814.595
+ },
+ "97f04b66-abc0-44c9-821a-6ea159ead29b": {
+  "nombre": "Morron Asado",
+  "local": "saavedra",
+  "costo": 1415.904
+ },
+ "659a2142-9c9a-44a9-8913-84951c6ac554": {
+  "nombre": "Ñoqui De Papa SG",
+  "local": "saavedra",
+  "costo": 776.0931
+ },
+ "9d3d2630-ce8f-4042-b5aa-fe57bb7399d6": {
+  "nombre": "Ñoqui De Papa SG (VIANDA)",
+  "local": "saavedra",
+  "costo": 1263.2931
+ },
+ "211508f3-02cd-4429-b52c-56d443061468": {
+  "nombre": "Ñoquis de papa",
+  "local": "vedia",
+  "costo": 915.1818
+ },
+ "c7a24c42-ae60-44a4-8865-6fe17b3f420b": {
+  "nombre": "Ñoquis de papa (VIANDA)",
+  "local": "vedia",
+  "costo": 1394.3318
+ },
+ "6c3c9acf-6719-49c4-9fe0-5c9d12034225": {
+  "nombre": "Ñoquis Relleno SG",
+  "local": "saavedra",
+  "costo": 864.9627
+ },
+ "7e589b97-9187-46ea-8db3-242ec29691d8": {
+  "nombre": "Ñoquis Relleno SG (VIANDA)",
+  "local": "saavedra",
+  "costo": 1352.1627
+ },
+ "85814287-d586-4843-8ffa-d0cc5fb543f4": {
+  "nombre": "Ñoquis rellenos",
+  "local": "vedia",
+  "costo": 970.6899
+ },
+ "c5a3bd37-ea42-4935-9523-8bed0b6a60aa": {
+  "nombre": "Ñoquis rellenos (VIANDA)",
+  "local": "vedia",
+  "costo": 1449.8399
+ },
+ "29a63a65-12fe-4cbb-8457-3446d9c12ccc": {
+  "nombre": "Pack de 4 Congeladas",
+  "local": "saavedra",
+  "costo": 10377.5846
+ },
+ "06c54cca-17ba-49c8-b094-62434c008356": {
+  "nombre": "Packaging Congelado",
+  "local": "saavedra",
+  "costo": 141.19
+ },
+ "2efc82d2-34ec-4680-b13b-484435c4b9c8": {
+  "nombre": "Packaging Congelado",
+  "local": "vedia",
+  "costo": 141.19
+ },
+ "bc5b374b-c309-4443-a156-9e715b0d476e": {
+  "nombre": "Packaging Vianda",
+  "local": "saavedra",
+  "costo": 487.2
+ },
+ "df24d22a-e1cb-45a2-aaaa-22deb9fe935e": {
+  "nombre": "Packaging Vianda",
+  "local": "vedia",
+  "costo": 479.15
+ },
+ "a56eee58-fbd4-4669-ae30-236161bab0bc": {
+  "nombre": "Pan Brioche (ALMACEN)",
+  "local": "saavedra",
+  "costo": 1707.6745
+ },
+ "fb5c147f-abe8-4dea-831f-caa43777d5d4": {
+  "nombre": "Pan Brioche Base",
+  "local": "saavedra",
+  "costo": 10163.607
+ },
+ "c1be7bae-44af-41af-9e8c-4d0639dbb864": {
+  "nombre": "Pan de Campo",
+  "local": "saavedra",
+  "costo": 7870.2901
+ },
+ "8de6d39f-87bc-45e0-807a-ce2ddefd57f2": {
+  "nombre": "Pan de campo (ALMACEN)",
+  "local": "saavedra",
+  "costo": 1324.8889
+ },
+ "b2561e19-8bec-4585-bbf7-43aab22ad25e": {
+  "nombre": "Pan de Miga",
+  "local": "saavedra",
+  "costo": 5988.1614
+ },
+ "f75c9b06-ee1a-43b9-9c9d-aeb2f2f8717d": {
+  "nombre": "Pan de Molde (ALMACEN)",
+  "local": "saavedra",
+  "costo": 1239.7162
+ },
+ "4870a669-bbf7-4678-846b-428cb9c35801": {
+  "nombre": "Pan de Molde Base",
+  "local": "saavedra",
+  "costo": 4903.905
+ },
+ "74140f64-4b16-4cae-8c87-749443beb6fc": {
+  "nombre": "Pan Lactal (ALMACEN)",
+  "local": "saavedra",
+  "costo": 1676.8279
+ },
+ "672619ab-9f88-4b24-b25c-9b7c24929192": {
+  "nombre": "Pan para servicio",
+  "local": "saavedra",
+  "costo": 13712.3901
+ },
+ "4984cc5d-b0a0-40e6-98a1-54c173045b64": {
+  "nombre": "Perrito Malvado (EL PERRO)",
+  "local": "vedia",
+  "costo": 1640
+ },
+ "3e03782e-1faa-4f25-b353-ccfa66b680dd": {
+  "nombre": "Pionono Base",
+  "local": "saavedra",
+  "costo": 5223.5443
+ },
+ "6971c3d0-bc2e-4e28-bc07-f2da785a55c9": {
+  "nombre": "Pizza De Especial SG",
+  "local": "saavedra",
+  "costo": 4477.1824
+ },
+ "e13584ce-bac5-4d71-b717-415ddc48975c": {
+  "nombre": "Pizza De Muzzarella SG",
+  "local": "saavedra",
+  "costo": 3662.6979
+ },
+ "671b272b-ce20-4a72-aafe-9a2f9aacb117": {
+  "nombre": "Pizza De Napolitana SG",
+  "local": "saavedra",
+  "costo": 3862.6979
+ },
+ "b1209c87-9c9e-4021-9c29-21d801966d3d": {
+  "nombre": "Pomodoro",
+  "local": "saavedra",
+  "costo": 1119.193
+ },
+ "56912dac-8f01-412d-9bdf-c3717a1a7d88": {
+  "nombre": "Pomodoro Base",
+  "local": "saavedra",
+  "costo": 39171.7546
+ },
+ "933d602e-3b0c-4e88-8d08-a19eda82aba4": {
+  "nombre": "Pomodoro Base",
+  "local": "vedia",
+  "costo": 42213.776
+ },
+ "bab3bb6d-4b76-4174-a188-0025b15ad7c1": {
+  "nombre": "Prepizza",
+  "local": "saavedra",
+  "costo": 5520.8569
+ },
+ "ab291054-3b5e-4b49-aa9e-ab6cd64e74a5": {
+  "nombre": "Pure papa para ñoqui",
+  "local": "saavedra",
+  "costo": 3063.7157
+ },
+ "9db82c12-93d7-4ed1-a0e8-2eb699cbfef9": {
+  "nombre": "Pure papa para ñoqui",
+  "local": "vedia",
+  "costo": 4623.997
+ },
+ "7ad21ad0-6bdd-413d-9c84-660b0b5bcca8": {
+  "nombre": "Radiatori",
+  "local": "vedia",
+  "costo": 201.38
+ },
+ "04a01800-6679-4f6f-800e-afb991403578": {
+  "nombre": "Radiatori (CONGELADO)",
+  "local": "vedia",
+  "costo": 342.57
+ },
+ "4afe5353-cd37-46b0-ba13-9cefac782966": {
+  "nombre": "Radiatori (VIANDA)",
+  "local": "vedia",
+  "costo": 1036.9788
+ },
+ "ace988bb-3bc8-4bc6-9870-b109a75aad37": {
+  "nombre": "Ravioles de Espinaca y Quesos (CONGELADA)",
+  "local": "saavedra",
+  "costo": 1587.1429
+ },
+ "0afafa96-f986-413c-baca-ab9a994a6b7d": {
+  "nombre": "Ravioli de Espinaca y Quesos",
+  "local": "vedia",
+  "costo": 1493.1273
+ },
+ "705b79af-1ec3-4ab8-86a6-b4a86fd00136": {
+  "nombre": "Ravioli de Espinaca y Quesos (CONGELADO)",
+  "local": "vedia",
+  "costo": 1277.8685
+ },
+ "9fdd8030-12ca-4d26-bd79-3ffa163dbf5c": {
+  "nombre": "Ravioli de Espinaca y Quesos (VIANDA)",
+  "local": "vedia",
+  "costo": 1972.2773
+ },
+ "8ee1796d-6aa3-4cdf-abb5-838c1fe694a3": {
+  "nombre": "Raviolis de Espinaca y Quesos",
+  "local": "saavedra",
+  "costo": 1799.4645
+ },
+ "c275e636-b6be-49d3-a9c1-e1fbf751cc7a": {
+  "nombre": "Raviolis De Espinaca y Quesos (VIANDA)",
+  "local": "saavedra",
+  "costo": 1933.1529
+ },
+ "09bb06dc-4eae-46b0-96d6-e3b2eaa5e476": {
+  "nombre": "Relleno Capresse",
+  "local": "saavedra",
+  "costo": 34622.8324
+ },
+ "b0463701-c7f6-4c57-97ee-951093e6482e": {
+  "nombre": "Relleno de Bondiola Braseada",
+  "local": "saavedra",
+  "costo": 62415.7938
+ },
+ "a2c5c7f2-1acf-4d9b-8252-983481ba8a7b": {
+  "nombre": "Relleno de Bondiola Braseada",
+  "local": "vedia",
+  "costo": 54049.204
+ },
+ "70cbc21a-5562-4b63-9d13-c0460306a392": {
+  "nombre": "Relleno de Espinaca y 2 Quesos",
+  "local": "saavedra",
+  "costo": 36811.8682
+ },
+ "fcaa4f71-e484-4ecb-b0c4-ce57e83b12fe": {
+  "nombre": "Relleno de Espinaca y 2 Quesos",
+  "local": "vedia",
+  "costo": 32533.428
+ },
+ "4b1d4083-e9a4-4551-904a-c3abfd78fdae": {
+  "nombre": "Relleno de Jamon, quesos y cebolla",
+  "local": "vedia",
+  "costo": 44960.7798
+ },
+ "469f37b2-2cfa-43cf-b9d1-477980421b9a": {
+  "nombre": "Rigatoni",
+  "local": "vedia",
+  "costo": 215.7643
+ },
+ "f96821f8-9cfc-425a-bda7-565aea3a8525": {
+  "nombre": "Rigatoni (CONGELADA)",
+  "local": "vedia",
+  "costo": 356.9543
+ },
+ "289fb8aa-e66f-4ea7-ae43-90d7bf36a1d6": {
+  "nombre": "Rigatoni (VIANDA)",
+  "local": "vedia",
+  "costo": 1051.3631
+ },
+ "d9651192-3415-426e-8653-5f5f394aae16": {
+  "nombre": "Rigatoni + Carbonara",
+  "local": "vedia",
+  "costo": 1945.3253
+ },
+ "e500bb83-a273-41ca-b05b-2d500986d935": {
+  "nombre": "Rosé",
+  "local": "saavedra",
+  "costo": 414.3646
+ },
+ "119bf605-2232-4504-885e-556125f365e6": {
+  "nombre": "Rosé",
+  "local": "vedia",
+  "costo": 512.6272
+ },
+ "75a62b11-428c-453d-ab7d-2b684acaba37": {
+  "nombre": "Rose Base",
+  "local": "saavedra",
+  "costo": 20718.2316
+ },
+ "342b215e-dc10-4421-ae8c-f87886ed278a": {
+  "nombre": "Rose Base",
+  "local": "vedia",
+  "costo": 35883.9008
+ },
+ "9209c1d9-e9e5-4d0e-8c27-dd2c7c5a31a1": {
+  "nombre": "Sabores Del Litoral",
+  "local": "saavedra",
+  "costo": 4184.58
+ },
+ "40fb2b23-6485-4064-b01e-f30bc21bb6a8": {
+  "nombre": "Salsa alfredo",
+  "local": "vedia",
+  "costo": 2009.1653
+ },
+ "edaea2d8-e053-4d0c-8e2d-5ed91ca56d7b": {
+  "nombre": "Salsa Alfredo Base",
+  "local": "vedia",
+  "costo": 5826.5794
+ },
+ "ecd73977-3147-4076-a6ef-441801df9279": {
+  "nombre": "Sandwich de Pan Brioche",
+  "local": "saavedra",
+  "costo": 1606.0957
+ },
+ "c4a611c4-a9c1-440d-bb49-5bd64d3d3e8e": {
+  "nombre": "Sandwich Pan Brioche",
+  "local": "saavedra",
+  "costo": 1606.0957
+ },
+ "5e0233d9-a57e-4c00-9d22-ac0b666943fb": {
+  "nombre": "Scarparo",
+  "local": "saavedra",
+  "costo": 1882.3267
+ },
+ "55a02a9e-e301-44fc-8f26-3b05973bf06f": {
+  "nombre": "Scarparo",
+  "local": "vedia",
+  "costo": 1725.7459
+ },
+ "b3728e8e-8d90-48c1-b3dd-2d83ea3e838b": {
+  "nombre": "Scarparo Base",
+  "local": "saavedra",
+  "costo": 65881.4348
+ },
+ "ff92413b-a07a-4317-832b-25f42e30fb55": {
+  "nombre": "Scarparo Base",
+  "local": "vedia",
+  "costo": 60401.106
+ },
+ "e41a1af9-69ba-4c0b-a9ea-bea55f5b8ff7": {
+  "nombre": "Servicio Salón",
+  "local": "saavedra",
+  "costo": 353.5116
+ },
+ "5a30cb5a-9cd0-4256-b6bc-433bd85fc90c": {
+  "nombre": "Servicio Salón",
+  "local": "vedia",
+  "costo": 356.4488
+ },
+ "775eb5a7-7702-4be3-ad18-0921ed1a53bd": {
+  "nombre": "Session IPA (EL PERRO)",
+  "local": "vedia",
+  "costo": 1540
+ },
+ "a47850ed-3b5b-49ea-a6ce-492d792ff321": {
+  "nombre": "Sorrentinos De Jamón Y Quesos",
+  "local": "vedia",
+  "costo": 1963.7046
+ },
+ "83a9759f-103c-4980-8360-1abc51b56057": {
+  "nombre": "Sorrentinos De Jamón Y Quesos (CONGELADO)",
+  "local": "vedia",
+  "costo": 1748.4458
+ },
+ "8983b9ad-c1f1-455a-a689-d4783aeb77ba": {
+  "nombre": "Sorrentinos De Jamón Y Quesos (VIANDA)",
+  "local": "vedia",
+  "costo": 2442.8546
+ },
+ "ed3727f6-8b30-469c-8e7f-4ccd0cdf98b6": {
+  "nombre": "Spaghetti Al Huevo SG",
+  "local": "saavedra",
+  "costo": 709.0982
+ },
+ "a4417cc5-aee6-4f81-ad1b-90c2eda965f5": {
+  "nombre": "Spaghetti Al Huevo SG (CONGELADO)",
+  "local": "saavedra",
+  "costo": 496.7766
+ },
+ "c6bfc646-8f54-4aec-b2ce-405760be0a50": {
+  "nombre": "Spaghetti Al Huevo SG (VIANDA)",
+  "local": "saavedra",
+  "costo": 1196.2982
+ },
+ "a1fe090f-6efa-44af-b0e2-3bb5711971e9": {
+  "nombre": "Sprite",
+  "local": "saavedra",
+  "costo": 687.5
+ },
+ "55ec483b-f2a2-47ba-8b75-b1a2cf4ae0c9": {
+  "nombre": "Sprite",
+  "local": "vedia",
+  "costo": 687.5
+ },
+ "10b0a8d3-144c-48b1-959e-7529c5c36832": {
+  "nombre": "Tagliatelles Al Huevo",
+  "local": "saavedra",
+  "costo": 709.0982
+ },
+ "4654872e-c734-406e-a4c4-d5e1968c45ec": {
+  "nombre": "Tagliatelles Al Huevo (CONGELADO)",
+  "local": "saavedra",
+  "costo": 496.7766
+ },
+ "6b8a98f6-7ef3-4876-a512-6a189728acd4": {
+  "nombre": "Tagliatelles Al Huevo (VIANDA)",
+  "local": "saavedra",
+  "costo": 1196.2982
+ },
+ "591fa3f3-5588-40bf-8c00-f27952b808cc": {
+  "nombre": "Tagliatelles Huevo",
+  "local": "vedia",
+  "costo": 555.9276
+ },
+ "edbbdab6-a2dc-4a40-9ca1-81d45baa2d46": {
+  "nombre": "tagliatelles Huevo (CONGELADO)",
+  "local": "vedia",
+  "costo": 340.6688
+ },
+ "27ac15a5-05ef-4fed-b31b-30afcc82942a": {
+  "nombre": "Tagliatelles Huevo (VIANDA)",
+  "local": "vedia",
+  "costo": 1035.0776
+ },
+ "aa491479-dabd-4d13-8a91-c502504c8ba2": {
+  "nombre": "Tagliatelles Mix",
+  "local": "vedia",
+  "costo": 555.9276
+ },
+ "89a07d0e-2656-487b-bd7d-3684191c0aae": {
+  "nombre": "Tagliatelles Mix (CONGELADA)",
+  "local": "vedia",
+  "costo": 340.6688
+ },
+ "01a869bf-71b4-4272-99b1-8726c0931231": {
+  "nombre": "Tagliatelles Mix (VIANDA)",
+  "local": "vedia",
+  "costo": 1035.0776
+ },
+ "5929d56c-d3b4-4a0d-8c34-db0bd8ec6221": {
+  "nombre": "Tapas de Chocolates",
+  "local": "saavedra",
+  "costo": 14127.9852
+ },
+ "5150a3a7-4bb0-4723-98ae-1282643e8328": {
+  "nombre": "Tarta Vazca",
+  "local": "saavedra",
+  "costo": 9995.0831
+ },
+ "c4de49ed-2e16-4ac5-93a4-dcc23c4d3f65": {
+  "nombre": "Tarta vazca (ALMACEN)",
+  "local": "saavedra",
+  "costo": 12192.9003
+ },
+ "948719fb-e63b-4ed6-983f-ad51e69af5a0": {
+  "nombre": "Tarta Vazca (PORCIONES)",
+  "local": "saavedra",
+  "costo": 1357.4778
+ },
+ "fd024692-3f27-4f66-a26a-c44b03e37119": {
+  "nombre": "tiramisú",
+  "local": "vedia",
+  "costo": 2117.0026
+ },
+ "8f7c450d-af6c-4b6d-8b6e-d784b1e730b4": {
+  "nombre": "Tiramisú",
+  "local": "saavedra",
+  "costo": 869.3645
+ },
+ "589c5002-74f9-48a8-9559-12b785b3b001": {
+  "nombre": "Tiramisú",
+  "local": "vedia",
+  "costo": 25404.0314
+ },
+ "32e0e3da-be11-42fc-b30f-ae999d83bb8f": {
+  "nombre": "Tiramisú Base",
+  "local": "saavedra",
+  "costo": 6954.9157
+ },
+ "dc16989b-8f1c-4434-ac03-a0ebabe82121": {
+  "nombre": "Torta Brownie (ALMACEN)",
+  "local": "saavedra",
+  "costo": 10291.2865
+ },
+ "8d098dcf-27f2-47a1-9a5a-55beafe61a67": {
+  "nombre": "Torta Brownie (ALMACÉN)",
+  "local": "saavedra",
+  "costo": 9226.6309
+ },
+ "caad8b43-b1ad-4b3b-98d4-5354af5e9057": {
+  "nombre": "Torta matilda",
+  "local": "saavedra",
+  "costo": 6036.9446
+ },
+ "7af4889a-83cd-4a39-b5b2-2452a443d48c": {
+  "nombre": "Torta Matilda (ALMACEN)",
+  "local": "saavedra",
+  "costo": 6249.0422
+ },
+ "d9480952-4b90-430a-9649-9fd47b239e49": {
+  "nombre": "Torta matilda (PORCION)",
+  "local": "saavedra",
+  "costo": 709.7433
+ },
+ "98485a0c-3500-4f2f-af26-a3625279cd17": {
+  "nombre": "Tortelli De Espinaca y Quesos",
+  "local": "saavedra",
+  "costo": 1826.1364
+ },
+ "43d61e11-56c3-418d-aeb9-6df234f08325": {
+  "nombre": "Tortelli de Espinaca y Quesos (CONGELADO)",
+  "local": "saavedra",
+  "costo": 1613.8148
+ },
+ "ffae5b9b-825a-4415-a1df-83e710475d9a": {
+  "nombre": "Tortelli de Espinaca y Quesos (PACK)",
+  "local": "saavedra",
+  "costo": 1613.8148
+ },
+ "196c6560-4868-49bb-ac93-c0ca2717a9f3": {
+  "nombre": "Tortelli de Espinaca y Quesos (VIANDA)",
+  "local": "saavedra",
+  "costo": 2313.3364
+ },
+ "1b8877e4-9095-4ee2-9fd6-9ce6e713aa43": {
+  "nombre": "Tostadas Con Dips",
+  "local": "saavedra",
+  "costo": 1782.9321
+ },
+ "e0386720-854f-45b4-b0cd-c4ad78b33b5d": {
+  "nombre": "Tostadas Proteica",
+  "local": "saavedra",
+  "costo": 2737.4795
+ },
+ "ca10d585-034e-4a03-8263-4edb4020bb1c": {
+  "nombre": "Tostadas Proteicas",
+  "local": "saavedra",
+  "costo": 2737.4795
+ },
+ "9c154057-e2fd-4b9b-8d03-c646d6ac6da4": {
+  "nombre": "Tostados de Jyq",
+  "local": "saavedra",
+  "costo": 1370.9796
+ },
+ "cadfe9dd-a173-4505-88bc-ef2d3d809207": {
+  "nombre": "Tostados Jamon Y Queso",
+  "local": "saavedra",
+  "costo": 1370.9796
+ },
+ "be5869ae-0bd0-4d12-94c4-e09c68ba2822": {
+  "nombre": "Vermu Bianco",
+  "local": "saavedra",
+  "costo": 1437.9664
+ },
+ "ee359821-3141-4302-af15-e409952c95db": {
+  "nombre": "Vermu Rosso",
+  "local": "saavedra",
+  "costo": 1375.9808
+ },
+ "b7100259-80eb-4bec-b72a-6015347ef2a1": {
+  "nombre": "Vermut Con Soda",
+  "local": "vedia",
+  "costo": 1865.605
+ }
+}
