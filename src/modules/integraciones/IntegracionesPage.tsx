@@ -1,6 +1,7 @@
 import { useState, useRef, useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { guardarContando } from '@/lib/escribir';
 import { PageContainer } from '@/components/layout/PageContainer';
 import { cn, formatARS } from '@/lib/utils';
 import { normalizarTexto } from '@/modules/rrhh/utils';
@@ -368,8 +369,14 @@ export function IntegracionesPage() {
           notas: `${base}${v?.numero ? ` · VEP N° ${v.numero}` : ''}${v?.impuesto ? ` · ${v.impuesto}` : ''}`.trim(),
         };
 
-        const { error } = aVincular
-          ? await supabase.from('pagos_fijos').update(fila).eq('id', aVincular.id)
+        // ⚠️ Acá NO se usa `guardarContando`, a propósito: hace falta el `code` crudo
+        // del error para reconocer el 23505 (el mismo VEP resubido) y avisar en vez de
+        // cargarlo dos veces. El helper devuelve el mensaje ya masticado y esa
+        // distinción se perdería. El conteo de filas del update se hace igual, abajo.
+        // Mismo criterio que ChecklistPagos.moverPago.
+        // El insert no cuenta nada: un insert que la RLS bloquea SÍ tira error (42501).
+        const { data: vinculadas, error } = aVincular
+          ? await supabase.from('pagos_fijos').update(fila).eq('id', aVincular.id).select('id')
           : await supabase.from('pagos_fijos').insert(fila);
         if (error) {
           // 23505 = viola un UNIQUE: el número de VEP (pagos_fijos_vep_numero_uidx) o
@@ -385,6 +392,24 @@ export function IntegracionesPage() {
             return;
           }
           throw error;
+        }
+        // 💣 Cero filas y ningún error: la RLS bloqueó el update. Sin este corte el
+        // cartel decía "se vinculó al pago que ya estaba cargado a mano" con el VEP
+        // sin guardar en ninguna parte: el impuesto queda sin comprobante y nadie se
+        // entera hasta que lo buscan en Pagos Fijos.
+        if (aVincular && (vinculadas?.length ?? 0) === 0) {
+          // El PDF se borra igual que en los otros dos cortes de este flujo: el
+          // mensaje invita a reintentar y cada reintento dejaría otra copia
+          // colgada en un bucket que ya pegó contra la cuota.
+          await supabase.storage.from('correos-contadores').remove([path]);
+          // ⚠️ El aviso arranca por lo que hay que hacer, no por la explicación:
+          // se muestra en un renglón con `truncate` y la cola se corta.
+          throw new Error(
+            `El VEP NO quedó cargado: revisá Pagos Fijos y volvé a subirlo. ` +
+              `No se pudo vincular al pago "${aVincular.concepto}" que ya estaba cargado a mano ` +
+              '(no se guardó ninguna fila: casi siempre es un permiso que falta, o que alguien ' +
+              'más lo cambió recién).',
+          );
         }
         // Cuando quedaron VARIOS candidatos (o el monto no coincidió con ninguno) no
         // vinculamos nada, pero hay que decirlo: si no, el duplicado vuelve callado.
@@ -514,7 +539,9 @@ export function IntegracionesPage() {
                 <span className="text-base">
                   {it.estado === 'ok' ? '✓' : it.estado === 'error' ? '⚠' : '⏳'}
                 </span>
-                <span className="min-w-0 flex-1 truncate">
+                {/* `truncate` corta los avisos largos: el title deja leer el resto
+                    pasando el mouse, sin romper el renglon. */}
+                <span className="min-w-0 flex-1 truncate" title={it.resultado ?? undefined}>
                   <span className="font-medium text-gray-700">{it.nombre}</span>
                   {it.resultado && <span className="ml-2 text-gray-500">{it.resultado}</span>}
                   {!it.resultado && (
@@ -563,12 +590,35 @@ function SeccionRecibos({ empleados }: { empleados: EmpleadoMin[] }) {
     return m;
   }, [empleados]);
 
+  // Las dos escrituras de abajo salen de un onChange y de un onClick: si el error
+  // no se avisa acá, se pierde en la consola y la pantalla se refresca igual, como
+  // si hubiera guardado. Por eso el alert, y por eso se invalida en los dos casos:
+  // que la lista muestre cómo quedó de verdad.
   async function asignar(id: string, empleadoId: string) {
-    await supabase.from('recibos_sueldo').update({ empleado_id: empleadoId || null }).eq('id', id);
+    try {
+      await guardarContando(
+        supabase.from('recibos_sueldo').update({ empleado_id: empleadoId || null }).eq('id', id),
+        'No se pudo asignar el recibo a ese empleado',
+        { filasEsperadas: 1 },
+      );
+    } catch (e) {
+      window.alert((e as Error).message);
+    }
     qc.invalidateQueries({ queryKey: ['recibos_sueldo'] });
   }
   async function borrar(id: string) {
-    await supabase.from('recibos_sueldo').delete().eq('id', id);
+    // No es un "borrá lo que haya": el recibo está en pantalla, así que tiene que
+    // desaparecer una fila. Cero filas es la RLS bloqueando, y el recibo vuelve solo
+    // al recargar.
+    try {
+      await guardarContando(
+        supabase.from('recibos_sueldo').delete().eq('id', id),
+        'No se pudo borrar el recibo',
+        { filasEsperadas: 1 },
+      );
+    } catch (e) {
+      window.alert((e as Error).message);
+    }
     qc.invalidateQueries({ queryKey: ['recibos_sueldo'] });
   }
 
