@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
+import { guardarContando } from '@/lib/escribir';
 import { mediosDeDividendo, esCobroDeDividendo } from '@/lib/mediosPago';
 import { parseFudoVentas } from '../parsers/parseFudoVentas';
 import { parseFudoGastos } from '../parsers/parseFudoGastos';
@@ -100,6 +101,12 @@ export function UploadFudo({ onSuccess }: { onSuccess?: () => void }) {
   async function importarVentas(buffer: ArrayBuffer, loc: LocalFudo) {
     const data = parseFudoVentas(buffer, loc);
     const errores: string[] = [];
+    // Si un paso corta después de que ya se juntaron avisos (cortesías,
+    // productos, cobros), esos avisos nunca llegan al cartel: `setResult` está
+    // al final y no se ejecuta. Se los pegamos al mensaje del error para que el
+    // usuario vea todo lo que pasó, no sólo lo último.
+    const conLosAvisos = (e: unknown) =>
+      new Error([e instanceof Error ? e.message : String(e), ...errores].join(' · '));
     const fiscalMap = new Map(data.fiscales.map((f) => [f.fudo_id, f]));
 
     // Qué medios de pago son plata del socio: lo dice el catálogo, no una cadena
@@ -167,18 +174,43 @@ export function UploadFudo({ onSuccess }: { onSuccess?: () => void }) {
       // papelera. Las filas que inserta ESTA pantalla nacen con origen='fudo'
       // (es el default de la columna), asi que el filtro no le impide limpiar
       // lo suyo: solo le impide borrar lo ajeno.
-      await supabase
-        .from('ventas_tickets')
-        .delete()
-        .eq('local', loc)
-        .in('periodo', periodosArchivo)
-        .eq('origen', 'fudo');
+      //
+      // Cero filas es un resultado válido: un mes que nunca se importó no tiene
+      // nada que borrar. Lo que sí corta acá es el error, y hay uno concreto:
+      // `ventas_comprobantes` apunta a los tickets con ON DELETE RESTRICT, así
+      // que un mes ya facturado en ARCA no se deja pisar. Antes ese error se
+      // tiraba a la basura y la importación seguía como si hubiera limpiado.
+      //
+      // Pedimos solo `id` de vuelta porque un mes son miles de filas y no las
+      // usamos para nada: alcanza con contarlas. (Vale para todas las de acá.)
+      await guardarContando(
+        supabase
+          .from('ventas_tickets')
+          .delete()
+          .eq('local', loc)
+          .in('periodo', periodosArchivo)
+          .eq('origen', 'fudo'),
+        'No se pudieron borrar las ventas que ya estaban cargadas de ese período',
+        { permitirCero: true, columnas: 'id' },
+      );
     }
     // upsert por (local, fudo_id): si algún ticket quedó bajo otro periodo, se actualiza en vez de romper.
-    const { error: e1 } = await supabase
-      .from('ventas_tickets')
-      .upsert(ticketsRows, { onConflict: 'local,fudo_id' });
-    if (e1) errores.push(`Tickets: ${e1.message}`);
+    // Si esto no guarda todos los tickets, se corta: seguir con productos y pagos
+    // sería colgarlos de ventas que no existen.
+    //
+    // 📏 Pedir `filasEsperadas` sobre miles de filas sería peligroso si PostgREST
+    // cortara la respuesta, porque un mes normal son entre 1.271 y 4.677 tickets.
+    // Medido el 11-sep-2026 contra este proyecto: `max_rows` está en 100.000 y
+    // una consulta de 1.433 filas devolvió las 1.433. No hay corte en 1.000 acá.
+    // ⚠️ Si algún día se baja `max_rows`, este conteo empieza a fallar solo.
+    let ticketsGuardados = 0;
+    if (ticketsRows.length) {
+      ticketsGuardados = await guardarContando(
+        supabase.from('ventas_tickets').upsert(ticketsRows, { onConflict: 'local,fudo_id' }),
+        'No se pudieron guardar las ventas del archivo',
+        { filasEsperadas: ticketsRows.length, columnas: 'id' },
+      );
+    }
 
     console.log(
       '[upload] periodo:',
@@ -212,18 +244,46 @@ export function UploadFudo({ onSuccess }: { onSuccess?: () => void }) {
         monto: data.descuentos.otros_descuentos_monto,
       },
     ];
-    await supabase
-      .from('edr_partidas')
-      .upsert(descPartidas, { onConflict: 'local,periodo,concepto' });
+    // A diferencia de los borrados y del guardado de ventas, esta no corta la
+    // importación: las cortesías son un dato al costado y perder el mes entero
+    // por un renglón informativo sería peor. Pero ya no falla en silencio —
+    // el aviso sale en el cartel del resultado, como el de productos y pagos.
+    try {
+      await guardarContando(
+        supabase.from('edr_partidas').upsert(descPartidas, { onConflict: 'local,periodo,concepto' }),
+        'No se pudo guardar el resumen de cortesías y descuentos del período',
+        { filasEsperadas: descPartidas.length, columnas: 'id' },
+      );
+    } catch (e) {
+      errores.push(e instanceof Error ? e.message : String(e));
+    }
 
     // Ver el comentario del borrado de ventas_tickets: el filtro por origen
     // protege las ventas del POS propio.
-    await supabase
-      .from('ventas_items')
-      .delete()
-      .eq('local', loc)
-      .eq('periodo', data.periodo)
-      .eq('origen', 'fudo');
+    //
+    // 💣 Cero filas es legítimo (mes que nunca se importó) y por eso va
+    // `permitirCero`, pero ese permiso tiene precio: un borrado que la RLS
+    // bloquea también devuelve cero, y acá abajo hay un `insert`. Si eso llegara
+    // a pasar, el mes de productos vendidos queda DUPLICADO sin ningún aviso.
+    //
+    // ⚠️ ESTE BORRADO USA `data.periodo` A PROPÓSITO, no `periodosArchivo`.
+    // Los productos se insertan más abajo con `periodo: data.periodo` para
+    // TODAS las filas (el parser no le da fecha propia a cada producto), así
+    // que el borrado y el alta usan exactamente la misma llave: ampliar este
+    // `where` a todos los períodos del archivo borraría el mes anterior sin
+    // reponerlo nunca. Lo que sí queda torcido —y es viejo, no de acá— es que
+    // los productos de un ticket de las 23:xx que cae en el mes siguiente
+    // quedan archivados en el mes de la primera fila.
+    await guardarContando(
+      supabase
+        .from('ventas_items')
+        .delete()
+        .eq('local', loc)
+        .eq('periodo', data.periodo)
+        .eq('origen', 'fudo'),
+      'No se pudieron borrar los productos vendidos que ya estaban cargados',
+      { permitirCero: true, columnas: 'id' },
+    );
     const itemsRows = data.productos.map((p) => ({ local: loc, periodo: data.periodo, ...p }));
     console.log(
       '[upload] items a insertar:',
@@ -231,6 +291,9 @@ export function UploadFudo({ onSuccess }: { onSuccess?: () => void }) {
       itemsRows.length > 0 ? itemsRows[0] : 'VACÍO',
     );
     if (itemsRows.length) {
+      // Los tres `insert` de esta función se quedan como estaban: un insert que
+      // la RLS bloquea SÍ devuelve error (42501). El modo silencioso —cero filas
+      // y ningún error— es de los borrados, y esos ya cuentan.
       const { error: e2 } = await supabase.from('ventas_items').insert(itemsRows);
       if (e2) {
         console.error('[upload] error items:', e2);
@@ -239,13 +302,20 @@ export function UploadFudo({ onSuccess }: { onSuccess?: () => void }) {
     }
 
     // Ver el comentario del borrado de ventas_tickets: el filtro por origen
-    // protege los pagos del POS propio.
-    await supabase
-      .from('ventas_pagos')
-      .delete()
-      .eq('local', loc)
-      .eq('periodo', data.periodo)
-      .eq('origen', 'fudo');
+    // protege los pagos del POS propio. Le caben los dos 💣 del borrado de
+    // productos, palabra por palabra: abajo hay un `insert`.
+    await guardarContando(
+      supabase
+        .from('ventas_pagos')
+        .delete()
+        .eq('local', loc)
+        .eq('periodo', data.periodo)
+        .eq('origen', 'fudo'),
+      'No se pudieron borrar los cobros que ya estaban cargados',
+      { permitirCero: true, columnas: 'id' },
+    ).catch((e) => {
+      throw conLosAvisos(e);
+    });
     // Excluir pagos de tickets cancelados/eliminados
     const ticketIdsValidos = new Set(ticketsRows.map((t) => t.fudo_id));
     const pagosRows = data.pagos
@@ -284,12 +354,21 @@ export function UploadFudo({ onSuccess }: { onSuccess?: () => void }) {
         periodo: data.periodo,
         creado_por: 'import_fudo',
       }));
-    await supabase
-      .from('dividendos')
-      .delete()
-      .eq('local', loc)
-      .eq('periodo', data.periodo)
-      .eq('creado_por', 'import_fudo');
+    // Cero es lo normal acá, no la excepción: la mayoría de los meses no tiene
+    // ningún cobro con el posnet personal, y el filtro por `creado_por` es el
+    // que evita llevarse puestos los dividendos cargados a mano.
+    await guardarContando(
+      supabase
+        .from('dividendos')
+        .delete()
+        .eq('local', loc)
+        .eq('periodo', data.periodo)
+        .eq('creado_por', 'import_fudo'),
+      'No se pudieron borrar los dividendos que había importado Fudo',
+      { permitirCero: true, columnas: 'id' },
+    ).catch((e) => {
+      throw conLosAvisos(e);
+    });
     if (dividendosRows.length) {
       const { error: eDiv } = await supabase.from('dividendos').insert(dividendosRows);
       if (eDiv) {
@@ -298,7 +377,8 @@ export function UploadFudo({ onSuccess }: { onSuccess?: () => void }) {
       }
     }
 
-    setResult({ insertados: ticketsRows.length, errores });
+    // Las filas que de verdad entraron, no las que traia el archivo.
+    setResult({ insertados: ticketsGuardados, errores });
   }
 
   async function importarGastos(buffer: ArrayBuffer, loc: LocalFudo) {
@@ -311,8 +391,14 @@ export function UploadFudo({ onSuccess }: { onSuccess?: () => void }) {
         `El parser no encontró filas válidas. Verificá que el archivo sea el export de Gastos de Fudo ` +
           `y que tenga datos en las columnas Id, Fecha e Importe.`,
       );
-    const { error } = await supabase.from('gastos').upsert(rows, { onConflict: 'local,fudo_id' });
-    setResult({ insertados: rows.length, errores: error ? [error.message] : [] });
+    // Informamos las filas que realmente entraron, no las que traía el archivo:
+    // es la única forma de que el cartel verde no mienta.
+    const guardados = await guardarContando(
+      supabase.from('gastos').upsert(rows, { onConflict: 'local,fudo_id' }),
+      'No se pudieron guardar los gastos del archivo de Fudo',
+      { filasEsperadas: rows.length, columnas: 'id' },
+    );
+    setResult({ insertados: guardados, errores: [] });
   }
 
   const tipoLabel: Record<TipoArchivo, string> = {
