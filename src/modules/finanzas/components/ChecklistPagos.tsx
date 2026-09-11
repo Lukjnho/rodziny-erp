@@ -833,10 +833,15 @@ export function ChecklistPagos() {
   // mes correcto.
   async function moverPago(pago: PagoFijo, nuevoPeriodo: string) {
     if (!nuevoPeriodo || nuevoPeriodo === pago.periodo) return;
-    const { error } = await supabase
+    // ⚠️ Acá NO se usa `guardarContando`, a propósito: hace falta el `code` del
+    // error para distinguir el 23505 (choque con la constraint única) y dar un
+    // mensaje que diga qué hacer. El helper devuelve el mensaje ya masticado y
+    // esa distinción se perdería. El conteo de filas se hace igual, abajo.
+    const { data, error } = await supabase
       .from('pagos_fijos')
       .update({ periodo: nuevoPeriodo })
-      .eq('id', pago.id);
+      .eq('id', pago.id)
+      .select('id');
     if (error) {
       // 23505 = choque con la constraint única (periodo, concepto): ya hay un
       // pago con ese mismo nombre en el mes destino.
@@ -847,6 +852,16 @@ export function ChecklistPagos() {
       } else {
         window.alert(`No se pudo mover el pago: ${error.message}`);
       }
+      return;
+    }
+    // 💣 Cero filas y ningún error: la RLS lo bloqueó. Sin este corte la
+    // función seguía de largo, invalidaba las consultas y mostraba el cartel
+    // de "movido" con el pago intacto en el mes viejo.
+    if (!data || data.length === 0) {
+      window.alert(
+        `No se movió "${pago.concepto}": no tenés permiso para modificar ese pago. ` +
+          'Quedó donde estaba.',
+      );
       return;
     }
     if (pago.pagado && pago.gasto_id) {

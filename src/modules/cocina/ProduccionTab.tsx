@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { guardarContando } from '@/lib/escribir';
 import { mensajeErrorAmigable } from '@/lib/erroresSupabase';
 import { invalidarStockCocina } from './lib/invalidarStock';
 import { KPICard } from '@/components/ui/KPICard';
@@ -896,8 +897,15 @@ export function ProduccionTab() {
 
   const eliminarMasa = useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase.from('cocina_lotes_masa').delete().eq('id', id);
-      if (error) throw error;
+      // 💣 `cocina_lotes_masa` NO tiene la policy abierta para anon que sí
+      // tiene `cocina_lotes_produccion`: acá todo pasa por tiene_permiso('cocina').
+      // Sin conteo, un borrado bloqueado invalidaba la consulta, el lote volvía
+      // a aparecer, y parecía que la pantalla estaba rota.
+      await guardarContando(
+        supabase.from('cocina_lotes_masa').delete().eq('id', id),
+        'No se pudo borrar el lote de masa',
+        { filasEsperadas: 1 },
+      );
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['cocina-lotes-masa', fecha] }),
     onError: onErrorEliminar,
@@ -1502,15 +1510,22 @@ function ModalCerrarMasa({
     }
     setGuardando(true);
     setError('');
-    const { error: err } = await supabase
-      .from('cocina_lotes_masa')
-      .update({
-        kg_sobrante: Number(kgSobrante),
-        destino_sobrante: Number(kgSobrante) === 0 ? null : destino,
-      })
-      .eq('id', lote.id);
-    if (err) {
-      setError(mensajeErrorAmigable(err, 'No se pudo cerrar la masa'));
+    // El kg sobrante es merma: si esto no guarda nada, la merma del día se
+    // pierde sin que nadie se entere y el rinde de la tanda queda inflado.
+    try {
+      await guardarContando(
+        supabase
+          .from('cocina_lotes_masa')
+          .update({
+            kg_sobrante: Number(kgSobrante),
+            destino_sobrante: Number(kgSobrante) === 0 ? null : destino,
+          })
+          .eq('id', lote.id),
+        'No se pudo cerrar la masa',
+        { filasEsperadas: 1 },
+      );
+    } catch (e) {
+      setError((e as Error).message);
       setGuardando(false);
       return;
     }
