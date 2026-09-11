@@ -12,8 +12,8 @@
 --
 --  Lo que NO trae: las policies de RLS. Eso lo mide scripts/mapa-erp/.
 --
---  Generado: 2026-09-11 17:26 -0300
---  93 tablas · 13 vistas · 85 funciones · 116 claves foraneas · 289 indices · 3 realtime (publicaciones)
+--  Generado: 2026-09-11 20:38 -0300
+--  96 tablas · 13 vistas · 86 funciones · 121 claves foraneas · 300 indices · 3 realtime (publicaciones)
 -- ============================================================================
 
 -- ── TABLAS ──────────────────────────────────────────────────────
@@ -345,6 +345,42 @@ create table public.cocina_cierre_dia (
   notas text,
   created_at timestamp with time zone not null,
   receta_id uuid
+);
+
+create table public.cocina_formas_venta (
+  id uuid not null,
+  receta_id uuid not null,
+  codigo text not null,
+  nombre text not null,
+  multiplicador numeric not null,
+  precio numeric,
+  activo boolean not null,
+  vendible boolean not null,
+  fudo_productos ARRAY,
+  orden integer not null,
+  created_at timestamp with time zone not null,
+  updated_at timestamp with time zone not null
+);
+
+create table public.cocina_formas_venta_ingredientes (
+  id uuid not null,
+  forma_id uuid not null,
+  nombre text not null,
+  cantidad numeric not null,
+  unidad text not null,
+  producto_id uuid,
+  observaciones text,
+  orden integer not null,
+  created_at timestamp with time zone not null
+);
+
+create table public.cocina_formas_venta_surtido (
+  id uuid not null,
+  forma_id uuid not null,
+  receta_id uuid not null,
+  cantidad numeric not null,
+  orden integer not null,
+  created_at timestamp with time zone not null
 );
 
 create table public.cocina_lote_consumos (
@@ -1873,6 +1909,9 @@ create function public.cobrar_venta(p_idempotencia uuid, p_local text, p_caja te
 -- plpgsql · SECURITY DEFINER
 create function public.cocina_cerrar_masa(p_lote_id uuid, p_kg_sobrante numeric, p_destino text DEFAULT NULL::text) returns cocina_lotes_masa;
 
+-- plpgsql · SECURITY DEFINER
+create function public.cocina_formas_venta_precios_log() returns trigger;
+
 -- sql · SECURITY DEFINER
 create function public.cocina_ingredientes_expandidos(p_receta_id uuid) returns TABLE(id text, nombre text, cantidad double precision, unidad text, producto_id uuid);
 
@@ -2130,6 +2169,11 @@ alter table public.cocina_ajustes_stock add constraint cocina_ajustes_stock_prod
 alter table public.cocina_cierre_camara add constraint cocina_cierre_camara_producto_id_fkey FOREIGN KEY (producto_id) REFERENCES cocina_productos(id) ON DELETE CASCADE;
 alter table public.cocina_cierre_dia add constraint cocina_cierre_dia_producto_id_fkey FOREIGN KEY (producto_id) REFERENCES cocina_productos(id) ON DELETE CASCADE;
 alter table public.cocina_cierre_dia add constraint cocina_cierre_dia_receta_id_fkey FOREIGN KEY (receta_id) REFERENCES cocina_recetas(id) ON DELETE SET NULL;
+alter table public.cocina_formas_venta add constraint cocina_formas_venta_receta_id_fkey FOREIGN KEY (receta_id) REFERENCES cocina_recetas(id) ON DELETE CASCADE;
+alter table public.cocina_formas_venta_ingredientes add constraint cocina_formas_venta_ingredientes_forma_id_fkey FOREIGN KEY (forma_id) REFERENCES cocina_formas_venta(id) ON DELETE CASCADE;
+alter table public.cocina_formas_venta_ingredientes add constraint cocina_formas_venta_ingredientes_producto_id_fkey FOREIGN KEY (producto_id) REFERENCES productos(id) ON DELETE SET NULL;
+alter table public.cocina_formas_venta_surtido add constraint cocina_formas_venta_surtido_forma_id_fkey FOREIGN KEY (forma_id) REFERENCES cocina_formas_venta(id) ON DELETE CASCADE;
+alter table public.cocina_formas_venta_surtido add constraint cocina_formas_venta_surtido_receta_id_fkey FOREIGN KEY (receta_id) REFERENCES cocina_recetas(id) ON DELETE RESTRICT;
 alter table public.cocina_lote_consumos add constraint cocina_lote_consumos_lote_pasta_id_fkey FOREIGN KEY (lote_pasta_id) REFERENCES cocina_lotes_pasta(id) ON DELETE CASCADE;
 alter table public.cocina_lotes_masa add constraint cocina_lotes_masa_receta_id_fkey FOREIGN KEY (receta_id) REFERENCES cocina_recetas(id);
 alter table public.cocina_lotes_pasta add constraint cocina_lotes_pasta_lote_masa_id_fkey FOREIGN KEY (lote_masa_id) REFERENCES cocina_lotes_masa(id);
@@ -2279,6 +2323,17 @@ CREATE INDEX idx_cocina_cierre_dia_fecha_local ON public.cocina_cierre_dia USING
 CREATE INDEX idx_cocina_cierre_dia_producto ON public.cocina_cierre_dia USING btree (producto_id, fecha DESC);
 CREATE UNIQUE INDEX ux_cocina_cierre_dia_con_turno ON public.cocina_cierre_dia USING btree (fecha, local, producto_id, turno) WHERE (turno IS NOT NULL);
 CREATE UNIQUE INDEX ux_cocina_cierre_dia_sin_turno ON public.cocina_cierre_dia USING btree (fecha, local, producto_id) WHERE (turno IS NULL);
+CREATE UNIQUE INDEX cocina_formas_venta_pkey ON public.cocina_formas_venta USING btree (id);
+CREATE UNIQUE INDEX cocina_formas_venta_receta_codigo_key ON public.cocina_formas_venta USING btree (receta_id, codigo);
+CREATE INDEX idx_formas_venta_activas ON public.cocina_formas_venta USING btree (activo) WHERE activo;
+CREATE INDEX idx_formas_venta_receta ON public.cocina_formas_venta USING btree (receta_id);
+CREATE UNIQUE INDEX cocina_formas_venta_ingredientes_pkey ON public.cocina_formas_venta_ingredientes USING btree (id);
+CREATE INDEX idx_formas_ing_forma ON public.cocina_formas_venta_ingredientes USING btree (forma_id);
+CREATE INDEX idx_formas_ing_producto ON public.cocina_formas_venta_ingredientes USING btree (producto_id);
+CREATE UNIQUE INDEX cocina_formas_venta_surtido_forma_receta_key ON public.cocina_formas_venta_surtido USING btree (forma_id, receta_id);
+CREATE UNIQUE INDEX cocina_formas_venta_surtido_pkey ON public.cocina_formas_venta_surtido USING btree (id);
+CREATE INDEX idx_formas_surtido_forma ON public.cocina_formas_venta_surtido USING btree (forma_id);
+CREATE INDEX idx_formas_surtido_receta ON public.cocina_formas_venta_surtido USING btree (receta_id);
 CREATE UNIQUE INDEX cocina_lote_consumos_pkey ON public.cocina_lote_consumos USING btree (id);
 CREATE INDEX idx_cocina_lote_consumos_lote ON public.cocina_lote_consumos USING btree (lote_pasta_id);
 CREATE INDEX idx_cocina_lote_consumos_origen ON public.cocina_lote_consumos USING btree (origen_tabla, origen_id);
