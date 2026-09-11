@@ -431,7 +431,6 @@ Deno.serve(async (req) => {
       total_neto: number | null
       iva: number
       es_fiscal: boolean
-      es_dividendo: boolean
       periodo: string
       origen: string
       cliente: string | null
@@ -445,7 +444,6 @@ Deno.serve(async (req) => {
       monto: number
       tipo_venta: string
       caja: string
-      es_dividendo: boolean
     }
     // `_saleId` es transitorio: se usa para resolver ticket_id despues de
     // insertar los tickets (recien ahi existe el uuid) y NO se manda a la base.
@@ -468,13 +466,34 @@ Deno.serve(async (req) => {
     const ticketsRows: TicketRow[] = []
     const pagosRows: PagoRow[] = []
     const ventasItemsRows: VentaItemRow[] = []
-    // Los cobros con el POSnet personal de Lucas se marcan acá (ventas_pagos.es_dividendo)
-    // pero NO generan filas en `dividendos`: la fuente única de ese dividendo es el
-    // cierre de caja (cierres_caja.fudo_mp_lucas → cierres_caja.dividendo_id).
-    // Antes los creaban los dos y el mismo cobro se contaba dos veces en el Flujo
-    // de Caja. Ver migración 128. Se sigue contando para reportarlo en la respuesta
-    // y para que el Flujo pueda avisar si hay cobros MP Lucas sin cierre cargado.
+    // Los cobros con el POSnet personal de Lucas NO generan filas en `dividendos`:
+    // la fuente única de ese dividendo es el cierre de caja
+    // (cierres_caja.fudo_mp_lucas → cierres_caja.dividendo_id). Antes los creaban
+    // los dos y el mismo cobro se contaba dos veces en el Flujo de Caja. Ver
+    // migración 128. Se sigue contando para reportarlo en la respuesta y para que
+    // el Flujo pueda avisar si hay cobros MP Lucas sin cierre cargado.
     let mpLucasDetectados = 0
+
+    // 🔑 Qué medios de pago son plata del socio lo dice el CATÁLOGO, no una cadena
+    // escrita acá. Antes este archivo tenía 'mercadopago lucas' escrito cuatro
+    // veces. Ahora sale de medios_pago.es_dividendo cruzado con sus alias, que es
+    // exactamente la misma tabla que usa el disparador de la base para marcar la
+    // fila (migración 205). Agregar una variante de nombre es un renglón en
+    // `medios_pago_alias`, sin deploy de esta función.
+    const { data: aliasRows, error: eAlias } = await supabase
+      .from('medios_pago_alias')
+      .select('alias, medios_pago!inner(es_dividendo)')
+      .eq('medios_pago.es_dividendo', true)
+    if (eAlias) {
+      throw new Error(
+        `No se pudo leer qué medios de pago son dividendo: ${eAlias.message}. ` +
+          `Se frena la importación: sin eso, la plata del socio entraría como venta.`,
+      )
+    }
+    const aliasDividendo = new Set(
+      (aliasRows ?? []).map((r: { alias: string }) => r.alias.toLowerCase().trim()),
+    )
+    const esDividendo = (nombre: string) => aliasDividendo.has(nombre.toLowerCase().trim())
 
     let countPorEstado: Record<string, number> = {}
 
@@ -524,7 +543,7 @@ Deno.serve(async (req) => {
       const cajaId = crData && !Array.isArray(crData) ? crData.id : null
       const caja = cajaId ? crNombre.get(cajaId) ?? `caja-${cajaId}` : ''
 
-      // Calcular MP Lucas (medio_pago name contains 'mercadopago lucas')
+      // Cuánto de este ticket se cobró con el POSnet personal (según el catálogo)
       let totalPagos = 0
       let mpLucas = 0
       const mediosPago: string[] = []
@@ -535,8 +554,10 @@ Deno.serve(async (req) => {
         const pmId = pmRelData && !Array.isArray(pmRelData) ? pmRelData.id : null
         const pmName = pmId ? pmNombre.get(pmId) ?? `pm-${pmId}` : 'Sin medio'
         mediosPago.push(pmName)
-        if (pmName.toLowerCase().includes('mercadopago lucas')) mpLucas += monto
+        if (esDividendo(pmName)) mpLucas += monto
 
+        // `es_dividendo` no se manda: lo pone el disparador de la base leyendo
+        // medios_pago.es_dividendo (mig 205).
         pagosRows.push({
           local,
           periodo,
@@ -546,11 +567,10 @@ Deno.serve(async (req) => {
           monto,
           tipo_venta: '',
           caja,
-          es_dividendo: pmName.toLowerCase().includes('mercadopago lucas'),
         })
 
         // El dividendo NO se crea acá — lo crea el cierre de caja (fuente única).
-        if (pmName.toLowerCase().includes('mercadopago lucas')) mpLucasDetectados++
+        if (esDividendo(pmName)) mpLucasDetectados++
       }
 
       const esDividendoCompleto = mpLucas > 0 && mpLucas >= total - 0.01
@@ -581,7 +601,11 @@ Deno.serve(async (req) => {
         total_neto: previo?.total_neto ?? null,
         iva: previo?.iva ?? 0,
         es_fiscal: previo?.es_fiscal ?? false,
-        es_dividendo: esDividendoCompleto,
+        // `es_dividendo` no se manda: cuando el ticket entero se cobró con el
+        // POSnet personal, medio_pago queda con ese nombre y el disparador de la
+        // base lo marca solo (mig 205). `esDividendoCompleto` sigue haciendo falta
+        // acá arriba, pero solo para el caso MIXTO: ahí el total del ticket va sin
+        // la parte del socio.
         periodo,
         origen: 'fudo',
         // En Vedia acá va el número de llamador que se le da al cliente; en

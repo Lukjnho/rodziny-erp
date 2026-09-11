@@ -9,6 +9,7 @@ import { useAuth } from '@/lib/auth';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { useProveedoresMap, nombreProveedor } from '@/modules/gastos/proveedorDisplay';
 import { hoyAR } from '@/lib/fechaAR';
+import { aliasDeDividendo, esCobroDeDividendo } from '@/lib/mediosPago';
 // ⚠️ parseDecimal sigue acá solo para el saldo de Mercado Pago (línea ~636),
 // que es del grupo C y se migra en la tanda siguiente. Para dinero, la puerta
 // es MontoInput: el punto es separador de miles, no coma decimal.
@@ -240,12 +241,15 @@ function tiempoRelativoSync(iso: string | null): string {
 
 // Cobros de POSnet personal de Lucas que entran como dividendo automático.
 // Son 1 fila por cobro → en la tabla se colapsan en una sola línea total.
-function esMpLucasAuto(d: Dividendo): boolean {
-  const medio = (d.medio_pago ?? '').toLowerCase();
+//
+// Los nombres de medio de pago salen del catálogo (`medios_pago.es_dividendo`
+// cruzado con sus alias, mig 205) y no escritos acá: antes decía
+// 'mercadopago lucas' y 'mp' a mano, que eran dos de los tres alias cargados —
+// un cobro con el tercero no se agrupaba y aparecía suelto en la tabla.
+function esMpLucasAuto(d: Dividendo, aliasDiv: Set<string>): boolean {
   const concepto = (d.concepto ?? '').toLowerCase();
   return (
-    medio === 'mercadopago lucas' ||
-    medio === 'mp' ||
+    esCobroDeDividendo(d.medio_pago, aliasDiv) ||
     concepto.includes('posnet') ||
     concepto.includes('autoasignado')
   );
@@ -257,6 +261,13 @@ export function FlujoCaja() {
   const qc = useQueryClient();
   const { user } = useAuth();
   const { data: proveedoresMap } = useProveedoresMap();
+  // Qué medios de pago son plata del socio. Sale del catálogo (mig 205) y casi
+  // nunca cambia, así que se cachea por toda la sesión.
+  const { data: aliasDiv } = useQuery({
+    queryKey: ['medios_pago_alias_dividendo'],
+    queryFn: aliasDeDividendo,
+    staleTime: Infinity,
+  });
   // El flujo de caja es a nivel empresa (Rodziny SAS) — los movimientos bancarios
   // son de la SAS, no del local. Filtrar por local daba una vista parcial confusa.
   const [periodo, setPeriodo] = useState(() => new Date().toISOString().substring(0, 7));
@@ -703,8 +714,9 @@ export function FlujoCaja() {
     const base = filtroSocio
       ? divsFiltrados.filter((d) => d.socio === filtroSocio)
       : divsFiltrados;
-    const autos = base.filter(esMpLucasAuto);
-    const filas: FilaDiv[] = base.filter((d) => !esMpLucasAuto(d));
+    const alias = aliasDiv ?? new Set<string>();
+    const autos = base.filter((d) => esMpLucasAuto(d, alias));
+    const filas: FilaDiv[] = base.filter((d) => !esMpLucasAuto(d, alias));
     if (autos.length > 0) {
       const total = autos.reduce((s, d) => s + Number(d.monto), 0);
       const maxFecha = autos.reduce((a, d) => (d.fecha > a ? d.fecha : a), autos[0].fecha);
@@ -723,7 +735,7 @@ export function FlujoCaja() {
       });
     }
     return filas.sort((a, b) => (a.fecha < b.fecha ? 1 : a.fecha > b.fecha ? -1 : 0));
-  }, [divsFiltrados, filtroSocio, periodo]);
+  }, [divsFiltrados, filtroSocio, periodo, aliasDiv]);
   const sueldosFiltrados = pagosSueldos ?? [];
   const pagosMPFiltrados = pagosMP ?? [];
 

@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
+import { aliasDeDividendo, esCobroDeDividendo } from '@/lib/mediosPago';
 import { parseFudoVentas } from '../parsers/parseFudoVentas';
 import { parseFudoGastos } from '../parsers/parseFudoGastos';
 import { cn } from '@/lib/utils';
@@ -101,14 +102,19 @@ export function UploadFudo({ onSuccess }: { onSuccess?: () => void }) {
     const errores: string[] = [];
     const fiscalMap = new Map(data.fiscales.map((f) => [f.fudo_id, f]));
 
-    // Precalcular por ticket: total de pagos y porción "Mercadopago lucas"
-    // Se usa para (a) flaggear tickets 100% MP Lucas como dividendo, (b) restar la porción
-    // MP Lucas del total_bruto en tickets mixtos (pagos combinados)
+    // Qué medios de pago son plata del socio: lo dice el catálogo, no una cadena
+    // escrita acá (mig 205). Ver src/lib/mediosPago.ts.
+    const aliasDiv = await aliasDeDividendo();
+
+    // Precalcular por ticket: total de pagos y porción cobrada con el POSnet
+    // personal. Solo se usa para restarla del total_bruto en los tickets MIXTOS:
+    // marcar el ticket como dividendo ya no se hace acá, lo hace el disparador
+    // de la base leyendo medios_pago.es_dividendo.
     const pagosPorTicket = new Map<string, { total: number; mpLucas: number }>();
     for (const p of data.pagos) {
       const entry = pagosPorTicket.get(p.fudo_ticket_id) ?? { total: 0, mpLucas: 0 };
       entry.total += Number(p.monto) || 0;
-      if ((p.medio_pago ?? '').toLowerCase().includes('mercadopago lucas')) {
+      if (esCobroDeDividendo(p.medio_pago, aliasDiv)) {
         entry.mpLucas += Number(p.monto) || 0;
       }
       pagosPorTicket.set(p.fudo_ticket_id, entry);
@@ -136,7 +142,10 @@ export function UploadFudo({ onSuccess }: { onSuccess?: () => void }) {
           total_neto: f ? f.total_neto : null,
           iva: f ? f.iva : 0,
           es_fiscal: t.es_fiscal,
-          es_dividendo: esDividendoCompleto,
+          // `es_dividendo` NO se manda: lo pone el disparador de la base desde
+          // medios_pago.es_dividendo (mig 205). Si se mandara acá, el disparador
+          // lo pisaría igual — y esta pantalla volvería a ser un lugar más donde
+          // la regla está escrita.
           periodo: t.fecha ? t.fecha.substring(0, 7) : data.periodo,
         };
       })
@@ -240,11 +249,11 @@ export function UploadFudo({ onSuccess }: { onSuccess?: () => void }) {
     const ticketIdsValidos = new Set(ticketsRows.map((t) => t.fudo_id));
     const pagosRows = data.pagos
       .filter((p) => ticketIdsValidos.has(p.fudo_ticket_id))
+      // Mismo criterio que arriba: `es_dividendo` lo pone el disparador.
       .map((p) => ({
         local: loc,
         periodo: data.periodo,
         ...p,
-        es_dividendo: (p.medio_pago ?? '').toLowerCase().includes('mercadopago lucas'),
       }));
     console.log('[upload] pagos a insertar:', pagosRows.length);
     if (pagosRows.length) {
@@ -258,7 +267,7 @@ export function UploadFudo({ onSuccess }: { onSuccess?: () => void }) {
     // Auto-insertar cobros MP Lucas como dividendos (reemplaza los del mismo local+periodo para evitar duplicados en reimport)
     const dividendosRows = data.pagos
       .filter((p) => ticketIdsValidos.has(p.fudo_ticket_id))
-      .filter((p) => (p.medio_pago ?? '').toLowerCase().includes('mercadopago lucas'))
+      .filter((p) => esCobroDeDividendo(p.medio_pago, aliasDiv))
       .map((p) => ({
         socio: 'lucas',
         fecha: p.fecha,
