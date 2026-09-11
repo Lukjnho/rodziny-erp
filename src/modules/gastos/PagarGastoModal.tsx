@@ -15,6 +15,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { guardarContando } from '@/lib/escribir';
 import { comprimirImagen } from '@/lib/comprimirImagen';
 import { useAuth } from '@/lib/auth';
 import { cn, formatARS } from '@/lib/utils';
@@ -212,11 +213,11 @@ export function PagarGastoModal({ open, gasto, onClose }: Props) {
       return;
     setGuardando(true);
     try {
-      const { error: errUpd } = await supabase
-        .from('pagos_gastos')
-        .update({ programado: false })
-        .eq('id', pago.id);
-      if (errUpd) throw errUpd;
+      await guardarContando(
+        supabase.from('pagos_gastos').update({ programado: false }).eq('id', pago.id),
+        'No se pudo confirmar el pago programado',
+        { filasEsperadas: 1 },
+      );
       await recomputarEstadoGasto(gasto.id);
       qc.invalidateQueries({ queryKey: ['pagos_gastos'] });
       qc.invalidateQueries({ queryKey: ['gastos_listado'] });
@@ -343,14 +344,22 @@ export function PagarGastoModal({ open, gasto, onClose }: Props) {
             return opDigits === ref || (opDigits.endsWith(ref) && opDigits.length - ref.length <= 1);
           });
           if (match) {
-            await supabase
-              .from('pagos_gastos')
-              .update({ conciliado_movimiento_id: match.id })
-              .eq('id', pagoInsertado.id);
-            await supabase
-              .from('movimientos_bancarios')
-              .update({ gasto_id: gasto.id })
-              .eq('id', match.id);
+            // Las dos patas de la conciliación automática. Si una engancha y la
+            // otra no, el movimiento queda usado y el pago sin conciliar: la
+            // pantalla de Conciliación lo va a volver a ofrecer.
+            await guardarContando(
+              supabase
+                .from('pagos_gastos')
+                .update({ conciliado_movimiento_id: match.id })
+                .eq('id', pagoInsertado.id),
+              'No se pudo conciliar el pago con el movimiento del banco',
+              { filasEsperadas: 1 },
+            );
+            await guardarContando(
+              supabase.from('movimientos_bancarios').update({ gasto_id: gasto.id }).eq('id', match.id),
+              'No se pudo enganchar el movimiento del banco al gasto',
+              { filasEsperadas: 1 },
+            );
           }
         }
       }
@@ -374,11 +383,13 @@ export function PagarGastoModal({ open, gasto, onClose }: Props) {
         }
       }
 
-      const { error: errUpd } = await supabase
-        .from('gastos')
-        .update(updateGasto)
-        .eq('id', gasto.id);
-      if (errUpd) throw errUpd;
+      // El paso que cierra: si no toca nada, el pago quedó cargado y el gasto
+      // sigue figurando impago. El próximo intento carga un segundo pago.
+      await guardarContando(
+        supabase.from('gastos').update(updateGasto).eq('id', gasto.id),
+        'No se pudo actualizar el estado del gasto',
+        { filasEsperadas: 1 },
+      );
 
       // 5) Invalidar caches que dependen de gastos / pagos
       qc.invalidateQueries({ queryKey: ['gastos_listado'] });

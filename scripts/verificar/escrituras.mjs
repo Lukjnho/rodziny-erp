@@ -54,7 +54,7 @@ import { C, titulo, universo, testigos, pad, padN } from './_comun.mjs';
 
 // La línea de base: medida el 11-sep-2026 sobre el repo entero.
 // Baja cuando alguien arregla una. NUNCA sube sin discutirlo.
-const BASE_A_CIEGAS = 140;
+const BASE_A_CIEGAS = 134;
 
 const RAIZ = 'src';
 const CHAIN = /\.from\(\s*['"]([a-z0-9_]+)['"]\s*\)/g;

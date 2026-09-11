@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase';
+import { guardarContando } from '@/lib/escribir';
 import {
   matchearPorIdOperacion,
   type MovimientoParaMatchId,
@@ -76,16 +77,24 @@ export async function conciliarPorIdOperacion(): Promise<ResultadoConciliacion> 
     let vinculados = 0;
     for (const m of matches) {
       try {
-        const { error: e1 } = await supabase
-          .from('movimientos_bancarios')
-          .update({ tipo: 'pago_de_gasto', gasto_id: m.gastoId })
-          .eq('id', m.movId);
-        if (e1) throw e1;
-        const { error: e2 } = await supabase
-          .from('pagos_gastos')
-          .update({ conciliado_movimiento_id: m.movId })
-          .eq('id', m.pagoId);
-        if (e2) throw e2;
+        // Las dos patas de cada match. El try/catch de afuera ya junta los
+        // errores por renglón y los muestra: alcanza con que cero filas tire.
+        await guardarContando(
+          supabase
+            .from('movimientos_bancarios')
+            .update({ tipo: 'pago_de_gasto', gasto_id: m.gastoId })
+            .eq('id', m.movId),
+          'No se pudo enganchar el movimiento al gasto',
+          { filasEsperadas: 1 },
+        );
+        await guardarContando(
+          supabase
+            .from('pagos_gastos')
+            .update({ conciliado_movimiento_id: m.movId })
+            .eq('id', m.pagoId),
+          'No se pudo marcar el pago como conciliado',
+          { filasEsperadas: 1 },
+        );
         vinculados++;
       } catch (e) {
         errores.push(
