@@ -115,6 +115,46 @@ un renglón más en `barrios.json` y volver a correrlo.** Es acumulativo: solo m
 
 ## Reglas del proyecto (independientes del mapa)
 
+### 💥 Ninguna migración se aplica si su código no está mergeado Y publicado
+
+**Vercel publica `main`. La base es UNA sola.** Entonces aplicar una migración
+desde una rama pone el cambio en producción **al instante**, corriendo contra el
+código viejo de `main`. La migración y su código "en el mismo commit" no alcanza:
+lo que manda es **el merge**, no el commit.
+
+**Antes de aplicar cualquier migración, verificá qué rama publica Vercel:**
+
+    curl -s https://rodziny-erp.vercel.app/version.json     # devuelve el SHA publicado
+    git rev-parse main                                       # tiene que coincidir
+    git rev-list --count main..HEAD                          # commits que NO están arriba
+
+Si ese último número no es 0, tu código **no está en producción** y la migración
+sí lo va a estar.
+
+**Las tres formas, de menos a más peligrosa:**
+
+| Qué hace la migración | Se puede aplicar antes del merge |
+|---|---|
+| Solo datos (`update` de valores) | **Sí**, si el código viejo no compara ese valor contra un literal |
+| Agrega columna / tabla | **Sí**: es aditivo, nadie la pide todavía |
+| **Renombra o borra** columna | **NO.** Va en dos pasos: puente ahora, borrado después del merge publicado |
+
+💣 **Borrar una columna que el código viejo pide en un `select` NO falla en
+silencio: PostgREST devuelve HTTP 400** y la pantalla entera queda en error.
+Pasó el 11-sep con `cocina_productos.costo_empaque` (mig 204): rompió 5
+pantallas de Productos y Ventas durante horas.
+
+💣 **Renombrar un VALOR (no la columna) es peor, porque sí falla en silencio.**
+El código viejo compara contra el texto anterior, no encuentra nada y muestra
+una lista corta sin ningún error. Pasó el mismo día con `rol` de `panificado` a
+`panificado_base` (mig 208). Ver
+`memory/pantalla-que-filtra-y-queda-vacia.md`.
+
+**El puente**, cuando hay que renombrar una columna: dejá la vieja como columna
+real con un disparador que sincronice **en las dos direcciones** — el frontend
+viejo no solo lee, también escribe. Una columna `generated` deja leer pero
+**rompe todas las escrituras** (mig 209 → reparada por la 210).
+
 ### Toda escritura a la base tiene que contar las filas que tocó
 
 Un `UPDATE` o `DELETE` que la RLS bloquea devuelve **0 filas y NINGÚN error**.
