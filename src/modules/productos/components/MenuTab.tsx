@@ -4,13 +4,29 @@ import { supabase } from '@/lib/supabase';
 import { formatARS, cn } from '@/lib/utils';
 import { MontoInput } from '@/components/ui/MontoInput';
 import { useAuth } from '@/lib/auth';
-import { useCostosRecetas } from '@/modules/costeo';
-import { useConfigCosteo } from '@/modules/costeo';
+import {
+  SUBCATEGORIA_LABEL,
+  desgloseDeCobro,
+  margenSobreRecibido,
+  semaforoDeMargen,
+  useConfigCosteo,
+  useCostosRecetas,
+  type CondicionesDeCobro,
+  type SemaforoMargen,
+} from '@/modules/costeo';
 import { useComisionMpConfig } from '../hooks/useComisionMpConfig';
+import { useProductosCosteoConfig } from '../hooks/useProductosCosteoConfig';
 import { type CanalPrecio } from '../hooks/usePreciosCanal';
-import { SUBCATEGORIA_LABEL } from '@/modules/costeo';
 import { useFudoHuerfanos } from '@/modules/productos/hooks/useFudoHuerfanos';
 import { usePrecioCobrado } from '@/modules/productos/hooks/usePrecioCobrado';
+
+// Los tres colores del semáforo del margen. El umbral NO está acá: sale de
+// `productos_costeo_config` y lo resuelve `semaforoDeMargen`.
+const COLOR_BADGE: Record<SemaforoMargen, string> = {
+  rojo: 'bg-red-100 text-red-700',
+  amarillo: 'bg-amber-100 text-amber-700',
+  verde: 'bg-emerald-100 text-emerald-700',
+};
 
 // El Menú es una PROYECCIÓN de Costeo: lista las recetas marcadas "vendible"
 // (su costo sale del motor de Costeo, no se duplica) + las bebidas de reventa
@@ -239,22 +255,29 @@ export function MenuTab() {
   const descEfectivo = configGen?.descuento_efectivo_pct ?? 0.25;
   const descConvenio = configGen?.descuento_convenio_pct ?? 0.15;
 
+  // El piso de margen de cada categoría, desde `productos_costeo_config`. El
+  // 0,5 de respaldo es el de la categoría `default`: solo se usa si la tabla
+  // todavía no cargó.
+  const { getConfig: getCfgCategoria } = useProductosCosteoConfig();
+  const minimoDe = (tipo: string | null | undefined): number =>
+    getCfgCategoria(tipo)?.margen_min ?? 0.5;
+
+  // Escenario Lista: precio de carta, sin descuento, con la comisión más alta.
+  const condicionesLista: CondicionesDeCobro = { ivaPct, comisionPct: comisionMax };
+
   // Margen real sobre el precio cobrado, contemplando: descuento del escenario,
-  // IVA y comisión bancaria. precioBruto = precio de lista (IVA incluido).
-  // margen = (recibido − costo) / recibido.
+  // IVA y comisión bancaria.
+  //
+  // La cuenta ya no vive acá: es `margenSobreRecibido` de @/modules/costeo, la
+  // misma que usan Ingeniería de Menú y "En vivo Fudo". Antes estaba escrita
+  // tres veces, y una de las tres devolvía 62 donde las otras devolvían 0,62.
   const margenEscenario = (
     precioBruto: number | null | undefined,
     costo: number | null,
     descuentoPct: number,
     comisionPct: number,
-  ): number | null => {
-    if (!precioBruto || precioBruto <= 0 || costo == null) return null;
-    const precioCobrado = precioBruto * (1 - descuentoPct);
-    const neto = precioCobrado / (1 + ivaPct);
-    const recibido = neto - neto * comisionPct;
-    if (recibido <= 0) return null;
-    return (recibido - costo) / recibido;
-  };
+  ): number | null =>
+    margenSobreRecibido(precioBruto, costo, { ivaPct, comisionPct, descuentoPct });
   // Atajos por escenario (no acumulables entre sí).
   const margenLista = (p: number | null | undefined, c: number | null) =>
     margenEscenario(p, c, 0, comisionMax);
@@ -276,14 +299,18 @@ export function MenuTab() {
     if (!precioBruto || precioBruto <= 0 || costo == null) {
       return `${label}\nFalta cargar precio y/o costo.`;
     }
-    const descMonto = precioBruto * descuentoPct;
-    const precioCobrado = precioBruto - descMonto;
-    const neto = precioCobrado / (1 + ivaPct);
-    const ivaMonto = precioCobrado - neto;
-    const comisionMonto = neto * comisionPct;
-    const recibido = neto - comisionMonto;
+    // Los escalones salen de la misma cadena que el margen, no de una copia:
+    // si el tooltip y el badge se calcularan aparte, podrían no coincidir.
+    const {
+      descuento: descMonto,
+      precioCobrado,
+      iva: ivaMonto,
+      neto,
+      comision: comisionMonto,
+      recibido,
+    } = desgloseDeCobro(precioBruto, { ivaPct, comisionPct, descuentoPct });
     const ganancia = recibido - costo;
-    const margen = recibido > 0 ? (ganancia / recibido) * 100 : 0;
+    const margen = (margenEscenario(precioBruto, costo, descuentoPct, comisionPct) ?? 0) * 100;
     const l: string[] = [label, `Precio lista: ${formatARS(precioBruto)}`];
     if (descuentoPct > 0)
       l.push(
@@ -481,6 +508,7 @@ export function MenuTab() {
         precios={precios}
         margenPctDe={margenLista}
         desglose={desgloseLista}
+        margenMinimo={minimoDe('pasta')}
       />
 
       {recetasVendiblesLocal === 0 && (
@@ -518,9 +546,12 @@ export function MenuTab() {
           // ─── Modo Desglose: radiografía de rentabilidad (escenario Lista) ──
           if (vista === 'desglose') {
             const precio = pp.plato ?? null;
-            const sinIva = precio != null ? precio / (1 + ivaPct) : null;
-            const comision = sinIva != null ? sinIva * comisionMax : null;
-            const recibido = sinIva != null && comision != null ? sinIva - comision : null;
+            // Misma cadena que el resto de la pantalla (@/modules/costeo), no
+            // una copia: acá estaba escrita a mano por tercera vez en el archivo.
+            const d = precio != null ? desgloseDeCobro(precio, condicionesLista) : null;
+            const sinIva = d?.neto ?? null;
+            const comision = d?.comision ?? null;
+            const recibido = d?.recibido ?? null;
             const margenDinero =
               recibido != null && p.costo != null ? recibido - p.costo : null;
             return (
@@ -544,6 +575,7 @@ export function MenuTab() {
                 <td className="px-3 py-1.5 text-right">
                   <MargenBadge
                     pct={margenLista(precio, p.costo)}
+                    margenMinimo={minimoDe(p.tipo)}
                     title={desgloseLista(precio, p.costo)}
                   />
                 </td>
@@ -575,18 +607,21 @@ export function MenuTab() {
               <td className="px-3 py-1.5 text-right">
                 <MargenBadge
                   pct={margenLista(pp.plato, p.costo)}
+                  margenMinimo={minimoDe(p.tipo)}
                   title={desgloseLista(pp.plato, p.costo)}
                 />
               </td>
               <td className="px-3 py-1.5 text-right">
                 <MargenBadge
                   pct={margenEfectivo(pp.plato, p.costo)}
+                  margenMinimo={minimoDe(p.tipo)}
                   title={desgloseEfectivo(pp.plato, p.costo)}
                 />
               </td>
               <td className="px-3 py-1.5 text-right">
                 <MargenBadge
                   pct={margenConvenio(pp.plato, p.costo)}
+                  margenMinimo={minimoDe(p.tipo)}
                   title={desgloseConvenio(pp.plato, p.costo)}
                 />
               </td>
@@ -831,12 +866,15 @@ function ArmarPlato({
   precios,
   margenPctDe,
   desglose,
+  margenMinimo,
 }: {
   items: ItemMenu[];
   filtroLocal: FiltroLocal;
   precios: Map<string, Partial<Record<CanalPrecio, number>>>;
   margenPctDe: (precio: number | null | undefined, costo: number | null) => number | null;
   desglose: (precio: number | null | undefined, costo: number | null) => string;
+  /** El plato armado es pasta + salsa: se mide contra el piso de las pastas. */
+  margenMinimo: number;
 }) {
   const [pastaKey, setPastaKey] = useState('');
   const [salsaKey, setSalsaKey] = useState('');
@@ -905,7 +943,12 @@ function ArmarPlato({
         </div>
         {margenPlato != null && (
           <div className="text-xs text-gray-600">
-            margen plato <MargenBadge pct={margenPlato} title={desglose(total, costoPlato)} />
+            margen plato{' '}
+            <MargenBadge
+              pct={margenPlato}
+              margenMinimo={margenMinimo}
+              title={desglose(total, costoPlato)}
+            />
           </div>
         )}
       </div>
@@ -961,19 +1004,27 @@ function PrecioInput({
 
 // ─── Badge de margen con semáforo ────────────────────────────────────────────
 // `title` = desglose paso a paso (tooltip nativo al pasar el mouse).
-function MargenBadge({ pct, title }: { pct: number | null; title?: string }) {
+// `margenMinimo` sale de `productos_costeo_config`, la configuración por
+// categoría. Acá estaban clavados un 0,50 y un 0,65 que no miraban esa
+// configuración: una pasta con mínimo 0,55 y margen 0,60 se pintaba de verde
+// aunque la categoría pida más, y un vino con mínimo 0,45 y margen 0,60 salía
+// amarillo estando holgado.
+function MargenBadge({
+  pct,
+  margenMinimo,
+  title,
+}: {
+  pct: number | null;
+  margenMinimo: number;
+  title?: string;
+}) {
   if (pct == null)
     return (
       <span title={title} className={cn('text-xs text-gray-300', title && 'cursor-help')}>
         —
       </span>
     );
-  const color =
-    pct < 0.5
-      ? 'bg-red-100 text-red-700'
-      : pct < 0.65
-        ? 'bg-amber-100 text-amber-700'
-        : 'bg-emerald-100 text-emerald-700';
+  const color = COLOR_BADGE[semaforoDeMargen(pct, margenMinimo)];
   return (
     <span
       title={title}

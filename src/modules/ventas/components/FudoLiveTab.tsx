@@ -5,6 +5,15 @@ import { LocalSelector } from '@/components/ui/LocalSelector';
 import { KPICard } from '@/components/ui/KPICard';
 import { formatARS, cn } from '@/lib/utils';
 import { useCostoPorFudo } from '@/modules/productos/hooks/useCostoPorFudo';
+import { useProductosCosteoConfig } from '@/modules/productos/hooks/useProductosCosteoConfig';
+import { semaforoDeMargen, type SemaforoMargen } from '@/modules/costeo';
+
+// El semáforo del margen, con los mismos tres colores que usa la carta.
+const COLOR_SEMAFORO: Record<SemaforoMargen, string> = {
+  verde: 'text-green-700',
+  amarillo: 'text-amber-700',
+  rojo: 'text-red-700',
+};
 import {
   BarChart,
   Bar,
@@ -151,7 +160,12 @@ export function FudoLiveTab() {
   // Costo/margen CANÓNICO desde Productos (no del maestro de Fudo). El costo sale
   // del motor de costeo vía fudo_nombres/fudo_productos; el margen usa el mismo
   // modelo que Ingeniería de Menú (neto de IVA − comisión).
-  const { getCosto, getMargenPct, costoPorFudo } = useCostoPorFudo(local);
+  const { getCosto, getMargen, costoPorFudo } = useCostoPorFudo(local);
+  // El piso de margen sale de la configuración por categoría, no de un número
+  // escrito acá. Esta pantalla tenía los suyos propios —40 y 60— distintos de
+  // los de la carta —50 y 65—, así que el mismo plato se pintaba de un color
+  // en Ventas y de otro en Productos.
+  const { getConfig: getCfgCategoria } = useProductosCosteoConfig();
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['fudo-productos', local, fechaDesde, fechaHasta],
@@ -282,10 +296,10 @@ export function FudoLiveTab() {
     if (ordenRanking === 'cantidad') items = [...items].sort((a, b) => b.cantidad - a.cantidad);
     else if (ordenRanking === 'margen') {
       items = [...items]
-        .filter((p) => getMargenPct(p.nombre, p.precio) !== null)
+        .filter((p) => getMargen(p.nombre, p.precio) !== null)
         .sort((a, b) => {
-          const mA = getMargenPct(a.nombre, a.precio) ?? -Infinity;
-          const mB = getMargenPct(b.nombre, b.precio) ?? -Infinity;
+          const mA = getMargen(a.nombre, a.precio) ?? -Infinity;
+          const mB = getMargen(b.nombre, b.precio) ?? -Infinity;
           return mB - mA;
         });
     }
@@ -545,7 +559,7 @@ export function FudoLiveTab() {
                     <tbody className="divide-y divide-gray-50">
                       {rankingFiltrado.map((p, i) => {
                         const costoCanon = getCosto(p.nombre);
-                        const margen = getMargenPct(p.nombre, p.precio);
+                        const margen = getMargen(p.nombre, p.precio);
                         return (
                           <tr key={p.productId} className="hover:bg-gray-50">
                             <td className="px-3 py-2 text-xs text-gray-400">{i + 1}</td>
@@ -573,14 +587,15 @@ export function FudoLiveTab() {
                                 <span
                                   className={cn(
                                     'text-xs font-medium',
-                                    margen >= 60
-                                      ? 'text-green-700'
-                                      : margen >= 40
-                                        ? 'text-amber-700'
-                                        : 'text-red-700',
+                                    COLOR_SEMAFORO[
+                                      semaforoDeMargen(
+                                        margen,
+                                        getCfgCategoria(p.categoria)?.margen_min ?? 0.5,
+                                      )
+                                    ],
                                   )}
                                 >
-                                  {margen.toFixed(1)}%
+                                  {(margen * 100).toFixed(1)}%
                                 </span>
                               ) : (
                                 <span className="text-xs text-gray-300">—</span>

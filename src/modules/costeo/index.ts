@@ -76,12 +76,13 @@ export type { ConfigCosteo } from './useConfigCosteo';
 // ── La regla del margen ─────────────────────────────────────────────────────
 export {
   UMBRAL_AMARILLO_SOBRE_MINIMO,
+  desgloseDeCobro,
   loQueRecibimos,
   margenSobreRecibido,
   precioParaMargen,
   semaforoDeMargen,
 } from './margen';
-export type { CondicionesDeCobro, SemaforoMargen } from './margen';
+export type { CondicionesDeCobro, DesgloseDeCobro, SemaforoMargen } from './margen';
 
 // ── Pantalla compartida ─────────────────────────────────────────────────────
 export { AutocompleteIngrediente, DialogDuplicar, FichaTecnica } from './componentes';

@@ -1,7 +1,12 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
-import { useConfigCosteo, useCostosRecetas } from '@/modules/costeo';
+import {
+  margenSobreRecibido,
+  useConfigCosteo,
+  useCostosRecetas,
+  type CondicionesDeCobro,
+} from '@/modules/costeo';
 import { useComisionMpConfig } from './useComisionMpConfig';
 
 // Normalización idéntica a la de useMenuEngineering para matchear nombres Fudo
@@ -109,21 +114,28 @@ export function useCostoPorFudo(local: 'vedia' | 'saavedra' | null) {
     return costoPorFudo.get(normalizar(nombreFudo)) ?? null;
   }
 
-  // Helper: margen % con el MISMO modelo que Productos/Ingeniería de Menú:
-  // precio neto de IVA, menos la comisión más alta, menos el costo, sobre lo recibido.
-  function getMargenPct(nombreFudo: string, precioBruto: number): number | null {
-    const costo = getCosto(nombreFudo);
-    if (costo == null || precioBruto <= 0) return null;
-    const neto = precioBruto / (1 + ivaPct);
-    const recibido = neto - neto * comisionMax;
-    if (recibido <= 0) return null;
-    return ((recibido - costo) / recibido) * 100;
+  // Las condiciones de cobro de esta pantalla: precio de lista (sin descuento),
+  // IVA y la comisión más alta. Se exponen para que quien las necesite use la
+  // misma cadena y no arme la suya.
+  const condiciones: CondicionesDeCobro = { ivaPct, comisionPct: comisionMax };
+
+  /**
+   * Margen del producto a ese precio, como FRACCIÓN (0,62 = 62 %).
+   *
+   * 💣 Antes se llamaba `getMargenPct` y devolvía 62, mientras las otras dos
+   * pantallas devolvían 0,62 con la misma cuenta. Ahora la cuenta vive una sola
+   * vez en `@/modules/costeo` y la escala es una sola: fracción. El ×100 lo hace
+   * quien dibuja.
+   */
+  function getMargen(nombreFudo: string, precioBruto: number): number | null {
+    return margenSobreRecibido(precioBruto, getCosto(nombreFudo), condiciones);
   }
 
   return {
     costoPorFudo,
     getCosto,
-    getMargenPct,
+    getMargen,
+    condiciones,
     ivaPct,
     comisionMax,
     isLoading:

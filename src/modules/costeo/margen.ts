@@ -70,6 +70,44 @@ export function loQueRecibimos(
   return recibido > 0 ? recibido : null;
 }
 
+/** Cada escalón entre el precio de carta y la plata en la mano. */
+export interface DesgloseDeCobro {
+  precioLista: number;
+  descuento: number;
+  precioCobrado: number;
+  iva: number;
+  neto: number;
+  comision: number;
+  recibido: number;
+}
+
+/**
+ * La misma cadena de `loQueRecibimos`, pero devolviendo cada escalón.
+ *
+ * Existe para las pantallas que muestran el desglose ("−IVA … −comisión … te
+ * queda"). Sin esto, esas pantallas vuelven a escribir la cadena a mano para
+ * poder mostrar los pasos intermedios, y ahí es donde se desincroniza de la
+ * cuenta buena. `recibido` acá es exactamente lo que devuelve `loQueRecibimos`.
+ */
+export function desgloseDeCobro(
+  precioBruto: number,
+  cond: CondicionesDeCobro,
+): DesgloseDeCobro {
+  const descuento = precioBruto * (cond.descuentoPct ?? 0);
+  const precioCobrado = precioBruto - descuento;
+  const neto = precioCobrado / (1 + cond.ivaPct);
+  const comision = neto * cond.comisionPct;
+  return {
+    precioLista: precioBruto,
+    descuento,
+    precioCobrado,
+    iva: precioCobrado - neto,
+    neto,
+    comision,
+    recibido: neto - comision,
+  };
+}
+
 /**
  * El margen sobre lo recibido, como FRACCIÓN (0,62 = 62 %).
  *

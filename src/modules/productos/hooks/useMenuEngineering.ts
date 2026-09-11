@@ -2,7 +2,14 @@ import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { VISTA_ITEMS_OFICIAL } from '@/lib/origenVentas';
-import { useConfigCosteo, useCostosRecetas } from '@/modules/costeo';
+import {
+  loQueRecibimos,
+  margenSobreRecibido,
+  precioParaMargen,
+  useConfigCosteo,
+  useCostosRecetas,
+  type CondicionesDeCobro,
+} from '@/modules/costeo';
 import { useComisionMpConfig } from './useComisionMpConfig';
 import { useProductosCosteoConfig } from './useProductosCosteoConfig';
 
@@ -265,6 +272,9 @@ export function useMenuEngineering(opts: MenuEngineeringOptions) {
     // que efectivamente se dieron. Sí restamos comisión para que el margen sea
     // consistente con el tab Menú.
     const comisionMax = Math.max(0, ...(comisiones ?? []).map((c) => Number(c.pct)));
+    // Las condiciones de cobro de esta pantalla, en un solo objeto: sin
+    // descuento comercial, con IVA y con la comisión más alta.
+    const condiciones: CondicionesDeCobro = { ivaPct, comisionPct: comisionMax };
     // Acumulador de consolidación: distintas líneas de Fudo del mismo producto
     // vendible (ej. "Flan" + "Flan M.E", o "Ñoquis de papa" + "M.E. Ñoquis")
     // matchean la misma receta y se fusionan en UNA fila. Las líneas M.E suman
@@ -377,32 +387,32 @@ export function useMenuEngineering(opts: MenuEngineeringOptions) {
       // se valúan a ese precio del producto suelto. El precio está en bruto (con
       // IVA): lo netamos y le restamos la comisión más alta (modelo del tab Menú).
       const precioPromedio = it.baseUds > 0 ? it.baseTotal / it.baseUds : 0;
-      const precioNeto = precioPromedio / (1 + ivaPct);
-      const recibido = precioNeto - precioNeto * comisionMax;
-      const tienePrecio = recibido > 0;
+      // La cadena precio → neto → recibido y el margen salen de
+      // @/modules/costeo, la misma que usan el tab Menú y "En vivo Fudo".
+      // Estaban escritas a mano acá adentro del bucle.
+      const recibido = loQueRecibimos(precioPromedio, condiciones);
 
       const margenUnitario =
-        tienePrecio && it.costoUnitario != null ? recibido - it.costoUnitario : null;
-      const margenPctSobrePrecio =
-        margenUnitario != null ? margenUnitario / recibido : null;
+        recibido != null && it.costoUnitario != null ? recibido - it.costoUnitario : null;
+      const margenPctSobrePrecio = margenSobreRecibido(
+        precioPromedio,
+        it.costoUnitario,
+        condiciones,
+      );
 
       // A cuánto habría que venderlo para llegar al margen mínimo de su categoría.
-      // Se invierte la misma cadena de arriba: del margen se sale al recibido, del
-      // recibido al neto y del neto al precio con IVA. Sin esto, la alerta de
-      // "margen bajo" decía cuántos puntos faltan pero no daba ningún precio.
+      // Es la misma cadena invertida, y por eso vive al lado de la de ida
+      // (`precioParaMargen`). Sin esto, la alerta de "margen bajo" decía cuántos
+      // puntos faltan pero no daba ningún precio.
       const cfgCat = getConfig(it.tipo);
       let precioParaMargenMin: number | null = null;
-      if (
-        cfgCat &&
-        it.costoUnitario != null &&
-        cfgCat.margen_min < 1 &&
-        comisionMax < 1
-      ) {
-        const recibidoObjetivo = it.costoUnitario / (1 - cfgCat.margen_min);
-        const bruto = (recibidoObjetivo * (1 + ivaPct)) / (1 - comisionMax);
-        // Redondeo HACIA ARRIBA: para abajo quedaría por debajo del mínimo.
-        const paso = cfgCat.redondeo > 0 ? cfgCat.redondeo : 100;
-        precioParaMargenMin = Math.ceil(bruto / paso) * paso;
+      if (cfgCat) {
+        const bruto = precioParaMargen(it.costoUnitario, cfgCat.margen_min, condiciones);
+        if (bruto != null) {
+          // Redondeo HACIA ARRIBA: para abajo quedaría por debajo del mínimo.
+          const paso = cfgCat.redondeo > 0 ? cfgCat.redondeo : 100;
+          precioParaMargenMin = Math.ceil(bruto / paso) * paso;
+        }
       }
       // Contribución sobre la demanda TOTAL (incluye unidades M.E al margen base).
       const contribucionAbsoluta =
