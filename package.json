@@ -17,7 +17,10 @@
     "foto-grafo": "node scripts/verificar/foto-grafo.mjs",
     "escrituras": "node scripts/verificar/escrituras.mjs",
     "costos": "node scripts/verificar/costos.mjs",
-    "huerfanas": "node scripts/verificar/huerfanas.mjs"
+    "huerfanas": "node scripts/verificar/huerfanas.mjs",
+    "vocabularios": "node scripts/verificar/vocabularios.mjs",
+    "nombres": "node scripts/verificar/nombres.mjs",
+    "verificar-deploy": "node scripts/verificar/deploy.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
