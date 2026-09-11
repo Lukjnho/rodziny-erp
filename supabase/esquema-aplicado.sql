@@ -12,8 +12,8 @@
 --
 --  Lo que NO trae: las policies de RLS. Eso lo mide scripts/mapa-erp/.
 --
---  Generado: 2026-09-10 11:33 -0300
---  93 tablas · 13 vistas · 86 funciones · 116 claves foraneas · 289 indices · 3 realtime (publicaciones)
+--  Generado: 2026-09-11 10:54 -0300
+--  93 tablas · 13 vistas · 87 funciones · 116 claves foraneas · 289 indices · 3 realtime (publicaciones)
 -- ============================================================================
 
 -- ── TABLAS ──────────────────────────────────────────────────────
@@ -504,7 +504,6 @@ create table public.cocina_productos (
   disponible_almacen boolean,
   receta_id uuid,
   precio_venta numeric,
-  costo_empaque numeric,
   fudo_nombres ARRAY not null,
   es_ancla boolean not null,
   insumo_reventa_id uuid,
@@ -926,7 +925,8 @@ create table public.medios_pago (
   orden integer not null,
   created_at timestamp with time zone,
   cuenta_default_venta text,
-  factura_automatica boolean not null
+  factura_automatica boolean not null,
+  es_dividendo boolean not null
 );
 
 create table public.medios_pago_alias (
@@ -2063,6 +2063,9 @@ create function public.trg_medio_pago_completar() returns trigger;
 
 -- plpgsql · SECURITY DEFINER
 create function public.trg_medio_pago_completar_id() returns trigger;
+
+-- plpgsql · SECURITY DEFINER
+create function public.trg_medio_pago_dividendo() returns trigger;
 
 -- plpgsql · SECURITY DEFINER
 create function public.trg_merma_camara_fifo() returns trigger;
