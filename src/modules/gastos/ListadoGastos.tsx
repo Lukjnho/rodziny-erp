@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { guardarContando } from '@/lib/escribir';
 import { formatARS, formatFecha, cn } from '@/lib/utils';
 import type { Gasto } from './types';
 import { TIPO_COMPROBANTE_LABEL } from './types';
@@ -308,22 +309,41 @@ export function ListadoGastos({
       )
     )
       return;
-    const { error } = await supabase.from('gastos').update({ cancelado: true }).eq('id', g.id);
-    if (error) {
-      window.alert(error.message);
-      return;
+    try {
+      // Este es el paso que manda: si no toca ninguna fila (permiso, o alguien ya
+      // lo borró), cortamos acá. Seguir de largo soltaría el comprobante de un
+      // gasto que sigue VIVO, y después el mismo archivo se podría cargar dos veces.
+      await guardarContando(
+        supabase.from('gastos').update({ cancelado: true }).eq('id', g.id),
+        'No se pudo eliminar el gasto',
+        { filasEsperadas: 1 },
+      );
+      // Al cancelar el gasto, liberar su comprobante: el alta de gastos bloquea por
+      // hash mientras el comprobante siga vinculado a un gasto (aunque esté
+      // cancelado). Sin esto, no se puede volver a subir el mismo archivo al rehacerlo.
+      // Desvinculamos las dos puntas: comprobantes.gasto_id y gastos.comprobante_id.
+      await guardarContando(
+        supabase
+          .from('comprobantes')
+          .update({ gasto_id: null, estado: 'huerfano' })
+          .eq('gasto_id', g.id),
+        'No se pudo liberar el comprobante del gasto eliminado',
+        // El gasto puede no tener comprobante adjunto: cero filas acá es normal.
+        { permitirCero: true },
+      );
+      await guardarContando(
+        supabase.from('gastos').update({ comprobante_id: null }).eq('id', g.id),
+        'No se pudo soltar el comprobante del gasto eliminado',
+        { filasEsperadas: 1 },
+      );
+    } catch (e) {
+      window.alert((e as Error).message);
+    } finally {
+      // Refrescamos pase lo que pase: si falló un paso del medio, el gasto ya quedó
+      // cancelado y la pantalla tiene que mostrar cómo quedó de verdad.
+      qc.invalidateQueries({ queryKey: ['gastos_listado'] });
+      qc.invalidateQueries({ queryKey: ['gastos_resumen_kpis'] });
     }
-    // Al cancelar el gasto, liberar su comprobante: el alta de gastos bloquea por
-    // hash mientras el comprobante siga vinculado a un gasto (aunque esté
-    // cancelado). Sin esto, no se puede volver a subir el mismo archivo al rehacerlo.
-    // Desvinculamos las dos puntas: comprobantes.gasto_id y gastos.comprobante_id.
-    await supabase
-      .from('comprobantes')
-      .update({ gasto_id: null, estado: 'huerfano' })
-      .eq('gasto_id', g.id);
-    await supabase.from('gastos').update({ comprobante_id: null }).eq('id', g.id);
-    qc.invalidateQueries({ queryKey: ['gastos_listado'] });
-    qc.invalidateQueries({ queryKey: ['gastos_resumen_kpis'] });
   }
 
   return (
