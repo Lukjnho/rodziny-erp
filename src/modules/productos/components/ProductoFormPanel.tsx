@@ -67,7 +67,6 @@ interface ProductoRow {
   insumo_reventa_id: string | null;
   // Para bebidas reventa por copa/shot: ml servidos. Se gestiona desde
   // BebidaReventaPanel — acá lo preservamos al editar para no pisarlo en NULL.
-  ml_por_venta: number | null;
   fudo_nombres: string[] | null;
   /** Solo pastas: si se arma con un lote de relleno (migración 160). */
   lleva_relleno: boolean | null;
@@ -97,7 +96,7 @@ export function ProductoFormPanel({
     queryFn: async (): Promise<ProductoRow | null> => {
       const { data, error } = await supabase
         .from('cocina_productos')
-        .select('id, nombre, codigo, familia_stock, unidad, minimo_produccion, controla_stock, disponible_almacen, local, activo, receta_id, insumo_reventa_id, ml_por_venta, fudo_nombres, lleva_relleno')
+        .select('id, nombre, codigo, familia_stock, unidad, minimo_produccion, controla_stock, disponible_almacen, local, activo, receta_id, insumo_reventa_id, fudo_nombres, lleva_relleno')
         .eq('id', productoId)
         .maybeSingle();
       if (error) throw error;

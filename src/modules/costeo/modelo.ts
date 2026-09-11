@@ -400,3 +400,87 @@ export function formatCantidad(n: number): string {
   if (Number.isInteger(n)) return String(n);
   return n.toLocaleString('es-AR', { maximumFractionDigits: 2 });
 }
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ¿ESTO SE FABRICA O SE COMPRA HECHO?
+// ══════════════════════════════════════════════════════════════════════════════
+//
+// 💣 POR QUÉ EXISTE. De las 24 recetas vendibles que hoy figuran por debajo de
+// su margen mínimo, **19 son vinos y tragos**. No llevan una sola subreceta: su
+// costo es la factura del proveedor y su único problema es el precio de carta.
+// Mezcladas con las 5 de producción propia —que sí son un problema de costeo—
+// hacen que la lista de "rojos" no se pueda usar para decidir nada.
+//
+// 🔑 LA REGLA, medida el 11-sep-2026 sobre las 159 recetas vendibles activas:
+//
+//     · sin ninguna subreceta  → 41 recetas
+//     · de esas 41, cuántas NO son bebida ni cafetería → **0**
+//
+// O sea: **toda receta que no usa subrecetas es una bebida. Cero excepciones.**
+// Por eso la pregunta se le hace a los INGREDIENTES y no a la categoría: la
+// categoría dice qué es (bebida), los ingredientes dicen cómo se consigue. Y
+// hay 17 bebidas que SÍ se preparan (el café con su subreceta expreso, los
+// licuados) que la categoría metería en la bolsa equivocada.
+//
+// ⚠️ Esto NO está enchufado a ninguna pantalla todavía: el filtro va con el
+// modelo de formas de venta, que reescribe MenuTab y FichaProductoTab. Ponerlo
+// ahora sería pagar esa pantalla dos veces.
+
+/** Cómo se consigue lo que se vende. Tres cajones, tres problemas distintos. */
+export const MODOS_PRODUCCION = ['reventa', 'barra', 'propia'] as const;
+export type ModoProduccion = (typeof MODOS_PRODUCCION)[number];
+
+export const MODO_PRODUCCION_LABEL: Record<ModoProduccion, string> = {
+  reventa: 'Reventa',
+  barra: 'Armado en barra',
+  propia: 'Producción propia',
+};
+
+/** Qué se revisa en cada cajón. Para el encabezado de cada grupo. */
+export const MODO_PRODUCCION_AYUDA: Record<ModoProduccion, string> = {
+  reventa: 'Se compra hecho y se vende. El costo es la factura: lo único a revisar es el precio.',
+  barra: 'Se mezcla en el momento, sin cocina. Se revisa el precio y las proporciones.',
+  propia: 'Lleva receta nuestra. Acá sí se revisa el costeo: receta, empaque y colchón.',
+};
+
+/**
+ * Un renglón de receta, visto desde acá: sólo importa si apunta a una subreceta.
+ *
+ * 💣 La prueba es el prefijo "Subreceta " del nombre, igual que en el motor de
+ * costeo (`costearReceta`). La otra forma posible —`producto_id` en null— da
+ * **exactamente el mismo resultado**: medido sobre las 159 vendibles, las dos
+ * definiciones coinciden en las 159. Si alguna vez dejaran de coincidir, la que
+ * manda es la del motor, porque es la que decide el costo.
+ */
+export interface RenglonParaModo {
+  nombre: string;
+}
+
+export function esRenglonDeSubreceta(r: RenglonParaModo): boolean {
+  return /^subreceta\s+/i.test(r.nombre ?? '');
+}
+
+/**
+ * En qué cajón cae una receta según cómo se consigue.
+ *
+ *     lleva alguna subreceta      → 'propia'   (118 de 159)
+ *     un solo insumo, sin cocina  → 'reventa'  (33)  la botella que se compra y se vende
+ *     varios insumos, sin cocina  → 'barra'    (8)   el trago que se mezcla
+ *
+ * Una receta sin ingredientes cae en 'propia': está a medio cargar, y el lugar
+ * donde se la ve es el de las que hay que costear.
+ */
+export function modoDeProduccion(ingredientes: readonly RenglonParaModo[]): ModoProduccion {
+  const renglones = ingredientes ?? [];
+  if (renglones.some(esRenglonDeSubreceta)) return 'propia';
+  if (renglones.length === 1) return 'reventa';
+  if (renglones.length === 0) return 'propia';
+  return 'barra';
+}
+
+/** Orden de lectura: primero lo que se fabrica, que es donde está el trabajo. */
+export const ORDEN_MODOS: readonly ModoProduccion[] = ['propia', 'barra', 'reventa'];
+
+export function compararModos(a: ModoProduccion, b: ModoProduccion): number {
+  return ORDEN_MODOS.indexOf(a) - ORDEN_MODOS.indexOf(b);
+}

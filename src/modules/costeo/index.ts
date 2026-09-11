@@ -64,15 +64,25 @@ export {
   etiquetaDeCajon,
   mapearUnidad,
   queEsLaReceta,
+  // ¿se fabrica o se compra hecho? — separa los rojos de precio de los de costeo
+  MODOS_PRODUCCION,
+  MODO_PRODUCCION_LABEL,
+  MODO_PRODUCCION_AYUDA,
+  ORDEN_MODOS,
+  compararModos,
+  esRenglonDeSubreceta,
+  modoDeProduccion,
 } from './modelo';
 export type {
   FamiliaStock,
   Ingrediente,
+  ModoProduccion,
   ProductoCompras,
   Receta,
   RecetaCategoria,
   RecetaTipo,
   RendUnidad,
+  RenglonParaModo,
   SubrecetaRol,
 } from './modelo';
 

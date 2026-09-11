@@ -82,7 +82,6 @@ interface CocinaProductoRow {
   local: string;
   receta_id: string | null;
   insumo_reventa_id: string | null;
-  ml_por_venta: number | null;
   es_ancla: boolean;
   fudo_nombres: string[];
 }
@@ -160,7 +159,7 @@ export function useMenuEngineering(opts: MenuEngineeringOptions) {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cocina_productos')
-        .select('id, codigo, nombre, familia_stock, local, receta_id, insumo_reventa_id, ml_por_venta, es_ancla, fudo_nombres')
+        .select('id, codigo, nombre, familia_stock, local, receta_id, insumo_reventa_id, es_ancla, fudo_nombres')
         .eq('activo', true);
       if (error) throw error;
       return data as CocinaProductoRow[];

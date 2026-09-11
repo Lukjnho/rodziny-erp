@@ -81,7 +81,12 @@ function SeccionManoObra() {
   );
 }
 
-// ─── Sección Generales (margen seguridad + IVA) ─────────────────────────────
+// ─── Sección Generales (colchón del costo + IVA) ────────────────────────────
+//
+// 💣 Esta pantalla tenía DOS cosas distintas llamadas "margen", y son opuestas:
+// la de acá arriba INFLA EL COSTO, la de la tabla de abajo es un UMBRAL contra
+// el que se compara el resultado. Se renombraron para que no se confundan. El
+// nombre de la columna en la base (`margen_seguridad_pct`) no cambió.
 function SeccionGenerales() {
   const { config, actualizar } = useConfigCosteo();
   const [edits, setEdits] = useState<Partial<Record<keyof ConfigCosteo, string>>>({});
@@ -89,8 +94,8 @@ function SeccionGenerales() {
   const items: { key: keyof ConfigCosteo; label: string; hint: string }[] = [
     {
       key: 'margen_seguridad_pct',
-      label: 'Margen de seguridad',
-      hint: 'Colchón sobre el costo base (merma extra, variación de precios)',
+      label: 'Colchón del costo',
+      hint: 'Se SUMA al costo de cada receta para cubrir merma y subas de precio. No es un margen: encarece el plato a propósito. Se aplica una sola vez, sobre el costo final.',
     },
     { key: 'iva_pct', label: 'IVA', hint: 'Para despejar precio neto del precio final' },
     {
@@ -183,19 +188,28 @@ function SeccionCategorias() {
 
   return (
     <section className="rounded-lg border border-gray-200 bg-white p-4">
-      <h3 className="mb-1 text-sm font-semibold text-gray-800">🏷️ Margen mínimo por categoría</h3>
+      <h3 className="mb-1 text-sm font-semibold text-gray-800">🏷️ Piso de margen por categoría</h3>
       <p className="mb-3 text-xs text-gray-600">
         El <strong>margen</strong> es lo que te queda del precio después de IVA y comisión. Si un
-        producto queda por debajo del mínimo de su categoría, aparece en <strong>Plan de Acción</strong>{' '}
-        con el precio al que habría que venderlo para llegar, redondeado al paso de acá abajo. Si la
-        categoría no tiene config propia, se usa <code>default</code>.
+        producto queda por debajo del <strong>piso</strong> de su categoría, aparece en{' '}
+        <strong>Plan de Acción</strong> con el precio al que habría que venderlo para llegar,
+        redondeado al paso de acá abajo. Si la categoría no tiene config propia, se usa{' '}
+        <code>default</code>.
+      </p>
+      <p className="mb-3 rounded bg-amber-50 px-2 py-1.5 text-xs text-amber-900">
+        ⚠️ Esto <strong>no</strong> es el colchón del costo de arriba. Aquél encarece el plato; éste
+        es el umbral contra el que se lo compara. La <strong>franja amarilla</strong> dice cuántos
+        puntos por encima del piso hay que estar para que el semáforo se ponga en verde.
       </p>
       <div className="overflow-x-auto rounded border border-gray-200">
         <table className="w-full text-xs">
           <thead className="bg-gray-50 text-left text-[10px] uppercase tracking-wide text-gray-500">
             <tr>
               <th className="px-3 py-2">Categoría</th>
-              <th className="px-3 py-2 text-right">Margen mínimo %</th>
+              <th className="px-3 py-2 text-right">Piso de margen %</th>
+              <th className="px-3 py-2 text-right" title="Cuántos puntos por encima del piso arranca el verde del semáforo">
+                Franja amarilla
+              </th>
               <th className="px-3 py-2 text-right">Redondeo $</th>
               <th className="px-3 py-2">Descripción</th>
             </tr>
@@ -208,7 +222,7 @@ function SeccionCategorias() {
             ))}
             {!configs?.length && (
               <tr>
-                <td colSpan={4} className="px-3 py-6 text-center text-gray-400">
+                <td colSpan={5} className="px-3 py-6 text-center text-gray-400">
                   Sin configuraciones cargadas
                 </td>
               </tr>
@@ -233,7 +247,13 @@ function FilaCategoria({
   const val = (k: keyof ProductoCosteoConfig) =>
     (edit[k] !== undefined ? edit[k] : config[k]) as number | string | null;
 
-  function pctInput(field: 'margen_min') {
+  // Dónde arranca el verde = piso + franja amarilla. Es la cuenta que hace
+  // `semaforoDeMargen`; se muestra acá para no obligar a sumarla de cabeza.
+  const piso = val('margen_min') as number | null;
+  const franja = val('margen_colchon') as number | null;
+  const verdeDesde = piso == null || franja == null ? null : piso + franja;
+
+  function pctInput(field: 'margen_min' | 'margen_colchon') {
     const v = val(field);
     const display = v != null ? ((v as number) * 100).toFixed(1) : '';
     return (
@@ -272,6 +292,14 @@ function FilaCategoria({
     <tr className="hover:bg-gray-50">
       <td className="px-3 py-2 font-medium capitalize">{config.categoria}</td>
       <td className="px-3 py-2 text-right">{pctInput('margen_min')}</td>
+      <td className="px-3 py-2 text-right">
+        {pctInput('margen_colchon')}
+        {/* El número que importa de verdad es dónde arranca el verde. Se muestra
+            calculado para que nadie tenga que sumar de cabeza. */}
+        <div className="mt-0.5 text-[10px] text-gray-400 tabular-nums">
+          {verdeDesde == null ? '—' : `verde desde ${(verdeDesde * 100).toFixed(1)}%`}
+        </div>
+      </td>
       <td className="px-3 py-2 text-right">{numInput('redondeo')}</td>
       <td className="px-3 py-2">
         <input
