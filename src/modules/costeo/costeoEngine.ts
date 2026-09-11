@@ -63,6 +63,18 @@ export interface CostoReceta {
   costoConMargen: number;
   costoPorKg: number | null;
   costoPorPorcion: number | null;
+  /**
+   * Lo mismo que `costoPorKg` / `costoPorPorcion` pero SIN el colchón.
+   *
+   * 💣 Existen por una razón puntual: **una receta que usa otra tiene que
+   * tomar estos, no los de arriba.** Si tomara los que ya traen el colchón
+   * puesto, después volvería a multiplicar el total por (1 + colchón) y el
+   * colchón se aplicaría dos veces. Con tres niveles, tres veces.
+   *
+   * Ver el comentario grande de más abajo, donde se aplica el colchón.
+   */
+  costoBasePorKg: number | null;
+  costoBasePorPorcion: number | null;
   detalles: DetalleIngrediente[];
   advertencias: string[];
 }
@@ -246,6 +258,8 @@ export function costearReceta(
       costoConMargen: 0,
       costoPorKg: null,
       costoPorPorcion: null,
+      costoBasePorKg: null,
+      costoBasePorPorcion: null,
       detalles: [],
       advertencias: ['Receta no encontrada'],
     };
@@ -260,6 +274,8 @@ export function costearReceta(
       costoConMargen: 0,
       costoPorKg: null,
       costoPorPorcion: null,
+      costoBasePorKg: null,
+      costoBasePorPorcion: null,
       detalles: [],
       advertencias: [`Referencia circular detectada en "${receta.nombre}"`],
     };
@@ -333,15 +349,17 @@ export function costearReceta(
       //
       // ⚠️ Mientras tanto: si tocás esta conversión, tocá las otras dos.
       if (u === 'kg' || u === 'g' || u === 'ml' || u === 'lt' || u === 'oz') {
-        if (sub.costoPorKg != null) {
+        // 🔑 `costoBasePorKg`, NO `costoPorKg`: la subreceta entra SIN colchón.
+        // El colchón se lo pone esta receta una sola vez, al final. Ver abajo.
+        if (sub.costoBasePorKg != null) {
           let cantKg: number;
           if (u === 'kg') cantKg = ing.cantidad;
           else if (u === 'g') cantKg = ing.cantidad / 1000;
           else if (u === 'ml') cantKg = ing.cantidad / 1000;          // densidad 1
           else if (u === 'lt') cantKg = ing.cantidad;                  // 1 lt ≈ 1 kg
           else /* oz */ cantKg = (ing.cantidad * 30) / 1000;           // 1 oz = 30 ml
-          costoUnit = sub.costoPorKg;
-          const costoTotal = cantKg * sub.costoPorKg;
+          costoUnit = sub.costoBasePorKg;
+          const costoTotal = cantKg * sub.costoBasePorKg;
           costoBase += costoTotal;
           detalles.push({
             id: ing.id,
@@ -360,9 +378,10 @@ export function costearReceta(
         }
         error = `Subreceta "${subrecetaMatch.nombre}" no tiene rendimiento en kg`;
       } else if (u === 'unid') {
-        if (sub.costoPorPorcion != null) {
-          costoUnit = sub.costoPorPorcion;
-          const costoTotal = ing.cantidad * sub.costoPorPorcion;
+        // 🔑 Igual que arriba: la subreceta entra SIN colchón.
+        if (sub.costoBasePorPorcion != null) {
+          costoUnit = sub.costoBasePorPorcion;
+          const costoTotal = ing.cantidad * sub.costoBasePorPorcion;
           costoBase += costoTotal;
           detalles.push({
             id: ing.id,
@@ -490,15 +509,46 @@ export function costearReceta(
     });
   }
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // EL COLCHÓN SE APLICA UNA SOLA VEZ, ACÁ
+  // ══════════════════════════════════════════════════════════════════════════
+  //
+  // 💣 QUÉ VENÍA PASANDO. `costoPorKg` y `costoPorPorcion` salen de
+  // `costoConMargen`, o sea que ya traen el colchón. Y una receta que usaba una
+  // subreceta tomaba ESOS números, los sumaba a su propio `costoBase`, y al
+  // final multiplicaba todo otra vez por (1 + colchón).
+  //
+  // Resultado: el colchón se elevaba a la cantidad de niveles.
+  //
+  //     0 niveles de subreceta → ×1,100   (bien)
+  //     1 nivel                → ×1,210
+  //     2 niveles              → ×1,331
+  //     3 niveles              → ×1,464
+  //
+  // Medido el 11-sep-2026 sobre las 273 recetas activas: 148 estaban caras de
+  // más, hasta un 17,2 % (el Pack de 4 Congeladas). Ocho platos figuraban por
+  // debajo de su margen mínimo sin estarlo.
+  //
+  // 🔑 LA REGLA, decidida por Lucas: el colchón cubre merma y variación de
+  // precio. Eso NO se multiplica porque la receta tenga más niveles. Se aplica
+  // una sola vez, sobre el costo total final.
+  //
+  // Por eso la recursión viaja con los costos BASE (`costoBasePorKg` /
+  // `costoBasePorPorcion`) y el colchón se pone recién acá. `costoConMargen`,
+  // `costoPorKg` y `costoPorPorcion` siguen significando lo mismo de siempre
+  // —con colchón— así que ninguna pantalla cambia.
+  //
+  // ⚠️ Si alguna vez una receta vuelve a consumir `sub.costoPorKg` en lugar de
+  // `sub.costoBasePorKg`, vuelve el bug y no lo avisa nadie: los números siguen
+  // siendo plausibles, solo que más altos. Lo cuida `costeoEngine.test.ts`.
   const margenPct = ctx.margenGlobal;
   const costoConMargen = costoBase * (1 + margenPct);
-  const costoPorKg =
-    receta.rendimiento_kg && receta.rendimiento_kg > 0
-      ? costoConMargen / receta.rendimiento_kg
-      : null;
-  const costoPorPorcion =
+
+  const porKg = (costo: number) =>
+    receta.rendimiento_kg && receta.rendimiento_kg > 0 ? costo / receta.rendimiento_kg : null;
+  const porPorcion = (costo: number) =>
     receta.rendimiento_porciones && receta.rendimiento_porciones > 0
-      ? costoConMargen / receta.rendimiento_porciones
+      ? costo / receta.rendimiento_porciones
       : null;
 
   const resultado: CostoReceta = {
@@ -506,8 +556,10 @@ export function costearReceta(
     costoBase,
     margenPct,
     costoConMargen,
-    costoPorKg,
-    costoPorPorcion,
+    costoPorKg: porKg(costoConMargen),
+    costoPorPorcion: porPorcion(costoConMargen),
+    costoBasePorKg: porKg(costoBase),
+    costoBasePorPorcion: porPorcion(costoBase),
     detalles,
     advertencias,
   };
