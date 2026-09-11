@@ -12,8 +12,8 @@
 --
 --  Lo que NO trae: las policies de RLS. Eso lo mide scripts/mapa-erp/.
 --
---  Generado: 2026-09-11 16:28 -0300
---  93 tablas · 13 vistas · 87 funciones · 116 claves foraneas · 289 indices · 3 realtime (publicaciones)
+--  Generado: 2026-09-11 17:26 -0300
+--  93 tablas · 13 vistas · 85 funciones · 116 claves foraneas · 289 indices · 3 realtime (publicaciones)
 -- ============================================================================
 
 -- ── TABLAS ──────────────────────────────────────────────────────
@@ -500,15 +500,12 @@ create table public.cocina_productos (
   activo boolean not null,
   created_at timestamp with time zone not null,
   congelable boolean,
-  tiempo_anticipacion_hs integer,
   disponible_almacen boolean,
   receta_id uuid,
-  precio_venta numeric,
   fudo_nombres ARRAY not null,
   es_ancla boolean not null,
   insumo_reventa_id uuid,
   controla_stock boolean not null,
-  ml_por_venta numeric,
   es_mixto boolean not null,
   masa_id uuid,
   lleva_relleno boolean
@@ -557,13 +554,11 @@ create table public.cocina_recetas (
   created_at timestamp with time zone not null,
   updated_at timestamp with time zone not null,
   local text,
-  margen_seguridad_pct numeric,
   gramos_por_porcion integer,
   fudo_productos ARRAY,
   rendimiento_unidad text not null,
   g_semolin_por_kg numeric,
   g_huevo_por_kg numeric,
-  minutos_lote numeric,
   vendible boolean not null,
   categoria text,
   rol text,
@@ -1132,7 +1127,6 @@ create table public.productos (
   categoria_gasto_id uuid,
   marca text,
   merma_pct numeric not null,
-  es_packaging boolean not null,
   contenido_ml numeric,
   bulto_cantidad numeric,
   bulto_nombre text
@@ -1886,9 +1880,6 @@ create function public.cocina_ingredientes_expandidos(p_receta_id uuid) returns 
 create function public.cocina_lote_pasta_exige_relleno() returns trigger;
 
 -- plpgsql · SECURITY DEFINER
-create function public.cocina_productos_log_precio() returns trigger;
-
--- plpgsql · SECURITY DEFINER
 create function public.cocina_recetas_baja_log() returns trigger;
 
 -- plpgsql · SECURITY DEFINER
@@ -2025,9 +2016,6 @@ create function public.salon_sacar_linea(p_linea_id uuid, p_motivo text DEFAULT 
 
 -- sql
 create function public.snapshot_inventario_actual(p_local text) returns TABLE(monto_alimentos numeric, monto_bebidas numeric, monto_indirectos numeric, productos_sin_clasificar integer, valor_sin_clasificar numeric);
-
--- plpgsql
-create function public.sync_precio_venta_salon() returns trigger;
 
 -- sql · SECURITY DEFINER
 create function public.ticket_pos_sin_cobros(p_ticket uuid) returns boolean;
