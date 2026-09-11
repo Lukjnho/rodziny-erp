@@ -162,3 +162,42 @@ export function esContinua(unidad: string): boolean {
   const g = aBase(1, unidad).grupo;
   return g === 'peso' || g === 'vol';
 }
+
+/**
+ * Qué parte de una subreceta usa un renglón que la nombra.
+ *
+ * Es la cuenta `cantidad del padre ÷ lo que rinde la subreceta`, pero pasando
+ * antes peso y volumen a kilos. Sin esa conversión, un renglón de "500 g" con
+ * una subreceta que rinde 20 kg da 25 (veinticinco lotes) en vez de 0,025.
+ *
+ * 💣 Es el espejo en TypeScript de `_cocina_fraccion_subreceta` en la base
+ * (migración 174). Si cambia una, cambia la otra: son la misma regla escrita
+ * dos veces, y ya nos costó caro tener tres copias que no coincidían.
+ *
+ * Devuelve `null` cuando falta el rinde que hace falta. Ese null NO es un
+ * error: es la señal de "este renglón no se puede expandir", y la pantalla
+ * tiene que mostrarlo sin abrir en vez de inventar un número.
+ */
+export function fraccionDeSubreceta(
+  cantidad: number,
+  unidad: string,
+  rendKg: number | null | undefined,
+  rendPorciones: number | null | undefined,
+): number | null {
+  if (!isFinite(cantidad) || cantidad <= 0) return null;
+  const { cantidad: base, grupo } = aBase(cantidad, unidad);
+
+  // Peso y volumen van contra el rinde en kilos (densidad 1: 1 ml = 1 g).
+  if (grupo === 'peso' || grupo === 'vol') {
+    if (!rendKg || rendKg <= 0) return null;
+    return base / 1000 / rendKg;
+  }
+
+  // "unid.", "botella", "paquete" y demás van contra el rinde en porciones.
+  if (grupo === 'unid') {
+    if (!rendPorciones || rendPorciones <= 0) return null;
+    return cantidad / rendPorciones;
+  }
+
+  return null;
+}

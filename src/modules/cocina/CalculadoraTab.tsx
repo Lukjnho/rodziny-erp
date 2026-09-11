@@ -4,6 +4,7 @@ import { supabase } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
 import { LocalSelector } from '@/components/ui/LocalSelector';
 import { formatNum, parseDecimal, normalizarDecimal } from '@/lib/numero';
+import { fraccionDeSubreceta } from '@/lib/unidades';
 import type { Receta, Ingrediente } from './recetas/modelo';
 
 // ── Calculadora / planificador de recetas ────────────────────────────────────
@@ -140,10 +141,16 @@ export function CalculadoraTab() {
         const nombreSub = ing.nombre.replace(/^subreceta\s+/i, '').trim();
         // Solo la subreceta DE ESTE LOCAL. Si no está, se deja sin expandir.
         const sub = subrecetaPorNombre.get(`${local}|${normNombre(nombreSub)}`);
-        const rinde = sub ? Number(sub.rendimiento_kg) || 0 : 0;
+        // 💣 Antes acá se hacía `cantidad / rendimiento_kg` a secas, sin pasar
+        // la cantidad a kilos. Un renglón de "Subreceta Pomodoro 500 g" con un
+        // Pomodoro que rinde 20 kg daba 500/20 = 25 LOTES en vez de 0,025: la
+        // lista de compra pedía mil veces de más. Ahora usa la misma cuenta que
+        // el costeo y que la base.
+        const subFactor = sub
+          ? fraccionDeSubreceta(cantidad, ing.unidad, sub.rendimiento_kg, sub.rendimiento_porciones)
+          : null;
 
-        if (sub && rinde > 0) {
-          const subFactor = cantidad / rinde;
+        if (sub && subFactor != null) {
           return {
             clave: normNombre(nombreSub),
             nombre: nombreSub,
