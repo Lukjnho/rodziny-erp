@@ -12,8 +12,8 @@
 --
 --  Lo que NO trae: las policies de RLS. Eso lo mide scripts/mapa-erp/.
 --
---  Generado: 2026-09-11 14:53 -0300
---  93 tablas · 13 vistas · 87 funciones · 116 claves foraneas · 289 indices · 3 realtime (publicaciones)
+--  Generado: 2026-09-11 15:36 -0300
+--  93 tablas · 13 vistas · 88 funciones · 116 claves foraneas · 289 indices · 3 realtime (publicaciones)
 -- ============================================================================
 
 -- ── TABLAS ──────────────────────────────────────────────────────
@@ -1888,6 +1888,9 @@ create function public.cocina_lote_pasta_exige_relleno() returns trigger;
 
 -- plpgsql · SECURITY DEFINER
 create function public.cocina_productos_log_precio() returns trigger;
+
+-- plpgsql
+create function public.cocina_productos_puente_familia() returns trigger;
 
 -- plpgsql · SECURITY DEFINER
 create function public.cocina_recetas_baja_log() returns trigger;
