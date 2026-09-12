@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { guardarContando } from '@/lib/escribir';
 import { comprimirImagen } from '@/lib/comprimirImagen';
 import { useAuth } from '@/lib/auth';
 import { cn, formatARS, formatFecha } from '@/lib/utils';
@@ -730,11 +731,14 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
         // acá para no desincronizar (antes se sobrescribía medio_pago a un default).
         delete (payload as Partial<typeof payload>).estado_pago;
         delete (payload as Partial<typeof payload>).medio_pago;
-        const { error: errUp } = await supabase
-          .from('gastos')
-          .update(payload)
-          .eq('id', gastoEditando.id);
-        if (errUp) throw errUp;
+        // Esta es LA escritura de la edición: acá viajan los importes. Si no
+        // toca ninguna fila (permiso que falta) el modal se cerraba igual y la
+        // pantalla mostraba el importe nuevo que nunca se guardó. Corta.
+        await guardarContando(
+          supabase.from('gastos').update(payload).eq('id', gastoEditando.id),
+          'No se pudieron guardar los cambios del gasto',
+          { filasEsperadas: 1 },
+        );
         gastosCreados.push(gastoEditando.id);
       } else if (usarSplit && splitPorSubcat.length > 1) {
         // Split: una fila por subcategoría, cada una con sus propios items
@@ -789,22 +793,51 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
           numero_operacion: numOp,
           creado_por: perfil?.nombre ?? null,
         }));
+        // Los INSERT no pasan por guardarContando: un insert que la RLS bloquea
+        // SÍ devuelve error (42501). El silencio de cero filas es cosa del
+        // update y del delete.
         const { error: errPago } = await supabase.from('pagos_gastos').insert(rowsPago);
         if (errPago) throw errPago;
       }
+
+      // ══════════════════════════════════════════════════════════════════════
+      // DE ACÁ PARA ABAJO LA PLATA YA SE MOVIÓ
+      // ══════════════════════════════════════════════════════════════════════
+      //
+      // El gasto ya está cargado y, si correspondía, el pago también. Lo que
+      // queda —aprender el costo del insumo, marcar la recepción como
+      // validada— es anotación, no plata.
+      //
+      // 💣 Si alguno de esos pasos CORTARA, la función saltaría al catch sin
+      // cerrar el modal ni refrescar las listas: el botón "Crear gasto" queda
+      // habilitado y el reintento —la reacción obvia ante un cartel rojo—
+      // vuelve a insertar el gasto Y su pago. El gasto pagado dos veces.
+      // Por eso de acá en adelante se avisa y se sigue, y la pantalla se
+      // limpia y se cierra siempre.
+      const avisos: string[] = [];
 
       // 4) Self-learning de costo y categoria_gasto_id en productos. NO toca stock:
       //    el inventario lo maneja el QR de Recepción (RPC mig 102). Este gasto suele
       //    venir de validar una recepción pendiente (prefill.recepcion_id) que ya
       //    sumó el stock; sumarlo acá de nuevo contaría doble la entrega.
       if (form.vincular_stock && form.items.length > 0 && !gastoEditando) {
+        // Se juntan los nombres en vez de empujar un aviso por ítem: si el
+        // permiso falta, falta para todos, y serían N carteles idénticos.
+        const noAprendidos: string[] = [];
         for (const it of form.items) {
           const { data: prodActual } = await supabase
             .from('productos')
             .select('categoria_gasto_id')
             .eq('id', it.producto_id)
             .single();
-          if (!prodActual) continue;
+          if (!prodActual) {
+            // 💣 Acá se salía en silencio. El permiso de compras es el MISMO para
+            // leer y para escribir el producto: si falta, esta lectura vuelve
+            // vacía, nunca se llega al update y antes no salía ningún aviso —
+            // el costo no se aprendía y la pantalla decía que salió todo bien.
+            noAprendidos.push(`${it.producto_nombre} (no pude leer el costo actual)`);
+            continue;
+          }
           const updates: Record<string, unknown> = {
             costo_unitario: it.precio_unitario,
             updated_at: new Date().toISOString(),
@@ -813,21 +846,55 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
           if (!prodActual.categoria_gasto_id && it.categoria_gasto_id) {
             updates.categoria_gasto_id = it.categoria_gasto_id;
           }
-          await supabase.from('productos').update(updates).eq('id', it.producto_id);
+          // El producto se pudo leer recién arriba con el mismo permiso que
+          // gobierna esta escritura, así que existe y hay permiso: cero filas
+          // acá es algo más raro (lo borraron en el medio). Se avisa igual.
+          try {
+            await guardarContando(
+              supabase.from('productos').update(updates).eq('id', it.producto_id),
+              `No se pudo actualizar el costo de ${it.producto_nombre}`,
+              { filasEsperadas: 1, columnas: 'id' },
+            );
+          } catch (e) {
+            // El aviso a Lucas se junta en uno solo más abajo, pero el detalle
+            // que armó guardarContando queda en la consola para diagnosticar.
+            console.error('[NuevoGasto] No se pudo aprender el costo:', (e as Error).message, e);
+            noAprendidos.push(it.producto_nombre);
+          }
+        }
+        if (noAprendidos.length > 0) {
+          avisos.push(
+            `No se pudo actualizar el costo de: ${noAprendidos.join(', ')}. ` +
+              'El gasto quedó bien cargado; el costo lo podés corregir a mano en Productos.',
+          );
         }
       }
 
       // 5) Si vino de una recepción pendiente, linkearla al PRIMER gasto
       if (prefill?.recepcion_id && gastosCreados.length > 0) {
-        await supabase
-          .from('recepciones_pendientes')
-          .update({
-            estado: 'validada',
-            gasto_id: gastosCreados[0],
-            validada_en: new Date().toISOString(),
-            validada_por: perfil?.nombre ?? null,
-          })
-          .eq('id', prefill.recepcion_id);
+        try {
+          await guardarContando(
+            supabase
+              .from('recepciones_pendientes')
+              .update({
+                estado: 'validada',
+                gasto_id: gastosCreados[0],
+                validada_en: new Date().toISOString(),
+                validada_por: perfil?.nombre ?? null,
+              })
+              .eq('id', prefill.recepcion_id),
+            'No se pudo marcar la recepción como validada',
+            { filasEsperadas: 1, columnas: 'id' },
+          );
+        } catch (e) {
+          // Si esto no entra, la recepción sigue figurando pendiente y el
+          // próximo que la abra carga el MISMO gasto de nuevo. Hay que decirlo
+          // con todas las letras, no tragárselo.
+          avisos.push(
+            (e as Error).message +
+              ' El gasto SÍ quedó cargado: no lo vuelvas a cargar desde la recepción o queda duplicado.',
+          );
+        }
       }
 
       const gastoId = gastosCreados[0];
@@ -843,6 +910,13 @@ export function NuevoGastoModal({ open, onClose, gastoEditando, prefill, onSaved
       qc.invalidateQueries({ queryKey: ['pagos_gastos'] });
       onSaved?.(gastoId);
       onClose();
+      // Se cierra primero y se avisa después: el cartel no tiene que dejar el
+      // modal abierto con los datos puestos, listo para que lo manden otra vez.
+      if (avisos.length > 0) {
+        window.alert(
+          'El gasto quedó guardado, pero algo no se pudo completar:\n\n· ' + avisos.join('\n\n· '),
+        );
+      }
     } catch (e: any) {
       const partes = [e?.message ?? 'Error al guardar'];
       if (e?.code) partes.push(`(${e.code})`);
