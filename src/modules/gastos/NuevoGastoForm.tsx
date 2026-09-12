@@ -13,6 +13,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../../lib/supabase';
+import { guardarContando } from '@/lib/escribir';
 import { MontoInput } from '@/components/ui/MontoInput';
 import {
   comprimirImagen,
@@ -202,6 +203,12 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
   const [tipoGasto, setTipoGasto] = useState<TipoGasto | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
+  // Lo que NO se pudo completar después de que el gasto ya quedó creado (enganchar
+  // el comprobante, anotar el costo del insumo, sacar el remito de pendientes).
+  // Esos pasos no cortan —cortar deja el formulario abierto y el próximo clic en
+  // "Confirmar" carga el gasto de nuevo— así que se juntan acá y se muestran en la
+  // pantalla final.
+  const [avisosAlta, setAvisosAlta] = useState<string[]>([]);
 
   // Upload state (solo aplica a tipo='digital')
   const [file, setFile] = useState<File | null>(null);
@@ -313,6 +320,7 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
       setTipoGasto(null);
       setError(null);
       setWarning(null);
+      setAvisosAlta([]);
       setFile(null);
       setHash(null);
       setComprobanteId(null);
@@ -734,13 +742,32 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
     // Bloquear si es transferencia interna (no es un gasto)
     const cuitEsRodziny = esCuitDeRodziny(extraido.proveedor_cuit);
     if (extraido.es_transferencia_interna || cuitEsRodziny) {
-      // Limpiar el comprobante huerfano (no se va a usar)
-      await supabase.from('comprobantes').delete().eq('id', idComprobante);
+      // Limpiar el comprobante huerfano (no se va a usar). La fila la acabamos de
+      // crear nosotros, así que tiene que borrarse UNA. Pero si el borrado no toca
+      // nada, la carga se aborta igual: acá lo importante es el cartel de abajo.
+      // Se avisa aparte porque queda un archivo colgado en Storage que después
+      // nadie sabe de dónde salió — y encima BLOQUEA: el índice único de
+      // hash_archivo es global (vale también para las filas sin gasto_id), así
+      // que volver a subir ese mismo comprobante choca contra él y no entra.
+      let sobroElArchivo = '';
+      try {
+        await guardarContando(
+          supabase.from('comprobantes').delete().eq('id', idComprobante),
+          'No se pudo borrar el comprobante que se acababa de subir',
+          { filasEsperadas: 1, columnas: 'id' },
+        );
+      } catch (eBorrar) {
+        console.warn('[NuevoGastoForm] quedó un comprobante colgado en Storage:', eBorrar);
+        sobroElArchivo =
+          '\n\n⚠️ Además, el archivo que subiste quedó guardado y no se pudo borrar. ' +
+          'Mientras siga ahí, volver a subir ESE MISMO comprobante va a fallar: ' +
+          'avisá para que lo saquen.';
+      }
       setComprobanteReintentable(null);
       setError(
         'Este comprobante es una transferencia entre cuentas propias de Rodziny — no es un gasto a un proveedor.\n\n' +
         'Las transferencias internas se concilian automáticamente al importar los extractos bancarios. ' +
-        'No las cargues acá.',
+        'No las cargues acá.' + sobroElArchivo,
       );
       setStep('upload');
       return false;
@@ -886,11 +913,20 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
 
       // Si hay filas con el mismo hash pero huerfanas/fallidas, las descartamos antes
       // de insertar la nueva (evita conflict con UNIQUE constraint en hash_archivo).
-      await supabase
-        .from('comprobantes')
-        .delete()
-        .eq('hash_archivo', fileHash)
-        .is('gasto_id', null);
+      //
+      // Cero filas es lo NORMAL: casi siempre no hay nada colgado con ese hash, por
+      // eso va `permitirCero`. Lo que se cuenta acá es el permiso: si la regla
+      // bloquea el borrado Y sí había una huérfana, el insert de abajo choca contra
+      // el índice único y el error que se ve no dice nada. Avisando acá, sí.
+      await guardarContando(
+        supabase
+          .from('comprobantes')
+          .delete()
+          .eq('hash_archivo', fileHash)
+          .is('gasto_id', null),
+        'No se pudo limpiar un comprobante viejo que tiene el mismo archivo',
+        { permitirCero: true, columnas: 'id' },
+      );
 
       // 3. Subir a Storage. Extensión/contentType/mime salen del archivo YA COMPRIMIDO:
       // comprimirImagen re-encodea a JPEG, y declarar el mime del original hacía que la
@@ -1367,6 +1403,7 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
 
   async function handleConfirmar() {
     setError(null);
+    setAvisosAlta([]);
 
     // Validaciones generales (aplican a ambos caminos)
     if (importeTotal <= 0) {
@@ -1667,22 +1704,73 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
         }
       }
 
-      // 3) Vincular comprobante OCR al PRIMER gasto creado (flujo digital)
+      // ══════════════════════════════════════════════════════════════════════
+      // DE ACÁ PARA ABAJO EL GASTO YA EXISTE
+      // ══════════════════════════════════════════════════════════════════════
+      //
+      // 💣 Lo que queda —enganchar el comprobante, anotar el costo del insumo,
+      // sacar el remito de pendientes— NO puede cortar. Si cortara, la función
+      // salta al catch, vuelve a 'preview' con todos los datos puestos y el botón
+      // "Confirmar" habilitado: el reintento —la reacción obvia ante un cartel
+      // rojo— inserta OTRO gasto y OTRA fila de pago. El gasto queda cargado dos
+      // veces, que es justo lo que estos pasos tienen que evitar.
+      //
+      // Entonces avisan y siguen, y la pantalla llega igual a "Listo" con la
+      // lista de lo que faltó.
+      const avisos: string[] = [];
+      // Devuelve si el paso entró o no: hay uno que necesita saberlo (el historial
+      // de costos, más abajo).
+      const alCostado = async (
+        aviso: string,
+        fn: (aviso: string) => Promise<unknown>,
+      ): Promise<boolean> => {
+        try {
+          await fn(aviso);
+          return true;
+        } catch (e) {
+          // En la lista va MI frase, no la del error: la que arma guardarContando
+          // termina en "volvé a intentar", y acá reintentar carga el gasto dos veces.
+          console.warn('[NuevoGastoForm] un paso de al lado falló:', e);
+          avisos.push(aviso);
+          return false;
+        }
+      };
+
+      // 3) Vincular comprobante OCR al PRIMER gasto creado (flujo digital).
+      //    💣 Mientras el comprobante no quede vinculado, el bloqueo por hash de la
+      //    subida NO se activa: solo frena los archivos que ya tienen gasto_id. O
+      //    sea, el mismo archivo se puede volver a subir y cargar el gasto de nuevo.
       if (comprobanteId && gastosCreados.length > 0) {
-        await supabase
-          .from('comprobantes')
-          .update({ gasto_id: gastosCreados[0], estado: 'vinculado' })
-          .eq('id', comprobanteId);
+        await alCostado(
+          'El comprobante de pago no quedó enganchado al gasto: NO vuelvas a subir ese archivo, cargaría el gasto por segunda vez',
+          (aviso) =>
+            guardarContando(
+              supabase
+                .from('comprobantes')
+                .update({ gasto_id: gastosCreados[0], estado: 'vinculado' })
+                .eq('id', comprobanteId),
+              aviso,
+              { filasEsperadas: 1, columnas: 'id' },
+            ),
+        );
       }
 
       // 3.b) Vincular también el comprobante de la FACTURA (si se adjuntó con OCR).
       //      Sin esto la fila de `comprobantes` de la factura quedaba huérfana para
       //      siempre y el bloqueo de duplicado por hash no aplicaba a facturas.
       if (facturaComprobanteId && facturaComprobanteId !== comprobanteId && gastosCreados.length > 0) {
-        await supabase
-          .from('comprobantes')
-          .update({ gasto_id: gastosCreados[0], estado: 'vinculado' })
-          .eq('id', facturaComprobanteId);
+        await alCostado(
+          'La factura no quedó enganchada al gasto: NO vuelvas a subir ese archivo, cargaría el gasto por segunda vez',
+          (aviso) =>
+            guardarContando(
+              supabase
+                .from('comprobantes')
+                .update({ gasto_id: gastosCreados[0], estado: 'vinculado' })
+                .eq('id', facturaComprobanteId),
+              aviso,
+              { filasEsperadas: 1, columnas: 'id' },
+            ),
+        );
       }
 
       // 4) Self-learning de categoria_gasto_id y costo en productos. NO toca stock:
@@ -1709,13 +1797,28 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
           if (it.actualizar_costo && it.precio_unitario > 0) {
             updates.costo_unitario = it.precio_unitario;
           }
+          // ¿El costo entró de verdad en la ficha del producto? Lo necesita el
+          // historial de abajo: anotar un cambio de precio que no se guardó deja
+          // el registro diciendo una cosa y el producto mostrando otra.
+          let fichaActualizada = false;
           if (Object.keys(updates).length > 0) {
             updates.updated_at = new Date().toISOString();
-            await supabase.from('productos').update(updates).eq('id', it.producto_id);
+            // 💣 Acá se escribe el COSTO del insumo que salió de esta factura. Si no
+            // toca la fila, el costeo de TODAS las recetas que lo usan sigue con el
+            // precio viejo y nadie se entera: el margen queda mintiendo.
+            fichaActualizada = await alCostado(
+              `No se pudo actualizar ${it.producto_nombre}: el costo del insumo quedó con el valor viejo y el costeo de sus recetas también`,
+              (aviso) =>
+                guardarContando(
+                  supabase.from('productos').update(updates).eq('id', it.producto_id),
+                  aviso,
+                  { filasEsperadas: 1, columnas: 'id' },
+                ),
+            );
           }
 
           // Registrar en historial cuando hubo cambio de costo aprobado
-          if (it.actualizar_costo && it.precio_unitario > 0) {
+          if (it.actualizar_costo && it.precio_unitario > 0 && fichaActualizada) {
             const costoAnterior = prodActual.costo_unitario ?? null;
             const variacionPct =
               costoAnterior && costoAnterior > 0
@@ -1737,16 +1840,26 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
 
       // 4.b) Si vino de una recepción pendiente ("Cargar gasto"), marcarla validada
       //      y linkearla al primer gasto para que salga de la lista de pendientes.
+      //      💣 Si el remito no sale de pendientes, alguien va a apretar "Cargar
+      //      gasto" de nuevo sobre el mismo remito y el gasto entra dos veces.
       if (recepcionIdPrefill && gastosCreados.length > 0) {
-        await supabase
-          .from('recepciones_pendientes')
-          .update({
-            estado: 'validada',
-            gasto_id: gastosCreados[0],
-            validada_en: new Date().toISOString(),
-            validada_por: perfil?.nombre ?? null,
-          })
-          .eq('id', recepcionIdPrefill);
+        await alCostado(
+          'El remito sigue figurando como pendiente: NO lo vuelvas a cargar, avisá para que lo marquen a mano',
+          (aviso) =>
+            guardarContando(
+              supabase
+                .from('recepciones_pendientes')
+                .update({
+                  estado: 'validada',
+                  gasto_id: gastosCreados[0],
+                  validada_en: new Date().toISOString(),
+                  validada_por: perfil?.nombre ?? null,
+                })
+                .eq('id', recepcionIdPrefill),
+              aviso,
+              { filasEsperadas: 1, columnas: 'id' },
+            ),
+        );
         qc.invalidateQueries({ queryKey: ['recepciones_pendientes'] });
       }
 
@@ -1768,6 +1881,9 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
       qc.invalidateQueries({ queryKey: ['subcategorias-con-productos'] });
       qc.invalidateQueries({ queryKey: ['movimientos_stock'] });
 
+      // Se llega a "Listo" SIEMPRE, con avisos o sin ellos: el gasto ya está
+      // cargado y dejar el formulario abierto es la puerta al gasto duplicado.
+      setAvisosAlta(avisos);
       setStep('done');
       onCreated?.(gastosCreados[0]);
     } catch (e) {
@@ -3028,11 +3144,28 @@ export default function NuevoGastoForm({ open, onClose, onCreated, prefill }: Nu
           {/* Step: done */}
           {step === 'done' && (
             <div className="flex flex-col items-center justify-center py-12">
-              <div className="text-5xl">✅</div>
+              <div className="text-5xl">{avisosAlta.length > 0 ? '⚠️' : '✅'}</div>
               <div className="mt-3 text-base font-semibold">Gasto cargado</div>
-              <div className="mt-2 text-center text-sm text-gray-600">
-                Todo en orden. Ya aparece en Compras y en el EdR.
-              </div>
+              {avisosAlta.length > 0 ? (
+                // El gasto entró bien; lo que falló es de al lado (enganchar el
+                // comprobante, el costo del insumo, el remito). Se dice acá con
+                // todas las letras para que nadie lo cargue de nuevo "por las dudas".
+                <div className="mt-3 w-full rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                  <div className="font-semibold">Pero algo no se pudo completar:</div>
+                  <ul className="mt-1 list-disc space-y-1 pl-5 text-xs">
+                    {avisosAlta.map((a, i) => (
+                      <li key={i}>{a}</li>
+                    ))}
+                  </ul>
+                  <p className="mt-2 text-xs font-medium">
+                    El gasto ya está anotado — NO lo vuelvas a cargar.
+                  </p>
+                </div>
+              ) : (
+                <div className="mt-2 text-center text-sm text-gray-600">
+                  Todo en orden. Ya aparece en Compras y en el EdR.
+                </div>
+              )}
               <button
                 onClick={onClose}
                 className="mt-6 rounded bg-rodziny-600 px-4 py-2 text-sm font-medium text-white hover:bg-rodziny-700"
