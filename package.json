@@ -24,7 +24,8 @@
     "formas": "node scripts/verificar/formas.mjs",
     "columnas": "node scripts/verificar/columnas.mjs",
     "montos": "node scripts/verificar/montos.mjs",
-    "rindes": "node scripts/verificar/rindes.mjs"
+    "rindes": "node scripts/verificar/rindes.mjs",
+    "precios": "node scripts/verificar/precios.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
