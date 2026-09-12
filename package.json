@@ -21,7 +21,8 @@
     "vocabularios": "node scripts/verificar/vocabularios.mjs",
     "nombres": "node scripts/verificar/nombres.mjs",
     "verificar-deploy": "node scripts/verificar/deploy.mjs",
-    "formas": "node scripts/verificar/formas.mjs"
+    "formas": "node scripts/verificar/formas.mjs",
+    "columnas": "node scripts/verificar/columnas.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
