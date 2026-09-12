@@ -6,6 +6,7 @@ import { PageContainer } from '@/components/layout/PageContainer';
 import { cn, formatARS } from '@/lib/utils';
 import { normalizarTexto } from '@/modules/rrhh/utils';
 import { hoyAR } from '@/lib/fechaAR';
+import { sha256File } from '@/lib/hashFile';
 
 // ── Tipos ──────────────────────────────────────────────────────────────────
 interface EmpleadoMin {
@@ -194,6 +195,39 @@ export function IntegracionesPage() {
       setItems((prev) => prev.map((it) => (it.id === itemId ? { ...it, ...patch } : it)));
 
     try {
+      // ════════════════════════════════════════════════════════════════════
+      // 0) ¿ESTE MISMO ARCHIVO YA SE CARGÓ?
+      // ════════════════════════════════════════════════════════════════════
+      //
+      // 💥 Los recibos de junio de 2026 entraron DOS VECES —el 5-ago y el
+      // 19-ago— y nada lo impidió: 9 empleados repetidos, $6,7 M de más en el
+      // total de la pantalla de Recibos. Es la misma familia que el F931 que
+      // entró tres veces.
+      //
+      // 🔑 Acá no hay ningún correo del que sacar un id: los PDF se arrastran
+      // a mano. Lo que identifica al archivo es su contenido, así que el
+      // candado va sobre el SHA-256, igual que en `comprobantes`.
+      //
+      // Y se pregunta ANTES de subir y ANTES del OCR a propósito: el OCR se
+      // paga por uso y no tiene sentido gastarlo en algo que ya está cargado.
+      // ⚠️ Sólo se pregunta por los recibos. El VEP NO tiene hash y no hace
+      // falta: el VEP vive en `pagos_fijos` y ahí el candado por número ya
+      // existe (`pagos_fijos_vep_numero_uidx`). La tabla `veps` no la escribe
+      // nadie: tiene 0 filas y ni una línea de código la toca.
+      const hashArchivo = await sha256File(file);
+      const { data: yaCargado } = await supabase
+        .from('recibos_sueldo')
+        .select('periodo')
+        .eq('hash_archivo', hashArchivo)
+        .limit(1);
+      if (yaCargado?.length) {
+        setItem({
+          estado: 'error',
+          resultado: `⚠️ Este mismo archivo ya se cargó (recibos de ${mesNombre(yaCargado[0].periodo as string)}). No se cargó de nuevo.`,
+        });
+        return;
+      }
+
       // 1) Subir al bucket
       const ext = file.name.split('.').pop()?.toLowerCase() || 'pdf';
       const mes = new Date().toISOString().slice(0, 7);
@@ -271,9 +305,31 @@ export function IntegracionesPage() {
           total_aportes:
             r.total_aportes ?? (r.bruto != null && r.neto != null ? r.bruto - r.neto : null),
           archivo_path: paths[i] ?? path,
+          // Sólo el PRIMER recibo del lote se queda con el hash: el candado es
+          // único y un PDF con ocho hojas genera ocho filas del mismo archivo.
+          // Con que una lo lleve alcanza para que el archivo entero no se
+          // pueda volver a subir, que es lo que se quiere impedir.
+          hash_archivo: i === 0 ? hashArchivo : null,
         }));
         const { error } = await supabase.from('recibos_sueldo').insert(filas);
-        if (error) throw error;
+        if (error) {
+          // 23505 = choca contra un candado único. Son dos: el del archivo
+          // (mismo PDF otra vez) y el de (CUIL, período) — que es el que
+          // atrapa el caso real: el MISMO mes exportado de nuevo, con otro
+          // archivo. Sin esto, junio 2026 entró dos veces y nadie se enteró.
+          if ((error as { code?: string }).code === '23505') {
+            setItem({
+              estado: 'error',
+              resultado:
+                '⚠️ Estos recibos ya estaban cargados: hay uno por empleado y por mes. ' +
+                'No se cargó nada de nuevo. Si el contador mandó una corrección, hay que ' +
+                'borrar el recibo viejo desde Sueldos antes de subir el nuevo.',
+            });
+            await supabase.storage.from('correos-contadores').remove([path]);
+            return;
+          }
+          throw error;
+        }
 
         // Si TODAS las hojas se cortaron bien, borramos el PDF completo para no
         // dejar el lote entero (todos los sueldos) accesible.
@@ -343,11 +399,17 @@ export function IntegracionesPage() {
         // Solo se vincula si NO hay ambigüedad: un único candidato y el monto coincide.
         // El monto es el desempate que importa — la serie "F931 $7.000.000" de la
         // moratoria también matchea por nombre y pisarla borraría la deuda vieja.
+        // 💥 ACÁ SE BUSCA ENTRE TODOS, PAGADOS O NO, y ese es el arreglo.
+        //
+        // Antes llevaba `.eq('pagado', false)`, y el camino NORMAL del F931 es
+        // justo el otro: se carga a mano y se tilda cuando se paga. Cuando el
+        // VEP llegaba después, esa fila ya tildada quedaba fuera de la
+        // búsqueda, no había candidato, y el VEP entraba como una SEGUNDA fila.
+        // Es exactamente por donde el F931 entró tres veces.
         const { data: candidatos } = await supabase
           .from('pagos_fijos')
-          .select('id, concepto, periodo, monto')
+          .select('id, concepto, periodo, monto, pagado')
           .is('vep_numero', null)
-          .eq('pagado', false)
           .in('periodo', [periodoPago, mesAnterior(periodoPago)])
           .or(patronesConcepto(carga, v?.impuesto).join(','));
 
@@ -369,6 +431,21 @@ export function IntegracionesPage() {
           notas: `${base}${v?.numero ? ` · VEP N° ${v.numero}` : ''}${v?.impuesto ? ` · ${v.impuesto}` : ''}`.trim(),
         };
 
+        // ⚠️ Si la fila YA está tildada como pagada, el VEP no le toca la plata.
+        //
+        // Ese pago ya se hizo y puede estar conciliado contra el banco: pisarle
+        // el monto con lo que leyó el OCR —que además puede venir vacío— le
+        // cambiaría el número a un gasto cerrado. Lo que el VEP aporta ahí es
+        // el comprobante y el número, que es justo lo que faltaba.
+        const loQueSeEscribe =
+          aVincular?.pagado
+            ? {
+                comprobante_path: fila.comprobante_path,
+                vep_numero: fila.vep_numero,
+                notas: fila.notas,
+              }
+            : fila;
+
         // ⚠️ Acá NO se usa `guardarContando`, a propósito: hace falta el `code` crudo
         // del error para reconocer el 23505 (el mismo VEP resubido) y avisar en vez de
         // cargarlo dos veces. El helper devuelve el mensaje ya masticado y esa
@@ -376,7 +453,11 @@ export function IntegracionesPage() {
         // Mismo criterio que ChecklistPagos.moverPago.
         // El insert no cuenta nada: un insert que la RLS bloquea SÍ tira error (42501).
         const { data: vinculadas, error } = aVincular
-          ? await supabase.from('pagos_fijos').update(fila).eq('id', aVincular.id).select('id')
+          ? await supabase
+              .from('pagos_fijos')
+              .update(loQueSeEscribe)
+              .eq('id', aVincular.id)
+              .select('id')
           : await supabase.from('pagos_fijos').insert(fila);
         if (error) {
           // 23505 = viola un UNIQUE: el número de VEP (pagos_fijos_vep_numero_uidx) o
@@ -416,7 +497,7 @@ export function IntegracionesPage() {
         const sospechosos = (candidatos ?? []).filter((c) => c.id !== aVincular?.id);
         const aviso =
           aVincular != null
-            ? ` · se vinculó al pago que ya estaba cargado a mano ("${aVincular.concepto}", ${mesNombre(aVincular.periodo)}): no se duplicó`
+            ? ` · se vinculó al pago que ya estaba cargado a mano ("${aVincular.concepto}", ${mesNombre(aVincular.periodo)}): no se duplicó${aVincular.pagado ? '. Ese pago ya estaba tildado, así que se le agregó el comprobante y el N° de VEP y NO se le tocó el monto' : ''}`
             : sospechosos.length > 0
               ? ` · ⚠️ ojo: hay ${sospechosos.length} pago(s) parecido(s) cargado(s) a mano (${sospechosos.map((c) => `"${c.concepto}"`).join(', ')}). Si es el mismo, borrá el manual.`
               : '';

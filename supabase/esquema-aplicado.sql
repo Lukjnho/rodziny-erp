@@ -12,8 +12,8 @@
 --
 --  Lo que NO trae: las policies de RLS. Eso lo mide scripts/mapa-erp/.
 --
---  Generado: 2026-09-11 21:40 -0300
---  96 tablas · 13 vistas · 86 funciones · 121 claves foraneas · 300 indices · 3 realtime (publicaciones)
+--  Generado: 2026-09-12 02:28 -0300
+--  96 tablas · 13 vistas · 86 funciones · 121 claves foraneas · 302 indices · 3 realtime (publicaciones)
 -- ============================================================================
 
 -- ── TABLAS ──────────────────────────────────────────────────────
@@ -1290,7 +1290,8 @@ create table public.recibos_sueldo (
   aporte_jubilacion numeric,
   aporte_obra_social numeric,
   aporte_pami numeric,
-  total_aportes numeric
+  total_aportes numeric,
+  hash_archivo text
 );
 
 create table public.reglas_movimiento (
@@ -2513,7 +2514,9 @@ CREATE INDEX push_subscriptions_user_idx ON public.push_subscriptions USING btre
 CREATE INDEX idx_recepciones_estado ON public.recepciones_pendientes USING btree (estado, local);
 CREATE INDEX idx_recepciones_pendientes_gasto ON public.recepciones_pendientes USING btree (gasto_id);
 CREATE UNIQUE INDEX recepciones_pendientes_pkey ON public.recepciones_pendientes USING btree (id);
+CREATE UNIQUE INDEX recibos_sueldo_cuil_periodo_uidx ON public.recibos_sueldo USING btree (cuil_detectado, periodo);
 CREATE INDEX recibos_sueldo_empleado_idx ON public.recibos_sueldo USING btree (empleado_id);
+CREATE UNIQUE INDEX recibos_sueldo_hash_archivo_uidx ON public.recibos_sueldo USING btree (hash_archivo) WHERE (hash_archivo IS NOT NULL);
 CREATE UNIQUE INDEX recibos_sueldo_pkey ON public.recibos_sueldo USING btree (id);
 CREATE INDEX idx_reglas_movimiento_activo ON public.reglas_movimiento USING btree (activo, prioridad);
 CREATE UNIQUE INDEX reglas_movimiento_pkey ON public.reglas_movimiento USING btree (id);
