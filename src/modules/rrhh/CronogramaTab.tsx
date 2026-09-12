@@ -1,6 +1,8 @@
 import { useState, useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { guardarContando } from '@/lib/escribir';
+import { mensajeErrorAmigable } from '@/lib/erroresSupabase';
 import { cn } from '@/lib/utils';
 import type { Empleado } from './RRHHPage';
 import {
@@ -121,17 +123,77 @@ export function CronogramaTab() {
     if (!confirm('¿Publicar el cronograma de esta quincena? Los empleados podrán verlo.')) return;
     setPublicando(true);
     try {
-      const { error } = await supabase
+      // 💣 Este botón decide el PRESENTISMO, que es el 10 % del sueldo.
+      // SueldosTab saltea los días sin publicar:
+      //     if (!crono || !crono.publicado || crono.es_franco) continue;
+      // O sea que un día que quedó en borrador no puede generar una falta ni una
+      // tardanza. Si este UPDATE no toca ninguna fila y nadie avisa, la quincena
+      // entera queda invisible y todos cobran el presentismo igual.
+      //
+      // Por eso no alcanza con "no dio error". Se cuenta primero cuántos
+      // borradores hay EN LA BASE —no los de la pantalla, que pueden estar
+      // viejos— y después se exige ese número exacto de vuelta.
+      const { data: borradores, error: errContar } = await supabase
         .from('cronograma')
-        .update({ publicado: true, updated_at: new Date().toISOString() })
+        .select('id')
         .gte('fecha', fechaDesde)
         .lte('fecha', fechaHasta)
         .eq('publicado', false);
-      if (error) throw error;
-      qc.invalidateQueries({ queryKey: ['cronograma'] });
+      if (errContar) {
+        throw new Error(
+          mensajeErrorAmigable(errContar, 'No pude ver cuántos días faltaba publicar'),
+        );
+      }
+      const cuantosBorradores = borradores?.length ?? 0;
+      if (cuantosBorradores === 0) {
+        // La grilla mostraba borradores pero en la base ya no hay: los publicó
+        // otra persona mientras esta pantalla estaba abierta. No es una falla.
+        alert('Esta quincena ya estaba publicada. No quedaba nada en borrador.');
+        return;
+      }
+
+      const publicados = await guardarContando(
+        supabase
+          .from('cronograma')
+          .update({ publicado: true, updated_at: new Date().toISOString() })
+          .gte('fecha', fechaDesde)
+          .lte('fecha', fechaHasta)
+          .eq('publicado', false),
+        'No se pudo publicar el cronograma de esta quincena',
+        // Cero corta (eso es lo que hace el helper). El número exacto NO se pide
+        // con `filasEsperadas` a propósito: si entre la cuenta de arriba y este
+        // UPDATE otra persona cargó un día más, el helper diría "no se siguió
+        // adelante" cuando en realidad ya se publicó, y eso es peor que no
+        // avisar. Se compara acá abajo y se dice la verdad de cada caso.
+        { columnas: 'id' },
+      );
+
+      if (publicados < cuantosBorradores) {
+        // El caso caro: el UPDATE entró a medias (típicamente un permiso que
+        // solo deja tocar parte de las filas). Los días que quedaron en
+        // borrador no generan falta ni tardanza: son presentismo regalado.
+        alert(
+          `⚠️ ALERTA LUCAS: se publicaron ${publicados} de ${cuantosBorradores} días.\n\n` +
+            'Los que faltan siguen en borrador (amarillo en la grilla) y NO cuentan ' +
+            'para el presentismo. Probá de nuevo; si vuelve a pasar, es un permiso ' +
+            'y hay que avisar antes de liquidar la quincena.',
+        );
+      } else {
+        // Se dice el número a propósito: publicar es lo único que hace que estos
+        // días cuenten para el presentismo, y hasta hoy no había forma de saber
+        // si había entrado o no.
+        alert(
+          `Cronograma publicado: ${publicados} día(s) de personal. ` +
+            'Desde ahora esos días cuentan para el presentismo.',
+        );
+      }
     } catch (err: any) {
       alert('Error al publicar: ' + err.message);
     } finally {
+      // Se refresca SIEMPRE, con error o sin él: si algo no entró, la grilla
+      // tiene que mostrar lo que de verdad quedó en la base (los borradores
+      // siguen en amarillo) y no lo que se quiso hacer.
+      qc.invalidateQueries({ queryKey: ['cronograma'] });
       setPublicando(false);
     }
   }
@@ -483,13 +545,18 @@ function ModalCelda({
         hora_entrada: esFranco ? null : ordenados[0].entrada,
         hora_salida: esFranco ? null : ordenados[ordenados.length - 1].salida,
         observaciones: observaciones.trim() || null,
+        // ⚠️ Tocar un día lo devuelve a borrador, aunque la quincena ya estuviera
+        // publicada: hay que volver a apretar Publicar o ese día deja de contar
+        // para el presentismo. Es como está decidido hoy; no se cambia acá.
         publicado: false,
         updated_at: new Date().toISOString(),
       };
-      const { error } = await supabase
-        .from('cronograma')
-        .upsert(payload, { onConflict: 'empleado_id,fecha' });
-      if (error) throw error;
+      // Una sola fila: el índice único es (empleado_id, fecha).
+      await guardarContando(
+        supabase.from('cronograma').upsert(payload, { onConflict: 'empleado_id,fecha' }),
+        'No se pudo guardar el horario de este día',
+        { filasEsperadas: 1 },
+      );
       onSaved();
     } catch (err: any) {
       setError(err.message);
@@ -503,8 +570,13 @@ function ModalCelda({
     if (!confirm('¿Eliminar esta asignación?')) return;
     setGuardando(true);
     try {
-      const { error } = await supabase.from('cronograma').delete().eq('id', existente.id);
-      if (error) throw error;
+      // Borra por id: o desaparece esa fila o no se borró nada. Si vuelve cero,
+      // la celda seguía cargada y la pantalla decía lo contrario.
+      await guardarContando(
+        supabase.from('cronograma').delete().eq('id', existente.id),
+        'No se pudo eliminar el horario de este día',
+        { filasEsperadas: 1 },
+      );
       onSaved();
     } catch (err: any) {
       setError(err.message);
@@ -707,6 +779,9 @@ function ModalCopia({
       }
       onCopied();
     } catch (err: any) {
+      // Acá el modal queda abierto y el botón habilitado a propósito: reintentar
+      // es inofensivo porque la copia es un upsert por (empleado, fecha), o sea
+      // que pisa el mismo día en vez de agregar uno nuevo. No duplica nada.
       setError(err.message);
     } finally {
       setTrabajando(false);
@@ -741,12 +816,18 @@ function ModalCopia({
       hora_salida: c.hora_salida,
       turnos: c.turnos ?? [],
       es_franco: c.es_franco,
+      // La copia entra SIEMPRE como borrador: hay que revisarla y apretar
+      // Publicar. Si no se publica, esos días no cuentan para el presentismo.
       publicado: false,
     }));
-    const { error: errIns } = await supabase
-      .from('cronograma')
-      .upsert(nuevos, { onConflict: 'empleado_id,fecha' });
-    if (errIns) throw errIns;
+    // Se exige una fila por cada día que se leyó del origen. Si entran menos, la
+    // quincena queda copiada a medias y la grilla no lo muestra: los días que
+    // faltan se ven igual que los que nunca se cargaron.
+    await guardarContando(
+      supabase.from('cronograma').upsert(nuevos, { onConflict: 'empleado_id,fecha' }),
+      'No se pudo copiar la quincena anterior',
+      { filasEsperadas: nuevos.length, columnas: 'id' },
+    );
   }
 
   async function copiarDiaADia(origen: string, destino: string, ids: string[]) {
@@ -765,12 +846,14 @@ function ModalCopia({
       hora_salida: c.hora_salida,
       turnos: c.turnos ?? [],
       es_franco: c.es_franco,
+      // Igual que la copia de quincena: entra como borrador y hay que publicarlo.
       publicado: false,
     }));
-    const { error: errIns } = await supabase
-      .from('cronograma')
-      .upsert(nuevos, { onConflict: 'empleado_id,fecha' });
-    if (errIns) throw errIns;
+    await guardarContando(
+      supabase.from('cronograma').upsert(nuevos, { onConflict: 'empleado_id,fecha' }),
+      'No se pudo copiar el día',
+      { filasEsperadas: nuevos.length, columnas: 'id' },
+    );
   }
 
   const titulos = {
