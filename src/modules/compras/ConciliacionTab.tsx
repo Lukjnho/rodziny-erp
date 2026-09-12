@@ -18,6 +18,7 @@
 import { Fragment, useState, useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { guardarContando } from '@/lib/escribir';
 import { useAuth } from '@/lib/auth';
 import { formatARS, cn } from '@/lib/utils';
 import { hoyAR } from '@/lib/fechaAR';
@@ -445,29 +446,38 @@ export function ConciliacionTab() {
   async function handleMarcarAlDia(cuenta: string) {
     setMensaje(null);
     try {
-      const { error } = await supabase
-        .from('extractos_estado')
-        .upsert(
-          { cuenta, al_dia_hasta: hoyAR(), actualizado_por: user?.id ?? null },
-          { onConflict: 'cuenta' },
-        );
-      if (error) throw error;
+      // El upsert pisa la fila que ya existe para esa cuenta: por ese lado es un
+      // UPDATE, y un UPDATE que la regla frena vuelve con cero filas y sin error.
+      // Si no entra, el semáforo sigue en rojo y la pantalla vuelve a pedir lo mismo.
+      await guardarContando(
+        supabase
+          .from('extractos_estado')
+          .upsert(
+            { cuenta, al_dia_hasta: hoyAR(), actualizado_por: user?.id ?? null },
+            { onConflict: 'cuenta' },
+          ),
+        `No se pudo marcar ${cuenta.toUpperCase()} como al día`,
+        { filasEsperadas: 1 },
+      );
       setMensaje({ tipo: 'ok', texto: `${cuenta.toUpperCase()} marcado como al día.` });
       qc.invalidateQueries({ queryKey: ['conciliacion', 'estado_bancos'] });
     } catch (e: unknown) {
       console.error('[Conciliacion] marcar al día error:', e);
-      setMensaje({ tipo: 'err', texto: `Error al marcar al día: ${formatError(e)}` });
+      setMensaje({ tipo: 'err', texto: formatError(e) });
     }
   }
 
   async function handleMarcarInterna(movId: string) {
     setMensaje(null);
     try {
-      const { error } = await supabase
-        .from('movimientos_bancarios')
-        .update({ es_transferencia_interna: true })
-        .eq('id', movId);
-      if (error) throw error;
+      await guardarContando(
+        supabase
+          .from('movimientos_bancarios')
+          .update({ es_transferencia_interna: true })
+          .eq('id', movId),
+        'No se pudo marcar el movimiento como transferencia interna',
+        { filasEsperadas: 1 },
+      );
       setMensaje({
         tipo: 'ok',
         texto: 'Movimiento marcado como transferencia interna. Sale del listado de egresos.',
@@ -475,25 +485,28 @@ export function ConciliacionTab() {
       qc.invalidateQueries({ queryKey: ['conciliacion'] });
     } catch (e: unknown) {
       console.error('[Conciliacion] marcar interna error:', e);
-      setMensaje({ tipo: 'err', texto: `Error al marcar como interna: ${formatError(e)}` });
+      setMensaje({ tipo: 'err', texto: formatError(e) });
     }
   }
 
   async function handleDesvincular(movId: string) {
     setMensaje(null);
     try {
-      const { error } = await supabase
-        .from('movimientos_bancarios')
-        .update({ gasto_id: null })
-        .eq('id', movId);
-      if (error) throw error;
+      // La otra mitad del enganche. Si no toca ninguna fila y decimos que lo
+      // soltamos, el movimiento sigue pegado al gasto viejo y nadie lo vuelve a
+      // ofrecer: el gasto de verdad se queda para siempre sin su pago del banco.
+      await guardarContando(
+        supabase.from('movimientos_bancarios').update({ gasto_id: null }).eq('id', movId),
+        'No se pudo desvincular el movimiento del gasto',
+        { filasEsperadas: 1 },
+      );
       setMensaje({ tipo: 'ok', texto: 'Movimiento desvinculado del gasto.' });
       qc.invalidateQueries({ queryKey: ['conciliacion'] });
       qc.invalidateQueries({ queryKey: ['gastos_conciliados_ids'] });
       qc.invalidateQueries({ queryKey: ['gastos_listado'] });
     } catch (e: unknown) {
       console.error('[Conciliacion] desvincular error:', e);
-      setMensaje({ tipo: 'err', texto: `Error al desvincular: ${formatError(e)}` });
+      setMensaje({ tipo: 'err', texto: formatError(e) });
     }
   }
 
@@ -667,18 +680,21 @@ export function ConciliacionTab() {
   async function handleVincular(movId: string, gastoId: string) {
     setMensaje(null);
     try {
-      const { error } = await supabase
-        .from('movimientos_bancarios')
-        .update({ gasto_id: gastoId })
-        .eq('id', movId);
-      if (error) throw error;
+      // El enganche. Si no toca ninguna fila y la pantalla igual dice "vinculado",
+      // el movimiento queda libre y mañana se lo puede enganchar a OTRO gasto: el
+      // mismo pago del banco tapando dos gastos distintos.
+      await guardarContando(
+        supabase.from('movimientos_bancarios').update({ gasto_id: gastoId }).eq('id', movId),
+        'No se pudo enganchar el movimiento del banco al gasto',
+        { filasEsperadas: 1 },
+      );
       setMensaje({ tipo: 'ok', texto: 'Movimiento vinculado al gasto cargado.' });
       qc.invalidateQueries({ queryKey: ['conciliacion'] });
       qc.invalidateQueries({ queryKey: ['gastos_conciliados_ids'] });
       qc.invalidateQueries({ queryKey: ['gastos_listado'] });
     } catch (e: unknown) {
       console.error('[Conciliacion] vincular error:', e);
-      setMensaje({ tipo: 'err', texto: `Error al vincular: ${formatError(e)}` });
+      setMensaje({ tipo: 'err', texto: formatError(e) });
     }
   }
 
@@ -1332,7 +1348,11 @@ export function ConciliacionTab() {
                             ) : (
                               <select
                                 onChange={(e) => {
-                                  if (e.target.value) handleVincular(m.id, e.target.value);
+                                  const gastoId = e.currentTarget.value;
+                                  // Lo dejamos de nuevo en vacío: si el enganche falla, elegir
+                                  // otra vez ESE MISMO gasto tiene que volver a intentarlo.
+                                  e.currentTarget.value = '';
+                                  if (gastoId) handleVincular(m.id, gastoId);
                                 }}
                                 defaultValue=""
                                 className="rounded border border-amber-300 bg-amber-50 px-1 py-0.5 text-[11px] text-amber-900"
