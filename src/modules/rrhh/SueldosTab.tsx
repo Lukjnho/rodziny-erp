@@ -10,6 +10,7 @@ import {
 import { useAuth } from '@/lib/auth';
 import { cn, formatARS } from '@/lib/utils';
 import { mensajeErrorAmigable } from '@/lib/erroresSupabase';
+import { guardarContando } from '@/lib/escribir';
 import { procesarComprobantePago } from '@/lib/ocrComprobantePago';
 import type { Empleado } from './RRHHPage';
 import {
@@ -375,13 +376,19 @@ export function SueldosTab() {
       periodo: string;
       patch: Partial<Liquidacion>;
     }) => {
-      const { error } = await supabase
-        .from('liquidaciones_quincenales')
-        .upsert(
-          { empleado_id: payload.empleado_id, periodo: payload.periodo, ...payload.patch },
-          { onConflict: 'empleado_id,periodo' },
-        );
-      if (error) throw error;
+      // Una sola fila: la de este empleado en esta quincena. Si vuelven cero, el
+      // cambio no entró (casi siempre un permiso) y la pantalla no puede quedarse
+      // mostrando la tilde nueva como si estuviera guardada.
+      await guardarContando(
+        supabase
+          .from('liquidaciones_quincenales')
+          .upsert(
+            { empleado_id: payload.empleado_id, periodo: payload.periodo, ...payload.patch },
+            { onConflict: 'empleado_id,periodo' },
+          ),
+        'No se pudo guardar el cambio en la liquidación de la quincena',
+        { filasEsperadas: 1 },
+      );
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['liquidaciones'] }),
     onError: (e: Error) => window.alert(`Error: ${e.message}`),
@@ -449,17 +456,30 @@ export function SueldosTab() {
       }
 
       // 1) Actualizar liquidación
-      const { error: errLiq } = await supabase.from('liquidaciones_quincenales').upsert(
-        {
-          empleado_id: payload.empleado_id,
-          periodo: payload.periodo,
-          pagado: payload.medio !== null,
-          medio_pago: payload.medio,
-          fecha_pago: payload.medio !== null ? hoyYmd : null,
-        },
-        { onConflict: 'empleado_id,periodo' },
+      //
+      // 💣 Es la plata del sueldo. Si este upsert no entra, la quincena queda sin
+      // liquidar mientras la pantalla dice que se pagó.
+      //
+      // 🔑 Cortar acá es seguro y por eso corta: todavía no se tocó NINGUNA fila
+      // de `pagos_sueldos`, así que el reintento —la reacción obvia ante el cartel
+      // rojo— vuelve a empezar de cero y no duplica ningún pago. El modal queda
+      // abierto a propósito, con el comprobante y el N° de operación ya tipeados.
+      await guardarContando(
+        supabase.from('liquidaciones_quincenales').upsert(
+          {
+            empleado_id: payload.empleado_id,
+            periodo: payload.periodo,
+            pagado: payload.medio !== null,
+            medio_pago: payload.medio,
+            fecha_pago: payload.medio !== null ? hoyYmd : null,
+          },
+          { onConflict: 'empleado_id,periodo' },
+        ),
+        payload.medio === null
+          ? 'No se pudo desmarcar el pago de la quincena'
+          : 'No se pudo marcar la quincena como pagada',
+        { filasEsperadas: 1 },
       );
-      if (errLiq) throw errLiq;
 
       const idsPrevios = (previos ?? []).map((p) => p.id);
 
@@ -554,6 +574,9 @@ export function SueldosTab() {
   });
 
   const updateModalidad = useMutation({
+    // No va por `guardarContando`: acá no alcanza con contar las filas, hace falta
+    // el VALOR que quedó guardado para confirmar que la base entendió la modalidad
+    // (el chequeo de abajo). El helper devuelve el número de filas, no la fila.
     mutationFn: async (payload: { id: string; modalidad: 'quincenal' | 'mensual' }) => {
       const { data, error } = await supabase
         .from('empleados')
