@@ -10,6 +10,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabaseAnon as supabase } from '@/lib/supabaseAnon';
 import { cn } from '@/lib/utils';
 import { mensajeErrorAmigable } from '@/lib/erroresSupabase';
+import { guardarContando } from '@/lib/escribir';
 import { invalidarStockCocina } from './lib/invalidarStock';
 import { salidasDeCamara } from './lib/ventasCocina';
 import { normalizarDecimal, parseDecimal, equivalenteKgGramos } from '@/lib/numero';
@@ -544,8 +545,9 @@ function CierrePastas({ local }: { local: Local }) {
         })
         .select('id');
       if (error) throw error;
-      // Un INSERT que la RLS bloquea devuelve 0 filas SIN error. Sin este chequeo,
-      // el botón diría "listo" y no habría quedado nada anotado.
+      // No va por `guardarContando`: eso es para UPDATE y DELETE, que son los que
+      // se pierden en silencio. Un INSERT bloqueado por la RLS sí tira error
+      // (42501). El chequeo se queda igual porque ya está escrito y no molesta.
       if (!data || data.length === 0) {
         throw new Error('La base no confirmó la bajada. Avisale a Lucas antes de seguir.');
       }
@@ -634,14 +636,28 @@ function CierrePastas({ local }: { local: Local }) {
       // (local/fecha/tipo/turno), NO por los ids del snapshot `cierreActual`:
       // si ese snapshot estaba viejo (otro guardado, otra pestaña) quedaban filas
       // sin borrar y el insert chocaba contra el índice único ux_..._con_turno.
-      const { error: errDel } = await supabase
-        .from('cocina_cierre_dia')
-        .delete()
-        .eq('local', local)
-        .eq('fecha', fecha)
-        .eq('tipo', 'pasta')
-        .eq('turno', turno);
-      if (errDel) throw errDel;
+      //
+      // permitirCero: la primera vez que se cierra el turno no hay nada que borrar,
+      // y ese es el caso normal. El caso peligroso —que la base rechace el borrado
+      // habiendo filas— no queda en silencio: el insert de abajo choca contra ese
+      // mismo índice único y la pantalla lo muestra.
+      //
+      // ⚠️ Acá SÍ vale y en el cierre simple de más abajo NO, aunque el código se
+      // parezca. El índice lleva `producto_id` adentro y en Postgres dos NULL no
+      // chocan. Medido el 11-sep-2026: las 2.851 filas de pasta tienen
+      // producto_id cargado, así que el índice las cubre a todas. Las de salsa y
+      // milanesa lo tienen en NULL y por eso allá hubo que contar a mano.
+      await guardarContando(
+        supabase
+          .from('cocina_cierre_dia')
+          .delete()
+          .eq('local', local)
+          .eq('fecha', fecha)
+          .eq('tipo', 'pasta')
+          .eq('turno', turno),
+        'No se pudo reemplazar el cierre anterior de este turno',
+        { permitirCero: true, columnas: 'id' },
+      );
 
       const payload = conDatos.map(([productoId, f]) => ({
         fecha,
@@ -657,6 +673,8 @@ function CierrePastas({ local }: { local: Local }) {
         responsable: responsable.trim(),
       }));
 
+      // INSERT: no se cuenta. Si la RLS lo bloqueara tira error (42501), que es
+      // justo lo que no pasa con un UPDATE o un DELETE.
       const { error } = await supabase.from('cocina_cierre_dia').insert(payload);
       if (error) throw error;
     },
@@ -1127,14 +1145,47 @@ function CierreSimple({
       // Borrar el cierre previo por columnas naturales (local/fecha/tipo, turno
       // NULL en salsa/postre/panadería), NO por los ids del snapshot
       // `cierreActual` — si está viejo deja filas sin borrar y se duplican.
-      const { error: errDel } = await supabase
+      //
+      // 💣 Acá NO alcanza con permitirCero, y el índice único NO es la red que
+      // parecía. `ux_cocina_cierre_dia_sin_turno` es (fecha, local, producto_id)
+      // WHERE turno IS NULL, y en Postgres **dos NULL nunca chocan**. Medido el
+      // 11-sep-2026: de 5.047 filas de cierre, **1.077 tienen producto_id nulo**
+      // — las 900 de salsa y las 30 de milanesa, todas. Para esos tipos el
+      // borrado bloqueado devolvía cero, permitirCero lo dejaba pasar, y abajo
+      // entraba un juego completo de filas duplicadas mientras la pantalla decía
+      // "al guardar se reemplaza".
+      //
+      // La red de verdad es contar: se mira cuántas hay ANTES y se exige ese
+      // número. Cero sigue siendo válido —el primer cierre del día no tiene nada
+      // que borrar— pero ahora es cero PORQUE NO HABÍA, no porque no se pudo.
+      const { data: cierresPrevios, error: errPrevios } = await supabase
         .from('cocina_cierre_dia')
-        .delete()
+        .select('id')
         .eq('local', local)
         .eq('fecha', fecha)
         .eq('tipo', tipo)
         .is('turno', null);
-      if (errDel) throw errDel;
+      if (errPrevios) {
+        throw new Error(
+          mensajeErrorAmigable(errPrevios, 'No pude ver si ya había un cierre cargado hoy'),
+        );
+      }
+      const cuantasPrevias = cierresPrevios?.length ?? 0;
+      await guardarContando(
+        supabase
+          .from('cocina_cierre_dia')
+          .delete()
+          .eq('local', local)
+          .eq('fecha', fecha)
+          .eq('tipo', tipo)
+          .is('turno', null),
+        'No se pudo reemplazar el cierre anterior de hoy',
+        {
+          filasEsperadas: cuantasPrevias,
+          permitirCero: cuantasPrevias === 0,
+          columnas: 'id',
+        },
+      );
 
       // Salsas/postres se identifican por receta_id (no por producto_id).
       // Parse robusto: convención AR (decimal con coma). Sacamos espacios y
@@ -1192,69 +1243,165 @@ function CierreSimple({
         notas: notas[itemId]?.trim() || null,
       }));
 
+      // INSERT: no se cuenta (bloqueado por la RLS tira 42501). Y este SÍ corta:
+      // es el paso que registra lo contado; sin él no hay cierre.
       const { error } = await supabase.from('cocina_cierre_dia').insert(payload);
       if (error) throw error;
 
-      // Sincronizar con cocina_lotes_produccion para que el stock visible cuadre
-      // con lo que se cerró: apaga los lotes activos previos de la receta + local,
-      // y crea uno nuevo con la cantidad real del cierre. Así Dashboard/Stock
-      // arrancan el día siguiente con exactamente lo que se contó al cerrar.
+      // ══════════════════════════════════════════════════════════════════════
+      // DE ACÁ PARA ABAJO EL CONTEO YA QUEDÓ GUARDADO
+      // ══════════════════════════════════════════════════════════════════════
+      //
+      // Lo que sigue sincroniza cocina_lotes_produccion para que el stock visible
+      // cuadre con lo que se cerró: apaga los lotes activos previos de la receta +
+      // local, y crea uno nuevo con la cantidad real del cierre. Así Dashboard y
+      // Stock arrancan el día siguiente con exactamente lo que se contó.
+      //
+      // 💣 Si uno de estos pasos CORTARA, los ítems que vienen después se
+      // quedarían sin acomodar y la pantalla diría "no se pudo guardar el cierre"
+      // con el conteo YA guardado. Ante ese cartel rojo lo que hace cualquiera es
+      // volver a tocar Guardar, y entonces se repite todo por algo que no estaba
+      // en el conteo.
+      //
+      // Por eso estos pasos AVISAN Y SIGUEN: el único que corta es el insert de
+      // arriba, que es el que registra lo contado. Volver a guardar no duplica
+      // nada (el cierre se borra y se repone por local/fecha/tipo, y cada ítem
+      // apaga sus lotes activos antes de crear el nuevo), pero el que contó tiene
+      // que enterarse de qué renglón quedó sin acomodar.
+      const avisos: string[] = [];
+      const alCostado = async (fn: () => Promise<unknown>) => {
+        try {
+          await fn();
+        } catch (e) {
+          avisos.push((e as Error).message);
+        }
+      };
+
       const unidadLote: 'kg' | 'unid' | 'lt' = unidad === 'kg' ? 'kg' : 'unid';
       for (const { recetaId, productoId, nombre, cantidad } of cierres) {
+        const queEs = nombre ?? 'un ítem del cierre';
+
+        // 💣 EL CIERRE NO ES "AVISAR Y SEGUIR": ES STOCK.
+        //
+        // Apagar los lotes viejos y cargar el nuevo son UN SOLO movimiento. Si
+        // el apagado falla y el alta igual corre, quedan los viejos prendidos
+        // MÁS el nuevo, y el tab Stock suma todo lo que tenga en_stock: 12 kg
+        // que ya no están + 8 contados = 20 kg donde hay 8. El conteo, que
+        // existe justo para corregir el stock, termina inventándolo.
+        //
+        // Por eso se anota si el apagado anduvo, y si no anduvo NO se carga el
+        // lote nuevo de ESE ítem. Los demás siguen.
+        let apagadoOk = true;
+        const apagarLotes = async (fn: () => Promise<unknown>) => {
+          try {
+            await fn();
+          } catch (e) {
+            apagadoOk = false;
+            avisos.push((e as Error).message);
+          }
+        };
+
         // (a) Apagar lotes con la misma receta vinculada (si el ítem tiene receta).
         if (recetaId) {
-          const { error: errOff } = await supabase
-            .from('cocina_lotes_produccion')
-            .update({ en_stock: false })
-            .eq('local', local)
-            .eq('receta_id', recetaId)
-            .eq('en_stock', true);
-          if (errOff) throw errOff;
+          await apagarLotes(() =>
+            guardarContando(
+              supabase
+                .from('cocina_lotes_produccion')
+                .update({ en_stock: false })
+                .eq('local', local)
+                .eq('receta_id', recetaId)
+                .eq('en_stock', true),
+              `No se pudieron apagar los lotes viejos de ${queEs}`,
+              // Cero es normal: puede no haber ningún lote activo de esa receta
+              // (nadie produjo desde el último cierre). Y cuando hay, son N: no
+              // existe un número exacto que se pueda exigir.
+              { permitirCero: true, columnas: 'id' },
+            ),
+          );
         }
 
         // (b) Apagar lotes previos identificados por nombre_libre = nombre del
         // ítem. Cubre los cierres anteriores en modo producto (que sellan
         // nombre_libre) y los huérfanos del modelo viejo. Sin esto se acumularían.
         if (nombre) {
-          const { error: errOff2 } = await supabase
-            .from('cocina_lotes_produccion')
-            .update({ en_stock: false })
-            .eq('local', local)
-            .ilike('nombre_libre', nombre)
-            .eq('en_stock', true);
-          if (errOff2) throw errOff2;
+          await apagarLotes(() =>
+            guardarContando(
+              supabase
+                .from('cocina_lotes_produccion')
+                .update({ en_stock: false })
+                .eq('local', local)
+                .ilike('nombre_libre', nombre)
+                .eq('en_stock', true),
+              `No se pudieron apagar los lotes viejos anotados como "${nombre}"`,
+              // Igual que (a): cero es lo habitual y las filas son N.
+              { permitirCero: true, columnas: 'id' },
+            ),
+          );
         }
 
-        if (cantidad > 0) {
+        if (cantidad > 0 && !apagadoOk) {
+          // Ver el comentario de arriba: sin el apagado, el alta duplica stock.
+          avisos.push(
+            `El stock de ${queEs} quedó como estaba: no cargué el conteo nuevo para no sumarlo encima de lo viejo.`,
+          );
+        } else if (cantidad > 0) {
           // origen='cierre' evita que el trigger trg_pizarron_lote_produccion
           // marque items del pizarrón como ciclo_completo: el cierre es
           // re-baselining de stock, no producción real.
           // Modo producto (postre/panadería): sellamos nombre_libre con el nombre
           // del producto para que el StockTab lo reconcilie aunque el producto
           // tenga receta_id null. Modo receta (salsa/milanesa): nombre_libre null.
-          const { error: errIns } = await supabase.from('cocina_lotes_produccion').insert({
-            fecha,
-            local,
-            categoria: tipo,
-            receta_id: recetaId,
-            nombre_libre: productoId ? nombre : null,
-            cantidad_producida: cantidad,
-            unidad: unidadLote,
-            en_stock: true,
-            origen: 'cierre',
+          await alCostado(async () => {
+            const { error: errIns } = await supabase.from('cocina_lotes_produccion').insert({
+              fecha,
+              local,
+              categoria: tipo,
+              receta_id: recetaId,
+              nombre_libre: productoId ? nombre : null,
+              cantidad_producida: cantidad,
+              unidad: unidadLote,
+              en_stock: true,
+              origen: 'cierre',
+            });
+            // Un insert bloqueado SÍ tira error (no hace falta contarlo), pero si
+            // los dos pasos de arriba ya apagaron los lotes viejos, este ítem se
+            // queda con stock cero. Eso hay que decirlo con todas las letras.
+            if (errIns) {
+              throw new Error(
+                mensajeErrorAmigable(
+                  errIns,
+                  `El conteo de ${queEs} se guardó, pero su stock quedó en cero`,
+                ),
+              );
+            }
           });
-          if (errIns) throw errIns;
         }
       }
+
+      return avisos;
     },
-    onSuccess: () => {
-      setMensaje('✅ Cierre guardado. Stock actualizado.');
+    onSuccess: (avisos) => {
+      if (avisos.length === 0) {
+        setMensaje('✅ Cierre guardado. Stock actualizado.');
+        setTimeout(() => setMensaje(null), 2500);
+      } else {
+        // El conteo entró igual: si acá dijera "no se pudo guardar", la persona
+        // volvería a cargar todo al pedo.
+        // 🔑 "Volver a guardar" es seguro DE VERDAD, y sólo porque lo de arriba
+        // saltea el alta cuando el apagado falló: el que entró bien se apaga y
+        // se vuelve a cargar (queda uno), y el que no entró sigue sin entrar.
+        setMensaje(
+          '⚠️ El conteo quedó guardado, pero el stock no se acomodó del todo: ' +
+            avisos.join(' · ') +
+            ' Podés volver a guardar: repetirlo no suma de nuevo. Si sigue igual, avisale a Lucas.',
+        );
+        setTimeout(() => setMensaje(null), 15000);
+      }
       qc.invalidateQueries({ queryKey: ['mostrador-simple-cierre'] });
       qc.invalidateQueries({ queryKey: ['cocina-cierre-dia'] });
       qc.invalidateQueries({ queryKey: ['cocina-cierre-faltantes'] });
       // El cierre también define el stock actual del tab Stock y catálogo.
       invalidarStockCocina(qc);
-      setTimeout(() => setMensaje(null), 2500);
     },
     onError: (e) => {
       setMensaje(`❌ ${mensajeErrorAmigable(e, 'No se pudo guardar el cierre')}`);
