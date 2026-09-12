@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { guardarContando } from '@/lib/escribir';
 import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/utils';
 import { KPICard } from '@/components/ui/KPICard';
@@ -191,23 +192,43 @@ export function VacacionesTab() {
         aprobado_por:
           estado === 'aprobada' || estado === 'rechazada' ? perfil?.nombre || null : null,
       };
-      const { error } = await supabase
-        .from('vacaciones')
-        .update({ ...patch, updated_at: new Date().toISOString() })
-        .eq('id', id);
-      if (error) throw error;
+      // Vacaciones no es plata, pero define quién puede venir a trabajar. Si el
+      // permiso frena este UPDATE vuelven cero filas y NINGÚN error: la lista se
+      // refrescaba igual y la solicitud seguía pendiente, como si el botón no
+      // hubiera hecho nada. Es una sola fila, buscada por id.
+      await guardarContando(
+        supabase
+          .from('vacaciones')
+          .update({ ...patch, updated_at: new Date().toISOString() })
+          .eq('id', id),
+        estado === 'aprobada'
+          ? 'No se pudieron aprobar las vacaciones'
+          : estado === 'rechazada'
+            ? 'No se pudo rechazar la solicitud de vacaciones'
+            : estado === 'tomada'
+              ? 'No se pudieron marcar las vacaciones como tomadas'
+              : 'No se pudo cambiar el estado de la solicitud de vacaciones',
+        { filasEsperadas: 1 },
+      );
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['vacaciones'] }),
-    onError: (e: Error) => window.alert(`Error: ${e.message}`),
+    onError: (e: Error) => window.alert(e.message),
   });
 
   const eliminar = useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase.from('vacaciones').delete().eq('id', id);
-      if (error) throw error;
+      // Acá NO va `permitirCero`: el renglón que se borra es el que la persona
+      // está viendo en el histórico, así que siempre existe. Cero filas no es
+      // "no había nada que borrar", es un permiso que falta o alguien que ya lo
+      // borró — y sin avisar, el renglón reaparecía al refrescar sin explicación.
+      await guardarContando(
+        supabase.from('vacaciones').delete().eq('id', id),
+        'No se pudo borrar la solicitud de vacaciones',
+        { filasEsperadas: 1 },
+      );
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['vacaciones'] }),
-    onError: (e: Error) => window.alert(`Error: ${e.message}`),
+    onError: (e: Error) => window.alert(e.message),
   });
 
   const cargando = !empleados || !vacaciones || !cronograma90 || !fichadas90;
@@ -633,12 +654,18 @@ function ModalVacacion({
         updated_at: new Date().toISOString(),
       };
       if (vacacionEdit) {
-        const { error } = await supabase
-          .from('vacaciones')
-          .update(payload)
-          .eq('id', vacacionEdit.id);
-        if (error) throw error;
+        // Una sola fila, por id. Si volvían cero, el modal se cerraba igual y
+        // la pantalla quedaba exactamente como antes: parecía guardado y no lo
+        // estaba. Volver a intentar es seguro, porque este UPDATE pisa los
+        // valores enteros (fechas, días, estado); no suma ni acumula nada.
+        await guardarContando(
+          supabase.from('vacaciones').update(payload).eq('id', vacacionEdit.id),
+          'No se pudieron guardar los cambios de las vacaciones',
+          { filasEsperadas: 1 },
+        );
       } else {
+        // El INSERT se queda como está: si el permiso lo frena tira error
+        // (42501), no se pierde en silencio, que es lo que arregla el helper.
         const { error } = await supabase.from('vacaciones').insert(payload);
         if (error) throw error;
       }
