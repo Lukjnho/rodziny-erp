@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { guardarContando } from '@/lib/escribir';
 import { esEfectivo, SELECT_MEDIO } from '@/lib/mediosPago';
 import { VISTA_TICKETS_OFICIAL } from '@/lib/origenVentas';
 import { useAuth } from '@/lib/auth';
@@ -688,17 +689,23 @@ export function CierreMesPanel({ onNavigateToTab }: Props) {
   // ── mutations ──────────────────────────────────────────────────────────────
   const guardarOverride = useMutation({
     mutationFn: async ({ key, motivo }: { key: string; motivo: string }) => {
-      const { error } = await supabase.from('cierres_mes_overrides').upsert(
-        {
-          local,
-          periodo,
-          checkpoint_key: key,
-          motivo: motivo.trim() || null,
-          marcado_por: usuarioActual,
-        },
-        { onConflict: 'local,periodo,checkpoint_key' },
+      // Si el override no entra, el checkpoint sigue faltando y el mes se puede
+      // dar por cerrado con el EdR en el número viejo. (local, periodo,
+      // checkpoint_key) es único: tiene que volver exactamente 1 fila.
+      await guardarContando(
+        supabase.from('cierres_mes_overrides').upsert(
+          {
+            local,
+            periodo,
+            checkpoint_key: key,
+            motivo: motivo.trim() || null,
+            marcado_por: usuarioActual,
+          },
+          { onConflict: 'local,periodo,checkpoint_key' },
+        ),
+        'No se pudo marcar el checkpoint como revisado',
+        { filasEsperadas: 1 },
       );
-      if (error) throw error;
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['cierre_overrides'] });
@@ -709,19 +716,30 @@ export function CierreMesPanel({ onNavigateToTab }: Props) {
 
   const quitarOverride = useMutation({
     mutationFn: async (key: string) => {
-      const { error } = await supabase
-        .from('cierres_mes_overrides')
-        .delete()
-        .eq('local', local)
-        .eq('periodo', periodo)
-        .eq('checkpoint_key', key);
-      if (error) throw error;
+      // El botón solo existe cuando el override está puesto, así que hay una
+      // fila y una sola. Cero filas acá serían un permiso que falta: el
+      // checkpoint volvería a aparecer "revisado manual" al refrescar.
+      await guardarContando(
+        supabase
+          .from('cierres_mes_overrides')
+          .delete()
+          .eq('local', local)
+          .eq('periodo', periodo)
+          .eq('checkpoint_key', key),
+        'No se pudo quitar la revisión manual del checkpoint',
+        { filasEsperadas: 1 },
+      );
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['cierre_overrides'] }),
+    // Sin esto el error queda adentro de la mutation y la fila se ve igual que
+    // antes: el que mira la pantalla no se entera de que no se borró nada.
+    onError: (e: Error) => window.alert(e.message),
   });
 
   const cerrarMes = useMutation({
     mutationFn: async () => {
+      // Es un INSERT: si la RLS lo frena devuelve error (42501), no cero filas
+      // en silencio. Por eso este no pasa por guardarContando.
       const { error } = await supabase.from('cierres_mes').insert({
         local,
         periodo,
@@ -739,14 +757,18 @@ export function CierreMesPanel({ onNavigateToTab }: Props) {
 
   const reabrirMes = useMutation({
     mutationFn: async () => {
-      const { error } = await supabase
-        .from('cierres_mes')
-        .delete()
-        .eq('local', local)
-        .eq('periodo', periodo);
-      if (error) throw error;
+      // Reabrir el mes ES este delete. Si no toca ninguna fila, el mes sigue
+      // cerrado —y sin poder editarse— mientras el cartel verde desaparece un
+      // rato y vuelve: parece que se reabrió y no se reabrió nada.
+      // (local, periodo) es único en cierres_mes: tiene que volver 1 fila.
+      await guardarContando(
+        supabase.from('cierres_mes').delete().eq('local', local).eq('periodo', periodo),
+        'No se pudo reabrir el mes',
+        { filasEsperadas: 1 },
+      );
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['cierre_mes'] }),
+    onError: (e: Error) => window.alert(e.message),
   });
 
   // ── render ─────────────────────────────────────────────────────────────────
@@ -820,6 +842,7 @@ export function CierreMesPanel({ onNavigateToTab }: Props) {
                   override={overrideMap.get(c.key)}
                   onMarkOverride={() => setOverrideModal({ key: c.key, titulo: c.titulo })}
                   onQuitarOverride={() => quitarOverride.mutate(c.key)}
+                  quitandoOverride={quitarOverride.isPending}
                   onCta={c.ctaTab && onNavigateToTab ? () => onNavigateToTab(c.ctaTab!) : undefined}
                   ctaUrl={c.ctaUrl}
                 />
@@ -897,6 +920,13 @@ export function CierreMesPanel({ onNavigateToTab }: Props) {
                 Guardar
               </button>
             </div>
+            {/* El modal queda abierto con el motivo escrito: reintentar es
+                seguro porque el upsert pisa siempre la misma fila. */}
+            {guardarOverride.isError && (
+              <p className="mt-2 text-xs text-red-600">
+                {(guardarOverride.error as Error).message}
+              </p>
+            )}
           </div>
         </div>
       )}
@@ -954,6 +984,7 @@ function CheckpointRow({
   override,
   onMarkOverride,
   onQuitarOverride,
+  quitandoOverride,
   onCta,
   ctaUrl,
 }: {
@@ -961,6 +992,7 @@ function CheckpointRow({
   override?: Override;
   onMarkOverride: () => void;
   onQuitarOverride: () => void;
+  quitandoOverride: boolean;
   onCta?: () => void;
   ctaUrl?: string;
 }) {
@@ -1069,7 +1101,11 @@ function CheckpointRow({
           {tieneOverride && (
             <button
               onClick={onQuitarOverride}
-              className="whitespace-nowrap rounded border border-blue-200 bg-blue-50 px-2.5 py-1 text-[11px] text-blue-700 hover:bg-blue-100"
+              // Sin esto, un segundo clic mientras el primero viaja borra cero
+              // filas —porque ya no queda ninguna— y el cartel avisa de un
+              // permiso que falta sobre un borrado que salió bien.
+              disabled={quitandoOverride}
+              className="whitespace-nowrap rounded border border-blue-200 bg-blue-50 px-2.5 py-1 text-[11px] text-blue-700 hover:bg-blue-100 disabled:opacity-50"
             >
               Quitar revisión manual
             </button>
