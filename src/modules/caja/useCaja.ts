@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { guardarContando } from '@/lib/escribir';
 import { avisarCambioDeTurno, escucharCambioDeTurno } from '@/lib/avisoCaja';
 import { mensajeErrorAmigable } from '@/lib/erroresSupabase';
 
@@ -640,7 +641,10 @@ export function useCerrarTurno() {
         .from('cierres_caja_medios')
         .select('medio_pago_id')
         .eq('cierre_caja_id', input.turnoId);
-      if (eLeerMedios) throw eLeerMedios;
+      if (eLeerMedios)
+        throw new Error(
+          mensajeErrorAmigable(eLeerMedios, 'No se pudo leer el arqueo que ya estaba cargado'),
+        );
 
       if ((mediosPrevios?.length ?? 0) > 0) {
         const { data: borrados, error: eBorrarMedios } = await supabase
@@ -648,7 +652,10 @@ export function useCerrarTurno() {
           .delete()
           .eq('cierre_caja_id', input.turnoId)
           .select('medio_pago_id');
-        if (eBorrarMedios) throw eBorrarMedios;
+        if (eBorrarMedios)
+          throw new Error(
+            mensajeErrorAmigable(eBorrarMedios, 'No se pudo borrar el arqueo anterior'),
+          );
         if ((borrados?.length ?? 0) < mediosPrevios!.length) {
           throw new Error(
             'No se pudieron borrar los renglones del arqueo anterior, así que el cierre se frenó ' +
@@ -669,53 +676,78 @@ export function useCerrarTurno() {
             declarado: m.declarado,
           })),
         );
-        if (eMedios) throw eMedios;
+        if (eMedios)
+          throw new Error(
+            mensajeErrorAmigable(eMedios, 'No se pudo guardar el detalle del arqueo'),
+          );
       }
 
-      const { data: cerrado, error } = await supabase
-        .from('cierres_caja')
-        .update({
-          monto_contado: montoContado,
-          monto_esperado: montoEsperado,
-          // ⚠️ `diferencia` NO se manda: es una columna calculada por la base
-          // (`monto_contado − monto_esperado`). Mandarla revienta con
-          // "column diferencia can only be updated to DEFAULT".
-          hora_cierre: input.horaCierre,
-          // Las columnas fudo_* son "lo que dice el sistema de ventas". Cuando el
-          // turno lo cobró el POS propio, el sistema de ventas es el POS. Se
-          // escriben acá para que Cierre de Caja (Finanzas) lo lea sin cambios.
-          // Se mapean por CÓDIGO, no por el nombre que se muestra: si mañana
-          // alguien renombra "Código QR", el nombre cambia pero el código no.
-          fudo_efectivo: efectivoCobrado,
-          fudo_qr: porCodigo('qr'),
-          fudo_debito: porCodigo('debito'),
-          fudo_credito: porCodigo('credito'),
-          fudo_transferencia: porCodigo('transferencia'),
-          fudo_mp_lucas: porCodigo('mp_lucas'),
-          // Retiros: `otros_retiros` es el TOTAL y es el que entra en la cuenta
-          // del arqueo; los otros dos dicen en qué se fue (migración 139).
-          // `retiro` es columna vieja y va en 0: si se duplicara el dato, el
-          // arqueo contaría los retiros dos veces.
-          otros_retiros: otrosRetiros,
-          retiro_cambio: input.retiroCambio,
-          retiro_pagos: input.retiroPagos,
-          otros_retiros_nota: input.retiroNota,
-          retiro: 0,
-          fondo_siguiente: 0,
-          nota: input.nota,
-        })
-        .eq('id', input.turnoId)
-        .select('id');
-      if (error) throw error;
-      // ⚠️ Cuando la base no deja tocar la fila (permiso, o el turno ya estaba
-      // cerrado) NO tira error: devuelve cero filas. Sin este control la
-      // pantalla decía "listo", volvía al ERP y el turno seguía abierto —
-      // exactamente el síntoma de "sigue diciendo turno en curso".
-      if (!cerrado || cerrado.length === 0) {
+      // ⚠️ El renglón más frágil del POS. La regla que deja cerrar
+      // (`cierres_caja_cerrar_pos`, migración 146 y afinada por la 187) es la
+      // ÚNICA del ERP que pide algo más que el permiso: el arqueo lo tiene que
+      // haber abierto el POS (`origen = 'pos'`), tiene que seguir sin
+      // `hora_cierre`, y tiene que ser del local del cajero. Si falla
+      // cualquiera de esas tres, la base no toca la fila y devuelve CERO FILAS
+      // SIN ERROR: la pantalla decía "listo", volvía al ERP y el turno seguía
+      // abierto — el famoso "sigue diciendo turno en curso".
+      //
+      // Por eso el mensaje no puede ser "no tenés permiso": el permiso puede
+      // estar y la fila no moverse igual.
+      //
+      // 💣 Con usuario administrador esto NO se prueba: el admin pasa todas las
+      // reglas. Hay que probarlo con un cajero de verdad.
+      await guardarContando(
+        supabase
+          .from('cierres_caja')
+          .update({
+            monto_contado: montoContado,
+            monto_esperado: montoEsperado,
+            // ⚠️ `diferencia` NO se manda: es una columna calculada por la base
+            // (`monto_contado − monto_esperado`). Mandarla revienta con
+            // "column diferencia can only be updated to DEFAULT".
+            hora_cierre: input.horaCierre,
+            // Las columnas fudo_* son "lo que dice el sistema de ventas". Cuando el
+            // turno lo cobró el POS propio, el sistema de ventas es el POS. Se
+            // escriben acá para que Cierre de Caja (Finanzas) lo lea sin cambios.
+            // Se mapean por CÓDIGO, no por el nombre que se muestra: si mañana
+            // alguien renombra "Código QR", el nombre cambia pero el código no.
+            fudo_efectivo: efectivoCobrado,
+            fudo_qr: porCodigo('qr'),
+            fudo_debito: porCodigo('debito'),
+            fudo_credito: porCodigo('credito'),
+            fudo_transferencia: porCodigo('transferencia'),
+            fudo_mp_lucas: porCodigo('mp_lucas'),
+            // Retiros: `otros_retiros` es el TOTAL y es el que entra en la cuenta
+            // del arqueo; los otros dos dicen en qué se fue (migración 139).
+            // `retiro` es columna vieja y va en 0: si se duplicara el dato, el
+            // arqueo contaría los retiros dos veces.
+            otros_retiros: otrosRetiros,
+            retiro_cambio: input.retiroCambio,
+            retiro_pagos: input.retiroPagos,
+            otros_retiros_nota: input.retiroNota,
+            retiro: 0,
+            fondo_siguiente: 0,
+            nota: input.nota,
+          })
+          .eq('id', input.turnoId),
+        // Corto a propósito: este texto va adelante de CUALQUIER falla, también
+        // de un corte de internet, y ahí las tres causas de abajo serían mentira.
+        'No se pudo cerrar el turno',
+        // Es una sola fila, apuntada por id: si vuelve otra cosa, algo cambió
+        // abajo y es mejor frenar que dar el turno por cerrado.
+        { filasEsperadas: 1, columnas: 'id' },
+      ).catch((e: unknown) => {
+        // Las tres causas explican UN solo caso: la base contestó bien y no tocó
+        // ninguna fila. Por eso el mensaje se reemplaza únicamente ahí; el resto
+        // de las fallas se muestran como vinieron.
+        const texto = e instanceof Error ? e.message : String(e);
+        if (!texto.includes('no se guardó ninguna fila')) throw e;
         throw new Error(
-          'No se pudo cerrar el turno: puede que ya lo haya cerrado alguien más. Actualizá la pantalla y fijate cómo quedó antes de volver a intentar.',
+          'No se pudo cerrar el turno: la base no cambió nada. Puede que ya lo haya cerrado ' +
+            'alguien más, que ese arqueo no lo haya abierto el POS, o que sea de otro local. ' +
+            'Actualizá la pantalla y fijate cómo quedó antes de volver a intentar.',
         );
-      }
+      });
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['caja-turno-abierto'] });
@@ -922,16 +954,16 @@ export function useAnularVenta(turnoId: string | null) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (ticketId: string) => {
-      const { error, count } = await supabase
-        .from('ventas_tickets')
-        .delete({ count: 'exact' })
-        .eq('id', ticketId);
-      if (error) throw error;
-      if (!count) {
-        throw new Error(
-          'No se pudo anular la venta. Puede ser que el turno ya esté cerrado, que la venta tenga factura hecha, o que te falte permiso. Pedile ayuda a un administrador.',
-        );
-      }
+      // Contaba bien de antes, con `{ count: 'exact' }`. Pasa por el helper
+      // igual para que sea la misma puerta que el resto del ERP: pedir la fila
+      // de vuelta acá no cambia quién puede borrar, porque para llegar al botón
+      // de anular hay que estar viendo la venta (permiso de caja o de ventas).
+      await guardarContando(
+        supabase.from('ventas_tickets').delete().eq('id', ticketId),
+        'No se pudo anular la venta. Puede ser que el turno ya esté cerrado, que la venta ' +
+          'tenga factura hecha, o que te falte el permiso para anular',
+        { filasEsperadas: 1, columnas: 'id' },
+      );
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['caja-ventas-turno', turnoId] });
