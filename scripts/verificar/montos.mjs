@@ -74,8 +74,16 @@ export function revisar(txt, ruta = 'testigo') {
     }
     // Un parser propio sobre algo que suena a plata: parseFloat de un replace
     // de puntos y comas es reimplementar montoDesdeTipeo, y nunca da igual.
-    if (/parseFloat\([^)]*replace\(/.test(l) && SUENA_A_PLATA.test(l)) {
-      out.parserPropio.push({ ruta, linea: i + 1, contexto: l.trim().slice(0, 90) });
+    //
+    // 💣 Se mira el VECINDARIO y no sólo el renglón. La primera versión miraba
+    // la línea sola y se perdió `parseFloat(e.target.value.replace(...))` en
+    // SeccionImpuestos: ese renglón no dice "monto" en ninguna parte, lo dice
+    // la etiqueta del campo de arriba. Era un caso real que no se veía.
+    if (/parseFloat\([^)]*replace\(/.test(l)) {
+      const vecindario = lineas.slice(Math.max(0, i - 4), i + 3).join(' ');
+      if (SUENA_A_PLATA.test(vecindario) && !/kg|gramo|porcion|minuto|dias|pct|porcentaje/i.test(l)) {
+        out.parserPropio.push({ ruta, linea: i + 1, contexto: l.trim().slice(0, 90) });
+      }
     }
   }
   return out;
@@ -123,6 +131,11 @@ const EJEMPLOS = {
     <input type="number" value={kg} onChange={(e) => setKg(e.target.value)} />
   `,
   parserPropio: `const monto = parseFloat(texto.replace(/\\./g, '').replace(',', '.'));`,
+  // La palabra "monto" está en la ETIQUETA, no en el renglón que parsea.
+  parserSinLaPalabra: `
+    <label>Monto del impuesto</label>
+    <input onChange={(e) => { const n = parseFloat(e.target.value.replace(',', '.')) || 0; }} />
+  `,
   bienHecho: `<MontoInput value={importe} onChange={setImporte} />`,
 };
 
@@ -151,6 +164,11 @@ testigos([
     que: 'Un parser de plata escrito a mano aparece',
     espera: 1,
     obtuvo: revisar(EJEMPLOS.parserPropio).parserPropio.length,
+  },
+  {
+    que: '💣 Y también cuando la palabra "monto" está en la etiqueta y no en el renglón',
+    espera: 1,
+    obtuvo: revisar(EJEMPLOS.parserSinLaPalabra).parserPropio.length,
   },
   {
     que: 'Un MontoInput bien puesto no reporta nada',
