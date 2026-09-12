@@ -8,11 +8,15 @@
 // entrada→salida cronológicos dentro de la jornada, con anti doble-tap. Un par
 // de más de MAX_HORAS_TRAMO se considera salida no fichada y NO suma.
 // ════════════════════════════════════════════════════════════════════════════
-import { ANTIREBOTE_SEG } from './utils';
+import { VENTANA_TURNO_ABIERTO_H, sinDoblesToques, tramosDelDia } from './utils';
 
 // Un par entrada→salida más largo que esto es una salida que nunca se fichó
-// (el cierre quedó al día siguiente). No suma horas. Igual que HorasTab.
-export const MAX_HORAS_TRAMO = 16;
+// (el cierre quedó al día siguiente). No suma horas.
+//
+// 🔑 Ya NO es un 16 escrito acá: es el mismo de `utils`, que usan las tres
+// pantallas. Antes había tres constantes con el mismo valor y tres nombres
+// distintos, y coincidían de casualidad.
+export const MAX_HORAS_TRAMO = VENTANA_TURNO_ABIERTO_H;
 // Umbrales de revisión: no cambian el total, solo levantan la bandera.
 export const REVISAR_LARGO_H = 12; // turno sospechosamente largo
 export const REVISAR_CORTO_H = 0.5; // fichada de prueba / error
@@ -64,88 +68,75 @@ export function armarTurnos(
   fecha: string,
   marcas: FichadaEvento[],
 ): Turno[] {
-  const ordenadas = [...marcas].sort(
-    (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
-  );
+  // 🔑 El apareo, el anti doble-tap y el tope de 16 h ya NO se deciden acá:
+  // los pone `tramosDelDia` (utils.ts), que es el mismo que usan Horas y
+  // Asistencia. Lo único propio de la Bienal es de qué STAND salió cada marca
+  // y las alertas de turno largo / corto / cruzado.
+  //
+  // `sinDoblesToques` se llama también acá para poder recuperar el `local` de
+  // cada marca: es la misma limpieza que hace `tramosDelDia` adentro, así que
+  // las marcas que quedan son exactamente las mismas.
+  const limpias = sinDoblesToques(marcas);
+  const porTimestamp = new Map(limpias.map((f) => [f.timestamp, f]));
 
-  // Anti doble-tap: dos marcas del mismo tipo dentro de la ventana de rebote son
-  // el mismo toque repetido (pasó bastante con el QR en el predio).
-  const limpias: FichadaEvento[] = [];
-  for (const f of ordenadas) {
-    const prev = limpias[limpias.length - 1];
-    if (
-      prev &&
-      prev.tipo === f.tipo &&
-      new Date(f.timestamp).getTime() - new Date(prev.timestamp).getTime() < ANTIREBOTE_SEG * 1000
-    ) {
-      continue;
-    }
-    limpias.push(f);
-  }
+  return tramosDelDia(limpias).map((t): Turno => {
+    // El `!` es seguro y no es pereza: los timestamps de los tramos salen de
+    // `limpias`, que es el mismo array con el que se armó este mapa.
+    const entrada = porTimestamp.get(t.entrada)!;
+    const salida = t.salida ? porTimestamp.get(t.salida)! : null;
 
-  const turnos: Turno[] = [];
-  let i = 0;
-  while (i < limpias.length) {
-    const f = limpias[i];
-
-    if (f.tipo === 'salida') {
-      turnos.push({
+    // Una salida huérfana se devuelve con su hora en `entrada` (así venía),
+    // porque es la única marca que hay.
+    if (t.motivo === 'salida_huerfana') {
+      return {
         empleadoId,
         fecha,
-        entrada: f.timestamp,
+        entrada: t.entrada,
         salida: null,
-        standEntrada: f.local,
-        standSalida: f.local,
+        standEntrada: entrada.local,
+        standSalida: entrada.local,
         horas: 0,
         computa: false,
         alertas: ['salida_huerfana'],
-      });
-      i++;
-      continue;
+      };
     }
 
-    const next = limpias[i + 1];
-    if (!next || next.tipo !== 'salida') {
-      turnos.push({
+    if (!t.computa) {
+      // Cubre los dos casos que no suman: la entrada sin salida y el tramo de
+      // más de 16 h, que es una salida que nunca se fichó. Para la planilla
+      // son lo mismo: falta el cierre.
+      return {
         empleadoId,
         fecha,
-        entrada: f.timestamp,
+        entrada: t.entrada,
         salida: null,
-        standEntrada: f.local,
+        standEntrada: entrada.local,
         standSalida: null,
         horas: 0,
         computa: false,
         alertas: ['sin_salida'],
-      });
-      i++;
-      continue;
+      };
     }
 
-    const brutas = Math.max(
-      0,
-      (new Date(next.timestamp).getTime() - new Date(f.timestamp).getTime()) / 3600000,
-    );
     const alertas: Alerta[] = [];
-    const computa = brutas <= MAX_HORAS_TRAMO;
-    if (!computa) alertas.push('sin_salida');
-    else if (brutas > REVISAR_LARGO_H) alertas.push('largo');
-    else if (brutas < REVISAR_CORTO_H) alertas.push('corto');
-    if (f.local !== next.local) alertas.push('cruce');
+    if (t.horas > REVISAR_LARGO_H) alertas.push('largo');
+    else if (t.horas < REVISAR_CORTO_H) alertas.push('corto');
+    if (salida && entrada.local !== salida.local) alertas.push('cruce');
 
-    turnos.push({
+    return {
       empleadoId,
       fecha,
-      entrada: f.timestamp,
-      salida: next.timestamp,
-      standEntrada: f.local,
-      standSalida: next.local,
-      horas: computa ? brutas : 0,
-      computa,
+      entrada: t.entrada,
+      salida: t.salida,
+      standEntrada: entrada.local,
+      // Si el tramo computa, tiene salida sí o sí: `tramosDelDia` sólo marca
+      // `computa: true` cuando apareó una entrada con su salida.
+      standSalida: salida!.local,
+      horas: t.horas,
+      computa: true,
       alertas,
-    });
-    i += 2;
-  }
-  return turnos;
+    };
+  });
 }
 
 // Agrupa las fichadas crudas del evento por (empleado, jornada) y devuelve todos

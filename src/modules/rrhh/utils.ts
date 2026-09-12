@@ -182,6 +182,130 @@ export const VENTANA_TURNO_ABIERTO_H = 16;
 // un toque repetido (o un reintento por red lenta), no un fichaje real.
 export const ANTIREBOTE_SEG = 90;
 
+// ════════════════════════════════════════════════════════════════════════════
+// CUÁNTAS HORAS TRABAJÓ ALGUIEN EN UN DÍA — UNA SOLA VEZ
+// ════════════════════════════════════════════════════════════════════════════
+//
+// 💥 Estaba escrito TRES veces y las tres NO daban lo mismo:
+//
+//   · `HorasTab.calcularHorasReales`      apareo cronológico + tope de 16 h
+//   · `AsistenciaTab.calcularHorasTrabajadas`  apareo cronológico, SIN tope
+//   · `bienalHoras.armarTurnos`           apareo + tope + anti doble-tap
+//
+// Consecuencia concreta: una salida que alguien fichó a la mañana siguiente
+// inflaba las horas en la tarjeta de Asistencia y no aparecía en Horas. **La
+// misma persona tenía dos totales distintos en dos pantallas del mismo ERP.**
+//
+// Medido sobre las 8.547 fichadas al 12-sep-2026, en 3.493 día-persona:
+//
+//     45 días con un tramo de más de 16 h   (Asistencia los sumaba, Horas no)
+//     27 dobles toques en 23 días           (sólo la Bienal los descartaba)
+//
+// 🔑 LAS CUATRO REGLAS, decididas y escritas de una sola vez:
+//
+//   1. Dos marcas del MISMO tipo separadas por menos de `ANTIREBOTE_SEG` son
+//      el mismo toque repetido. Se queda la primera.
+//   2. Cada entrada se aparea con la salida que le SIGUE en el tiempo. No por
+//      índice: con el orden E,E,S,S el apareo por índice cruza los tramos.
+//   3. Una entrada sin salida que la siga es un turno abierto: **no suma**.
+//   4. Un par de más de `VENTANA_TURNO_ABIERTO_H` es una salida que nunca se
+//      fichó —el cierre quedó al día siguiente—: **no suma**. Un turno
+//      legítimo no dura 16 horas.
+//
+// Devuelve los tramos con el motivo escrito, para que cada pantalla arme su
+// texto sin volver a decidir nada.
+
+export interface MarcaDeReloj {
+  tipo: 'entrada' | 'salida';
+  timestamp: string; // ISO
+}
+
+export interface TramoTrabajado {
+  entrada: string;
+  salida: string | null;
+  horas: number; // 0 si no computa
+  computa: boolean;
+  /** Por qué no computa. `null` cuando computa. */
+  motivo: 'sin_salida' | 'salida_huerfana' | null;
+}
+
+/** Saca los toques repetidos. Regla 1. */
+export function sinDoblesToques<T extends MarcaDeReloj>(marcas: readonly T[]): T[] {
+  const ordenadas = [...marcas].sort(
+    (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
+  );
+  const limpias: T[] = [];
+  for (const f of ordenadas) {
+    const prev = limpias[limpias.length - 1];
+    if (
+      prev &&
+      prev.tipo === f.tipo &&
+      new Date(f.timestamp).getTime() - new Date(prev.timestamp).getTime() < ANTIREBOTE_SEG * 1000
+    ) {
+      continue;
+    }
+    limpias.push(f);
+  }
+  return limpias;
+}
+
+/**
+ * Los tramos de UN día de UNA persona, con las cuatro reglas aplicadas.
+ *
+ * ⚠️ Las marcas tienen que ser de la MISMA jornada y la MISMA persona: acá no
+ * se agrupa nada, se aparea lo que llega.
+ */
+export function tramosDelDia(marcas: readonly MarcaDeReloj[]): TramoTrabajado[] {
+  const limpias = sinDoblesToques(marcas);
+  const tramos: TramoTrabajado[] = [];
+  let i = 0;
+  while (i < limpias.length) {
+    const f = limpias[i];
+
+    // Una salida sin su entrada delante. No suma, pero se devuelve: la Bienal
+    // la marca como huérfana y las otras pantallas la ignoran.
+    if (f.tipo !== 'entrada') {
+      tramos.push({
+        entrada: f.timestamp,
+        salida: null,
+        horas: 0,
+        computa: false,
+        motivo: 'salida_huerfana',
+      });
+      i++;
+      continue;
+    }
+
+    const sig = limpias[i + 1];
+    if (!sig || sig.tipo !== 'salida') {
+      tramos.push({ entrada: f.timestamp, salida: null, horas: 0, computa: false, motivo: 'sin_salida' });
+      i++;
+      continue;
+    }
+
+    const horas = Math.max(
+      0,
+      (new Date(sig.timestamp).getTime() - new Date(f.timestamp).getTime()) / 3_600_000,
+    );
+    const computa = horas <= VENTANA_TURNO_ABIERTO_H;
+    tramos.push({
+      entrada: f.timestamp,
+      salida: sig.timestamp,
+      horas: computa ? horas : 0,
+      computa,
+      // Más de 16 h no es un turno: es una salida que no se fichó.
+      motivo: computa ? null : 'sin_salida',
+    });
+    i += 2;
+  }
+  return tramos;
+}
+
+/** El total del día. Es `tramosDelDia` sumado: no hay una segunda cuenta. */
+export function horasDelDia(marcas: readonly MarcaDeReloj[]): number {
+  return tramosDelDia(marcas).reduce((a, t) => a + t.horas, 0);
+}
+
 // Fichada mínima necesaria para decidir el próximo tipo.
 export interface FichadaMin {
   tipo: 'entrada' | 'salida';

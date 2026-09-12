@@ -10,6 +10,7 @@ import {
   normalizarTexto,
   ultimoDiaDelMes,
   trabajoEnElPeriodo,
+  tramosDelDia,
   type Quincena,
   type TurnoCrono,
 } from './utils';
@@ -56,47 +57,23 @@ interface ResumenEmpleado {
 }
 
 const UMBRAL_DISCREPANCIA = 0.5; // horas — diferencia significativa por día
-const MAX_HORAS_TRAMO = 16; // un par entrada→salida con diff > esto se considera salida no fichada
 
-// Pares entrada/salida ordenados cronológicamente. Si quedan impares no suman.
-// Si un par excede MAX_HORAS_TRAMO, asume que el empleado se olvidó de fichar la
-// salida y al día siguiente cerró tarde — no suma esas horas falsas.
+// 🔑 La cuenta NO vive acá: vive en `tramosDelDia` (utils.ts), una sola vez.
+// Antes estaba escrita en tres lugares con tres resultados distintos — esta
+// copia tenía el tope de 16 h y la de AsistenciaTab no, así que la misma
+// persona mostraba horas distintas en dos pantallas. Acá sólo se arma el texto.
 function calcularHorasReales(fichadasDia: Fichada[]): { horas: number; texto: string } {
   if (fichadasDia.length === 0) return { horas: 0, texto: 'Sin fichar' };
-  const ordenadas = [...fichadasDia].sort(
-    (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
-  );
-  let horas = 0;
-  const tramos: string[] = [];
-  let i = 0;
-  while (i < ordenadas.length) {
-    const f = ordenadas[i];
-    if (f.tipo !== 'entrada') {
-      i++;
-      continue;
-    }
-    const next = ordenadas[i + 1];
-    if (next && next.tipo === 'salida') {
-      const t1 = new Date(f.timestamp);
-      const t2 = new Date(next.timestamp);
-      const horasTramo = Math.max(0, (t2.getTime() - t1.getTime()) / 3600000);
-      if (horasTramo > MAX_HORAS_TRAMO) {
-        // Salida fichada al día siguiente — turno sin cierre real
-        tramos.push(`${hhmmFromTs(f.timestamp)}–⚠ sin salida`);
-      } else {
-        horas += horasTramo;
-        tramos.push(`${hhmmFromTs(f.timestamp)}–${hhmmFromTs(next.timestamp)}`);
-      }
-      i += 2;
-    } else {
-      tramos.push(`${hhmmFromTs(f.timestamp)}–?`);
-      i++;
-    }
-  }
-  if (tramos.length === 0) {
-    return { horas: 0, texto: 'Fichaje incompleto' };
-  }
-  return { horas, texto: tramos.join(' · ') };
+  const tramos = tramosDelDia(fichadasDia);
+  if (tramos.length === 0) return { horas: 0, texto: 'Fichaje incompleto' };
+  const texto = tramos.map((t) => {
+    if (t.computa && t.salida) return `${hhmmFromTs(t.entrada)}–${hhmmFromTs(t.salida)}`;
+    // Un tramo de más de 16 h y una entrada sin salida se muestran igual: en
+    // los dos casos falta la salida, sólo que en uno se fichó al día siguiente.
+    if (t.motivo === 'sin_salida') return `${hhmmFromTs(t.entrada)}–⚠ sin salida`;
+    return `⚠ salida sin entrada–${hhmmFromTs(t.entrada)}`;
+  });
+  return { horas: tramos.reduce((a, t) => a + t.horas, 0), texto: texto.join(' · ') };
 }
 
 function hhmmFromTs(ts: string): string {

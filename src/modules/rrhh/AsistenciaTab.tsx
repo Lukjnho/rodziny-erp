@@ -16,6 +16,7 @@ import {
   ultimoDiaDelMes,
   ymd,
   trabajoEnElPeriodo,
+  horasDelDia,
   type Quincena,
   type TurnoCrono,
 } from './utils';
@@ -685,28 +686,17 @@ function formatDiferencia(min: number): string {
   return m > 0 ? `${signo}${h}h ${m}m` : `${signo}${h}h`;
 }
 
+// 💥 Esta cuenta tenía su propia copia y le FALTABAN dos reglas que las otras
+// pantallas sí tenían: el tope de 16 h y el anti doble-tap. Consecuencia: una
+// salida fichada a la mañana siguiente inflaba las horas acá y no aparecía en
+// Horas. Medido al 12-sep-2026: 45 días con un tramo de más de 16 h y 27
+// dobles toques en 23 días, sobre 3.493 día-persona.
+//
+// 🔑 Ahora la cuenta es la de `horasDelDia` (utils.ts) y es la misma para todos.
+// Los números de esta pantalla BAJAN en esos 68 días: eran horas que no se
+// trabajaron.
 function calcularHorasTrabajadas(fichadas: Fichada[]): string | null {
-  // Apareo CRONOLÓGICO: cada entrada con la salida que le sigue (igual que HorasTab).
-  // Antes apareaba entradas[i] con salidas[i] por índice, lo que cruzaba tramos en
-  // turnos partidos con orden E,E,S,S y daba horas infladas/negativas.
-  const ordenadas = [...fichadas].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-  let totalMin = 0;
-  let i = 0;
-  while (i < ordenadas.length) {
-    if (ordenadas[i].tipo !== 'entrada') {
-      i++;
-      continue;
-    }
-    const next = ordenadas[i + 1];
-    if (next && next.tipo === 'salida') {
-      const e = new Date(ordenadas[i].timestamp).getTime();
-      const s = new Date(next.timestamp).getTime();
-      if (s > e) totalMin += (s - e) / 60000;
-      i += 2;
-    } else {
-      i++; // entrada sin salida que la siga → tramo abierto, no suma
-    }
-  }
+  const totalMin = horasDelDia(fichadas) * 60;
   if (totalMin === 0) return null;
   const h = Math.floor(totalMin / 60);
   const m = Math.round(totalMin % 60);
