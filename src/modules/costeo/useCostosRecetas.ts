@@ -6,6 +6,9 @@ import {
   costearReceta,
   type CostoReceta,
   type CosteoContext,
+  type FormaIngredienteRow,
+  type FormaSurtidoRow,
+  type FormaVentaRow,
   type IngredienteRow,
   type ProductoRow,
   type RecetaRow,
@@ -69,6 +72,50 @@ export function useCostosRecetas() {
     },
   });
 
+  // ── Las formas de venta ───────────────────────────────────────────────────
+  //
+  // Se traen siempre, aunque hoy la tabla esté vacía: así el día que el paso 3
+  // cargue la primera forma no hay que tocar ninguna pantalla. Mientras no
+  // haya ninguna, `buildCosteoContext` arma tres índices vacíos y el costeo da
+  // exactamente el mismo número que daba antes de que existieran.
+  //
+  // 🔑 Sólo las ACTIVAS, igual que las recetas: el motor no ve nada apagado.
+  const formasQ = useQuery({
+    queryKey: ['cocina-formas-venta-costeo'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('cocina_formas_venta')
+        .select('id, receta_id, codigo, nombre, multiplicador, unidad, precio, activo, vendible')
+        .eq('activo', true);
+      if (error) throw error;
+      return data as FormaVentaRow[];
+    },
+  });
+
+  const formasIngQ = useQuery({
+    queryKey: ['cocina-formas-venta-ingredientes-costeo'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('cocina_formas_venta_ingredientes')
+        .select('id, forma_id, nombre, cantidad, unidad, orden, producto_id')
+        .order('orden');
+      if (error) throw error;
+      return data as FormaIngredienteRow[];
+    },
+  });
+
+  const formasSurtidoQ = useQuery({
+    queryKey: ['cocina-formas-venta-surtido-costeo'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('cocina_formas_venta_surtido')
+        .select('forma_id, receta_id, cantidad, unidad')
+        .order('orden');
+      if (error) throw error;
+      return data as FormaSurtidoRow[];
+    },
+  });
+
   // Contexto de costeo (índices). Reutilizable por el editor inline para costear
   // un borrador sin guardar.
   const ctx = useMemo<CosteoContext | null>(() => {
@@ -76,8 +123,20 @@ export function useCostosRecetas() {
     const ings = ingredientesQ.data;
     const prods = productosQ.data;
     if (!recetas || !ings || !prods) return null;
-    return buildCosteoContext(recetas, ings, prods, margenGlobalQ.data ?? 0);
-  }, [recetasQ.data, ingredientesQ.data, productosQ.data, margenGlobalQ.data]);
+    return buildCosteoContext(recetas, ings, prods, margenGlobalQ.data ?? 0, {
+      formas: formasQ.data,
+      formasIngredientes: formasIngQ.data,
+      formasSurtido: formasSurtidoQ.data,
+    });
+  }, [
+    recetasQ.data,
+    ingredientesQ.data,
+    productosQ.data,
+    margenGlobalQ.data,
+    formasQ.data,
+    formasIngQ.data,
+    formasSurtidoQ.data,
+  ]);
 
   const costos = useMemo(() => {
     const mapa = new Map<string, CostoReceta>();
@@ -95,7 +154,17 @@ export function useCostosRecetas() {
       recetasQ.isLoading ||
       ingredientesQ.isLoading ||
       productosQ.isLoading ||
-      margenGlobalQ.isLoading,
-    error: recetasQ.error || ingredientesQ.error || productosQ.error || margenGlobalQ.error,
+      margenGlobalQ.isLoading ||
+      formasQ.isLoading ||
+      formasIngQ.isLoading ||
+      formasSurtidoQ.isLoading,
+    error:
+      recetasQ.error ||
+      ingredientesQ.error ||
+      productosQ.error ||
+      margenGlobalQ.error ||
+      formasQ.error ||
+      formasIngQ.error ||
+      formasSurtidoQ.error,
   };
 }

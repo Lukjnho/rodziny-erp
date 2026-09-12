@@ -93,8 +93,16 @@ export type {
 // acá el 11-sep-2026: estaban publicados y ningún archivo de fuera del módulo
 // los importaba. Siguen existiendo y se usan puertas adentro; lo que dejaron de
 // ser es API pública. Una puerta que publica de más deja de decir nada.
-export { costearBorrador } from './costeoEngine';
+export { costearBorrador, costearForma, costearFormasDeReceta } from './costeoEngine';
 export type { CosteoContext, IngredienteRow, ProductoRow, RecetaRow } from './costeoEngine';
+// Las formas de venta: una receta, N maneras de venderla. Ver costeoEngine.
+export type {
+  CostoForma,
+  DatosDeFormas,
+  FormaIngredienteRow,
+  FormaSurtidoRow,
+  FormaVentaRow,
+} from './costeoEngine';
 
 // ── Los datos ───────────────────────────────────────────────────────────────
 export { useCostosRecetas } from './useCostosRecetas';

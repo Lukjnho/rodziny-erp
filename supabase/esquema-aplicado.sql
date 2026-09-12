@@ -12,7 +12,7 @@
 --
 --  Lo que NO trae: las policies de RLS. Eso lo mide scripts/mapa-erp/.
 --
---  Generado: 2026-09-11 20:38 -0300
+--  Generado: 2026-09-11 21:02 -0300
 --  96 tablas · 13 vistas · 86 funciones · 121 claves foraneas · 300 indices · 3 realtime (publicaciones)
 -- ============================================================================
 
@@ -359,7 +359,8 @@ create table public.cocina_formas_venta (
   fudo_productos ARRAY,
   orden integer not null,
   created_at timestamp with time zone not null,
-  updated_at timestamp with time zone not null
+  updated_at timestamp with time zone not null,
+  unidad text not null
 );
 
 create table public.cocina_formas_venta_ingredientes (
@@ -380,7 +381,8 @@ create table public.cocina_formas_venta_surtido (
   receta_id uuid not null,
   cantidad numeric not null,
   orden integer not null,
-  created_at timestamp with time zone not null
+  created_at timestamp with time zone not null,
+  unidad text not null
 );
 
 create table public.cocina_lote_consumos (

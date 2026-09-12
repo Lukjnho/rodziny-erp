@@ -29,6 +29,17 @@ export interface IngredienteRow {
   unidad: string;
   orden: number;
   producto_id: string | null;
+  /**
+   * La subreceta enganchada POR ID, sin pasar por el nombre.
+   *
+   * Hoy ningun renglon guardado lo trae: `cocina_receta_ingredientes` engancha
+   * por nombre normalizado y por eso 15 pares de recetas que normalizan igual
+   * se pisan entre si. Lo usan las FORMAS DE VENTA, que si saben a que receta
+   * apuntan, y es el destino al que van a migrar los renglones guardados.
+   *
+   * Mientras este en null, el motor resuelve exactamente como resolvia antes.
+   */
+  subreceta_id?: string | null;
 }
 
 export interface ProductoRow {
@@ -154,6 +165,62 @@ function calcularCostoProducto(
   return { costo, error: null };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// LAS FORMAS DE VENTA
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Una receta se escribe UNA vez y cada forma de venderla dice cuanta receta
+// lleva, que le agrega de propio y, si es un surtido, que otras recetas mete
+// en la misma caja.
+//
+//     costo de la forma = costo de la receta x multiplicador
+//                       + los ingredientes propios de la forma
+//                       + cada receta del surtido x su cantidad
+//
+// 🔑 Mientras `cocina_formas_venta` este vacia, nada de esto se ejecuta y
+// ningun costo cambia. Eso es lo que verifica `npm run formas`.
+
+export interface FormaVentaRow {
+  id: string;
+  receta_id: string;
+  /** plato | vianda | congelado | porcion | almacen. El candado esta en la base. */
+  codigo: string;
+  nombre: string;
+  /** Cuanta receta base entra en UNA unidad de esta forma. */
+  multiplicador: number;
+  /** La unidad del multiplicador: decide si se toma el costo por kg o por porcion. */
+  unidad: string;
+  precio: number | null;
+  activo: boolean;
+  vendible: boolean;
+}
+
+export interface FormaIngredienteRow {
+  id: string;
+  forma_id: string;
+  nombre: string;
+  cantidad: number;
+  unidad: string;
+  orden: number;
+  producto_id: string | null;
+}
+
+export interface FormaSurtidoRow {
+  forma_id: string;
+  receta_id: string;
+  cantidad: number;
+  unidad: string;
+}
+
+/** Lo que cuesta UNA unidad de una forma. Es un CostoReceta con su forma al lado. */
+export interface CostoForma {
+  formaId: string;
+  codigo: string;
+  nombre: string;
+  precio: number | null;
+  costo: CostoReceta;
+}
+
 export interface CosteoContext {
   recetas: RecetaRow[];
   margenGlobal: number;
@@ -169,6 +236,19 @@ export interface CosteoContext {
   subrecetaByNombreLocal: Map<string, RecetaRow>;
   subrecetaByNombreSimplLocal: Map<string, RecetaRow>;
   ingsPorReceta: Map<string, IngredienteRow[]>;
+  // Las formas de venta. Vacias mientras no haya ninguna cargada: en ese caso
+  // el motor se comporta exactamente como antes de que existieran.
+  formaById: Map<string, FormaVentaRow>;
+  formasPorReceta: Map<string, FormaVentaRow[]>;
+  ingsPorForma: Map<string, FormaIngredienteRow[]>;
+  surtidoPorForma: Map<string, FormaSurtidoRow[]>;
+}
+
+/** Lo que `buildCosteoContext` necesita para conocer las formas. Todo opcional. */
+export interface DatosDeFormas {
+  formas?: FormaVentaRow[];
+  formasIngredientes?: FormaIngredienteRow[];
+  formasSurtido?: FormaSurtidoRow[];
 }
 
 // Construye los índices de búsqueda una sola vez. El resultado es inmutable y
@@ -178,6 +258,9 @@ export function buildCosteoContext(
   ings: IngredienteRow[],
   prods: ProductoRow[],
   margenGlobal: number,
+  // Opcional a proposito: todo lo que ya llamaba a esta funcion con cuatro
+  // argumentos sigue andando igual y sin formas.
+  formas: DatosDeFormas = {},
 ): CosteoContext {
   const prodById = new Map<string, ProductoRow>();
   for (const p of prods) prodById.set(p.id, p);
@@ -219,6 +302,24 @@ export function buildCosteoContext(
     ingsPorReceta.get(ing.receta_id)!.push(ing);
   }
 
+  const formaById = new Map<string, FormaVentaRow>();
+  const formasPorReceta = new Map<string, FormaVentaRow[]>();
+  for (const f of formas.formas ?? []) {
+    formaById.set(f.id, f);
+    if (!formasPorReceta.has(f.receta_id)) formasPorReceta.set(f.receta_id, []);
+    formasPorReceta.get(f.receta_id)!.push(f);
+  }
+  const ingsPorForma = new Map<string, FormaIngredienteRow[]>();
+  for (const i of formas.formasIngredientes ?? []) {
+    if (!ingsPorForma.has(i.forma_id)) ingsPorForma.set(i.forma_id, []);
+    ingsPorForma.get(i.forma_id)!.push(i);
+  }
+  const surtidoPorForma = new Map<string, FormaSurtidoRow[]>();
+  for (const x of formas.formasSurtido ?? []) {
+    if (!surtidoPorForma.has(x.forma_id)) surtidoPorForma.set(x.forma_id, []);
+    surtidoPorForma.get(x.forma_id)!.push(x);
+  }
+
   return {
     recetas,
     margenGlobal,
@@ -230,6 +331,10 @@ export function buildCosteoContext(
     subrecetaByNombreLocal,
     subrecetaByNombreSimplLocal,
     ingsPorReceta,
+    formaById,
+    formasPorReceta,
+    ingsPorForma,
+    surtidoPorForma,
   };
 }
 
@@ -308,8 +413,14 @@ export function costearReceta(
     //    que una receta vendible con mismo nombre normalizado (ej. "Salsa alfredo"
     //    vs subreceta "Salsa Alfredo") "ganaba" el lookup y rompía el costeo
     //    porque la vendible no tenía rendimiento_kg.
-    let subrecetaMatch: RecetaRow | null = null;
-    if (esSubrecetaPrefijo || ing.producto_id == null) {
+    // 🔑 Si el renglon dice a QUE receta apunta, no se busca por nombre. Es el
+    // unico camino que no puede confundir dos recetas que se llaman igual, y
+    // es el que usan las formas de venta. Si el id no esta en el contexto
+    // (receta apagada, por ejemplo) cae al camino de siempre.
+    let subrecetaMatch: RecetaRow | null = ing.subreceta_id
+      ? (ctx.recetas.find((r) => r.id === ing.subreceta_id) ?? null)
+      : null;
+    if (!subrecetaMatch && (esSubrecetaPrefijo || ing.producto_id == null)) {
       const localPadre = receta.local ?? '';
       if (esSubrecetaPrefijo) {
         subrecetaMatch =
@@ -588,4 +699,128 @@ export function costearBorrador(
     recetaId: receta.id,
     ingredientes,
   });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// COSTEAR UNA FORMA DE VENTA
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// 🔑 No hay un segundo camino de costeo. La forma se arma como una RECETA
+// VIRTUAL de un solo uso y se la manda por `costearReceta`, que es el mismo
+// código que costea todo lo demás. Por eso no puede divergir: si mañana
+// cambia la conversión de unidades o el colchón, cambia para las dos.
+//
+// La receta virtual tiene tres clases de renglón, en este orden:
+//
+//   1. la receta base, enganchada por `subreceta_id` (no por nombre);
+//   2. las otras recetas del surtido, si es un pack;
+//   3. lo propio de la forma: el empaque y los ingredientes que sólo lleva
+//      esta forma (el coulis de la porción, el chantilly del brownie).
+//
+// ⚠️ La receta virtual no declara rendimiento. Una forma ES una unidad
+// vendible: su costo es `costoConMargen`, no un costo por kg.
+export function costearForma(
+  formaId: string,
+  ctx: CosteoContext,
+  cache: Map<string, CostoReceta>,
+  enProgreso: Set<string>,
+): CostoForma {
+  const forma = ctx.formaById.get(formaId);
+  if (!forma) {
+    return {
+      formaId,
+      codigo: '',
+      nombre: '',
+      precio: null,
+      costo: {
+        recetaId: formaId,
+        costoBase: 0,
+        margenPct: ctx.margenGlobal,
+        costoConMargen: 0,
+        costoPorKg: null,
+        costoPorPorcion: null,
+        costoBasePorKg: null,
+        costoBasePorPorcion: null,
+        detalles: [],
+        advertencias: ['Forma de venta no encontrada'],
+      },
+    };
+  }
+
+  const base = ctx.recetas.find((r) => r.id === forma.receta_id) ?? null;
+  const idVirtual = `forma:${forma.id}`;
+  const virtual: RecetaRow = {
+    id: idVirtual,
+    nombre: `${base?.nombre ?? forma.nombre} (${forma.codigo})`,
+    tipo: 'receta',
+    rendimiento_kg: null,
+    rendimiento_porciones: null,
+    local: base?.local ?? null,
+  };
+
+  const renglones: IngredienteRow[] = [];
+  if (base) {
+    renglones.push({
+      id: `${idVirtual}:base`,
+      receta_id: idVirtual,
+      // El nombre va igual que el de la receta base: si el id no resolviera,
+      // el camino viejo por nombre sigue sirviendo de red.
+      nombre: base.nombre,
+      cantidad: forma.multiplicador,
+      unidad: forma.unidad,
+      orden: -2,
+      producto_id: null,
+      subreceta_id: base.id,
+    });
+  }
+  for (const s of ctx.surtidoPorForma.get(forma.id) ?? []) {
+    const r = ctx.recetas.find((x) => x.id === s.receta_id);
+    renglones.push({
+      id: `${idVirtual}:surtido:${s.receta_id}`,
+      receta_id: idVirtual,
+      nombre: r?.nombre ?? 'Receta del surtido',
+      cantidad: s.cantidad,
+      unidad: s.unidad,
+      orden: -1,
+      producto_id: null,
+      subreceta_id: s.receta_id,
+    });
+  }
+  for (const i of ctx.ingsPorForma.get(forma.id) ?? []) {
+    renglones.push({
+      id: i.id,
+      receta_id: idVirtual,
+      nombre: i.nombre,
+      cantidad: i.cantidad,
+      unidad: i.unidad,
+      orden: i.orden,
+      producto_id: i.producto_id,
+    });
+  }
+
+  const ctxVirtual: CosteoContext = { ...ctx, recetas: [...ctx.recetas, virtual] };
+  const costo = costearReceta(idVirtual, ctxVirtual, cache, enProgreso, {
+    recetaId: idVirtual,
+    ingredientes: renglones,
+  });
+  if (!base) costo.advertencias.push('La forma apunta a una receta que no está activa');
+
+  return {
+    formaId: forma.id,
+    codigo: forma.codigo,
+    nombre: forma.nombre,
+    precio: forma.precio,
+    costo,
+  };
+}
+
+/** Las formas ACTIVAS de una receta, costeadas. Vacío mientras no haya ninguna. */
+export function costearFormasDeReceta(
+  recetaId: string,
+  ctx: CosteoContext,
+  cache: Map<string, CostoReceta>,
+): CostoForma[] {
+  return (ctx.formasPorReceta.get(recetaId) ?? [])
+    .filter((f) => f.activo)
+    .map((f) => costearForma(f.id, ctx, cache, new Set()));
 }
