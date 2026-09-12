@@ -27,6 +27,50 @@ import { join } from 'node:path';
 const DIR = 'graphify-out/fotos';
 const GRAFO = 'graphify-out/graph.json';
 
+// ═══════════════════════════════════════════════════════════════════════════
+// POR QUE LOS COLGADOS SE CLASIFICAN Y NO SE "ARREGLAN"
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// 💣 Medido el 11-sep-2026, y el resultado es al reves de lo que se creia.
+// La teoria era: "el mismo nombre de tabla escrito distinto entre migraciones
+// (con y sin public.) parte el nodo en dos; si todas escriben igual, se unen".
+// ES FALSA. Las dos mediciones:
+//
+//   · 136 de los 275 colgados estan escritos EXACTAMENTE igual que su
+//     definicion (`public.cocina_recetas` en la migracion y en el esquema
+//     aplicado) y cuelgan lo mismo.
+//   · Se le sacaron los `public.` a una migracion y se rehizo el grafo: los
+//     colgados pasaron de 273 a 275. Reescribir SUMA un nodo con la grafia
+//     nueva y no saca el viejo.
+//
+// 🔑 La causa real: graphify crea UN NODO POR (archivo, objeto referenciado) y
+// solo le pone `source_file` al archivo que lo DEFINE. Una tabla nombrada en 30
+// migraciones son 30 nodos, 29 colgados. No es un desprolijo nuestro: es como
+// el lector de SQL modela las referencias, y no se arregla desde el repo.
+//
+// Por eso este comando dejo de tratar el numero como "algo que hay que bajar" y
+// pasa a decir DE QUE esta hecho. Lo unico que de verdad tiene que mirarse es
+// el cajon G: objetos que el lector no declara, donde se cuela lo que no existe.
+
+/** De que esta hecho un nodo colgado. El orden importa: se toma el primero. */
+function causaDelColgado(label, id, definidos) {
+  const nl = String(label).toLowerCase().replace(/^public\./, '');
+  if (/^(pg_|information_schema)/.test(nl)) return 'D';
+  if (/^auth\./.test(nl)) return 'E';
+  if (nl === 'public' || nl === 'v_tabla' || nl === 'image') return 'F';
+  if (definidos.has(nl)) return /^supabase_migrations_/.test(String(id)) ? 'A' : 'B';
+  return 'G';
+}
+
+const CAJONES = {
+  A: 'referencias desde una migracion a un objeto definido en otro archivo',
+  B: 'el mismo objeto nombrado con `public.` (nodo pelado de mas)',
+  D: 'catalogo de Postgres (pg_class, pg_namespace, pg_trigger) - externo',
+  E: 'esquema auth de Supabase - externo',
+  F: 'artefactos del parser (una variable plpgsql, el esquema pelado)',
+  G: 'funciones y vistas que EXISTEN y el lector de SQL no declara como nodo',
+};
+
 function sacarFoto() {
   if (!existsSync(GRAFO)) {
     console.error(`No encuentro ${GRAFO}. ¿Corriste /graphify?`);
@@ -34,19 +78,45 @@ function sacarFoto() {
   }
   const g = JSON.parse(readFileSync(GRAFO, 'utf8'));
   const sha = execSync('git rev-parse --short HEAD').toString().trim();
+  const sueltos = g.nodes.filter((n) => !n.source_file);
+  const definidos = new Set(
+    g.nodes
+      .filter((n) => n.source_file)
+      .map((n) => String(n.label).toLowerCase().replace(/^public\./, '')),
+  );
+  const porCausa = {};
+  for (const n of sueltos) {
+    const c = causaDelColgado(n.label, n.id, definidos);
+    (porCausa[c] ??= []).push(String(n.label));
+  }
   const foto = {
     commit: sha,
     asunto: execSync('git log -1 --pretty=%s').toString().trim(),
     cuando: execSync('git log -1 --pretty=%cI').toString().trim(),
     nodos: g.nodes.length,
     aristas: g.links.length,
-    colgados: g.nodes.filter((n) => !n.source_file).map((n) => String(n.id ?? n.name)).sort(),
+    colgados: sueltos.map((n) => String(n.id ?? n.name)).sort(),
+    porCausa: Object.fromEntries(Object.entries(porCausa).map(([k, v]) => [k, v.length])),
   };
   mkdirSync(DIR, { recursive: true });
   writeFileSync(join(DIR, `${sha}.json`), JSON.stringify(foto, null, 1));
   console.log(
     `foto ${sha}: ${foto.nodos} nodos · ${foto.aristas} aristas · ${foto.colgados.length} colgados`,
   );
+  console.log('');
+  console.log('DE QUE ESTAN HECHOS LOS COLGADOS');
+  for (const k of ['A', 'B', 'G', 'E', 'F', 'D']) {
+    const n = porCausa[k]?.length ?? 0;
+    if (!n) continue;
+    console.log(`  ${String(n).padStart(4)}  ${k} · ${CAJONES[k]}`);
+  }
+  const revisar = [...new Set(porCausa.G ?? [])];
+  if (revisar.length) {
+    console.log('');
+    console.log('  ⚠️ Del cajon G hay que chequear a mano que todos existan en la base.');
+    console.log('     Ahi se cuela lo unico que de verdad importa: un objeto que ya no esta.');
+    console.log('     ' + revisar.join(' · '));
+  }
   return foto;
 }
 
@@ -83,7 +153,7 @@ function comparar(shaA, shaB) {
   const nuevos = b.colgados.filter((x) => !antes.has(x));
   const idos = a.colgados.filter((x) => !despues.has(x));
   if (nuevos.length) {
-    console.log(`\n  ⚠️ COLGADOS NUEVOS (${nuevos.length}) — este número tiene que bajar, no subir:`);
+    console.log(`\n  ⚠️ COLGADOS NUEVOS (${nuevos.length}) — mirá de qué cajón salieron:`);
     nuevos.forEach((x) => console.log(`     + ${x}`));
   }
   if (idos.length) {

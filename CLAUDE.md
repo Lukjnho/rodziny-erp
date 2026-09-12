@@ -99,8 +99,26 @@ un renglón más en `barrios.json` y volver a correrlo.** Es acumulativo: solo m
   `uv tool install "graphifyy[sql]"`.
 - **El caché guarda los resultados vacíos.** Si faltaba un lector y lo instalás después,
   hay que borrar `graphify-out/cache/` y rehacer, o el agujero queda pegado.
-- **519 conexiones cuelgan en el aire** (10-sep-2026): apuntan a tablas nombradas en SQL
-  que ningún archivo define. No es corrupción. Ese número tiene que **bajar, no subir**.
+- 💥 **Los "nodos colgados" NO se arreglan reescribiendo el SQL, y la teoría que
+  decíamos era falsa.** Medido el 11-sep-2026 con `npm run foto-grafo`:
+
+  - La teoría era *"el mismo nombre escrito con y sin `public.` parte el nodo en dos;
+    si todas las migraciones escriben igual, se unen"*. **No.** **136 de 275** colgados
+    están escritos **exactamente igual** que su definición y cuelgan lo mismo.
+  - Se le sacaron los `public.` a una migración y se rehizo el grafo: los colgados
+    pasaron de **273 a 275**. Reescribir **suma** el nodo de la grafía nueva y no saca
+    el viejo. Ya había pasado al revés: calificar una vista con `public.` **creó** un nodo.
+
+  🔑 **La causa real:** graphify crea **un nodo por (archivo, objeto referenciado)** y
+  sólo le pone `source_file` al archivo que lo **define**. Una tabla nombrada en 30
+  migraciones son 30 nodos, 29 colgados. Es cómo el lector de SQL modela las
+  referencias — **no se arregla desde el repo, y crece con cada migración**.
+
+  Por eso `npm run foto-grafo` ya no trata el número como algo que "tiene que bajar":
+  lo **clasifica**. Hoy: 216 referencias entre archivos · 28 nodos pelados por el
+  prefijo · **18 funciones y vistas que existen y el lector no declara** · 13 externos
+  y artefactos del parser. ⚠️ **El único cajón que hay que mirar es el G**: ahí se
+  cuela un objeto que ya no existe.
 
 ---
 
