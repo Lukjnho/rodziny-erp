@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { guardarContando } from '@/lib/escribir';
 import { useAuth } from '@/lib/auth';
 import { formatARS, cn } from '@/lib/utils';
 import { procesarComprobantePago } from '@/lib/ocrComprobantePago';
@@ -95,6 +96,9 @@ export function PanelAdelantos({ empleado, periodo, adelantos, onClose }: Props)
         if (!comprobantePath) throw new Error('Comprobante de pago obligatorio. Subí la captura o PDF.');
         if (!nOperacion.trim()) throw new Error('N° de operación obligatorio. Copialo del comprobante.');
       }
+      // El alta NO va por `guardarContando` (a diferencia del borrado de más
+      // abajo): eso es para UPDATE y DELETE, que son los que se pierden en
+      // silencio. Un alta que la regla de permisos frena SÍ tira error y se ve.
       const { error } = await supabase.from('adelantos').insert({
         empleado_id: empleado.id,
         periodo,
@@ -119,10 +123,21 @@ export function PanelAdelantos({ empleado, periodo, adelantos, onClose }: Props)
 
   const borrar = useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase.from('adelantos').delete().eq('id', id);
-      if (error) throw error;
+      // Borrar acá cambia lo que se le paga al empleado. Si el borrado no entra
+      // —permiso que falta, o alguien que ya lo borró—, la fila desaparecía de
+      // la lista igual y el sueldo seguía calculándose con ella adentro. Por eso
+      // se cuenta: los cuatro paneles (adelantos, bonos, descuentos, sanciones)
+      // hacen esto exactamente igual.
+      await guardarContando(
+        supabase.from('adelantos').delete().eq('id', id),
+        'No se pudo borrar el adelanto',
+        { filasEsperadas: 1 },
+      );
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['adelantos'] }),
+    // Se refresca salga bien o mal: si el borrado no entró, la fila sigue viva y
+    // la lista tiene que volver a mostrarla en vez de esconderla hasta el F5.
+    onSettled: () => qc.invalidateQueries({ queryKey: ['adelantos'] }),
+    onError: (e: Error) => window.alert(e.message),
   });
 
   const total = adelantos.reduce((s, a) => s + Number(a.monto), 0);

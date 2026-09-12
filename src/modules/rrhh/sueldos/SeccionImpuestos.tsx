@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { guardarContando } from '@/lib/escribir';
 import { cn, formatARS } from '@/lib/utils';
 import type { ImpuestoMensual } from './tipos';
 
@@ -28,11 +29,19 @@ export function SeccionImpuestos({ periodoMes }: Props) {
     },
   });
 
+  // Esta es la única puerta por la que se escribe el F931 del mes, y el monto de
+  // acá alimenta las Cargas Sociales del EdR. Cuando la fila del período ya
+  // existe, el upsert termina siendo un UPDATE: si la regla de permisos lo
+  // frenaba, volvía cero filas y NINGÚN error, la pantalla mostraba el valor
+  // nuevo y la base se quedaba con el viejo.
   async function upsertCampos(patch: Partial<ImpuestoMensual>) {
-    const { error } = await supabase
-      .from('impuestos_mensuales')
-      .upsert({ periodo: periodoMes, ...patch }, { onConflict: 'periodo' });
-    if (error) throw error;
+    await guardarContando(
+      supabase
+        .from('impuestos_mensuales')
+        .upsert({ periodo: periodoMes, ...patch }, { onConflict: 'periodo' }),
+      'No se pudo guardar el dato de impuestos del mes',
+      { filasEsperadas: 1 },
+    );
     qc.invalidateQueries({ queryKey: ['impuestos_mensuales', periodoMes] });
   }
 
@@ -52,14 +61,21 @@ export function SeccionImpuestos({ periodoMes }: Props) {
         .from(BUCKET)
         .upload(path, file, { contentType: 'application/pdf', upsert: false });
       if (upErr) throw upErr;
-      // Borrar el anterior si había
       const pathAnterior = tipo === 'f931' ? impuesto?.f931_path : impuesto?.libro_path;
-      if (pathAnterior) {
-        await supabase.storage.from(BUCKET).remove([pathAnterior]);
-      }
+      // 🔑 EL ORDEN CAMBIÓ, Y ES A PROPÓSITO. Antes se borraba el PDF viejo y
+      // recién después se guardaba el nuevo. Ahora que el guardado CORTA cuando
+      // no entra, hacerlo en ese orden dejaba la ficha apuntando a un archivo
+      // que ya no existe: el botón "Ver" quedaba roto y nadie se enteraba.
+      // Primero se apunta al nuevo; el viejo se limpia después.
       await upsertCampos({
         [tipo === 'f931' ? 'f931_path' : 'libro_path']: path,
       } as Partial<ImpuestoMensual>);
+      if (pathAnterior) {
+        // Si este borrado falla, el PDF viejo queda ocupando lugar y nada más:
+        // la ficha ya apunta al nuevo. Ocupar lugar es barato; apuntar a un
+        // archivo que no está, no.
+        await supabase.storage.from(BUCKET).remove([pathAnterior]);
+      }
     } catch (e) {
       window.alert(`Error: ${(e as Error).message}`);
     } finally {
@@ -81,22 +97,30 @@ export function SeccionImpuestos({ periodoMes }: Props) {
     if (!path) return;
     if (!window.confirm(`¿Borrar ${tipo === 'f931' ? 'F931' : 'libro de sueldos'}?`)) return;
     try {
-      await supabase.storage.from(BUCKET).remove([path]);
+      // Mismo orden que al subir: primero se saca la referencia de la ficha y
+      // después el archivo. Si el guardado no entra y corta, el PDF sigue ahí y
+      // el botón "Ver" sigue andando.
       await upsertCampos({
         [tipo === 'f931' ? 'f931_path' : 'libro_path']: null,
       } as Partial<ImpuestoMensual>);
+      await supabase.storage.from(BUCKET).remove([path]);
     } catch (e) {
       window.alert(`Error: ${(e as Error).message}`);
     }
   };
 
+  // Los dos `onError` no estaban. Sin ellos, el aviso de que el guardado no
+  // entró se lo tragaba react-query y en pantalla quedaba el valor nuevo como
+  // si hubiera entrado: exactamente el silencio que veníamos a sacar.
   const toggleMonto = useMutation({
     mutationFn: async (monto: number) => upsertCampos({ monto_total: monto }),
+    onError: (e: Error) => window.alert(e.message),
   });
 
   const togglePagado = useMutation({
     mutationFn: async (pagado: boolean) =>
       upsertCampos({ pagado, fecha_pago: pagado ? new Date().toISOString().slice(0, 10) : null }),
+    onError: (e: Error) => window.alert(e.message),
   });
 
   return (

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { guardarContando } from '@/lib/escribir';
 import { formatARS } from '@/lib/utils';
 import { ymd } from '../utils';
 import type { Bono } from './tipos';
@@ -32,6 +33,9 @@ export function PanelBonos({ empleado, periodo, bonos, onClose }: Props) {
       const n = parseFloat(monto.replace(',', '.'));
       if (!n || n <= 0) throw new Error('Ingresá un monto válido');
       if (!motivo.trim()) throw new Error('El motivo es obligatorio');
+      // El alta NO va por `guardarContando` (a diferencia del borrado de más
+      // abajo): eso es para UPDATE y DELETE, que son los que se pierden en
+      // silencio. Un alta que la regla de permisos frena SÍ tira error y se ve.
       const { error } = await supabase.from('bonos').insert({
         empleado_id: empleado.id,
         periodo,
@@ -51,10 +55,21 @@ export function PanelBonos({ empleado, periodo, bonos, onClose }: Props) {
 
   const borrar = useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase.from('bonos').delete().eq('id', id);
-      if (error) throw error;
+      // Borrar acá cambia lo que se le paga al empleado. Si el borrado no entra
+      // —permiso que falta, o alguien que ya lo borró—, la fila desaparecía de
+      // la lista igual y el sueldo seguía calculándose con ella adentro. Por eso
+      // se cuenta: los cuatro paneles (adelantos, bonos, descuentos, sanciones)
+      // hacen esto exactamente igual.
+      await guardarContando(
+        supabase.from('bonos').delete().eq('id', id),
+        'No se pudo borrar el bono',
+        { filasEsperadas: 1 },
+      );
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['bonos'] }),
+    // Se refresca salga bien o mal: si el borrado no entró, la fila sigue viva y
+    // la lista tiene que volver a mostrarla en vez de esconderla hasta el F5.
+    onSettled: () => qc.invalidateQueries({ queryKey: ['bonos'] }),
+    onError: (e: Error) => window.alert(e.message),
   });
 
   const total = bonos.reduce((s, b) => s + Number(b.monto), 0);
