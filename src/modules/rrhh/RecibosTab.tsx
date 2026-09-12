@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { guardarContando } from '@/lib/escribir';
 import { cn, formatARS } from '@/lib/utils';
 import { normalizarTexto } from './utils';
 
@@ -97,11 +98,40 @@ export function RecibosTab() {
   }, [recibos, periodo, local, busqueda, empMap]);
 
   async function asignar(id: string, empleadoId: string) {
-    await supabase.from('recibos_sueldo').update({ empleado_id: empleadoId || null }).eq('id', id);
+    try {
+      await guardarContando(
+        supabase.from('recibos_sueldo').update({ empleado_id: empleadoId || null }).eq('id', id),
+        'No se pudo asignar el recibo a esa persona',
+        { filasEsperadas: 1 },
+      );
+    } catch (e) {
+      // La listita se queda mostrando el nombre que se eligió aunque la base no
+      // lo haya aceptado: sin el aviso, el recibo queda asignado solo en la
+      // pantalla y el control de "efectivos sin recibo" lo sigue contando como
+      // faltante sin que se entienda por qué.
+      window.alert((e as Error).message);
+    }
+    // El refresco va igual haya andado o no: así la lista muestra lo que quedó
+    // de verdad en la base.
     qc.invalidateQueries({ queryKey: ['recibos_sueldo'] });
   }
   async function borrar(id: string) {
-    await supabase.from('recibos_sueldo').delete().eq('id', id);
+    try {
+      await guardarContando(
+        supabase.from('recibos_sueldo').delete().eq('id', id),
+        'No se pudo borrar el recibo',
+        { filasEsperadas: 1 },
+      );
+    } catch (e) {
+      // 💣 Borrar acá es la ÚNICA forma de sacar un recibo mal cargado, y la
+      // base tiene un índice único por (CUIL, período): si el borrado no toca
+      // ninguna fila y nadie se entera, la próxima subida del mes corregido
+      // choca y no hay forma de entender por qué.
+      window.alert(
+        (e as Error).message +
+          ' El recibo sigue cargado: mientras esté, la base no va a dejar subir otro del mismo CUIL y período.',
+      );
+    }
     qc.invalidateQueries({ queryKey: ['recibos_sueldo'] });
   }
 

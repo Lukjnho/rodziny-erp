@@ -6,6 +6,7 @@ import { KPICard } from '@/components/ui/KPICard';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { cn, formatARS, formatFecha } from '@/lib/utils';
 import { mensajeErrorAmigable } from '@/lib/erroresSupabase';
+import { guardarContando } from '@/lib/escribir';
 import { CronogramaTab } from './CronogramaTab';
 import { AsistenciaTab } from './AsistenciaTab';
 import { HorasTab } from './HorasTab';
@@ -431,11 +432,11 @@ function LegajosTab() {
 
   const toggleProduccion = useMutation({
     mutationFn: async (payload: { id: string; valor: boolean }) => {
-      const { error } = await supabase
-        .from('empleados')
-        .update({ es_produccion: payload.valor })
-        .eq('id', payload.id);
-      if (error) throw error;
+      await guardarContando(
+        supabase.from('empleados').update({ es_produccion: payload.valor }).eq('id', payload.id),
+        'No se pudo cambiar si la persona cuenta como de producción',
+        { filasEsperadas: 1 },
+      );
     },
     onMutate: async ({ id, valor }) => {
       await qc.cancelQueries({ queryKey: ['empleados-todos'] });
@@ -448,8 +449,12 @@ function LegajosTab() {
       }
       return { previo };
     },
-    onError: (_e, _v, ctx) => {
+    onError: (e: Error, _v, ctx) => {
       if (ctx?.previo) qc.setQueryData(['empleados-todos'], ctx.previo);
+      // La tilde se pinta al instante y, si la base no la aceptó, vuelve sola a
+      // como estaba sin decir nada: parece que se erró el clic. Y de esta
+      // casilla sale quién entra al pool de mano de obra.
+      window.alert(e.message);
     },
     onSettled: () => {
       qc.invalidateQueries({ queryKey: ['empleados-todos'] });
@@ -856,7 +861,24 @@ function SeccionRecibosEmpleado({
   }
 
   async function borrar(id: string) {
-    await supabase.from('recibos_sueldo').delete().eq('id', id);
+    try {
+      await guardarContando(
+        supabase.from('recibos_sueldo').delete().eq('id', id),
+        'No se pudo borrar el recibo',
+        { filasEsperadas: 1 },
+      );
+    } catch (e) {
+      // 💣 Borrar acá es la ÚNICA forma de sacar un recibo mal cargado, y la
+      // base tiene un índice único por (CUIL, período): si el borrado no toca
+      // ninguna fila y nadie se entera, la próxima subida del mes corregido
+      // choca y no hay forma de entender por qué.
+      window.alert(
+        (e as Error).message +
+          ' El recibo sigue cargado: mientras esté, la base no va a dejar subir otro del mismo CUIL y período.',
+      );
+    }
+    // El refresco va igual haya andado o no: así la lista muestra lo que quedó
+    // de verdad en la base.
     qc.invalidateQueries({ queryKey: ['recibos_empleado', empleadoId] });
     qc.invalidateQueries({ queryKey: ['recibos_sueldo'] });
   }
@@ -868,7 +890,7 @@ function SeccionRecibosEmpleado({
   const efectivoSinRecibos = esEfectivo && lista.length === 0;
 
   return (
-    <div className={`rounded-lg pt-4 ${esEfectivo ? 'border-t-2 border-rodziny-200' : 'border-t border-gray-100'}`}>
+    <div className={`pt-4 ${esEfectivo ? 'border-t-2 border-rodziny-200' : 'border-t border-gray-100'}`}>
       <div className="mb-2 flex items-center justify-between">
         <span className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-gray-700">
           Recibos de sueldo
@@ -1522,7 +1544,7 @@ function ModalImportador({ onClose, onImported }: { onClose: () => void; onImpor
           </button>
         </div>
         <div className="space-y-3 px-6 py-4">
-          <div className="rounded border border-blue-100 bg-blue-50 p-3 text-xs text-gray-600">
+          <div className="rounded border border-blue-100 bg-blue-50 p-3 text-xs text-blue-900">
             <div className="mb-1 font-semibold">Formato del CSV:</div>
             <div>
               Columnas obligatorias:{' '}

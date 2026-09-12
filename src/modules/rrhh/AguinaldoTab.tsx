@@ -688,14 +688,41 @@ function ModalAguinaldo({
         // El aguinaldo no quedó guardado. Si el gasto lo creamos recién, se
         // deshace: si queda vivo sin que el aguinaldo lo conozca, el próximo
         // clic crea otro y el EdR termina con el aguinaldo cobrado dos veces.
+        //
+        // ⚠️ Acá NO va `guardarContando`: si el deshacer fallara, su excepción
+        // taparía el error original -el que dice por qué no se guardó el
+        // aguinaldo- y encima el cartel diría "se deshizo" sin haber deshecho
+        // nada. Se cuenta a mano y el texto se arma con lo que pasó de verdad:
+        // un borrado que la RLS bloquea devuelve cero filas y ningún error.
+        let cola = '';
         if (gastoRecienCreado) {
-          await supabase.from('pagos_gastos').delete().eq('gasto_id', gastoRecienCreado);
-          await supabase.from('gastos').delete().eq('id', gastoRecienCreado);
+          // El pago va primero: con el pago colgando, la base no deja borrar el
+          // gasto.
+          const { data: pagosBorrados } = await supabase
+            .from('pagos_gastos')
+            .delete()
+            .eq('gasto_id', gastoRecienCreado)
+            .select('id');
+          const { data: gastoBorrado } = await supabase
+            .from('gastos')
+            .delete()
+            .eq('id', gastoRecienCreado)
+            .select('id');
+          if (gastoBorrado?.length) {
+            cola = ' Se deshizo el gasto para que no quede duplicado.';
+          } else {
+            cola =
+              ' ⚠️ Y el gasto tampoco se pudo borrar: quedó cargado en Finanzas, ' +
+              'sumando en el Estado de Resultados, y el aguinaldo no lo conoce. ' +
+              'Borralo a mano desde Gastos ANTES de volver a guardar acá, o el ' +
+              'aguinaldo va a terminar cargado dos veces.';
+            if (pagosBorrados?.length) {
+              cola +=
+                ' (Su fila de pago sí se borró, así que ese gasto figura pagado y sin pago.)';
+            }
+          }
         }
-        throw new Error(
-          (e as Error).message +
-            (gastoRecienCreado ? ' Se deshizo el gasto para que no quede duplicado.' : ''),
-        );
+        throw new Error((e as Error).message + cola);
       }
 
       onSaved();
