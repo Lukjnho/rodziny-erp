@@ -228,6 +228,38 @@ export function etiquetaDeFamilia(familia: string | null | undefined): string {
 }
 
 /**
+ * La columna de `cocina_productos` donde vive la familia. UNA vez, acá.
+ *
+ * 💥 Existe porque este nombre YA CAMBIÓ y rompió producción. La 209 lo renombró
+ * de `tipo` a `familia_stock`, la 210 dejó un puente, y la 211 lo retiró el
+ * 11-sep-2026. Cinco consultas en cuatro pantallas siguieron pidiendo `tipo`:
+ *
+ *     GET /cocina_productos?...&tipo=eq.postre
+ *     → HTTP 400  "column cocina_productos.tipo does not exist"
+ *
+ * Y las pantallas mostraron ese 400 como "no hay postres cargadas", que es el
+ * peor final posible: el Conteo de cámara de los dos locales quedó en blanco y
+ * no se reportó como error. El próximo rename es una línea, no una cacería.
+ *
+ * 💣 El cliente de Supabase de este proyecto NO lleva el genérico `Database`,
+ * así que `.eq('columna_que_no_existe', x)` compila igual. `tsc` no puede
+ * cuidar el nombre de la columna — por eso está escrito una sola vez, y por eso
+ * `npm run vocabularios` lo cruza contra el esquema aplicado.
+ */
+export const COLUMNA_FAMILIA = 'familia_stock';
+
+/**
+ * Filtra una consulta de `cocina_productos` por familia de stock.
+ *
+ * 🔑 Lo que hace el trabajo es el TIPO: `FamiliaStock` sale de `FAMILIAS_STOCK`,
+ * así que un valor que no esté en esa lista no compila. Es lo único que `tsc`
+ * sí puede cuidar, y es gratis.
+ */
+export function porFamilia<Q>(consulta: Q, familia: FamiliaStock): Q {
+  return (consulta as { eq(columna: string, valor: string): Q }).eq(COLUMNA_FAMILIA, familia);
+}
+
+/**
  * El puente entre la familia del producto y la categoría con la que se graba un
  * LOTE de producción (`cocina_lotes_produccion.categoria`).
  *

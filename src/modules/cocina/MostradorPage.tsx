@@ -14,6 +14,9 @@ import { guardarContando } from '@/lib/escribir';
 import { invalidarStockCocina } from './lib/invalidarStock';
 import { salidasDeCamara } from './lib/ventasCocina';
 import { normalizarDecimal, parseDecimal, equivalenteKgGramos } from '@/lib/numero';
+// 💥 El nombre de la columna de familia vive en UN solo lado: ya cambió una vez
+// (mig 209 → 211) y dejó esta pantalla en blanco en los dos locales.
+import { COLUMNA_FAMILIA, porFamilia } from '@/modules/costeo';
 
 type Local = 'vedia' | 'saavedra';
 type Turno = 'mediodia' | 'noche';
@@ -36,6 +39,20 @@ const TAB_META: Record<TipoTab, { emoji: string; label: string }> = {
 const TABS_POR_LOCAL: Record<Local, TipoTab[]> = {
   vedia: ['pasta', 'salsa', 'postre'],
   saavedra: ['pasta', 'salsa', 'postre', 'panaderia', 'milanesa'],
+};
+
+// Contra qué filtra cada pestaña simple. Sirve para el diagnóstico del vacío:
+// si la consulta no trae nada, se mira qué valores SÍ hay en esa misma columna.
+// Panadería va en `null` a propósito: filtra por una lista curada de ids, no por
+// vocabulario, así que no hay "otro valor" que buscar.
+const FILTRO_POR_TIPO: Record<
+  TipoSimple,
+  { tabla: 'cocina_productos' | 'cocina_recetas'; columna: string; valor: string } | null
+> = {
+  salsa: { tabla: 'cocina_recetas', columna: 'rol', valor: 'salsa_base' },
+  postre: { tabla: 'cocina_productos', columna: COLUMNA_FAMILIA, valor: 'postre' },
+  panaderia: null,
+  milanesa: { tabla: 'cocina_recetas', columna: 'rol', valor: 'milanesa_base' },
 };
 
 const UNIDAD_POR_TIPO: Record<TipoSimple, 'kg' | 'unidades'> = {
@@ -241,16 +258,22 @@ function CierrePastas({ local }: { local: Local }) {
   const [filas, setFilas] = useState<Record<string, FilaPasta>>({});
   const [mensaje, setMensaje] = useState<string | null>(null);
 
-  const { data: pastas, isLoading: loadingPastas } = useQuery({
+  const {
+    data: pastas,
+    isLoading: loadingPastas,
+    error: errorPastas,
+  } = useQuery({
     queryKey: ['mostrador-pastas', local],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('cocina_productos')
-        .select('id, nombre, codigo')
-        .eq('tipo', 'pasta')
-        .eq('activo', true)
-        .eq('local', local)
-        .order('nombre');
+      // 💥 Acá decía `.eq('tipo', 'pasta')` y la 211 borró esa columna: HTTP 400.
+      const { data, error } = await porFamilia(
+        supabase
+          .from('cocina_productos')
+          .select('id, nombre, codigo')
+          .eq('activo', true)
+          .eq('local', local),
+        'pasta',
+      ).order('nombre');
       if (error) throw error;
       return data as Producto[];
     },
@@ -784,12 +807,14 @@ function CierrePastas({ local }: { local: Local }) {
       </div>
 
       {visibles.length === 0 ? (
-        <div className="mt-3 border border-dashed border-zinc-300 bg-white p-6 text-center">
-          <p className="text-sm font-medium text-zinc-700">No hay pastas cargadas</p>
-          <p className="mt-1 text-xs text-zinc-500">
-            Cargalas en Cocina → Productos con tipo "pasta" para que aparezcan acá.
-          </p>
-        </div>
+        <SinDatos
+          emoji="🍝"
+          label="pastas"
+          local={local}
+          error={errorPastas}
+          filtro={{ tabla: 'cocina_productos', columna: COLUMNA_FAMILIA, valor: 'pasta' }}
+          comoCargar="Cargalas en Cocina → Productos, con familia de stock 'pasta', para que aparezcan acá."
+        />
       ) : (
         <>
           {/* ── Un renglón por pasta. Cerrado muestra UNA línea; el detalle se abre
@@ -1018,6 +1043,120 @@ interface ItemCierre {
   productoId: string | null;
 }
 
+// ── Un vacío que puede ser un bug NO se muestra igual que un vacío real ──────
+//
+// 💥 12-sep-2026. Las pestañas Pastas y Postres pedían `cocina_productos.tipo`,
+// la columna que la migración 211 borró el día anterior. PostgREST contestó
+//
+//     HTTP 400  "column cocina_productos.tipo does not exist"
+//
+// react-query dejó los datos en `undefined`, la pantalla entró por el MISMO
+// `if` que usa el vacío real y dijo "no hay postres cargadas" en las tablets de
+// los dos locales. Un error disfrazado de dato, que es el peor final: nadie
+// reporta un cartel que parece normal.
+//
+// 🔑 Ahora hay tres finales y ninguno se parece a los otros:
+//     🔴 la consulta FALLÓ          → se muestra el error, textual
+//     ⚠️ trajo cero PERO hay filas  → se avisa QUÉ hay y cuántos
+//     ⚪ trajo cero y no hay nada   → recién ahí, "no hay … cargadas"
+function SinDatos({
+  emoji,
+  label,
+  local,
+  error,
+  filtro,
+  comoCargar,
+}: {
+  emoji: string;
+  label: string;
+  local: Local;
+  error: unknown;
+  /**
+   * Contra qué filtró la consulta que vino vacía. `null` cuando la pestaña
+   * filtra por una lista de ids curada (Panadería) y no por vocabulario: ahí no
+   * hay otro valor posible que buscar.
+   */
+  filtro: { tabla: 'cocina_productos' | 'cocina_recetas'; columna: string; valor: string } | null;
+  comoCargar: string;
+}) {
+  // Vino vacío y sin error: ¿qué HAY en esa tabla para este local? Si hay filas
+  // bajo otro valor, el vacío es sospechoso y hay que decirlo.
+  const { data: loQueHay } = useQuery({
+    queryKey: ['mostrador-que-hay', local, filtro?.tabla, filtro?.columna],
+    enabled: !error && filtro != null,
+    queryFn: async () => {
+      const { data, error: e } = await supabase
+        .from(filtro!.tabla)
+        .select(filtro!.columna)
+        .eq('activo', true)
+        .eq('local', local);
+      // Si el diagnóstico también falla no se inventa nada: se queda callado y
+      // la pantalla muestra el vacío común.
+      if (e) return [] as [string, number][];
+      const cuenta = new Map<string, number>();
+      // El `select()` toma el nombre de columna de una variable, así que el
+      // cliente no puede inferir la forma: se lee como diccionario a mano.
+      for (const f of (data ?? []) as unknown as Record<string, string | null>[]) {
+        const v = f[filtro!.columna] ?? '(sin valor)';
+        cuenta.set(v, (cuenta.get(v) ?? 0) + 1);
+      }
+      return [...cuenta].sort((a, b) => b[1] - a[1]);
+    },
+  });
+
+  if (error) {
+    return (
+      <div className="mx-auto max-w-md p-3">
+        <div className="rounded-lg border border-red-300 bg-red-50 p-4 text-center">
+          <p className="text-sm font-semibold text-red-800">
+            ⚠️ ALERTA LUCAS · no se pudieron leer {label.toLowerCase()}
+          </p>
+          <p className="mt-2 text-xs leading-snug text-red-700">
+            {mensajeErrorAmigable(error, 'La consulta falló')}
+          </p>
+          <p className="mt-2 text-[11px] text-red-600">
+            Esto NO quiere decir que no haya nada cargado. Avisá antes de contar.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (filtro && loQueHay && loQueHay.length > 0) {
+    const total = loQueHay.reduce((a, [, n]) => a + n, 0);
+    return (
+      <div className="mx-auto max-w-md p-3">
+        <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-center">
+          <p className="text-sm font-semibold text-amber-900">
+            ⚠️ ALERTA LUCAS · hay datos, pero el filtro no los agarra
+          </p>
+          <p className="mt-2 text-xs leading-snug text-amber-800">
+            Se buscó <code className="font-mono">{filtro.columna} = {filtro.valor}</code> y no
+            hay ninguno. Pero en {local} hay <strong>{total}</strong> filas activas en{' '}
+            <code className="font-mono">{filtro.tabla}</code>, con estos valores:
+          </p>
+          <p className="mt-2 font-mono text-xs text-amber-900">
+            {loQueHay.map(([v, n]) => `${v} (${n})`).join(' · ')}
+          </p>
+          <p className="mt-2 text-[11px] text-amber-700">
+            Es un desajuste de nombres, no una pantalla vacía. No cuentes contra esto.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mx-auto max-w-md p-3">
+      <div className="rounded-lg border border-dashed border-gray-300 bg-white p-6 text-center">
+        <p className="text-2xl">{emoji}</p>
+        <p className="mt-2 text-sm font-medium text-gray-700">No hay {label} cargadas</p>
+        <p className="mt-1 text-xs text-gray-500">{comoCargar}</p>
+      </div>
+    </div>
+  );
+}
+
 function CierreSimple({
   local,
   tipo,
@@ -1043,7 +1182,7 @@ function CierreSimple({
   //    el StockTab lo reconcilia siempre (matchea por receta_id o por nombre).
   //  · Salsas / Milanesa → se cuentan RECETAS-base; sus productos apuntan a esa
   //    misma receta, así que reconcilian igual (no se tocan).
-  const { data: productos, isLoading } = useQuery({
+  const { data: productos, isLoading, error } = useQuery({
     queryKey: ['mostrador-simple-items', local, tipo],
     queryFn: async (): Promise<ItemCierre[]> => {
       if (tipo === 'postre' || tipo === 'panaderia') {
@@ -1055,7 +1194,10 @@ function CierreSimple({
         if (tipo === 'postre') {
           // Todos los postres-producto (Flan, Tiramisú, y la repostería por
           // porción: Brownie, Carrot, Cheesecake, Tarta Vasca, Matilda).
-          pq = pq.eq('tipo', 'postre');
+          //
+          // 💥 Acá decía `pq.eq('tipo', 'postre')` y la 211 borró esa columna:
+          // HTTP 400 en las tablets de los dos locales.
+          pq = porFamilia(pq, 'postre');
         } else {
           // Panadería: solo los panes curados (ver PRODUCTOS_PAN_CIERRE_SAAVEDRA).
           pq = pq.in('id', PRODUCTOS_PAN_CIERRE_SAAVEDRA);
@@ -1413,20 +1555,20 @@ function CierreSimple({
     return <div className="py-12 text-center text-sm text-gray-400">Cargando…</div>;
   }
 
-  if (!productos || productos.length === 0) {
+  if (error || !productos || productos.length === 0) {
     return (
-      <div className="mx-auto max-w-md p-3">
-        <div className="rounded-lg border border-dashed border-gray-300 bg-white p-6 text-center">
-          <p className="text-2xl">{meta.emoji}</p>
-          <p className="mt-2 text-sm font-medium text-gray-700">
-            No hay {labelLower} cargadas
-          </p>
-          <p className="mt-1 text-xs text-gray-500">
-            Cargalas primero desde el ERP en Cocina → Recetas → "Nueva receta" con tipo "
-            {tipo}".
-          </p>
-        </div>
-      </div>
+      <SinDatos
+        emoji={meta.emoji}
+        label={labelLower}
+        local={local}
+        error={error}
+        filtro={FILTRO_POR_TIPO[tipo]}
+        comoCargar={
+          tipo === 'panaderia'
+            ? 'La panadería del cierre es una lista curada de panes. Si falta uno, se agrega en el código (PRODUCTOS_PAN_CIERRE_SAAVEDRA).'
+            : `Cargalas primero desde el ERP en Cocina → Recetas → "Nueva receta" con tipo "${tipo}".`
+        }
+      />
     );
   }
 

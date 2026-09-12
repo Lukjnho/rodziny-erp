@@ -41,7 +41,7 @@
 
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { C, titulo, universo, testigos, pad, padN } from './_comun.mjs';
+import { C, titulo, universo, testigos, pad, padN, columnasDelEsquema } from './_comun.mjs';
 
 const ESQUEMA = 'supabase/esquema-aplicado.sql';
 
@@ -50,26 +50,9 @@ const ESQUEMA = 'supabase/esquema-aplicado.sql';
 // Se lee el archivo versionado y no la base: así el comando corre en CI sin
 // credenciales. La foto se rehace con scripts/graphify/esquema_aplicado.py
 // después de cada migración, y el git diff de ese archivo es el registro.
-export function columnasDelEsquema(sql) {
-  const tablas = new Map();
-  // create table public.X (\n  col tipo,\n  ...\n);
-  const re = /create table (?:public\.)?(\w+)\s*\(([\s\S]*?)\n\);/gi;
-  let m;
-  while ((m = re.exec(sql))) {
-    const tabla = m[1].toLowerCase();
-    const cols = [];
-    for (const linea of m[2].split('\n')) {
-      const t = linea.trim();
-      if (!t || t.startsWith('--')) continue;
-      // Se saltan las restricciones de tabla, que no son columnas.
-      if (/^(primary key|foreign key|unique|check|constraint|exclude)\b/i.test(t)) continue;
-      const c = t.match(/^"?(\w+)"?\s+/);
-      if (c) cols.push(c[1].toLowerCase());
-    }
-    if (cols.length) tablas.set(tabla, cols);
-  }
-  return tablas;
-}
+// La lectura del esquema aplicado vive en _comun.mjs: la usa tambien
+// `vocabularios`, para cazar el filtro que pide una columna que ya no existe.
+export { columnasDelEsquema };
 
 // ─── Los nombres que el código nombra ────────────────────────────────────────
 //

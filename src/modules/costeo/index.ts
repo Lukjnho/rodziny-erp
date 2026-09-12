@@ -45,6 +45,10 @@ export {
   FAMILIAS_STOCK,
   FAMILIA_STOCK_LABEL,
   etiquetaDeFamilia,
+  // 💥 El nombre de la columna, una sola vez: ya cambió una vez y dejó el
+  // Conteo de cámara de los dos locales en blanco durante un día.
+  COLUMNA_FAMILIA,
+  porFamilia,
   categoriaDeLote,
   CATEGORIA_DE_LOTE_POR_FAMILIA,
   ROLES,

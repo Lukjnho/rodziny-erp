@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabaseAnon as supabase } from '@/lib/supabaseAnon';
 import { cn } from '@/lib/utils';
 import { mensajeErrorAmigable } from '@/lib/erroresSupabase';
+import { porFamilia } from '@/modules/costeo';
 import { invalidarStockCocina } from './lib/invalidarStock';
 import { IngredientesGrilla, type IngredienteReal } from './components/IngredientesGrilla';
 import { ResponsableSelect } from './components/ResponsableSelect';
@@ -4707,14 +4708,17 @@ function FormPasteleria({
   const { data: productos } = useQuery({
     queryKey: ['pasteleria-productos', local],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('cocina_productos')
-        .select('id, nombre, codigo, receta_id, unidad')
-        .eq('local', local)
-        .eq('tipo', 'postre')
-        .eq('activo', true)
-        .eq('controla_stock', true)
-        .order('nombre');
+      // 💥 Acá decía `.eq('tipo', 'postre')` y la 211 borró esa columna: la
+      // consulta devolvía HTTP 400 y la pastelería del QR quedaba sin productos.
+      const { data, error } = await porFamilia(
+        supabase
+          .from('cocina_productos')
+          .select('id, nombre, codigo, receta_id, unidad')
+          .eq('local', local)
+          .eq('activo', true)
+          .eq('controla_stock', true),
+        'postre',
+      ).order('nombre');
       if (error) throw error;
       return (data ?? []) as ProductoPasteleria[];
     },

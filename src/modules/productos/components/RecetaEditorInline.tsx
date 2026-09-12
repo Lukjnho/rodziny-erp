@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { cn, formatARS } from '@/lib/utils';
-import { AutocompleteIngrediente } from '@/modules/costeo';
+import { AutocompleteIngrediente, porFamilia } from '@/modules/costeo';
 import {
   CATEGORIAS,
   CATEGORIA_LABEL,
@@ -409,14 +409,17 @@ export function RecetaEditorInline({
     queryKey: ['pastas-sin-receta', local],
     enabled: creando && categoria === 'pasta',
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('cocina_productos')
-        .select('id, nombre, codigo')
-        .eq('local', local)
-        .eq('tipo', 'pasta')
-        .eq('activo', true)
-        .is('receta_id', null)
-        .order('nombre');
+      // 💥 Acá decía `.eq('tipo', 'pasta')` y la 211 borró esa columna: la
+      // consulta devolvía HTTP 400 al crear una receta de pasta.
+      const { data, error } = await porFamilia(
+        supabase
+          .from('cocina_productos')
+          .select('id, nombre, codigo')
+          .eq('local', local)
+          .eq('activo', true)
+          .is('receta_id', null),
+        'pasta',
+      ).order('nombre');
       if (error) throw error;
       return data as { id: string; nombre: string; codigo: string }[];
     },

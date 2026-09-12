@@ -4,6 +4,7 @@ import { supabase } from '@/lib/supabase';
 import { mensajeErrorAmigable } from '@/lib/erroresSupabase';
 import { cn } from '@/lib/utils';
 import { hoyAR } from '@/lib/fechaAR';
+import { porFamilia } from '@/modules/costeo';
 import { normNombre } from '../DashboardTab';
 import { salidasPorDias } from '../lib/ventasCocina';
 import { SELECT_STOCK_PASTAS, paraPlanificar, type StockPastaRow } from '../lib/stockPastas';
@@ -306,13 +307,12 @@ export function PlanProduccionEditor({
   const { data: productosPasta } = useQuery({
     queryKey: ['cocina-productos-pasta-plan', local],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('cocina_productos')
-        .select('nombre')
-        .eq('local', local)
-        .eq('activo', true)
-        .eq('tipo', 'pasta')
-        .order('nombre');
+      // 💥 Acá decía `.eq('tipo', 'pasta')` y la 211 borró esa columna: la
+      // consulta devolvía HTTP 400. El nombre de la columna vive en @/modules/costeo.
+      const { data, error } = await porFamilia(
+        supabase.from('cocina_productos').select('nombre').eq('local', local).eq('activo', true),
+        'pasta',
+      ).order('nombre');
       if (error) throw error;
       return ((data ?? []) as { nombre: string }[]).map((r) => r.nombre);
     },
