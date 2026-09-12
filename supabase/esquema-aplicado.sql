@@ -12,7 +12,7 @@
 --
 --  Lo que NO trae: las policies de RLS. Eso lo mide scripts/mapa-erp/.
 --
---  Generado: 2026-09-12 02:28 -0300
+--  Generado: 2026-09-12 02:30 -0300
 --  96 tablas · 13 vistas · 86 funciones · 121 claves foraneas · 302 indices · 3 realtime (publicaciones)
 -- ============================================================================
 

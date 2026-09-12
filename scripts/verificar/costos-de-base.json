@@ -999,11 +999,6 @@
   "local": "vedia",
   "costo": 1036.9788
  },
- "ace988bb-3bc8-4bc6-9870-b109a75aad37": {
-  "nombre": "Ravioles de Espinaca y Quesos (CONGELADA)",
-  "local": "saavedra",
-  "costo": 1587.1429
- },
  "0afafa96-f986-413c-baca-ab9a994a6b7d": {
   "nombre": "Ravioli de Espinaca y Quesos",
   "local": "vedia",
@@ -1018,16 +1013,6 @@
   "nombre": "Ravioli de Espinaca y Quesos (VIANDA)",
   "local": "vedia",
   "costo": 1972.2773
- },
- "8ee1796d-6aa3-4cdf-abb5-838c1fe694a3": {
-  "nombre": "Raviolis de Espinaca y Quesos",
-  "local": "saavedra",
-  "costo": 1799.4645
- },
- "c275e636-b6be-49d3-a9c1-e1fbf751cc7a": {
-  "nombre": "Raviolis De Espinaca y Quesos (VIANDA)",
-  "local": "saavedra",
-  "costo": 1933.1529
  },
  "09bb06dc-4eae-46b0-96d6-e3b2eaa5e476": {
   "nombre": "Relleno Capresse",
